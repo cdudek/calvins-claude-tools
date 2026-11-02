@@ -261,7 +261,7 @@ def test_visual_failure_is_a_failed_gate_check_and_cannot_reuse_earlier_pass(
     (repo / "sdlc.json").write_text(json.dumps({"checks": {scope: ["true"]}}))
     _approve(repo)
     assert _gate(repo, scope, ID).returncode == 0  # preliminary build/test gate
-    checker = SKILL.parents[2] / "omr-ux/skills/review/scripts/visual-check.py"
+    checker = SKILL.parent / "ux-review/scripts/visual-check.py"
     run = tmp_path / "visual run"
     run.mkdir()
     shot = run / "screen.png"
