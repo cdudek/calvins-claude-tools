@@ -11,7 +11,7 @@ export CLOUDSDK_ACTIVE_CONFIG_NAME DEV_DB_PORT NAME TF_REF TF_REPO SECRETS_FILE
 help: ## List the targets
 	@awk 'BEGIN { FS = ":.*## " } /^[a-z-]+:.*## / { printf "  make %-18s %s\n", $$1, $$2 }' $(MAKEFILE_LIST)
 
-dev-env: ## Staging secrets (Google and GitHub OAuth) from heydiff-terraform into .env.local; TF_REF=<branch> until they reach main
+dev-env: ## Staging secrets (Google and GitHub OAuth) from terraform-infra into .env.local; TF_REF=<branch> until they reach main
 	@sh scripts/dev-env.sh
 
 dev-db: ## Your database <firstname_lastname>_dev: register (first run) or connect, write .env.local, migrate

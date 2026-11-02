@@ -152,6 +152,7 @@ WCAG always decides how; the law decides only among WCAG-conformant designs.
 | W14 | Serial Position, Fitts (visual reorder with CSS `order` or grid placement) | 1.3.2 Meaningful Sequence, 2.4.3 Focus Order | A layout reordered at breakpoints | DOM order matches visual order; reorder in markup, not in CSS | R2 | https://www.w3.org/WAI/WCAG22/Understanding/focus-order.html |
 | W15 | One vocabulary, Jakob (a German UI with English product names) | 3.1.2 Language of Parts | Mixed-language strings | Mark passages in another language with `lang`; proper names and loan words are exempt | R2 | https://www.w3.org/WAI/WCAG22/Understanding/language-of-parts.html |
 | W16 | Flow, no interruptions (L8.5) | 2.2.1 (session time limits) | Security session expiry | Warn before expiry, offer an extension, preserve input (2.2.5 AAA when the product adopts it) | R2 / R3 | https://www.w3.org/WAI/WCAG22/Understanding/timing-adjustable.html |
+| W17 | Reflow testing (responsive-audit, E2E zoom tests, "400 % zoom" facts) | 1.4.10 Reflow | Testing 400 % zoom as a 320 × 256 window, or as 400 % of every screen size | One width: 320 CSS px (1280 at 400 %) at an ordinary height, tested at 320 × 640 (or the 320 × 568 floor). 256 CSS px applies only to content that scrolls horizontally (vertical writing); the two bounds are never combined. A product may test narrower phones too, never a stricter height | R2 | https://www.w3.org/WAI/WCAG22/Understanding/reflow.html |
 
 ### d. Law vs the legal floor (G01-G10)
 

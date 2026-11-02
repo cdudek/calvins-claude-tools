@@ -13,7 +13,7 @@ description: >-
 allowed-tools: "Read Grep Glob Edit Write Agent Skill AskUserQuestion Bash(bash */sdlc-run/scripts/*) Bash(python3 */sdlc-run/scripts/*) Bash(python3 */sdlc-run/templates/scripts/sdlc_version.py*) Bash(python3 scripts/sdlc_version.py*) Bash(python3 scripts/verify_gate.py *) Bash(python3 scripts/sdlc_status.py *) Bash(git *) Bash(gh *) Bash(bd *) Bash(plannotator *) Bash(make *) Bash(pnpm *) Bash(uv *) Bash(npx *) EnterWorktree mcp__claude_ai_Linear__* mcp__linear__*"
 user_invocable: true
 metadata:
-  version: 3.4.1
+  version: 3.6.1
   author: calvindudek
 effort: high
 ---
@@ -161,7 +161,12 @@ Two shapes. **One milestone** is the default and is unchanged:
   `origin/milestone/<slug>`, then `EnterWorktree path=` (`references/stages.md` 1.2). Their
   branch names contain the change slug.
 - Builders are `cct:builder` agents, at most 4 at once; the supervisor edits no code and runs
-  no test suite.
+  no test suite. Every builder dispatch carries `sdlc.json` `builderModel` and `builderEffort`
+  (default `sonnet`, `high`; set `opus` for a hard change, or let one plan's Approach override
+  them for that change). With `sdlc.json` `builders: "codex"`, every feature row and fix part runs
+  instead through `scripts/codex-build.sh` (the Codex CLI in the same worktree, network off,
+  `.git` read-only; the wrapper checks the result and makes the commit; `references/stages.md`
+  → Wall clock); the supervisor, the milestone close and the gates stay Claude.
 - Each builder runs in its own worktree and E2E slot, so independent features build at once
   (`references/stages.md` → Wall clock).
 - Milestone of one: one change, both checks. Hotfix: `--base <defaultBranch>`, feature checks only.
@@ -194,7 +199,9 @@ and flaky-spec repairs, CI timeout tweaks its tests need, and records (plans, ha
 lines, findings). A record written after a merge is the next milestone's first commit; a fix for
 a merged milestone goes into the next one. The close runs locally: one `cct:builder` subagent runs
 unit tests, the full E2E suite, the one fix round and `verify_gate.py milestone`, while the
-supervisor dispatches the reviews and the validation. Only its
+supervisor dispatches the reviews and the validation. With `builders: "codex"` the close
+builder runs the checks and the gate but implements nothing: the fix parts go to
+`codex-build.sh`, then the close builder runs the checks and the gate again. Only its
 `VERIFY PASS` head is pushed, once, with one PR and auto-merge armed, while the supervisor builds
 the next independent milestone (at most 4 builders). CI is the last check, never the test loop:
 a red check gets one fix commit and the gate again, never a rerun. Another repository follows
@@ -234,6 +241,7 @@ commands: `references/stages.md` "Records, gates and waiting", `references/ci-bl
 | `omr-ux` plugin | Yes when `ux` is `on` | enable the plugin |
 | A tracker: Linear MCP, `gh` with `project` scope, or `bd` | No: `none` runs ticketless | `references/trackers.md` setup guides |
 | `gh` authenticated | Yes for PRs | `gh auth login` |
+| `codex` CLI, signed in | Yes when `builders` is `codex` | `npm i -g @openai/codex`, then `codex login` |
 
 ## References
 

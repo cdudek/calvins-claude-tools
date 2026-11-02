@@ -41,7 +41,9 @@ Use `create_document`:
 
 ### Step 5: Update with the template
 
-Use `update_document` with the body from `references/prd-template.md`.
+Use `update_document` with the body from `references/prd-template.md`. When the problem is not yet
+agreed, write page one only (Problem, Who it is for, Success metric, Non-goals) and leave the rest
+of the template out: the document grows one section per product review (`cct:develop-prd`).
 
 **Write the Requirements section in EARS**, one numbered sentence per line, inside the MoSCoW
 buckets. The grammar is in `cct:ai-ready-issues` → `references/requirements-grammar.md`. Replace

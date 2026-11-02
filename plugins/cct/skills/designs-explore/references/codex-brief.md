@@ -72,7 +72,7 @@ When the brief says the surface is an OMR product, paste the token rules the ski
 > invent a colour, a font or a spacing value that is not in this list. A direction that breaks the
 > token system is rejected before it is looked at.
 
-For an OMR-branded surface that is not a product, use `cct:brand` instead and say so.
+For an OMR-branded surface that is not a product, use `brand` (OMR AI Kit only, OMR's brand; not in cct) instead and say so.
 For non-OMR work, drop this block entirely — then typography and colour are fair game as axes.
 
 ### 5. The brief itself

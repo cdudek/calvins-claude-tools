@@ -10,14 +10,7 @@
   "docs": "docs/sdlc.md",
   "verify": "pnpm format && pnpm lint && pnpm typecheck && pnpm test",
   "verifyStop": "pnpm format && pnpm lint && pnpm typecheck",
-  "verifyDirty": [
-    "*.ts",
-    "*.tsx",
-    "*.js",
-    "*.mjs",
-    "*.vue",
-    "*.json"
-  ],
+  "verifyDirty": ["*.ts", "*.tsx", "*.js", "*.mjs", "*.vue", "*.json"],
   "lintOnEdit": {
     "*.ts *.tsx *.js *.mjs *.vue *.css *.json *.md": "pnpm exec prettier --write {file}"
   },
@@ -59,11 +52,7 @@
   "tests": "vitest",
   "codeowners": [],
   "claude": true,
-  "claudeAllow": [
-    "Bash(pnpm *)",
-    "Bash(git:*)",
-    "Bash(gh pr:*)"
-  ],
+  "claudeAllow": ["Bash(pnpm *)", "Bash(git:*)", "Bash(gh pr:*)"],
   "showChannel": "",
   "keep": [],
   "milestones": {
@@ -76,14 +65,15 @@
   },
   "hotfix": true,
   "delivery": "one-go",
+  "builders": "claude",
+  "builderModel": "sonnet",
+  "builderEffort": "high",
   "goal": {
     "runTurns": 150,
     "featureTurns": 40,
     "milestoneTurns": 30
   },
-  "languages": [
-    "en"
-  ],
+  "languages": ["en"],
   "responsiveTier": "full",
   "ux": "on",
   "checks": {

@@ -10,9 +10,7 @@
   "docs": "docs/sdlc.md",
   "verify": "make verify",
   "verifyStop": "uv run ruff format --check . && uv run ruff check .",
-  "verifyDirty": [
-    "*.py"
-  ],
+  "verifyDirty": ["*.py"],
   "lintOnEdit": {
     "*.py": "uv run --quiet ruff format --quiet {file}"
   },
@@ -63,14 +61,15 @@
   },
   "hotfix": true,
   "delivery": "one-go",
+  "builders": "claude",
+  "builderModel": "sonnet",
+  "builderEffort": "high",
   "goal": {
     "runTurns": 150,
     "featureTurns": 40,
     "milestoneTurns": 30
   },
-  "languages": [
-    "en"
-  ],
+  "languages": ["en"],
   "responsiveTier": "full",
   "ux": "off",
   "checks": {

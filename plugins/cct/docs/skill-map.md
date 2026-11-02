@@ -2,6 +2,8 @@
 
 Where every skill, agent and command in this plugin came from. Call each one as `cct:<name>`.
 
+Description budget: 68 skills, 32,724 characters of descriptions, read on every prompt.
+
 | Name | Kind | Source |
 | --- | --- | --- |
 | `ac-auditor` | agent | omr-dev:ac-auditor |
@@ -22,34 +24,56 @@ Where every skill, agent and command in this plugin came from. Call each one as 
 | `accessibility-audit` | skill | omr-dev:accessibility-audit |
 | `address-feedback` | skill | omr-dev:address-feedback |
 | `ai-ready-issues` | skill | omr-pm:ai-ready-issues |
+| `analyze` | skill | omr-data:analyze |
+| `analyze-cohorts` | skill | omr-pm:analyze-cohorts |
+| `api-design` | skill | omr-dev:api-design |
 | `architecture-review` | skill | omr-dev:architecture-review |
+| `aws-manage` | skill | omr-dev:aws-manage |
+| `break-down-epics` | skill | omr-pm:break-down-epics |
 | `browser-automate` | skill | omr-dev:browser-automate |
 | `c4-diagram-create` | skill | omr-dev:c4-diagram-create |
+| `cloudflare-manage` | skill | omr-dev:cloudflare-manage |
+| `codex-run` | skill | omr-dev:codex-run |
+| `data-model-create` | skill | omr-dev:data-model-create |
+| `dependency-review` | skill | omr-dev:dependency-review |
 | `design-brief` | skill | ux-strategy:design-brief |
 | `design-consult` | skill | omr-dev:design-consult |
 | `design-system-apply` | skill | omr-dev:design-system-apply |
 | `designs-explore` | skill | omr-dev:designs-explore |
+| `develop-prd` | skill | omr-pm:develop-prd |
+| `dockerfile-review` | skill | omr-dev:dockerfile-review |
+| `docs-audit` | skill | omr-dev:docs-audit |
 | `e2e-from-ticket-write` | skill | omr-dev:e2e-from-ticket-write |
 | `e2e-test-run` | skill | omr-dev:e2e-test-run |
 | `e2e-write` | skill | omr-dev:e2e-write |
 | `flaky-test-fix` | skill | omr-dev:flaky-test-fix |
 | `frontend-design` | skill | frontend-design:frontend-design |
+| `github-manage` | skill | omr-dev:github-manage |
 | `heuristic-evaluation-ai` | skill | evaluation:heuristic-evaluation-ai |
 | `jobs-to-be-done` | skill | design-research:jobs-to-be-done |
 | `layout-grid` | skill | ui-design:layout-grid |
 | `linear-manage` | skill | omr-dev:linear-manage |
 | `microcopy-write` | skill | omr-dev:microcopy-write |
+| `model-train` | skill | omr-data:model-train |
+| `network-analyze` | skill | omr-data:network-analyze |
 | `plan-design-review` | skill | omr-dev:plan-design-review |
+| `plan-roadmap` | skill | omr-pm:plan-roadmap |
 | `pr-create` | skill | omr-dev:pr-create |
 | `pr-review` | skill | omr-dev:pr-review |
+| `product-playbook` | skill | omr-pm:product-playbook |
+| `queries-optimize` | skill | omr-dev:queries-optimize |
+| `release-cut` | skill | omr-dev:release-cut |
 | `responsive-audit` | skill | omr-dev:responsive-audit |
 | `review-fix-loop` | skill | omr-dev:review-fix-loop |
 | `role-code-analysis` | skill | omr-dev:role-code-analysis |
 | `role-review-vocabulary` | skill | omr-dev:role-review-vocabulary |
+| `run-story-mapping` | skill | omr-pm:run-story-mapping |
 | `sdlc-run` | skill | omr-dev:sdlc-run |
 | `security-review` | skill | omr-dev:security-review |
 | `squash` | skill | omr-dev:squash |
 | `state-machine` | skill | interaction-design:state-machine |
+| `tracking-apply` | skill | omr-dev:tracking-apply |
+| `transcripts-fix` | skill | omr-core:transcripts-fix |
 | `ux-audit` | skill | omr-ux:audit |
 | `ux-conformance` | skill | omr-ux:conformance |
 | `ux-decision` | skill | omr-ux:decision |
@@ -58,6 +82,7 @@ Where every skill, agent and command in this plugin came from. Call each one as 
 | `ux-init` | skill | omr-ux:init |
 | `ux-laws-apply` | skill | omr-dev:ux-laws-apply |
 | `ux-review` | skill | omr-ux:review |
+| `ux-run` | skill | omr-ux:run |
 | `ux-sitemap-create` | skill | omr-ux:sitemap-create |
 | `ux-validate` | skill | omr-ux:validate |
 | `ux-writing` | skill | designer-toolkit:ux-writing |

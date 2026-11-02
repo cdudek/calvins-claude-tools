@@ -54,8 +54,8 @@ Before any UX judgement, invoke these two via the `Skill` tool:
 If the artefact concerns OMR product surface, also consult:
 
 - `cct:design-system-apply` — the Product-UI token/component authority for OMR frontends
-- `cct:brand` — OMR brand colors, fonts, logo rules (collateral surfaces)
-- `cct:tone-of-voice` — OMR copy voice (for microcopy reviews)
+- `brand` (OMR AI Kit only, OMR's brand; not in cct) — OMR brand colors, fonts, logo rules (collateral surfaces)
+- `tone-of-voice` (OMR AI Kit only, OMR's voice; not in cct) — OMR copy voice (for microcopy reviews)
 
 ## Skill decision matrix
 
@@ -69,7 +69,7 @@ non-omr-dev skills.
 | Greenfield (non-OMR) design brief | `design-consult`, `cct:frontend-design` |
 | Accessibility audit request | `accessibility-audit` |
 | Dark mode / theming / token questions (OMR) | `cct:design-system-apply` |
-| Microcopy / errors / empty states | `microcopy-write`, `cct:tone-of-voice` |
+| Microcopy / errors / empty states | `microcopy-write`, `tone-of-voice` (OMR AI Kit only, OMR's voice; not in cct) |
 | Motion / animation | `cct:ux-audit` (Motion & Animation category + hard rules) |
 | Figma mockup → code | `figma:figma-use`, `figma:figma-code-connect` (external Figma plugin) |
 | Multiple visual directions wanted | `cct:variants-create`, `cct:frontend-design` |

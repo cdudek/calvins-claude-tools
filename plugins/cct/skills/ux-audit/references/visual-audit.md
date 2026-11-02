@@ -2,7 +2,7 @@
 
 Read this for check C20 and C21 of `cct:ux-audit`. It is the rendered-result half of the
 audit — what the pixels look like once the behaviour checks in C1-C19 are done. It came from
-`omr-dev:review-design`, which this skill replaced.
+`review-design` (OMR AI Kit only, the old name of ux-audit; not in cct), which this skill replaced.
 
 Findings use the audit's own finding format. The two grades below are optional: report them
 when the owner asks for a score, otherwise the findings stand on their own.

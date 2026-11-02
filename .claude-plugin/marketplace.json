@@ -6,7 +6,7 @@
     {
       "name": "cct",
       "source": "./plugins/cct",
-      "description": "The SDLC in one self-contained plugin: sdlc-run and every skill, agent and hook it runs, including the UX suite, plus a project kickoff and the Docker + GitHub Actions blueprint."
+      "description": "The SDLC in one self-contained plugin: sdlc-run and every skill, agent and hook it runs, including the UX suite, the product skills, the engineering and data skills run by hand, a project kickoff and the Docker + GitHub Actions blueprint."
     }
   ]
 }

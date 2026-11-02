@@ -9,7 +9,7 @@ name: Deploy
 # Each deploy switches traffic back to the revision that served before when its check fails.
 # Migrations are expand-and-contract, so the old revision keeps working while they run, and a
 # rollback (rollback.yml) never has to undo one. Off until the repo variable DEPLOY_ENABLED is
-# `true` (set it once heydiff-terraform is applied and the app has a Dockerfile target).
+# `true` (set it once terraform-infra is applied and the app has a Dockerfile target).
 # Security: no github.event.* expression is expanded inside a `run:` script.
 
 on:

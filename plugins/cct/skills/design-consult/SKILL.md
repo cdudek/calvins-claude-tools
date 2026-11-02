@@ -24,7 +24,7 @@ non-OMR products. If the target is an OMR frontend or any OMR-branded surface,
 STOP and invoke `cct:design-system-apply` instead — OMR's tokens, type
 scale, and components already exist, and inventing new ones there is a defect,
 not a design choice. (Brand collateral like decks and social assets calibrates
-against `cct:brand`.)
+against `brand` (OMR AI Kit only, OMR's brand; not in cct).)
 
 ## Phase 1: Product Context
 

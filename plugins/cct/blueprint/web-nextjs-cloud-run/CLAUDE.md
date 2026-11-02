@@ -51,12 +51,12 @@ New keys: `checks`, `milestones`, `projects`, `hotfix`, `goal`, `languages`, `re
 
 ## Terraform and infrastructure naming (owner, 2026-10-31)
 
-The infrastructure lives in [pokbytes/heydiff-terraform](https://github.com/pokbytes/heydiff-terraform). Every name that this repo's CI, scripts, tests or docs use follows its rule:
+The infrastructure lives in [pokbytes/terraform-infra](https://github.com/pokbytes/terraform-infra). Every name that this repo's CI, scripts, tests or docs use follows its rule:
 
 - **Every environment-scoped resource ends in its environment:** `-prod` or `-staging`, or `_prod` and `_staging` where `-` is not allowed (Postgres database names). Examples: `heydiff-web-prod`, `heydiff-web-staging`, `heydiff-web-migrate-prod`, `better-auth-secret-prod`, `heydiff_prod`.
 - **A resource used by every environment ends in `-shared`:** `heydiff-db-shared`, `heydiff-images-shared`, `heydiff-web-run-shared`, `heydiff-web-deploy-shared`. `-dev` (`_dev`) is for local development only: `heydiff-web-signer-dev`, `calvin_dudek_dev`.
 - **No bare names.** A name without its environment silently means production. Never `heydiff-web`, `database-url` or `heydiff`.
-- The full table, what is exempt (Terraform addresses, domain mappings, IAM users' emails, the GitHub environment `production`) and the policy that enforces it (`policy/terraform/naming.rego`) are in heydiff-terraform's README, "Naming".
+- The full table, what is exempt (Terraform addresses, domain mappings, IAM users' emails, the GitHub environment `production`) and the policy that enforces it (`policy/terraform/naming.rego`) are in terraform-infra's README, "Naming".
 
 ## Development database
 

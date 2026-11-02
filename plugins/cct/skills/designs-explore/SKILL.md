@@ -210,6 +210,6 @@ and wait. Do not pick a winner, do not start building one, and do not offer a fo
 This skill explores. It does not build, and it does not decide.
 
 Once a direction wins, implementing it is ordinary work — `cct:design-system-apply` for OMR
-frontends, `cct:vue-code-write` for `omr-js` consumers. Critiquing what was built afterwards
+frontends, `vue-code-write` (OMR AI Kit only, Vue is not in the stack; not in cct) for `omr-js` consumers. Critiquing what was built afterwards
 is `cct:ux-audit`. Getting Claude rather than Codex to draft quick variants, with no
 rendering and no gallery, is `cct:variants-create`.
