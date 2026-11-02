@@ -320,9 +320,16 @@ PATCHES.append(("skills/sdlc-run/SKILL.md",
 # Ship/Show/Ask is still asked on every adopt, but cct recommends and defaults to no: one owner.
 # Owner decision 2026-10-31 (kit #490): keep this even if a kit rebuild seems to make it moot.
 PATCHES.append(("skills/sdlc-run/scripts/adopt.py", "TIERS_DEFAULT = True", "TIERS_DEFAULT = False"))
-for goal in ("run", "milestone", "feature"):
+# The feature and milestone goal texts stay under the kit's 1000-character cap (test_verify_gate.py): the run text
+# carries the whole rule, the milestone text a pointer, and the feature text already names cct:builder.
+AGENTS_POINTER = "Agents: typed cct agents on their own models, never general-purpose (sdlc-run, Agents and models)."
+for goal, rule in (("run", AGENTS_RULE), ("milestone", AGENTS_POINTER)):
     PATCHES.append((f"skills/sdlc-run/templates/goal/{goal}.txt", "Stop after <TURNS> turns and report.",
-                    f"{AGENTS_RULE} Stop after <TURNS> turns and report."))
+                    f"{rule} Stop after <TURNS> turns and report."))
+# The kit's test finds the visual checker beside omr-ux; in cct it is the ux-review skill next door
+PATCHES.append(("skills/sdlc-run/scripts/test_verify_gate.py",
+                'SKILL.parents[2] / "omr-ux/skills/review/scripts/visual-check.py"',
+                'SKILL.parent / "ux-review/scripts/visual-check.py"'))
 for rel, old, new in PATCHES:
     f = OUT / rel
     t = f.read_text()
@@ -485,5 +492,8 @@ for (origin, kind, name), new in sorted(names.items(), key=lambda kv: (kv[0][1],
     rows.append(f"| `{new}` | {kind} | {origin}:{name} |")
 rows.append("| `project-kickoff` | skill | cct |")
 (OUT / "docs/skill-map.md").write_text("\n".join(rows) + "\n")
+# The interface contracts the review skills' tests read sit at skills/CLAUDE.md, as in the kit. Copied after the prune
+# and the skill map, which both treat every entry under skills/ as a skill folder.
+shutil.copy2(OUT / "docs/omr-dev-guide.md", OUT / "skills/CLAUDE.md")
 shutil.rmtree(TMP)
 print("overlay applied:", OUT)
