@@ -1,21 +1,21 @@
 # Deploy: images, Cloud Run, CI
 
-How heydiff-web becomes a running service. Modelled on OMR's app-blueprint (`ramp106/omr-reviews-workspace-infra`) with Cloud Run instead of Kubernetes, and GitHub Actions doing what ArgoCD does there. The infrastructure is in [pokbytes/heydiff-terraform](https://github.com/pokbytes/heydiff-terraform). The design is section 13 of [the HeyDiff design](designs/2026-10-27-snapmark-online.md) once the plan lands here.
+How heydiff-web becomes a running service. Modelled on OMR's app-blueprint (`ramp106/omr-reviews-workspace-infra`) with Cloud Run instead of Kubernetes, and GitHub Actions doing what ArgoCD does there. The infrastructure is in [pokbytes/terraform-infra](https://github.com/pokbytes/terraform-infra). The design is section 13 of [the HeyDiff design](designs/2026-10-27-snapmark-online.md) once the plan lands here.
 
 ## Region and domain
 
-Compute runs in `europe-west1` (Belgium): Cloud Run, Cloud SQL, Artifact Registry. Cloud Storage and BigQuery stay in the EU multi-region. heydiff.com reaches production through Cloud Run domain mapping, which Google offers in Belgium but in no German region (owner, 2026-10-28: "ok do belgium then", "ok move cloud sql too"). No load balancer, no Firebase. DNS is in AWS Route53; the records come from heydiff-terraform's `dns_records` output.
+Compute runs in `europe-west1` (Belgium): Cloud Run, Cloud SQL, Artifact Registry. Cloud Storage and BigQuery stay in the EU multi-region. heydiff.com reaches production through Cloud Run domain mapping, which Google offers in Belgium but in no German region (owner, 2026-10-28: "ok do belgium then", "ok move cloud sql too"). No load balancer, no Firebase. DNS is in AWS Route53; the records come from terraform-infra's `dns_records` output.
 
 ## Names
 
-`.github/workflows/*.yml`, `.github/actions/cloud-run-deploy` and `scripts/` name Cloud Run services, jobs, the registry, the Cloud SQL instance and the deploy identity. Every such name follows heydiff-terraform's naming rule (owner, 2026-10-31; CLAUDE.md, "Terraform and infrastructure naming"):
+`.github/workflows/*.yml`, `.github/actions/cloud-run-deploy` and `scripts/` name Cloud Run services, jobs, the registry, the Cloud SQL instance and the deploy identity. Every such name follows terraform-infra's naming rule (owner, 2026-10-31; CLAUDE.md, "Terraform and infrastructure naming"):
 
 - **Every environment-scoped resource ends in its environment:** `-prod` or `-staging`, or `_prod` and `_staging` where `-` is not allowed (Postgres database names). Examples: `heydiff-web-prod`, `heydiff-web-staging`, `heydiff-web-migrate-prod`, `better-auth-secret-prod`, `heydiff_prod`.
 - **A resource used by every environment ends in `-shared`:** `heydiff-db-shared`, `heydiff-images-shared`, `heydiff-web-run-shared`, `heydiff-web-deploy-shared`. `-dev` (`_dev`) is for local development only: `heydiff-web-signer-dev`, `calvin_dudek_dev`.
 - **No bare names.** A name without its environment silently means production. Never `heydiff-web`, `database-url` or `heydiff`.
-- The full table, what is exempt (Terraform addresses, domain mappings, IAM users' emails, the GitHub environment `production`) and the policy that enforces it (`policy/terraform/naming.rego`) are in heydiff-terraform's README, "Naming".
+- The full table, what is exempt (Terraform addresses, domain mappings, IAM users' emails, the GitHub environment `production`) and the policy that enforces it (`policy/terraform/naming.rego`) are in terraform-infra's README, "Naming".
 
-A new name here is chosen in heydiff-terraform first, never invented in a workflow.
+A new name here is chosen in terraform-infra first, never invented in a workflow.
 
 ## The images
 
@@ -58,7 +58,7 @@ The images build only when the app meets this contract:
 | `AUTH_TRUST_PROXY_HOPS`   | `1`                | Cloud Run's front end appends the client address to `X-Forwarded-For`. Sign-in rate limits count per address. In production the app refuses to sign anyone in when this is unset or `0`. |
 | `MAIL_PROVIDER`           | `resend`           | The `console` provider prints sign-in links to the log, so production refuses it.                                                                                                    |
 
-`AUTH_TRUST_PROXY_HOPS` is not a secret. `deploy.yml` sets it on every deploy (`--update-env-vars` in `.github/actions/cloud-run-deploy`); heydiff-terraform should hold the same value so a plain `terraform apply` does not drift from it. A request that arrives without a valid client address is refused with 403; it never shares a rate-limit bucket with other people.
+`AUTH_TRUST_PROXY_HOPS` is not a secret. `deploy.yml` sets it on every deploy (`--update-env-vars` in `.github/actions/cloud-run-deploy`); terraform-infra should hold the same value so a plain `terraform apply` does not drift from it. A request that arrives without a valid client address is refused with 403; it never shares a rate-limit bucket with other people.
 
 ## Database development and migrations
 
@@ -143,7 +143,7 @@ Where ArgoCD would act, the workflow acts instead:
 - **Rollout** is a revision with no traffic, checked on its tagged URL, then a traffic switch.
 - **Health gate** is `/readyz` serving the pushed sha, three reads in a row on the service URL.
 - **Self-heal** is an automatic traffic switch back to the revision that served before, when the check after promotion fails.
-- **Drift** is Terraform's drift workflow in heydiff-terraform; Terraform ignores the image and traffic, which CI owns.
+- **Drift** is Terraform's drift workflow in terraform-infra; Terraform ignores the image and traffic, which CI owns.
 
 No ship, show or ask: every PR auto-merges on green (`sdlc.json` `tiers: false`).
 
@@ -151,7 +151,7 @@ Authentication is Workload Identity Federation, no keys: provider `projects/3817
 
 ## Turning it on
 
-1. Apply heydiff-terraform (bootstrap by hand, then its CI).
+1. Apply terraform-infra (bootstrap by hand, then its CI).
 2. In this repo's settings, create the environments `staging`, `preview` and `production`; limit `production` to the `main` branch (Deployment branches).
 3. Set the repository variable `DEPLOY_ENABLED` to `true`. Until then `deploy.yml` and `preview.yml` skip every job.
 4. Make `check` the required status on `main`.

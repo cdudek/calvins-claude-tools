@@ -49,7 +49,7 @@
 | **1.4.3** Contrast (Minimum) | 4.5:1 for normal text, 3:1 for large text |
 | **1.4.4** Resize Text | Text can be resized to 200% without loss of functionality |
 | **1.4.5** Images of Text | Text used instead of images of text |
-| **1.4.10** Reflow | Content reflows at 320px width without horizontal scroll |
+| **1.4.10** Reflow | Content reflows at 320 CSS px wide (400 % of 1280) at an ordinary height without horizontal scroll; test 320 × 640. The 256 px height applies only to horizontally scrolling content. Data tables, maps, canvases and toolbars that must stay in view are excepted; the content around them is not |
 | **1.4.11** Non-text Contrast | UI components have 3:1 contrast |
 | **1.4.12** Text Spacing | Content adapts to text spacing changes |
 | **1.4.13** Content on Hover/Focus | Additional content is dismissible, hoverable, persistent |

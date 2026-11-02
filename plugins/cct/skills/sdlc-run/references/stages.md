@@ -328,8 +328,31 @@ disappear.
   cut after the first has merged.
 - **The supervisor plans, dispatches, judges and merges.** The session that runs this skill edits
   no code and runs no test suite; the builders and the gate do. Every feature and fix part goes to
-  an `cct:builder`, never to `general-purpose`. A subagent's result comes back as a file path
+  an `cct:builder`, never to `general-purpose`, dispatched with `model` and `effort` set to
+  `sdlc.json` `builderModel` and `builderEffort` (default `sonnet`, `high`; the agent's own
+  frontmatter says the same, so the default changes nothing), or to the pair the plan's
+  Approach names for this change. A subagent's result comes back as a file path
   plus a summary of at most about 2k tokens. At most 4 builders run at once.
+- **Codex builders (`sdlc.json` `builders: "codex"`).** The same rows go to the Codex CLI
+  instead of an agent, one run per worktree, through the kit's `scripts/codex-build.sh`
+  (`${CLAUDE_PLUGIN_ROOT}/skills/sdlc-run/scripts/`). Per row: run the stack's install in the
+  worktree once (`ciCommands.install`; the sandbox has no network, so nothing installs later),
+  write the brief to a file (the feature row, its facts, the worker branch), start
+  `codex-build.sh --worktree <wt> --change <id> --brief <file> --model <M> --reasoning <R>` as a
+  **background Bash** with `sdlc.json` `builderModel` and `builderEffort` (or the pair the plan's
+  Approach names for this change), and watch it with
+  `Monitor`. The script waits on Codex, writes `<out>/run.json` (model, reasoning, branch, base,
+  pid = process group) and `<out>/result.json`, checks a `done` (the tree changed; no protected
+  path, lockfile, manifest or locked test among the changes, else exit 3 `rejected`, left
+  uncommitted) and then makes the one commit itself with the subject the result names: the
+  sandbox keeps every `.git` read-only, so Codex only edits the tree and never touches history.
+  Read its last lines, nothing more, and merge the worker branch into the milestone branch as
+  for any builder. `blocked` or `failed` (exit 4) carries the blockers: answer in the brief and
+  re-dispatch. To cancel, kill the process group in `run.json` first; the lock in the worktree's
+  git dir refuses a second run while one lives. Loopback stays open with the network off
+  (checked 2026-11-02), so a Codex builder runs its touched E2E specs in its slot like any
+  builder. The milestone close keeps its one `cct:builder`, which then runs checks and gate
+  only: Claude checks, Codex fix parts, Claude checks and gate again.
 - **Isolate each worktree's E2E resources.** Give its run an app port, stub port, database and
   logs, derived from the worktree path. A repo that hard-codes a port or database name gets
   one env var per value first. Schedule runs under the lock and load policy in
@@ -365,7 +388,8 @@ person's own browser session. Never use Claude in Chrome or any tool driving tha
 1. One go: the same goal continues from Stage 5. Feature PRs: start `/goal` with
    `templates/goal/milestone.txt` filled (`goal.milestoneTurns`).
 2. Run on the diff, each once and in parallel: `cct:ux-review`, `cct:pr-review`,
-   `cct:responsive-audit` (the `responsiveTier` matrix, nothing overflows), the states of
+   `cct:responsive-audit` (the `responsiveTier` matrix, nothing overflows; reflow at
+   320 × 640, WCAG 1.4.10 as written, never a 320 × 256 window), the states of
    every changed page, `cct:accessibility-audit`, the full E2E suite once, ×3 only for
    changed and flaky specs. Use the committed `e2e/flaky-specs.txt` list and the selection
    and line-format rules in `../../e2e-test-run/references/suite-speed-and-reliability.md`

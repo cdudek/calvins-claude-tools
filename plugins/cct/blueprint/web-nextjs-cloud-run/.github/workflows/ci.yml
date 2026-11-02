@@ -1,7 +1,11 @@
 name: CI
 
 # Every PR and every push to main. `check` is the one required status: it passes only when
-# every job before it passed (a skipped Docker job counts as passed until the app exists).
+# every job before it passed or was skipped on purpose (see `changes`).
+# `changes` reads the paths a PR touches (scripts/ci-scope.sh) and sets one flag per step: documentation runs nothing but the
+# secret scan, test/ runs lint and unit, e2e/ runs lint and the touched specs, anything else is code and runs it all.
+# Code in a PR into main or project/* (or from milestone/*) and every push to main run the whole E2E suite in 4 shards,
+# any other PR runs only the E2E specs it changes.
 # Security: no github.event.* expression is expanded inside a `run:` script.
 
 on:
@@ -41,8 +45,52 @@ jobs:
           tar -xzf "$RUNNER_TEMP/gitleaks.tgz" -C "$RUNNER_TEMP" gitleaks
           "$RUNNER_TEMP/gitleaks" git . --redact --no-banner --verbose --exit-code 1 --config .github/gitleaks.toml
 
-  checks:
-    name: Format, lint, typecheck, test, e2e
+  changes:
+    name: Changed paths
+    runs-on: ubuntu-latest
+    outputs:
+      lint: ${{ steps.scope.outputs.lint }}
+      unit: ${{ steps.scope.outputs.unit }}
+      image: ${{ steps.scope.outputs.image }}
+      matrix: ${{ steps.scope.outputs.matrix }}
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+          # a pull request is checked out as its merge into the base: HEAD^1 is the base, HEAD^2 the PR head
+          fetch-depth: 2
+      - id: scope
+        env:
+          EVENT: ${{ github.event_name }}
+          BASE_REF: ${{ github.base_ref }}
+          HEAD_REF: ${{ github.head_ref }}
+        run: |
+          if [ "$EVENT" = pull_request ]; then git diff --no-renames --name-only HEAD^1 HEAD; fi | bash scripts/ci-scope.sh | tee -a "$GITHUB_OUTPUT"
+
+  static:
+    name: Format, lint, typecheck
+    needs: changes
+    if: needs.changes.outputs.lint == 'true'
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
+        with:
+          node-version-file: .nvmrc
+          cache: npm
+      - run: npm ci --ignore-scripts
+        env:
+          NODE_AUTH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+      - run: npm run format:check
+      - run: npm run lint
+      - run: npm run typecheck
+
+  unit:
+    name: Unit tests
+    needs: changes
+    if: needs.changes.outputs.unit == 'true'
     runs-on: ubuntu-latest
     env:
       TEST_DATABASE_URL: postgres://postgres:postgres@127.0.0.1:5432/postgres
@@ -69,15 +117,74 @@ jobs:
       - run: npm ci --ignore-scripts
         env:
           NODE_AUTH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-      - run: npm run format:check
-      - run: npm run lint
-      - run: npm run typecheck
       - run: npm test
+
+  # One job per entry of the `changes` matrix: 4 shards, or the changed specs, or none. Each has its own Postgres and its own
+  # production build (built per shard, in parallel: one build shared through an artifact would add the upload and download
+  # to the wall clock without making it shorter).
+  e2e:
+    name: E2E ${{ matrix.name }}
+    needs: changes
+    if: needs.changes.outputs.matrix != '[]'
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        include: ${{ fromJSON(needs.changes.outputs.matrix) }}
+    env:
+      TEST_DATABASE_URL: postgres://postgres:postgres@127.0.0.1:5432/postgres
+      NEXT_TELEMETRY_DISABLED: '1'
+    services:
+      postgres:
+        image: postgres:18
+        env:
+          POSTGRES_PASSWORD: postgres
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd "pg_isready -U postgres"
+          --health-interval 5s
+          --health-timeout 5s
+          --health-retries 10
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
+        with:
+          node-version-file: .nvmrc
+          cache: npm
+      - run: npm ci --ignore-scripts
+        env:
+          NODE_AUTH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
       - run: npx playwright install --with-deps chromium
-      - run: npm run smoke:background
+      # The only env the build needs: E2E_BUILD lets this production build use the dev providers (console mail, memory storage),
+      # see src/server/deployed.ts. Everything else reaches the server at start (playwright.config.ts).
+      - run: npm run build
+        env:
+          E2E_BUILD: '1'
+      - name: Playwright
+        env:
+          ARGS: ${{ matrix.args }}
+        # ARGS is `--shard=i/4` or spec paths that ci-scope.sh matched against a strict pattern; it is split on purpose
+        run: |
+          # shellcheck disable=SC2086
+          npm run smoke:background -- $ARGS
+      - name: Flaky specs to the job summary
+        if: always()
+        env:
+          SHARD: ${{ matrix.name }}
+        run: |
+          [ -f test-results/report.json ] || exit 0
+          flaky=$(jq -r '.. | objects | select(has("specs")) | .specs[] | select(any(.tests[]; .status == "flaky")) | "\(.file): \(.title)"' test-results/report.json | sort -u)
+          [ -n "$flaky" ] || exit 0
+          { echo "### Flaky on E2E $SHARD (failed, then passed on the retry; fix, see e2e/flaky-specs.txt)"; echo; printf -- '- %s\n' "$flaky"; } >>"$GITHUB_STEP_SUMMARY"
+          printf '%s\n' "$flaky" | while read -r line; do echo "::warning title=Flaky E2E spec::$line"; done
 
   dependencies:
     name: Dependency scan
+    needs: changes
+    if: needs.changes.outputs.image == 'true'
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
@@ -95,6 +202,8 @@ jobs:
 
   docker:
     name: Dockerfile lint, build and image scan
+    needs: changes
+    if: needs.changes.outputs.image == 'true'
     runs-on: ubuntu-latest
     services:
       postgres:
@@ -179,10 +288,21 @@ jobs:
   check:
     name: check
     if: always()
-    needs: [secrets-scan, checks, dependencies, docker]
+    needs: [changes, secrets-scan, static, unit, e2e, dependencies, docker]
     runs-on: ubuntu-latest
     steps:
+      # A job must succeed when its flag is on and must be skipped when it is off; `changes` and the secret scan always run.
       - env:
-          RESULTS: ${{ join(needs.*.result, ' ') }}
+          CHANGES: ${{ needs.changes.result }}
+          SECRETS: ${{ needs.secrets-scan.result }}
+          STATIC: ${{ needs.changes.outputs.lint }}:${{ needs.static.result }}
+          UNIT: ${{ needs.changes.outputs.unit }}:${{ needs.unit.result }}
+          IMAGE: ${{ needs.changes.outputs.image }}:${{ needs.dependencies.result }}:${{ needs.docker.result }}
+          E2E: ${{ needs.changes.outputs.matrix != '[]' }}:${{ needs.e2e.result }}
         run: |
-          for r in $RESULTS; do [ "$r" = success ] || { echo "::error::a required job ended $r"; exit 1; }; done
+          [ "$CHANGES" = success ] && [ "$SECRETS" = success ] || { echo "::error::changes or the secret scan ended $CHANGES / $SECRETS"; exit 1; }
+          ok() { # flag:result... ; flag true needs every result success, false needs every result skipped
+            local want=skipped flag=${1%%:*} r; [ "$flag" = true ] && want=success
+            for r in $(echo "${1#*:}" | tr : ' '); do [ "$r" = "$want" ] || { echo "::error::expected $want, got $r (flag $flag)"; return 1; }; done
+          }
+          ok "$STATIC" && ok "$UNIT" && ok "$IMAGE" && ok "$E2E"

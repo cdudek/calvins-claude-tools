@@ -15,8 +15,6 @@
     "typecheck": "tsc --noEmit -p tsconfig.json",
     "test": "vitest run",
     "smoke:background": "echo 'heydiff-kit has no E2E: packages are covered by unit tests'",
-    "changeset": "changeset",
-    "release:snapshot": "changeset version --snapshot m1 && changeset publish --tag next --no-git-tag",
     "sdlc:tools": "curl -fsSL https://plannotator.ai/install.sh | bash && claude plugin marketplace add backnotprop/plannotator && claude plugin install plannotator@plannotator"
   },
   "devDependencies": {

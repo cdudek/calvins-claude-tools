@@ -7,14 +7,14 @@
 #   make dev-db-psql   psql into your database
 # `sh scripts/dev-db.sh name "Full Name"` prints the derived name (tested in tests/).
 #
-# Access is granted in pokbytes/heydiff-terraform: terraform/developers.json maps
+# Access is granted in pokbytes/terraform-infra: terraform/developers.json maps
 # firstname-lastname to a Google account. You can reach your own database and no other.
 # No password and no token is ever written or printed: the proxy logs in with your
 # Application Default Credentials (IAM database auth).
 set -eu
 
 INSTANCE="heydiff:europe-west1:heydiff-db-shared"
-TF_REPO="${TF_REPO:-pokbytes/heydiff-terraform}"
+TF_REPO="${TF_REPO:-pokbytes/terraform-infra}"
 PORT="${DEV_DB_PORT:-5432}"
 STATE_DIR=".dev-db"
 PIDFILE="$STATE_DIR/proxy.pid"
@@ -49,10 +49,10 @@ resolve_name() {
   raw="${NAME:-$(git config user.name 2>/dev/null || true)}"
   [ -n "$raw" ] || die "no name: set git config user.name, or run make dev-db NAME=firstname-lastname"
   DEV_NAME="$(derive_name "$raw")"
-  # Same rule as heydiff-terraform's foundation precondition.
+  # Same rule as terraform-infra's foundation precondition.
   printf '%s' "$DEV_NAME" | grep -Eq '^[a-z]+(-[a-z]+)*$' ||
     die "\"$raw\" does not give a firstname-lastname name; run make dev-db NAME=firstname-lastname"
-  DATABASE="$(printf '%s' "$DEV_NAME" | tr - _)_dev" # heydiff-terraform README "Naming": the environment last
+  DATABASE="$(printf '%s' "$DEV_NAME" | tr - _)_dev" # terraform-infra README "Naming": the environment last
 }
 
 resolve_account() {
@@ -134,7 +134,7 @@ write_env_local() {
   echo "dev-db: DATABASE_URL for $DATABASE written to .env.local"
 }
 
-# Prints the account registered for $DEV_NAME on heydiff-terraform main, or nothing.
+# Prints the account registered for $DEV_NAME on terraform-infra main, or nothing.
 registered_account() {
   json="$(gh api -H 'Accept: application/vnd.github.raw+json' \
     "repos/$TF_REPO/contents/terraform/developers.json?ref=main" 2>/dev/null)" ||
@@ -150,7 +150,7 @@ open_registration_pr() {
   branch="dev-db/$DEV_NAME"
   url="$(gh pr list -R "$TF_REPO" --head "$branch" --state open --json url -q '.[0].url')"
   if [ -z "$url" ]; then
-    tmp="$(mktemp -d "${TMPDIR:-/tmp}/heydiff-terraform.XXXXXX")"
+    tmp="$(mktemp -d "${TMPDIR:-/tmp}/terraform-infra.XXXXXX")"
     trap 'rm -rf "$tmp"' EXIT
     gh repo clone "$TF_REPO" "$tmp" -- --quiet --depth 1 --branch main
     git -C "$tmp" switch -q -c "$branch"

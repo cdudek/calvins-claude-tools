@@ -333,7 +333,8 @@ shutil.copy2(REPO / "README.md", OUT / "README.md")
 DROP = {"brand", "tone-of-voice", "vue-code-write"}  # OMR's own brand and voice; Vue is not in the stack
 have_s = {d.name for d in (OUT / "skills").iterdir()}
 have_a = {f.stem for f in (OUT / "agents").iterdir()}
-keep, queue = set(), [("skill", "sdlc-run"), ("skill", "project-kickoff")]
+# overlay skills are hand-written for cct, so they stay even when nothing in the SDLC names them
+keep, queue = set(), [("skill", "sdlc-run"), ("skill", "project-kickoff")] + [("skill", d.name) for d in (REPO / "overlay/skills").iterdir() if d.is_dir()]
 while queue:
     kind, n = queue.pop()
     if (kind, n) in keep or n in DROP:

@@ -173,7 +173,10 @@ For EVERY target surface, at every width in the chosen tier:
 
    **Accessibility tie-ins** (report as findings with the criterion):
    - WCAG 1.4.10 Reflow: no two-dimensional scrolling at 320px width (equivalent to
-     400% zoom on a 1280 desktop) — run the 320x568 stress floor when auditing
+     400% zoom on a 1280 desktop) — run the 320x568 stress floor when auditing.
+     It is one width, not 400% of every screen size, and the height stays ordinary:
+     1.4.10's 256px height is only for content that scrolls sideways (vertical
+     writing), so never test a 320x256 window
    - WCAG 1.4.4: page still usable at 200% browser text zoom (spot-check one surface)
 
 Report "OK" for a surface x width ONLY after actually viewing BOTH its screenshots.

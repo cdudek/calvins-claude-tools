@@ -1,25 +1,52 @@
-name: Publish
+name: Release
 
-# Snapshot prereleases to GitHub Packages, so parallel milestones never wait for a bump PR
-# (docs/designs/2026-10-28-adr-kit-contracts-v1-frozen.md). Never commits back. Only main publishes to
-# the `next` dist-tag; every other branch gets a tag of its own slug, so snapshots never overwrite each
-# other. Nothing publishes before `verify` (the same checks as CI) has passed.
+# A real semver release when a PR merges into main or a project branch. semantic-release reads the Conventional
+# Commit titles since the last vX.Y.Z tag (fix -> patch, feat -> minor, feat! -> major), sets that one version on all
+# five packages, publishes them to GitHub Packages and tags it with a GitHub Release (.releaserc.json). Never commits
+# back: the tag is the record. Milestone branches publish nothing; a consumer builds against a local copy until the
+# milestone merges. Only main moves the `latest` dist-tag; a project branch publishes under its own slug. Nothing
+# publishes before `verify` (the same checks as CI) has passed, and only when a path a package ships changed
+# (sdlc.json `ciPaths.publish`, scripts/ci-scope.sh); a manual run, a new branch and a rewritten history release too.
 
 on:
   push:
-    branches: [main, 'milestone/**']
+    branches: [main, 'project/**']
   workflow_dispatch:
 
+# One release at a time across branches: two at once would both take the same next version.
 concurrency:
-  group: publish-${{ github.ref }}
+  group: release
   cancel-in-progress: false
 
 permissions:
   contents: read
-  packages: write
 
 jobs:
+  changes:
+    name: Changed paths
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    outputs:
+      publish: ${{ steps.scope.outputs.publish }}
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+          # the diff needs the commit this push replaced
+          fetch-depth: 0
+      - id: scope
+        env:
+          EVENT: ${{ github.event_name }}
+          BEFORE: ${{ github.event.before }}
+          SHA: ${{ github.sha }}
+        run: |
+          # a manual run, a new branch (BEFORE is all zeros) or a force push (BEFORE is gone) cannot list its paths: ALL=1
+          if [ "$EVENT" = push ] && git diff --no-renames --name-only "$BEFORE" "$SHA" > "$RUNNER_TEMP/paths"; then all=0; else all=1; : > "$RUNNER_TEMP/paths"; fi
+          ALL=$all EVENT=push bash scripts/ci-scope.sh < "$RUNNER_TEMP/paths" | tee -a "$GITHUB_OUTPUT"
+
   verify:
+    needs: changes
+    if: needs.changes.outputs.publish == 'true'
     runs-on: ubuntu-latest
     permissions:
       contents: read
@@ -45,41 +72,42 @@ jobs:
       - run: npm run typecheck
       - run: npm test
 
-  publish:
+  release:
     needs: verify
     runs-on: ubuntu-latest
+    permissions:
+      contents: write # the vX.Y.Z tag and its GitHub Release; .releaserc.json turns its issue and PR comments off
+      packages: write
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           persist-credentials: false
-          # changesets reads the history of each changeset; a shallow clone makes it try to fetch with no credentials
+          # semantic-release reads every commit since the last tag
           fetch-depth: 0
       - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
         with:
           node-version-file: .nvmrc
           registry-url: https://npm.pkg.github.com
           scope: '@pokbytes'
-          cache: npm
-      - run: npm ci --ignore-scripts
-        env:
-          NODE_AUTH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-      # fabric's render tests need node-canvas; only its install script runs
-      - run: npm rebuild canvas
       # The branch name goes through env and a shell variable, never into the script text.
-      - name: Slug and dist-tag of this branch
+      - name: Dist-tag of this branch
         id: branch
         env:
           BRANCH: ${{ github.ref_name }}
         run: |
+          # workflow_dispatch can run on any ref: only main and project/* are release lines
+          case "$BRANCH" in main | project/*) ;; *) echo "::error::$BRANCH is not a release branch"; exit 1 ;; esac
           slug=$(printf '%s' "$BRANCH" | tr '[:upper:]' '[:lower:]' | tr -c 'a-z0-9\n' '-' | sed 's/^-*//;s/-*$//')
           echo "slug=$slug" >> "$GITHUB_OUTPUT"
-          if [ "$BRANCH" = main ]; then echo "tag=next" >> "$GITHUB_OUTPUT"; else echo "tag=$slug" >> "$GITHUB_OUTPUT"; fi
-      - name: Version as a snapshot of this branch
+          if [ "$BRANCH" = main ]; then echo "tag=latest" >> "$GITHUB_OUTPUT"; else echo "tag=$slug" >> "$GITHUB_OUTPUT"; fi
+      # Exact versions: this step holds a contents: write token. `--branches` makes the pushed branch the release line,
+      # so a project branch and main count on from the same tags.
+      - name: semantic-release
         env:
-          SLUG: ${{ steps.branch.outputs.slug }}
-        run: npx changeset version --snapshot "$SLUG"
-      - name: Publish
-        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
           NODE_AUTH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-          TAG: ${{ steps.branch.outputs.tag }}
-        run: npx changeset publish --tag "$TAG" --no-git-tag
+          BRANCH: ${{ github.ref_name }}
+          DIST_TAG: ${{ steps.branch.outputs.tag }}
+          # shortcut: npx pins only the two top-level versions, not their tree; add both to devDependencies and run from the lockfile (an Ask-tier change)
+          npm_config_ignore_scripts: 'true'
+        run: npx --yes -p semantic-release@25.0.9 -p @semantic-release/exec@7.1.0 semantic-release --branches "$BRANCH"

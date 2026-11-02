@@ -1407,3 +1407,77 @@ def test_upgrade_refuses_a_repo_that_is_not_adopted(tmp_path: Path) -> None:
     repo = _repo(tmp_path, "node")
     res = _adopt(repo, "--upgrade")
     assert res.returncode != 0 and "not adopted" in res.stderr
+
+
+def test_upgrade_adds_builders_claude_when_missing(tmp_path: Path) -> None:
+    repo = _repo(tmp_path, "node")
+    assert _adopt(repo).returncode == 0
+    cfg = json.loads((repo / "sdlc.json").read_text())
+    assert cfg["builders"] == "claude"
+    cfg.pop("builders")
+    (repo / "sdlc.json").write_text(json.dumps(cfg))
+    subprocess.run(["git", "add", "."], cwd=repo, check=True, env=_env())
+    res = _adopt(repo, "--upgrade")
+    assert res.returncode == 0, res.stdout + res.stderr
+    cfg = json.loads((repo / "sdlc.json").read_text())
+    assert cfg["builders"] == "claude"
+    assert cfg["builderModel"] == "sonnet"
+    assert cfg["builderEffort"] == "high"
+    assert any("builders added" in w for w in _sections(res.stdout)["WROTE"])
+
+
+def test_upgrade_keeps_builders_codex(tmp_path: Path) -> None:
+    repo = _repo(tmp_path, "node")
+    assert _adopt(repo).returncode == 0
+    cfg = json.loads((repo / "sdlc.json").read_text())
+    cfg["builders"] = "codex"
+    cfg["builderModel"] = "gpt-5.5-codex"
+    cfg["builderEffort"] = "xhigh"
+    (repo / "sdlc.json").write_text(json.dumps(cfg))
+    subprocess.run(["git", "add", "."], cwd=repo, check=True, env=_env())
+    res = _adopt(repo, "--upgrade")
+    assert res.returncode == 0, res.stdout + res.stderr
+    cfg = json.loads((repo / "sdlc.json").read_text())
+    assert (cfg["builders"], cfg["builderModel"], cfg["builderEffort"]) == (
+        "codex",
+        "gpt-5.5-codex",
+        "xhigh",
+    )
+    assert not any("builder" in w for w in _sections(res.stdout)["WROTE"])
+
+
+def test_codex_builders_without_a_model_get_the_codex_default(tmp_path: Path) -> None:
+    repo = _repo(tmp_path, "node")
+    assert _adopt(repo).returncode == 0
+    cfg = json.loads((repo / "sdlc.json").read_text())
+    cfg["builders"] = "codex"
+    cfg.pop("builderModel")
+    (repo / "sdlc.json").write_text(json.dumps(cfg))
+    subprocess.run(["git", "add", "."], cwd=repo, check=True, env=_env())
+    res = _adopt(repo, "--upgrade")
+    assert res.returncode == 0, res.stdout + res.stderr
+    assert json.loads((repo / "sdlc.json").read_text())["builderModel"] == "gpt-5.5"
+
+
+def test_an_unknown_builder_effort_stops_adopt(tmp_path: Path) -> None:
+    repo = _repo(tmp_path, "node")
+    assert _adopt(repo).returncode == 0
+    cfg = json.loads((repo / "sdlc.json").read_text())
+    cfg["builderEffort"] = "max"
+    (repo / "sdlc.json").write_text(json.dumps(cfg))
+    subprocess.run(["git", "add", "."], cwd=repo, check=True, env=_env())
+    res = _adopt(repo, "--upgrade")
+    assert res.returncode != 0
+    assert "builderEffort must be one of" in res.stderr
+
+
+def test_an_unknown_builders_value_stops_adopt(tmp_path: Path) -> None:
+    repo = _repo(tmp_path, "node")
+    assert _adopt(repo).returncode == 0
+    cfg = json.loads((repo / "sdlc.json").read_text())
+    cfg["builders"] = "gpt"
+    (repo / "sdlc.json").write_text(json.dumps(cfg))
+    subprocess.run(["git", "add", "."], cwd=repo, check=True, env=_env())
+    res = _adopt(repo, "--upgrade")
+    assert res.returncode != 0
+    assert 'builders must be "claude" or "codex"' in res.stderr

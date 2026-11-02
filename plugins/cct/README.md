@@ -48,10 +48,16 @@ curl -fsSL https://plannotator.ai/install.sh | bash
 - **The SDLC:** `sdlc-run` (adopt, status, intent → UX plan → facts → tech plan → one /goal build per milestone → milestone PR), `review-fix-loop`, `pr-review`, `address-feedback`, `pr-create`, `squash`, `security-review`, `architecture-review`, `c4-diagram-create`, `plan-design-review`, `ai-ready-issues`, `write-ticket`, `linear-manage`, the E2E skills (`e2e-write`, `e2e-test-run`, `e2e-from-ticket-write`, `flaky-test-fix`), `browser-automate` and the `role-*` helpers, with the agents they dispatch (`builder`, `verifier`, `code-reviewer`, `validate-finding`, `ac-auditor`, `review-runner`, the fix-loop and E2E agents).
 - **UX:** `ux-init`, `ux-audit`, `ux-design`, `ux-validate`, `ux-review`, `ux-conformance`, `ux-guidelines`, `ux-decision`, `ux-sitemap-create` and the `ux-reviewer` agent, plus `designs-explore`, `variants-create`, `design-consult`, `design-system-apply`, `microcopy-write`, `accessibility-audit`, `responsive-audit`, `ux-laws-apply`, and the small design skills `ux-design` calls (`ux-writing`, `layout-grid`, `jobs-to-be-done`, `state-machine`, `heuristic-evaluation-ai`, `design-brief`, `frontend-design`).
 - **New projects:** `project-kickoff` writes the context, brand guide, design system and UX rules before the first line of app code.
+- **Providers:** `aws-manage` (the AWS CLI) and `cloudflare-manage` (the Cloudflare API and wrangler) use your credentials from the environment or `~/.zshrc` without printing them, and ask before any write.
 - **Hooks:** worktrees always under `<repo>/.worktrees/<name>`, and a lint on every edit.
 - **Docs:** `docs/stack.md`, `docs/working-rules.md`, `docs/skill-map.md` (where each skill came from), `docs/omr-dev-guide.md`.
 - **Blueprint:** `blueprint/` has the Dockerfile, GitHub Actions, deploy docs and release config for Next.js on Cloud Run, Electron, WXT and a HeroUI design-system kit, with notes for running it without GCP.
 - **Examples:** `examples/heydiff/` has a real context repo, brand guide exports, UX docs and the brand guide PDF.
+
+## How sdlc-run works
+
+- [`docs/sdlc-run.md`](docs/sdlc-run.md): the stages and the two touchpoints, one `/goal` per milestone, branches, commits versus PRs, the verify contract, the CI blueprint with `ciPaths`, and how to adopt. It has diagrams that GitHub renders.
+- [`docs/sdlc-run-explained.html`](docs/sdlc-run-explained.html): the same content as one visual page. Download it and open it in a browser.
 
 ## Rebuild from the sources
 

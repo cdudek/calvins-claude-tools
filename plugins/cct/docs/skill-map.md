@@ -23,8 +23,10 @@ Where every skill, agent and command in this plugin came from. Call each one as 
 | `address-feedback` | skill | omr-dev:address-feedback |
 | `ai-ready-issues` | skill | omr-pm:ai-ready-issues |
 | `architecture-review` | skill | omr-dev:architecture-review |
+| `aws-manage` | skill | omr-dev:aws-manage |
 | `browser-automate` | skill | omr-dev:browser-automate |
 | `c4-diagram-create` | skill | omr-dev:c4-diagram-create |
+| `cloudflare-manage` | skill | omr-dev:cloudflare-manage |
 | `design-brief` | skill | ux-strategy:design-brief |
 | `design-consult` | skill | omr-dev:design-consult |
 | `design-system-apply` | skill | omr-dev:design-system-apply |

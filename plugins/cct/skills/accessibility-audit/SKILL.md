@@ -68,7 +68,7 @@ axe https://example.com
 
 - [ ] **Keyboard navigation:** Tab through entire page, use Enter/Space to activate
 - [ ] **Screen reader:** Test with VoiceOver (Mac), NVDA (Windows), or TalkBack (Android)
-- [ ] **Text resize:** text resizes to 200% without loss of content or function (1.4.4); content reflows at 320 CSS px wide (1.4.10)
+- [ ] **Text resize:** text resizes to 200% without loss of content or function (1.4.4); content reflows at 320 CSS px wide (1.4.10), tested at 320 × 640: the 256 px height of 1.4.10 is only for content that scrolls sideways (vertical writing), never combined with the width
 - [ ] **High contrast:** Test with Windows High Contrast Mode
 - [ ] **Reduced motion:** Test with `prefers-reduced-motion: reduce`
 - [ ] **Focus order:** Logical and follows visual order

@@ -90,5 +90,123 @@
       "npm run smoke:background"
     ]
   },
-  "verifyStop": "npm run format && npm run lint && npm run typecheck"
+  "verifyStop": "npm run format && npm run lint && npm run typecheck",
+  "ciPaths": {
+    "_comment": "Shell globs (* also crosses /), the shape of the kit's sdlc-run 3.3.1. A file in `docs`, or in neither `code` nor `config`, runs NOTHING. A file in `all` runs every step. Any other code or config file runs the steps whose include it matches and whose exclude it does not; one no step lists (package.json, tsconfig, biome.json, *.config.ts, .nvmrc, .npmrc) runs every step. Steps: lint = format, lint, typecheck; unit = vitest; e2e = build the extension and the Playwright specs (the whole suite where the safety net applies, else only the changed specs). Safety net: a push to main, and a PR into main or project/* (or from milestone/*) that touches any code or config, run every step. Edit the lists here, not in scripts/ci-scope.sh.",
+    "docs": [
+      "changes/*",
+      "docs/*",
+      "plans/*",
+      ".claude/*",
+      ".beads/*",
+      "design-explorations/*",
+      "*.md",
+      "*.txt"
+    ],
+    "all": [
+      ".github/workflows/*",
+      "sdlc.json",
+      "package-lock.json"
+    ],
+    "code": [
+      "src/*",
+      "public/*",
+      "test/*",
+      "tests/*",
+      "e2e/*",
+      "scripts/*",
+      "*.ts",
+      "*.tsx",
+      "*.js",
+      "*.mjs",
+      "*.cjs",
+      "*.css"
+    ],
+    "config": [
+      "package.json",
+      "tsconfig*.json",
+      "wxt.config.*",
+      "vitest.config.*",
+      "playwright.config.*",
+      "biome.json",
+      ".nvmrc",
+      ".npmrc"
+    ],
+    "specs": [
+      "e2e/*.spec.ts"
+    ],
+    "lint": {
+      "include": [
+        "src/*",
+        "test/*",
+        "tests/*",
+        "e2e/*"
+      ],
+      "exclude": []
+    },
+    "unit": {
+      "include": [
+        "src/*",
+        "test/*",
+        "tests/*",
+        "scripts/*"
+      ],
+      "exclude": [
+        "e2e/*"
+      ]
+    },
+    "e2e": {
+      "include": [
+        "src/*",
+        "public/*",
+        "e2e/*"
+      ],
+      "exclude": [
+        "test/*",
+        "tests/*"
+      ]
+    },
+    "build": {
+      "include": [
+        "src/*",
+        "app/*",
+        "public/*",
+        "Dockerfile",
+        "next.config.*"
+      ],
+      "exclude": [
+        "e2e/*",
+        "test/*",
+        "*.test.*",
+        "*.css",
+        "*.scss"
+      ]
+    },
+    "deploy": {
+      "include": [
+        "src/*",
+        "app/*",
+        "public/*",
+        "Dockerfile",
+        "deploy/*",
+        "next.config.*",
+        "*.sql",
+        "drizzle/*"
+      ],
+      "exclude": [
+        "e2e/*",
+        "test/*",
+        "*.test.*"
+      ]
+    }
+  },
+  "ciCommands": {
+    "install": "npm ci --ignore-scripts",
+    "lint": "npm run format:check && npm run lint && npm run typecheck",
+    "unit": "npm test",
+    "build": "npm run build",
+    "e2e": "npx playwright install --with-deps chromium && npm run e2e",
+    "e2eTouched": "npx playwright install --with-deps chromium && npm run e2e -- {files}"
+  },
+  "sdlcVersion": "3.4.1"
 }

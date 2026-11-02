@@ -9,11 +9,121 @@ on:
 
 permissions:
   contents: read
-  pull-requests: read
+  pull-requests: read # `gh pr diff` in the changes job
+
+env:
+  SHARDS: '1' # the smoke test is not sharded
 
 # One job per check, so a PR shows exactly which one failed (owner, 2026-10-27).
 # Ubuntu, not macOS: macOS minutes cost 10x on private repos. Releases build on macOS.
+#
+# If no code or config was touched, no check runs (owner, 2026-11-01). The `changes` job reads sdlc.json `ciPaths` and
+# sets a flag per step: lint (format, lint, typecheck), unit, e2e (the smoke test). A README, docs, changes/ or
+# screenshot PR costs `changes`, `pr-title` and `check`. Do not use workflow-level `paths-ignore`: a workflow that never
+# starts leaves the required `check` pending and the PR unmergeable. Safety net: a push to main, and a PR into main
+# or from milestone/* that changes any code or config, run every step. Reference: sdlc-run references/ci-blueprint.md.
 jobs:
+  changes:
+    name: Changed paths
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    outputs:
+      lint: ${{ steps.f.outputs.lint }}
+      unit: ${{ steps.f.outputs.unit }}
+      build: ${{ steps.f.outputs.build }}
+      deploy: ${{ steps.f.outputs.deploy }}
+      full: ${{ steps.f.outputs.full }}
+      matrix: ${{ steps.f.outputs.matrix }}
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+          sparse-checkout: sdlc.json # only the path lists are needed
+          sparse-checkout-cone-mode: false
+      - id: f
+        env:
+          GH_TOKEN: ${{ github.token }}
+          GH_REPO: ${{ github.repository }}
+          PR: ${{ github.event.pull_request.number }}
+          BASE: ${{ github.base_ref }}
+          HEAD: ${{ github.head_ref }}
+          DEFAULT: ${{ github.event.repository.default_branch }}
+        run: |
+          # >>> changes-script (scripts/test_ci_changes.sh runs exactly these lines)
+          set -eu
+          set -f # keep the globs literal
+          # The lists live in sdlc.json "ciPaths" (shell globs; * also crosses /). jq is on every runner.
+          list() { jq -r "(.ciPaths$1 // []) | join(\" \")" sdlc.json; }
+          # shellcheck disable=SC2254 # the unquoted pattern is the point: it is a glob from sdlc.json
+          hit() { for g in $2; do case "$1" in $g) return 0 ;; esac; done; return 1; }
+          STEPS="lint unit build e2e deploy"
+          IGNORE=$(list .docs); ALL=$(list .all); CODE="$(list .code) $(list .config)"; SPECS=$(list .specs)
+          for s in $STEPS; do
+            eval "inc_$s=\"\$(list .$s.include)\" exc_$s=\"\$(list .$s.exclude)\""
+            eval "$s=false"
+          done
+          everything() { for s in $STEPS; do eval "$s=true"; done; }
+          full=false # the whole E2E suite, and every step once code or config changed
+          if [ -z "$PR" ]; then
+            full=true # push to the default branch
+          else
+            case "$BASE:$HEAD" in
+              "$DEFAULT":*|project/*:*|*:milestone/*) full=true ;;
+            esac
+          fi
+          specs=""
+          touched=false # did the PR change any code or config at all?
+          if [ -z "$PR" ]; then
+            everything
+            touched=true
+          else
+            files=$(gh pr diff "$PR" --name-only) # a failure (a diff too large to list) stops the job: fails closed
+            while IFS= read -r f; do
+              [ -n "$f" ] || continue
+              hit "$f" "$IGNORE" && continue
+              if hit "$f" "$ALL"; then everything; touched=true; continue; fi
+              hit "$f" "$CODE" || continue # neither code nor config: runs nothing
+              touched=true
+              known=false
+              for s in $STEPS; do
+                eval "inc=\"\$inc_$s\" exc=\"\$exc_$s\""
+                # on a step when it matches the include and not the exclude
+                if hit "$f" "$inc"; then known=true; hit "$f" "$exc" || eval "$s=true"; fi
+              done
+              # code or config that no step's include knows is a path you forgot to list: run everything
+              $known || everything
+              if hit "$f" "$SPECS"; then
+                case "$f" in
+                  *[!A-Za-z0-9._/-]*) echo "::warning::spec path skipped (unusual characters): $f" ;;
+                  *) specs="$specs $f" ;;
+                esac
+              fi
+            done <<< "$files"
+            # safety net: where the full suite runs, any code or config change runs every step
+            if [ "$touched" = true ] && [ "$full" = true ]; then everything; fi
+          fi
+          if [ "$e2e" != true ]; then
+            matrix='[]'
+          elif [ "$full" = true ]; then
+            matrix=$(jq -nc --argjson n "$SHARDS" '[range(1; $n + 1) | {name: "\(.)/\($n)", shard: ., total: $n, files: ""}]')
+          elif [ -n "$specs" ]; then
+            matrix=$(jq -nc --arg s "${specs# }" '[{name: "touched specs", shard: 1, total: 1, files: $s}]')
+          else
+            matrix='[]' # e2e code changed but no spec did: lint and unit cover it; the full run is on the way to main
+          fi
+          {
+            for s in lint unit build deploy; do eval "echo $s=\$$s"; done
+            echo "full=$full"
+            echo "matrix=$matrix"
+          } >> "$GITHUB_OUTPUT"
+          {
+            echo "### Changed paths"
+            echo
+            echo "lint=$lint unit=$unit build=$build deploy=$deploy full=$full e2e=$([ "$matrix" = '[]' ] && echo none || echo run)"
+            [ "$touched" = true ] || echo "No code or config changed: nothing runs except this job and \`check\`."
+          } >> "${GITHUB_STEP_SUMMARY:-/dev/null}"
+          # <<< changes-script
+
   pr-title:
     if: github.event_name == 'pull_request'
     runs-on: ubuntu-latest
@@ -39,6 +149,8 @@ jobs:
           fi
 
   format:
+    needs: changes
+    if: needs.changes.outputs.lint == 'true'
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v7
@@ -50,6 +162,8 @@ jobs:
       - run: npm run format:check
 
   lint:
+    needs: changes
+    if: needs.changes.outputs.lint == 'true'
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v7
@@ -61,6 +175,8 @@ jobs:
       - run: npm run lint
 
   typecheck:
+    needs: changes
+    if: needs.changes.outputs.lint == 'true'
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v7
@@ -72,6 +188,8 @@ jobs:
       - run: npm run typecheck
 
   unit:
+    needs: changes
+    if: needs.changes.outputs.unit == 'true'
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v7
@@ -83,6 +201,8 @@ jobs:
       - run: npm test
 
   e2e:
+    needs: changes
+    if: needs.changes.outputs.matrix != '[]' # the smoke test: a full run only
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v7
@@ -95,11 +215,11 @@ jobs:
       - run: sudo sysctl -w kernel.apparmor_restrict_unprivileged_userns=0
       - run: xvfb-run -a npm run smoke
 
-  # The main ruleset requires a check named "check"; it passes only when every job above passed
-  # (pr-title is skipped on pushes to main, which counts as passed).
+  # The main ruleset requires a check named "check"; it passes only when no job above failed. A job skipped by `changes`
+  # (no code or config touched) and pr-title on pushes to main count as passed.
   check:
     if: always()
-    needs: [pr-title, format, lint, typecheck, unit, e2e]
+    needs: [changes, pr-title, format, lint, typecheck, unit, e2e]
     runs-on: ubuntu-latest
     steps:
       - env:
