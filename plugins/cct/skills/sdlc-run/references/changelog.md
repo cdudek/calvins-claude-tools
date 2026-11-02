@@ -5,6 +5,23 @@ version warning, the **Mechanical** lines are what `adopt` does for you (it adds
 with the stack's defaults and never overwrites a value), the **Manual** lines are printed for
 the engineer. A version with no migration lines needs nothing but a re-run of `adopt`.
 
+## 3.6.1 — reflow is checked at 320 CSS px wide, not in a 320 × 256 window
+
+- The milestone verification checks WCAG 1.4.10 as written: 320 CSS px wide (1280 at 400 %) at an ordinary height, tested at 320 × 640. Its 256 px height is only for content that scrolls sideways (vertical writing); a fact or test that sets a 320 × 256 window, or asks for 400 % of every screen size, is stricter than WCAG and is corrected. Same rule in `accessibility-audit`, `responsive-audit` and the omr-ux conflicts table (W17). Source: https://www.w3.org/WAI/WCAG22/Understanding/reflow.html
+- Manual: a repo whose facts or E2E specs test reflow at 320 × 256 changes them to 320 × 640.
+
+## 3.6.0 — builders: the model is a setting
+
+- `sdlc.json` `builderModel` and `builderEffort` say which model builds and how hard. The default is `sonnet` at `high`: the `cct:builder` agent's own frontmatter, so nothing changes until a repo sets `opus` (or any Claude Code model alias or id), or `builders: "codex"` with a Codex model (default `gpt-5.5`). Every builder dispatch carries the pair; `codex-build.sh` gets it as `--model` and `--reasoning`. A plan's Approach may name another pair for that one change. Before this, a Codex build had no model unless the plan named one, so the wrapper refused to start.
+- Mechanical: `builderModel` and `builderEffort` are added when missing (`sonnet` or `gpt-5.5` by `builders`, `high`); set values are kept; an effort outside `low`, `medium`, `high`, `xhigh` or an empty model stops adopt.
+- Manual: nothing for the default. A repo on `builders: "codex"` checks that the added `builderModel` (`gpt-5.5`) is the Codex model it wants; a plan that already names a model keeps it, as the per-change override.
+
+## 3.5.0 — builders: codex, an option
+
+- `sdlc.json` `builders`: `claude` (default, `cct:builder` agents) or `codex`. With `codex`, feature rows and fix parts run through the kit's `scripts/codex-build.sh`: the Codex CLI in the feature worktree, `--sandbox workspace-write` with the network off, the builder's rules as the prompt, a schema-checked result, a check before the commit (the tree changed; no protected path, lockfile, manifest or locked test among the changes), and the commit made by the wrapper, since the sandbox keeps `.git` read-only. The supervisor, the milestone close (checks and gate only in this mode) and the gates stay Claude.
+- Mechanical: `builders` is added as `claude` when missing; a set value is kept; another value stops adopt.
+- Manual: to use it, set `builders` to `codex`, install and sign in the Codex CLI (`npm i -g @openai/codex`, `codex login`), and name the model and reasoning in the plan's approach section.
+
 ## 3.4.1 — the milestone close: one builder runs the local pipeline
 
 - The goal text and stages.md give unit tests, the full E2E suite, the fix round and the gate to one `cct:builder` subagent that spawns no agents; the supervisor dispatches the reviews and the validation (a subagent cannot start its own).

@@ -25,75 +25,75 @@ create_document:
 Then `update_document` with the body. Create minimal first, update second — long bodies on create
 are the most common source of Linear 500s.
 
+---
+
+## The shape, and why it is in this order
+
+Sections run from the least likely to change to the most (Nan Yu, Linear). **Page one** is the
+problem, who it is for, the success metric and the non-goals: no solution on it (Intercom). A PRD
+stays on page one until the problem is agreed, then grows one section per product review:
+solution, requirements, launch, impact. Match the detail to the risk: a two-day fix never leaves
+page one; a two-month project fills every section.
+
+Every section added loses readers. Add a section when it answers a question somebody has asked,
+and edit the document down every time it is touched.
+
 ## Template
 
 ```markdown
 # PRD: [Product / Feature Name]
 
-## Executive Summary
+**Owner:** [one name] · **Status:** [Page one | Draft | Approved | Shipped | Measured] · **Last updated:** [YYYY-MM-DD]
+**RACI:** R [who builds] · A [the owner] · C [design, eng, support, legal, marketing, as needed] · I [who gets the update]
+**Links:** [research] · [designs] · [RFC / ADR] · [tracker epic] · [analytics dashboard]
 
-### Vision
+> One link should answer any question about this work. If it is not linked here, link it.
 
-> One sentence describing the future state this enables. Customer benefit, not internal metrics.
+<!-- Page one: problem, who, metric, non-goals. No solution above the line. Stays one page until the problem is agreed. -->
 
-[What this makes possible for customers]
+## Problem
 
-### Why customers care
+[Who has the problem, what happens, what it costs them. In their words where possible.]
 
-[The value proposition, in their words]
+**Evidence:**
 
-### Success metrics
+- [Data point, with source and date]
+- [Customer quote or support theme, with count]
+- [Usage metric showing the pain]
+
+**Why now:** [what changed that makes this the quarter]
+
+**Cost of not solving:** [what happens if we do nothing: churn, competitive, regulatory]
+
+## Who it is for
+
+| Segment | Size | Current pain | What they will do with this |
+|---|---|---|---|
+| [A segment, never "users"] | [count or share, with source] | [problem] | [use] |
+
+## Success metric
 
 | Metric | Current | Target | How measured | When measured |
 |---|---|---|---|---|
-| [North star] | [Baseline] | [Goal] | [Method] | [Cadence] |
-| [Supporting] | [Baseline] | [Goal] | [Method] | [Cadence] |
+| [The one metric this must move] | [baseline] | [goal] | [method] | [cadence] |
+| [Guardrail: must not get worse] | [baseline] | [floor] | [method] | [cadence] |
 
-## Problem and Solution
+## Non-goals
 
-### Problem statement
+- [What this will not do, and why not now]
+- [The adjacent request this is not]
 
-[The problem]
+---
 
-**Evidence the problem exists:**
+## Solution
 
-- [Data point, with source]
-- [Customer quote or support theme]
-- [Usage metric showing the pain]
+[What we are building, in two or three paragraphs. The shape, not the pixels: design owns the UI.]
 
-**Impact:**
+**User flows:** [link to the flow or wireframe, a Figma URL, never a local path]
 
-- Who is affected: [segment and scale]
-- Current cost: [quantified]
-
-**Cost of not solving:**
-
-- [What happens if we do nothing]
-- [Competitive or retention risk]
-
-### Solution approach
-
-[Brief description of the solution]
-
-**User flows:** [link to the flow or wireframe — a Figma URL, not a local path]
-
-### Guiding principles
+**Guiding principles:**
 
 - [e.g. "Ship weekly iterations over one big release"]
-- [e.g. "User trust over feature velocity"]
-
-## Strategic Context
-
-**Business goals:** [the OKR or company goal this serves]
-**Market opportunity:** [TAM / SAM / SOM, or the segment size with a source]
-**Competitive landscape:** [who else solves this, and how]
-**Why now:** [what changed that makes this the right quarter]
-
-## Users
-
-| User type | Current pain point | What they will do with this |
-|---|---|---|
-| [Persona] | [Problem] | [Use] |
 
 ## Requirements
 
@@ -120,77 +120,77 @@ are the most common source of Linear 500s.
 - [Explicitly excluded, so the boundary is on the record]
 - [Future consideration]
 
-## Launch Plan
+## Decisions
 
-### Dependencies and blockers
+> Every call that changed this document. Appended, never rewritten, so nobody reopens a question
+> that has an answer. Anything that blocks a requirement is inline as [NEEDS CLARIFICATION: ...]
+> next to the requirement, not here.
+
+| Date | Question | Call | Who | Rejected, and why |
+|---|---|---|---|---|
+| [YYYY-MM-DD] | [the question] | [the answer] | [name] | [option]: [one clause] |
+
+**Open questions:**
+
+- [ ] [Question, owner, date needed by]
+
+## Launch
+
+**Target:** [date, or the quarter with the decision point that fixes it]
+**MVP scope:** [what must be in v1]
 
 **Dependencies:**
 
 - [ ] [Team or system]: [what we need from them, by when]
 
-**Potential blockers:**
-
-- [Risk that could delay or stop launch]
-
-### MVP scope
-
-[What must be in v1]
-
-**Target launch:** [date, or the quarter with the decision point that fixes it]
-
-### Success criteria
-
-- [ ] [Measurable launch criterion]
-- [ ] [Pre-launch requirement]
-
-### Key risks and mitigations
+**Risks:**
 
 | Risk | Probability | Impact | Mitigation | Owner |
 |---|---|---|---|---|
 | [Risk] | H/M/L | H/M/L | [Plan] | [Who] |
 
-## Open Questions
+**Readiness:** launch is cross-functional. Each line has a name or is struck through as not needed.
 
-> Unresolved decisions and areas still needing discovery. Anything that blocks a requirement
-> belongs inline as [NEEDS CLARIFICATION: question] instead, next to the requirement it blocks.
+- [ ] Support: macro, help article, who answers escalations
+- [ ] Legal and privacy: terms, consent, data retention
+- [ ] Marketing: announcement, changelog, who is told first
+- [ ] FAQ: the five questions customers will ask on day one, answered
+- [ ] Rollout: flag, cohort, rollback
 
-- [ ] [Question]
+## Impact
 
----
+> Filled after launch, on the date the success-metric table names. The section almost no
+> template asks for, and the only one that says whether this was worth it.
 
-**Status:** [Draft | Approved]
-**Author:** [Name]
-**Last updated:** [YYYY-MM-DD]
-**Related:** [research, designs, RFC, ADR]
+| Metric | Baseline | Target | Observed | Verdict |
+|---|---|---|---|---|
+| [from Success metric] | [baseline] | [goal] | [measured, with date and source] | [moved / did not / too early] |
 
----
-
-# Optional sections
-
-> Add only when the product actually needs them.
-
-## Key use cases / Jobs to be done
-
-**[Scenario name]**
-
-- **When:** [situation or trigger]
-- **I need to:** [goal]
-- **So I can:** [outcome]
-
-## Product components
-
-#### [Component name]
-
-- **Purpose:** [what it does]
-- **Must-have features:** [list]
-- **Success metric:** [how we measure it]
-
-## Phasing and roadmap
-
-### Phase 1: [Name]
-
-**Goal:** [what we learn or prove] · **Scope:** [what we build] · **Success:** [metric target]
+**What we learned:** [one paragraph. What to do differently next time.]
 ```
+
+## Optional sections
+
+> Add only when the product needs them. Each one loses readers.
+
+### Press release and FAQ (big launches)
+
+Written **before** page one is agreed, as a one-page press release dated launch day plus the FAQ
+(Amazon PR/FAQ). If the press release is not exciting, stop here. Keep it at the top of the
+document until launch, then move it to the Links line.
+
+### Jobs to be done
+
+**[Scenario name]**: **When** [situation or trigger], **I need to** [goal], **so I can** [outcome].
+
+### Strategic context
+
+**Business goal:** [the OKR this serves] · **Market:** [TAM / SAM / SOM with a source] ·
+**Competitive landscape:** [who else solves this, and how]
+
+### Phasing
+
+**Phase 1: [Name]** — **Goal:** [what we learn or prove] · **Scope:** [what we build] · **Success:** [metric target]
 
 ## Why MoSCoW and EARS together
 
@@ -198,8 +198,8 @@ MoSCoW answers "does this ship in v1"; EARS answers "what exactly must be true".
 questions and a template that only asks one of them produces either a prioritised list of vague
 wishes, or a precise specification with no launch boundary.
 
-The `Won't have` bucket is not filler. An explicitly excluded item is the cheapest scope control
-there is — it is the one an engineer can point at six weeks later.
+The `Won't have` bucket and the Non-goals section are not filler. An explicitly excluded item is
+the cheapest scope control there is: it is the one an engineer can point at six weeks later.
 
 ## Where the grammar is enforced
 

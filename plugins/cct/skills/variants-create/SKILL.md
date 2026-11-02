@@ -29,7 +29,7 @@ token/component system — variants explore layout, density, hierarchy, and
 composition, never off-brand fonts or colors. Build the variant HTML files via
 that skill's **Prototype mode**, so they render fully OMR-styled without a
 Tailwind build. For brand collateral (decks, social assets), calibrate against
-`cct:brand` instead. The variant dimensions below apply fully
+`brand` (OMR AI Kit only, OMR's brand; not in cct) instead. The variant dimensions below apply fully
 only to non-OMR/greenfield work.
 
 ### 2. Generate 3-5 Variants

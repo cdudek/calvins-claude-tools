@@ -1,6 +1,6 @@
 ---
 type: plan
-status: draft
+status: done
 created: 2026-11-02T17:30
 author: calvindudek
 project: calvins-claude-tools
@@ -110,3 +110,15 @@ Release: `feat(data): analyze, model, network` → 0.5.0; charts and reports in 
 - `python3 scripts/build.py` produces every skill in Milestones 1 to 3 under `plugins/cct/skills/`, `docs/skill-map.md` lists each with its origin, and the dangling-reference check passes.
 - `claude plugin update cct@cct` installs it and `/cct:develop-prd` opens the 2.0.0 skill.
 - Skill count after Milestone 3: about 68.
+
+## Revisions (2026-11-02, built)
+
+All four milestones and the build changes landed in one PR, as cct 0.3.0: 45 skills became 68, 15 agents unchanged, 32,724 description characters.
+
+- **The open questions are closed.** No product uses PostHog or Sentry (checked the HeyDiff, Snapmark and Samplewerk manifests), so `posthog-*` and `sentry-issues-fix` stay out.
+- **Deck, PDF, chart and report stay out.** `presentation-create`, `pdf-create`, `chart-create` and `report-create` ship OMR Sans and the OMR logo as files, not as a token they read. They need a style layer on the product's `tokens.json`, which is its own change, not a build patch.
+- **Design was not done.** `ux-run` was the one omr-ux skill nothing reached; it is a root now. `ux-laws-apply` is a root too.
+- **A bug the roots fixed.** `aws-manage` and `cloudflare-manage` (PR #12) were copied by the overlay and then deleted by the prune, since nothing rooted them. They are roots now.
+- **The dangling check found six calls on its first run,** three of them already on main: `cct:brand`, `cct:tone-of-voice` and `cct:vue-code-write` pointed at skills the build drops. Every call into a skill cct does not carry is now rewritten to say so, with its reason from `NOT_CARRIED`, and an unnamed one fails the build.
+- **The mirror check runs in `build.py`,** not a separate test, because the build is the only thing that writes `plugins/cct/`.
+- **Not fixed here:** seven tests fail in `plugins/cct` on main and on this branch alike: four in `sdlc-run` (the goal texts pass 1000 characters once cct appends its agents rule) and three contract tests in `pr-review` and `review-fix-loop`. Separate PR.

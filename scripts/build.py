@@ -94,9 +94,18 @@ for d in dirs(KIT / "omr-dev/skills"):
         copy_skill("omr-dev", d)
 for d in dirs(KIT / "omr-ux/skills"):
     copy_skill("omr-ux", d, "ux-" + d.name)
-for n in ("write-ticket", "ai-ready-issues"):
+# Product: the whole of omr-pm. Every skill is a job Calvin does on his own products; none touches an OMR system
+PM = [d.name for d in dirs(KIT / "omr-pm/skills")]
+for n in PM:
     copy_skill("omr-pm", KIT / "omr-pm/skills" / n)
-for n in ("brand", "tone-of-voice", "copy-write"):
+# Data: the method half of omr-data. The warehouse half (query-run, ask, dbt, Airflow, the semantic layer) is OMR's
+# BigQuery. chart-create and report-create (and omr-core's pdf-create and presentation-create) ship OMR Sans and the
+# OMR logo as files: they come in once a style layer reads the product's tokens.json instead.
+DATA = ["analyze", "model-train", "network-analyze"]
+for n in DATA:
+    copy_skill("omr-data", KIT / "omr-data/skills" / n)
+CORE = ["transcripts-fix"]
+for n in ("brand", "tone-of-voice", "copy-write", *CORE):
     copy_skill("omr-core", KIT / "omr-core/skills" / n)
 for f in files(KIT / "omr-dev/agents"):
     copy_agent("omr-dev", f)
@@ -333,7 +342,24 @@ shutil.copy2(REPO / "README.md", OUT / "README.md")
 DROP = {"brand", "tone-of-voice", "vue-code-write"}  # OMR's own brand and voice; Vue is not in the stack
 have_s = {d.name for d in (OUT / "skills").iterdir()}
 have_a = {f.stem for f in (OUT / "agents").iterdir()}
-keep, queue = set(), [("skill", "sdlc-run"), ("skill", "project-kickoff")]
+# Every skill Calvin calls directly. The prune keeps these and everything they reach; the rest of the kit stays out,
+# so a new kit skill enters cct only when one of these starts calling it or it is added here.
+ROOTS = [
+    "sdlc-run", "project-kickoff",
+    "aws-manage", "cloudflare-manage",  # overlay skills: without a root the prune deleted them (PR #12)
+    "ux-run", "ux-laws-apply",  # design: ux-run was the one omr-ux skill nothing reached
+    *PM,
+    # Engineering Calvin runs by hand, outside the SDLC chain. Left out on purpose: posthog-*, sentry-issues-fix (no
+    # product uses PostHog or Sentry, checked 2026-11-02), payments-integrate, vectorstore-scaffold, gsap-animate,
+    # scroll-animate (take when a product needs one), the AWS, Cloudflare and Fastly CDNs beyond the overlay, OMR's
+    # on-call and cluster skills, and the pattern catalogues nobody asks for by name.
+    "release-cut", "codex-run", "github-manage", "dependency-review", "api-design", "data-model-create",
+    "docs-audit", "dockerfile-review", "queries-optimize", "tracking-apply",
+    *DATA, *CORE,
+]
+missing = sorted(set(ROOTS) - have_s)
+assert not missing, f"roots not in the build: {missing}"
+keep, queue = set(), [("skill", r) for r in ROOTS]
 while queue:
     kind, n = queue.pop()
     if (kind, n) in keep or n in DROP:
@@ -370,10 +396,88 @@ for d in licenses.iterdir():
     if d.name not in kept_origins:
         shutil.rmtree(d)
 names = {key: new for key, new in names.items() if (key[1], new) in keep}
+
+# ── No call into a plugin cct does not carry ─────────────────────────────────
+# The rewrite turned every carried `omr-x:name` into `cct:name`. What is left calls a skill that is not here and would
+# resolve to nothing at runtime. Each one is named below with its reason and rewritten to say so; an unnamed one fails
+# the build, so the decision is made here and not when a skill silently calls nothing.
+NOT_CARRIED = {
+    "query-run": "OMR's BigQuery", "ask": "OMR's BigQuery", "bq-access-grant": "OMR's BigQuery IAM",
+    "model-scaffold": "OMR's dbt repo", "dag-scaffold": "OMR's Airflow repo", "model-diff": "OMR's dbt repo",
+    "semantic-model-create": "OMR's semantic layer", "semantic-layer-audit": "OMR's semantic layer",
+    "chart-create": "OMR branding baked in", "report-create": "OMR branding baked in",
+    "pdf-create": "OMR branding baked in", "presentation-create": "OMR branding baked in",
+    "pitch-create": "OMR branding baked in", "template-apply": "OMR templates",
+    "brand": "OMR's brand", "tone-of-voice": "OMR's voice", "copy-write": "OMR's voice",
+    "docs-search": "OMR's Outline", "mcp-and-artifacts": "OMR AI OS", "skill-names-fix": "OMR kit renames",
+    "omr-context": "OMR's GTM knowledge", "time-log": "OMR's Toggl", "secret-set": "OMR's secret registry",
+    "engineering-metrics-track": "OMR's warehouse", "jev-integrate": "OMR's Jev", "billing-manage": "OMR's Billwerk",
+    "langsmith-analyze": "OMR's reviews-agents traces", "overview": "OMR AI OS",
+    "posthog-*": "no product uses PostHog", "review-design": "the old name of ux-audit",
+    "vue-code-write": "Vue is not in the stack",
+}
+PLUGINS = r"omr-(?:dev|ux|pm|core|data|content|gtm|reviews|context|ai-os|cs)"
+kit_ref = re.compile(rf"`?{PLUGINS}:([a-z0-9][a-z0-9-]*\*?)`?")
+kept_files = [p for d in ("skills", "agents", "references", "hooks") for p in (OUT / d).rglob("*") if p.is_file()]
+unknown = {}
+for f in kept_files:
+    try:
+        t = f.read_text()
+    except (UnicodeDecodeError, OSError):
+        continue
+    n = re.sub(rf"{PLUGINS}:(\.\./)", r"\1", t)  # `omr-data:../model-train/...` is a sibling path, not a call
+    for m in kit_ref.finditer(n):
+        if m.group(1) not in NOT_CARRIED:
+            unknown.setdefault(m.group(1), set()).add(str(f.relative_to(OUT)))
+    n = kit_ref.sub(lambda m: f"`{m.group(1)}` (OMR AI Kit only, {NOT_CARRIED.get(m.group(1), '?')}; not in cct)", n)
+    # The same for a `cct:` call whose target the prune or DROP removed
+    for m in re.finditer(rf"`?{P}:([a-z0-9][a-z0-9-]*)`?", n):
+        if ("skill", m.group(1)) not in keep and ("agent", m.group(1)) not in keep and m.group(1) not in NOT_CARRIED:
+            unknown.setdefault(m.group(1), set()).add(str(f.relative_to(OUT)))
+    n = re.sub(rf"`?{P}:([a-z0-9][a-z0-9-]*)`?",
+               lambda m: m.group(0) if ("skill", m.group(1)) in keep or ("agent", m.group(1)) in keep
+               else f"`{m.group(1)}` (OMR AI Kit only, {NOT_CARRIED.get(m.group(1), '?')}; not in cct)", n)
+    if n != t:
+        f.write_text(n)
+assert not unknown, "calls into skills cct does not carry, decide each in NOT_CARRIED or ROOTS:\n" + "\n".join(
+    f"  {k}: {', '.join(sorted(v))}" for k, v in sorted(unknown.items()))
+
+# ── Mirror pairs: two copies that must stay identical from the first rule down (the kit's own check) ──
+for canon, mirror in (
+    ("skills/linear-manage/references/prd-template.md", "skills/develop-prd/template.md"),
+    ("skills/ai-ready-issues/references/requirements-grammar.md", "skills/sdlc-run/references/requirements-grammar.md"),
+):
+    a, b = ((OUT / p).read_text() for p in (canon, mirror))
+    assert a[a.find("\n---\n"):] == b[b.find("\n---\n"):], f"{mirror} no longer matches {canon}"
+
+
+# ── Description budget: every description is read on every prompt ──
+def description(md):
+    fm = md.read_text().split("---", 2)[1]
+    out, on = [], False
+    for line in fm.splitlines():
+        if line.startswith("description:"):
+            on, rest = True, line[len("description:"):].strip()
+            if rest not in (">-", ">", "|", "|-"):
+                out.append(rest.strip("\"'"))
+        elif on and line.startswith((" ", "\t")):
+            out.append(line.strip())
+        elif on:
+            break
+    return " ".join(out)
+
+
+lengths = {d.name: len(description(d / "SKILL.md")) for d in (OUT / "skills").iterdir()}
+over = {k: v for k, v in lengths.items() if v > 1024}
+assert not over, f"descriptions over 1024 characters are dropped silently: {over}"
+budget = sum(lengths.values())
 renames = []
 print(f"kept: {sum(k == 'skill' for k, _ in keep)} skills, {sum(k == 'agent' for k, _ in keep)} agents")
 
-rows = ["# Skill map", "", "Where every skill, agent and command in this plugin came from. Call each one as `cct:<name>`.", ""]
+n_skills = sum(1 for d in (OUT / "skills").iterdir())
+print(f"description budget: {n_skills} skills, {budget:,} characters")
+rows = ["# Skill map", "", "Where every skill, agent and command in this plugin came from. Call each one as `cct:<name>`.", "",
+        f"Description budget: {n_skills} skills, {budget:,} characters of descriptions, read on every prompt.", ""]
 if renames:
     rows += ["Renamed because two sources used the same name:", ""] + [f"- {r}" for r in renames] + [""]
 rows += ["| Name | Kind | Source |", "| --- | --- | --- |"]

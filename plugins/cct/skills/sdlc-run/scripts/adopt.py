@@ -661,6 +661,38 @@ def add_ci_commands(cfg: dict, preset: str) -> None:
         )
 
 
+BUILDERS = ("claude", "codex")
+EFFORTS = ("low", "medium", "high", "xhigh")
+DEFAULT_MODEL = {"claude": "sonnet", "codex": "gpt-5.5"}
+
+
+def add_builders(cfg: dict) -> None:
+    """`builders` says who builds feature rows and fix parts: `claude` (`cct:builder`
+    agents, the default) or `codex` (`scripts/codex-build.sh`, 3.5.0). `builderModel` and
+    `builderEffort` (3.6.0) say which model and how hard: the agent's `model`/`effort` override
+    for claude, `-c model`/`model_reasoning_effort` for codex. Missing keys get the defaults
+    (sonnet or gpt-5.5, high) and are written; a value the repo set is kept; a value outside
+    the lists stops adopt."""
+    v = cfg.get("builders")
+    if v is None:
+        v = cfg["builders"] = "claude"
+        wrote.append("sdlc.json: builders added (claude; set codex to build with the Codex CLI)")
+    elif v not in BUILDERS:
+        sys.exit(f'sdlc.json builders must be "claude" or "codex", not {v!r}')
+    m = cfg.get("builderModel")
+    if m is None:
+        cfg["builderModel"] = DEFAULT_MODEL[v]
+        wrote.append(f"sdlc.json: builderModel added ({DEFAULT_MODEL[v]})")
+    elif not isinstance(m, str) or not m.strip():
+        sys.exit(f"sdlc.json builderModel must be a model name, not {m!r}")
+    e = cfg.get("builderEffort")
+    if e is None:
+        cfg["builderEffort"] = "high"
+        wrote.append("sdlc.json: builderEffort added (high)")
+    elif e not in EFFORTS:
+        sys.exit(f"sdlc.json builderEffort must be one of {', '.join(EFFORTS)}, not {e!r}")
+
+
 def stamp_version(cfg: dict, *, fresh: bool) -> None:
     """`sdlcVersion` says which kit version the repo was last adopted or upgraded with, so the
     skill can tell a repo it is behind. On a move from an older stamp, the changelog's manual
@@ -882,6 +914,7 @@ def main() -> int:
         apply_tiers_answer(cfg)
         add_ci_paths(cfg, preset)
         add_ci_commands(cfg, preset)
+        add_builders(cfg)
         stamp_version(cfg, fresh=True)
         write(cfg_path, json.dumps(cfg, indent=2, ensure_ascii=False) + "\n")
         manual.append(
@@ -907,6 +940,7 @@ def main() -> int:
     if "sdlc.json" in kept:
         add_ci_paths(cfg, preset)
         add_ci_commands(cfg, preset)
+        add_builders(cfg)
         if not UPGRADE:
             migrate_test_cost(cfg, preset)
         elif "--repeat-each" in json.dumps(cfg.get("checks", {})):

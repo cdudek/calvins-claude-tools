@@ -2,10 +2,10 @@
 
 ## Brand v4 (2026-10-30, owner)
 
-Decided in the HeyDiff Brand Guide (https://claude.ai/artifact/Pqz7YxXwnWB3666JzAsXxv), version 4. Replaces the colour, type and logo lines further down where they differ; heydiff-kit and the web spec follow it.
+Decided in the HeyDiff Brand Guide (https://claude.ai/artifact/Pqz7YxXwnWB3666JzAsXxv), version 4. It replaced the colour, type and logo decisions of 2026-10-25 and 2026-10-28 (brand v3), which are no longer listed here; heydiff-kit and the web spec follow it.
 
-- **Accent:** Decision Violet `#6E4EF0` (dark `#7357F6`) is the one filled accent, one Filled button per region, chosen over Clear Sky blue `#0F72DB`. Focus ring and links are violet too.
-- **Type:** Plus Jakarta Sans for brand and app, JetBrains Mono for code, chosen over Inter.
+- **Accent:** Decision Violet `#6E4EF0` (dark `#7357F6`) is the one filled accent, one Filled button per region, chosen over the blue accent of brand v3 (2026-10-28). Focus ring and links are violet too.
+- **Type:** Plus Jakarta Sans for brand and app, JetBrains Mono for code, chosen over the sans-serif of brand v3.
 - **Controls:** 32 / 40 / 48 px (app default 32), chosen over 28 / 32 / 40. Pill buttons and chips, 12 px fields and menus, 24 px dialogs, chosen over 8 px everywhere.
 - **Buttons:** Filled, Tonal, Outlined, Text, Danger (solid red). Pressed shows the ripple.
 - **Dark mode:** Graphite neutrals (`#121214` canvas, `#19191C` surface).
@@ -18,9 +18,8 @@ HeyDiff does not keep its own copy of the design system; it pins one.
 
 - **Source:** [design-system-starter](https://github.com/cdudek/design-system-starter). HeyDiff's own rules are its `examples/snapmark.md` (to be renamed heydiff.md).
 - **How the app uses it:** the version is pinned in the Mac repo's `snapmark-app/design/tokens.lock.json` (the folder keeps its name until the Mac app's new ids ship); `npm run tokens` builds it into `snapmark-app/src/tokens.css`. Change the system there, then bump the pin.
-- **Brand and mark (2026-10-28, `strategy/2026-10-28-name-heydiff.md`):** HeyDiff is a friendly name with a precise, restrained design. The mark connects a comment, a precise point and a change. No mascot, no AI sparkle, no code brackets. The owner still supplies the logo (A53).
-- **Colour direction for HeyDiff (2026-10-28, owner: "A. Clear Sky"; replaced on 2026-10-29 by the Brand section above):** cool, lightly tinted neutrals on a brighter canvas, white content surfaces, and a designed dark mode. Blue `#0F72DB` is the only filled accent, one filled button per region, and the primary button sits last in its row. Logo blue `#2492FF` stays on the logo only, because white text on it is 3.17:1. Chosen over "Paper and Ink" (warm paper, black buttons) and "Iris" (violet). Asked for on 2026-10-28: "the current design looks very grey in grey. also there is no dark mode version". Tokens and research: [colour research](https://github.com/pokbytes/heydiff-desktop/blob/online-release-1-plan/changes/2026-10-27-online-release-1/spec/research/calm-saas-colour.md).
-- **Brand colours (2026-10-25, the app-UI line replaced on 2026-10-28 by the line above):** app UI in brand blue `#2492FF` from the logo. Annotations use the colour the user picks: 10 presets with coral red `#E5484D` as default, plus custom. Full list in `strategy/roadmap.md`, M1.
+- **Brand and mark (2026-10-28, `strategy/2026-10-28-name-heydiff.md`):** HeyDiff is a friendly name with a precise, restrained design. The mark connects a comment, a precise point and a change. No mascot, no AI sparkle, no code brackets. The logo is mark A of brand v4 (above).
+- **Annotation colours (2026-10-25; default and blue preset moved to brand v4 colours on 2026-11-01):** annotations use the colour the user picks: 10 presets with Feedback Coral `#E54A74` as default, plus custom. Full list in `strategy/roadmap.md`, M1.
 - **Style:** calm and native, HeroUI-like; the accent only on primary buttons; no blue outlines.
-- **Icons and logo:** `heydiff-desktop` `snapmark-app/assets/` (still the Snapmark logo until the owner supplies the HeyDiff one).
+- **Icons and logo:** the masters are in `brand/v4/`; place those files, never redraw them (guide page 35).
 - **Mockups and visual explorations:** each code repo's `design-explorations/` (Mac app in `heydiff-desktop`, the team service in `heydiff-web`).

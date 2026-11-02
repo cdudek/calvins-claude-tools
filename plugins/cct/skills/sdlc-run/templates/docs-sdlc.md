@@ -61,6 +61,8 @@ none.
 | `milestones`, `hotfix` | milestone branch prefix and rebase rule; the hotfix lane |
 | `delivery` | `one-go` (default) or `feature-prs` |
 | `goal` | turn caps: `runTurns` for the one-go goal, `featureTurns` and `milestoneTurns` for feature PRs |
+| `builders` | `claude` (default) or `codex`: who builds feature rows and fix parts. With `codex`, the kit's `codex-build.sh` runs the Codex CLI in the feature worktree with the network off and rejects a run that touched a protected path; Claude still supervises, closes the milestone and runs the gates |
+| `builderModel`, `builderEffort` | which model builds and how hard (default `sonnet`, `high`): the `model` and `effort` of every builder agent, or the Codex model and reasoning when `builders` is `codex`. Set `opus` for a repo whose changes are hard; a plan's Approach may override both for one change |
 | `languages`, `responsiveTier`, `ux` | what the product ships, the device matrix tier, UX on or off |
 | `ciPaths` | which changed files run which CI step (lint, unit, build, e2e, deploy): a file in `code` or `config` runs the steps whose include matches it, `all` runs everything, a file in neither `code` nor `config` (or in `docs`) runs nothing; `specs` names the E2E spec files |
 | `ciCommands` | what each job of `.github/workflows/ci.yml` runs: `install`, `lint`, `unit`, `build`, `e2e` (`{shard}`, `{total}`), `e2eTouched` (`{files}`), optional `deploy` |

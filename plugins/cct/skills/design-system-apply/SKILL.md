@@ -8,7 +8,7 @@ description: >-
   Figma handoff, or when choosing a token — even if nobody says "design system". Also for
   prototypes and mockups of OMR product surfaces. Skip for designed collateral outside the
   product: decks, slides, social posts, ads, whitepapers, print, charts, videos and image- or
-  video-generator prompts use cct:brand instead.
+  video-generator prompts use `brand` (OMR AI Kit only, OMR's brand; not in cct) instead.
 allowed-tools: "Read Grep Glob Bash(git *) WebFetch"
 user_invocable: true
 metadata:
@@ -148,7 +148,7 @@ and the hard rules above, which stay blocking errors there.
    `fonts.css`, `primitives.css`, `colors.css`, `typography.css`, `layout.css`,
    `utilities.css`, `base.css` from this skill's own copy at
    `${CLAUDE_SKILL_DIR}/references/tokens/`. It is a byte-identical mirror of the brand
-   skill's `tokens/` (canonical in `cct:brand`), kept here because a plugin cannot
+   skill's `tokens/` (canonical in `brand` (OMR AI Kit only, OMR's brand; not in cct)), kept here because a plugin cannot
    read another plugin's files at runtime; CI fails if the two diverge. When inlining
    `fonts.css`, drop the relative `../fonts/…` `src` line and keep only the
    `https://static.omr.com/…` source — relative paths don't resolve from an inlined block.

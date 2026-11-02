@@ -17,7 +17,7 @@ Core patterns adapted from MC Dean's MIT-licensed `cct:ux-writing`
 ## Before writing
 
 1. Read the project's design/voice contract if present (`PRODUCT.md` register + brand
-   personality, tone docs). For OMR products, the `cct:tone-of-voice` skill is the
+   personality, tone docs). For OMR products, the `tone-of-voice` (OMR AI Kit only, OMR's voice; not in cct) skill is the
    voice authority — consult it for anything user-facing.
 2. Find the project's terminology glossary (CLAUDE.md, docs) and reuse its exact terms —
    never introduce a synonym for an established concept (e.g. OMR Reviews: "Partner",
