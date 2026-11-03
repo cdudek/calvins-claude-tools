@@ -70,7 +70,7 @@ The versions are the ones in use on 2026-10-31. Take the latest stable version w
 - **Cloud:** GCP. Cloud Run (scale to zero), Artifact Registry, Secret Manager, Cloud Storage, BigQuery in the EU. HeyDiff runs in `europe-west1`; OMR work defaults to `europe-west3`.
 - **Auth from CI:** Workload Identity Federation, no service-account keys.
 - **Infrastructure as code:** Terraform in its own `<product>-terraform` repo; secrets as SOPS files encrypted with Cloud KMS and pushed to Secret Manager.
-- **Releases:** semantic-release decides the version from the Conventional Commit PR title (`fix` → patch, `feat` → minor, `feat!` → major). Squash merges only, PR title becomes the commit. Never bump versions by hand.
+- **Releases:** semantic-release decides the version from the Conventional Commit PR title (`fix` → patch, `feat` → minor, `feat!` → major). Milestone PRs merge with a merge commit, so semantic-release reads every commit in them and builders write Conventional Commit subjects; other PRs squash and their title becomes the commit. Never bump versions by hand.
 - **Dependencies:** Dependabot, grouped; adding a dependency is a human decision.
 
 ## Agents and their tools

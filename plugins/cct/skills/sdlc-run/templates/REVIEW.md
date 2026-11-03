@@ -1,12 +1,12 @@
 # Review instructions
 
-Read by `.github/workflows/claude-review.yml` once per non-bot pull request (and again on
-the `re-review` label), and by anyone reviewing by hand. The human reviewer's job is intent and risk — does the change do what
+Read by `cct:pr-review` at every milestone close (the only code review; nothing reviews
+in CI), and by anyone reviewing by hand. The human reviewer's job is intent and risk — does the change do what
 `changes/<date>-<slug>/plan.md` says, and is the blast radius acceptable. The
 mechanical passes below are Claude's job, and they run identically on every PR.
 
-This CI review stays one cheap pass. The deep code review (`cct:pr-review` with one
-`review-fix-loop` round) runs once per milestone, on the milestone diff, not on each feature PR.
+The review (`cct:pr-review` with one `review-fix-loop` round) runs once per milestone,
+on the milestone diff, not on each feature PR.
 
 ## Passes
 

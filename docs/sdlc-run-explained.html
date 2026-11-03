@@ -330,7 +330,7 @@
 <body>
 <main>
 
-<div class="kicker">cct · sdlc-run v3.3.1</div>
+<div class="kicker">OMR AI Kit and cct · sdlc-run v3.7.0</div>
 <h1>sdlc-run, explained</h1>
 <p class="lede">You confirm intent and plan. The agent builds and checks inside /goal. Acceptance follows the shape of the work.</p>
 
@@ -354,10 +354,10 @@
 <p class="small muted" style="margin:16px 0 0">Ship: Stage 6 for each milestone, plus 6p for a project. Hotfixes ship from Stage 5.</p>
 <div class="stats">
   <div class="stat"><b>2</b><span>confirmations before the build</span></div>
-  <div class="stat"><b>1</b><span>PR to default per project or standalone milestone</span></div>
+  <div class="stat"><b>1</b><span>PR to default per milestone</span></div>
   <div class="stat"><b>0</b><span>code written outside /goal</span></div>
 </div>
-<p class="new"><b>New in 3.3.</b> The CI ships as one runnable GitHub Actions workflow for six stacks (<a href="#gha">setup in five steps</a>). A file that is neither code nor config runs no CI at all. Every repo records the sdlc-run version it runs in <code>sdlc.json</code>, and the skill tells you when it is behind (<a href="#current">staying current</a>).</p>
+<p class="new"><b>New in 3.7.</b> A milestone branch stays local until it passes, then gets one push and one PR. Independent milestones are cut from the default branch and merge on their own; only a milestone that needs another's code is stacked on it. Parallel builders start from the milestone head, not from the trunk. Milestone PRs merge with a merge commit. A project is planning by default, not a branch. Claude no longer runs in CI, so no repo needs <code>ANTHROPIC_API_KEY</code>: the review happens once, locally, at the milestone close. The CI itself is unchanged (<a href="#gha">setup</a>, <a href="#current">staying current</a>).</p>
 </div>
 
 <!-- touchpoints -->
@@ -427,17 +427,17 @@
   <div class="stages three">
     <div class="card sc">
       <div class="head"><div class="num">5</div><h3>Build, feature by feature</h3></div>
-      <p>One go is the default: each feature is a commit on the milestone branch, and the next starts at once. Fixes, test repairs and records are commits on that branch too, never PRs of their own. With <code>feature-prs</code>, each feature is a PR that auto-merges into the milestone when green. Hotfixes go straight to the default branch.</p>
+      <p>One go is the default: each feature is a commit on the local milestone branch, and the next starts at once. Parallel builders each get a worktree reset to the milestone head and are merged back one at a time. Fixes, test repairs and records are commits on that branch too, never PRs of their own. With <code>feature-prs</code>, each feature is a PR that auto-merges into the milestone when green. Hotfixes go straight to the default branch.</p>
       <ul><li>Write E2E tests, then build</li><li>Bugs: a failing test first, then the fix</li><li>Only the tests you touched run; no full checks between features</li><li>Open questions go to questions.md and never block</li></ul>
       <span class="pill agent">agent</span>
       <div class="files"><span class="file">milestone.md</span></div>
     </div>
     <div class="card sc you">
       <div class="head"><div class="num">6</div><h3>Milestone</h3></div>
-      <p>The heavy checks run once, on everything the milestone changed.</p>
-      <ul><li>Code review, UX audit, accessibility</li><li>Configured width matrix; full E2E once, three times for changed and flaky specs</li><li>Every fact and ask exercised in the built app</li><li>Security review when auth, money or consent is touched</li></ul>
+      <p>The heavy checks run once, on everything the milestone changed, on one frozen head: nothing is merged in while they run.</p>
+      <ul><li>Code review by Claude and Codex, UX audit, accessibility</li><li>Configured width matrix; full E2E once, three times for changed and flaky specs</li><li>Every fact and ask exercised in the built app</li><li>Security review when auth, money or consent is touched</li></ul>
       <p>You accept each milestone. In one go you are asked only when a Critical or High would be deferred.</p>
-      <p><b>6p · Project:</b> rebase, then run milestone checks on the whole project diff. One PR to default; you accept the project.</p>
+      <p><b>6p · Project:</b> after the last milestone, the milestone checks run once more on the whole project, on the default branch. No PR; you accept the project. With a project branch: merge the default branch in, same checks, one PR to default.</p>
       <span class="pill you">6 + 6p inside /goal</span>
       <div class="files"><span class="file">verify/report.md</span><span class="file">validation.md</span></div>
     </div>
@@ -461,7 +461,7 @@
     <div class="ps"><div class="pn">STEP 4</div><b>PR into milestone</b><small>Feature PRs only. UX review of its screens; Critical and High fixed.</small></div>
     <div class="ps"><div class="pn">STEP 5</div><b>Arm, then move on</b><small>Auto-merge on green. Watch in the background; never wait.</small></div>
   </div>
-  <div class="back"><span class="bi">↻</span>Next feature starts at once. Independent features run in parallel, at most 4 builders, each in its own worktree and test slot.</div>
+  <div class="back"><span class="bi">↻</span>Next feature starts at once. Independent features run in parallel, at most 4 builders, each in its own worktree and test slot, each starting from the milestone head.</div>
 </section>
 
 <!-- work shapes -->
@@ -485,7 +485,7 @@
       <h3>A milestone of one</h3>
       <p class="when">Pick <code>single</code> for one change with both check scopes.</p>
       <ol class="branch-strip" aria-label="Single milestone branch path">
-        <li>one feature branch</li><li class="branch">milestone/&lt;slug&gt;</li><li class="default">default branch</li>
+        <li>one change, as commits</li><li class="branch">milestone/&lt;slug&gt; · local until it passes</li><li class="default">default branch</li>
       </ol>
       <dl><dt>PRs to default</dt><dd>1 milestone PR.</dd>
         <dt>Checks</dt><dd>Feature + milestone checks on one change.</dd>
@@ -496,49 +496,49 @@
       <h3>One milestone, several features</h3>
       <p class="when">Pick <code>new</code> to open a milestone, or <code>existing</code> to add features to one.</p>
       <ol class="branch-strip" aria-label="Multi-feature milestone branch path">
-        <li>feature A · B · C</li><li class="branch">milestone/&lt;slug&gt;</li><li class="default">default branch</li>
+        <li>feature A · B · C, as commits</li><li class="branch">milestone/&lt;slug&gt; · local until it passes</li><li class="default">default branch</li>
       </ol>
       <dl><dt>PRs to default</dt><dd>1 milestone PR. Features are commits on the milestone branch; only <code>feature-prs</code> makes each one a PR that auto-merges.</dd>
-        <dt>Checks</dt><dd>Feature checks per PR; heavy checks on the milestone diff.</dd>
+        <dt>Checks</dt><dd>Touched tests while building; the heavy checks once, on the milestone diff.</dd>
         <dt class="accept">Where you accept</dt><dd>The milestone at Stage 6. Choose no project for this shape.</dd></dl>
     </article>
     <article class="card shape">
       <div class="pick">04 · Project · new / existing</div>
       <h3>Several milestones, one project</h3>
-      <p class="when">When opening a new milestone, add a project if the work will span several milestones.</p>
-      <ol class="branch-strip" aria-label="Project branch path">
-        <li>feature branches</li><li class="branch">milestone/&lt;slug&gt; × several</li><li class="branch">project/&lt;slug&gt;</li><li class="default">default branch</li>
+      <p class="when">When opening a new milestone, add a project if the work will span several milestones. A project groups them; it is not a branch.</p>
+      <ol class="branch-strip" aria-label="Project path: a tracker grouping over several milestones, each merging into the default branch">
+        <li class="tracker">Project · planning, no branch</li><li class="branch">milestone/&lt;slug&gt; × several, each on its own</li><li class="default">default branch · unfinished work behind a flag</li>
       </ol>
-      <dl><dt>PRs to default</dt><dd>1 project PR. Milestone PRs auto-merge into the project on green.</dd>
-        <dt>Checks</dt><dd>Per milestone, then milestone checks again on the whole project diff.</dd>
-        <dt class="accept">Where you accept</dt><dd>Each milestone at Stage 6, then the project at 6p. Only the project PR gets CI review and a tier.</dd></dl>
+      <dl><dt>PRs to default</dt><dd>1 per milestone. A milestone stacks on another only when it needs that one's code. A <code>project/&lt;slug&gt;</code> branch only when you ask for one.</dd>
+        <dt>Checks</dt><dd>Per milestone, then milestone checks once more on the whole project after the last one lands.</dd>
+        <dt class="accept">Where you accept</dt><dd>Each milestone at Stage 6, then the project at 6p.</dd></dl>
     </article>
     <article class="card shape">
       <div class="pick">05 · Initiative · tracker only</div>
       <h3>Several projects, one initiative</h3>
       <p class="when">Group projects toward a shared outcome over a quarter or so.</p>
       <ol class="branch-strip" aria-label="Initiative tracking and project branch paths">
-        <li class="tracker">Initiative · no branch</li><li class="tracker">contains several projects</li><li class="branch">each: features → milestone/&lt;slug&gt; → project/&lt;slug&gt;</li><li class="default">default branch · per project</li>
+        <li class="tracker">Initiative · no branch</li><li class="tracker">contains several projects</li><li class="branch">each: milestone/&lt;slug&gt; × several</li><li class="default">default branch · per milestone</li>
       </ol>
-      <dl><dt>PRs to default</dt><dd>1 per project. No initiative PR.</dd>
+      <dl><dt>PRs to default</dt><dd>1 per milestone. No initiative or project PR.</dd>
         <dt>Tracker</dt><dd>Linear initiative, GitHub initiative issue, or Beads epic labeled initiative.</dd>
         <dt class="accept">Where you accept</dt><dd>Each milestone and each project. There is no separate initiative acceptance stage.</dd></dl>
     </article>
   </div>
-  <p class="shape-note"><b>Acceptance is separate from PR approval.</b> Stage 6 is where you accept each milestone, even inside a project. Interior PRs auto-merge on checks alone. Only PRs into the default branch get CI review and a Ship/Show/Ask tier.</p>
+  <p class="shape-note"><b>Acceptance is separate from PR approval.</b> Stage 6 is where you accept each milestone, even inside a project. Interior PRs auto-merge on checks alone. Only PRs into the default branch get a Ship/Show/Ask tier. The code review happens once, locally, at the milestone close; nothing reviews again in CI.</p>
 </section>
 
 <!-- branches -->
 <section>
   <h2>Branches and PRs</h2>
-  <p class="sub">Example: one milestone without a project. Here, main represents the repo’s default branch. With a project, its PR reaches default instead. In one go, features are commits on the milestone branch, and the next milestone is cut from it.</p>
+  <p class="sub">Example: one milestone. Here, main represents the repo’s default branch. In one go, features are commits on the local milestone branch. The next milestone is cut from main as well, unless it needs this one's code: then it is cut from this one and its PR opens after this one merges.</p>
   <div class="card graph-sm">
-    <div class="gl"><i style="background:var(--ink3)"></i><div><b>main</b><span>In this example, one milestone PR lands here. CI reviews and tiers it; you accept the milestone.</span></div></div>
-    <div class="gl ind"><i style="background:var(--blue)"></i><div><b style="color:var(--blue)">milestone</b><span>Cut from main. Every feature merges into it.</span></div></div>
-    <div class="gl ind" style="margin-left:44px;border-color:var(--agent)"><i style="background:var(--agent)"></i><div><b style="color:var(--agent)">feature A, B, C</b><span>One commit each, or one small PR with feature PRs. Independent features build in parallel.</span></div></div>
+    <div class="gl"><i style="background:var(--ink3)"></i><div><b>main</b><span>One milestone PR lands here, as a merge commit. It gets a tier; you accept the milestone.</span></div></div>
+    <div class="gl ind"><i style="background:var(--blue)"></i><div><b style="color:var(--blue)">milestone</b><span>Cut from main locally. Never pushed until it passes; then one push, one PR.</span></div></div>
+    <div class="gl ind" style="margin-left:44px;border-color:var(--agent)"><i style="background:var(--agent)"></i><div><b style="color:var(--agent)">feature A, B, C</b><span>One commit each. Parallel builders start from the milestone head in their own worktrees; the supervisor merges them back one at a time.</span></div></div>
   </div>
   <div class="card graph-lg">
-    <svg viewBox="0 0 900 310" role="img" aria-label="Git graph. Main at the top. A milestone branch is cut from main. Three feature branches each merge into the milestone. At the end, the milestone merges into main through one reviewed PR.">
+    <svg viewBox="0 0 900 310" role="img" aria-label="Git graph. Main at the top. A milestone branch is cut from main. Three features each merge into the milestone. At the end, the milestone merges into main through one PR, as a merge commit.">
       <defs>
         <marker id="ab" viewBox="0 0 10 10" refX="8" refY="5" markerWidth="7" markerHeight="7" orient="auto"><path d="M0 0 10 5 0 10z" fill="var(--blue)"/></marker>
         <marker id="ag2" viewBox="0 0 10 10" refX="8" refY="5" markerWidth="7" markerHeight="7" orient="auto"><path d="M0 0 10 5 0 10z" fill="var(--agent)"/></marker>
@@ -568,25 +568,25 @@
       <text x="465" y="128" text-anchor="middle" font-size="12.5" class="t2">each feature: a commit (a PR only with feature-prs)</text>
       <rect x="610" y="78" width="172" height="40" rx="10" fill="var(--blue-soft)"/>
       <text x="696" y="96" text-anchor="middle" font-size="13" font-weight="800" fill="var(--blue)">milestone PR</text>
-      <text x="696" y="111" text-anchor="middle" font-size="11.5" fill="var(--blue)">full review + you accept</text>
+      <text x="696" y="111" text-anchor="middle" font-size="11.5" fill="var(--blue)">merge commit + you accept</text>
     </svg>
   </div>
   <div class="prs">
     <div class="card pr">
       <div class="route">feature → milestone · feature-prs only</div>
       <div class="row"><span>Checks</span><span>fast, on what it touched</span></div>
-      <div class="row"><span>Claude review</span><span class="no">no</span></div>
+      <div class="row"><span>Review</span><span class="no">none</span></div>
       <div class="row"><span>Who approves</span><span class="yes">auto-merge on green</span></div>
     </div>
     <div class="card pr trunk">
-      <div class="route">milestone / project → default</div>
+      <div class="route">milestone → default</div>
       <div class="row"><span>Checks</span><span>milestone checks on the diff</span></div>
-      <div class="row"><span>Claude review</span><span class="yes">yes</span></div>
+      <div class="row"><span>Review</span><span class="yes">local, at the close</span></div>
       <div class="row"><span>Who approves</span><span>Ship / Show / Ask tier</span></div>
     </div>
     <div class="card pr">
-      <div class="route">big work: + project branch</div>
-      <p class="small muted" style="margin:0">Work over several milestones adds <code>project/&lt;slug&gt;</code> between main and the milestones. Milestones auto-merge into it. Only the project PR into default gets CI review and a tier. You still accept each milestone, then the project.</p>
+      <div class="route">big work: a project</div>
+      <p class="small muted" style="margin:0">A project groups several milestones in the tracker. Each still merges into main on its own, unfinished work behind a flag. Only when you ask for one (<code>project.branch: true</code>) does <code>project/&lt;slug&gt;</code> sit between them, and then only its PR gets a tier.</p>
     </div>
   </div>
 
@@ -605,8 +605,8 @@
     <div class="card p">
       <h3>A PR, and only these</h3>
       <ul>
-        <li>The milestone PR, into <code>project/&lt;slug&gt;</code> or the default branch</li>
-        <li>The project PR, into the default branch</li>
+        <li>The milestone PR, into the default branch, or into <code>project/&lt;slug&gt;</code> when the project has a branch</li>
+        <li>The project PR, only when the project has a branch</li>
         <li>Feature PRs, only with <code>delivery: "feature-prs"</code></li>
         <li>Other repositories, and a change you send to the default branch first</li>
       </ul>
@@ -951,8 +951,8 @@
 <!-- staying current -->
 <section id="current">
   <h2>Staying current</h2>
-  <p class="sub"><code>adopt</code> writes <code>"sdlcVersion": "3.3.1"</code> into <code>sdlc.json</code>. Every time the skill runs in the repo, <code>status</code> and the verify gate compare that stamp with the installed kit.</p>
-  <p class="warn">This repo runs sdlc-run 3.2.0; the kit is 3.3.1. Run `adopt --upgrade` (changes: 3.3.1: adopt --upgrade never overwrites or moves anything; 3.3.0: the CI workflow ships as a template, ciPaths by file type, versioned repos).</p>
+  <p class="sub"><code>adopt</code> writes <code>"sdlcVersion": "3.7.0"</code> into <code>sdlc.json</code>. Every time the skill runs in the repo, <code>status</code> and the verify gate compare that stamp with the installed kit.</p>
+  <p class="warn">This repo runs sdlc-run 3.6.1; the kit is 3.7.0. Run `adopt --upgrade` (changes: 3.7.0: local milestones, merge commits, builders start from the milestone, no Claude in CI).</p>
   <div class="afacts card">
     <div class="fact"><div class="ix">1</div><p><b>The stamp.</b> A repo adopted before 3.3.0 has none, which counts as the oldest version.</p></div>
     <div class="fact"><div class="ix">2</div><p><b>The warning.</b> One line, for a missing or older stamp, and one telling you to update the plugin when the repo is newer than the kit. The verify gate prints it as a <code>WARN</code> line. It never blocks anything.</p></div>
@@ -1066,7 +1066,7 @@
   </div>
 </section>
 
-<footer>Describes cct:sdlc-run v3.3.1 on calvins-claude-tools main, 31 October 2026. Details: the skill's references/stages.md and references/ci-blueprint.md.</footer>
+<footer>Describes sdlc-run v3.7.0 in the OMR AI Kit (omr-dev) and in cct, 3 November 2026. Details: the skill's references/stages.md and references/ci-blueprint.md.</footer>
 </main>
 </body>
 </html>

@@ -181,3 +181,12 @@ def test_feature_prs_delivery_allows_feature_prs_into_the_milestone(repo: Path) 
 def test_a_repo_without_sdlc_json_gets_no_opinion(repo: Path) -> None:
     (repo / "sdlc.json").unlink()
     assert _run(repo, "gh pr create --base project/trial --head records/x").returncode == 0
+
+
+def test_a_pass_still_counts_after_the_archive_move(repo: Path) -> None:
+    # Stage 7 moves the change into changes/archive/ as the last commit before the push.
+    _pass(repo)
+    (repo / "changes" / "archive").mkdir()
+    _git(repo, "mv", f"changes/{ID}", f"changes/archive/{ID}")
+    _git(repo, "commit", "-qm", "archive")
+    assert _run(repo, "git push -u origin milestone/trial-1").returncode == 0

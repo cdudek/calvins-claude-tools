@@ -258,8 +258,9 @@ JSON
 ```
 
 - OWNER/REPO is the repository. Repo setting "Allow auto-merge" must be on.
-- No `non_fast_forward` rule: the SDLC rebases `milestone/*` and `project/*` and pushes with
-  lease. A required status also blocks that push, so the bypass (actor 5 is the admin role)
-  must cover whoever pushes. Without a bypass, protect only `project/*`.
+- A `non_fast_forward` rule is safe since 3.7.0: the SDLC merges a parent into `milestone/*`
+  and `project/*` and never rewrites a pushed one. A required status also blocks the close push,
+  so the bypass (actor 5 is the admin role) must cover whoever pushes. Without a bypass, protect
+  only `project/*`.
 - `delivery: "one-go"` pushes features straight to `milestone/<slug>` and opens one PR from
   it, so nothing merges into it: protect `project/*` only. `delivery: "feature-prs"` protects both.

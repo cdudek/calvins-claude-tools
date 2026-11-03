@@ -312,14 +312,14 @@ permalinks; local laptop paths are refused.
 | `tests`, `testFile` | adopt | rendered guardrail test type and path |
 | `codeowners` | adopt | generated CODEOWNERS owners |
 | `claude` | adopt, test | whether Claude workflows are generated |
-| `claudeAllow` | adopt | extra tools for `claude.yml` |
+| `claudeAllow` | none | obsolete since 3.7.0, when `claude.yml` went; `adopt` leaves the key alone |
 | `showChannel` | adopt | Slack channel for show notices |
 | `tiers` | adopt, test, docs | Ship / Show / Ask on or off |
 | `askGatesMerge` | adopt | whether `ask` withholds auto-merge |
 | `keep` | adopt | generated paths this repo owns |
 | `checks.feature[]`, `checks.milestone[]` | `verify_gate.py` | commands, cheapest first; `{id}` is the change id; a string or `{name, run}` |
-| `milestones` | skill | `{branchPrefix, rebaseOnDefault}`; default `milestone/`, `true`. A milestone is cut from its parent: the project branch when the change has one, else the default branch |
-| `projects` | skill | `{branchPrefix, rebaseOnDefault}`; default `project/`, `true`. Only used when `decisions.json` names a `project`; without one the level does not exist and milestones go straight to the default branch |
+| `milestones` | skill | `{branchPrefix}`; default `milestone/`. A milestone is cut locally from its parent: the project branch when the project has one, else the default branch, or from the milestone its plan row `needs`. `rebaseOnDefault` is obsolete since 3.7.0: a parent is merged in, never rebased |
+| `projects` | skill | `{branchPrefix}`; default `project/`. Only used when `decisions.json` `project.branch` is true (or the project predates 3.7.0 and has no `branch` key); otherwise a project is planning only and its milestones go straight to the default branch |
 | `hotfix` | skill | the hotfix lane on or off; default `true` |
 | `delivery` | skill | `one-go` (default): one `/goal` builds every feature as commits on the milestone branch and closes the milestone; `feature-prs`: one PR per feature into the milestone |
 | `goal` | skill | `{runTurns, featureTurns, milestoneTurns}`; default 150, 40 and 30 |

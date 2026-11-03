@@ -65,6 +65,18 @@ Each step has a proof. The proof is a command, a file, or a fact.
 - [ ] 2. <step> — proof: `<file>` exists
 - [ ] 3. <step> — proof: F<n> passes
 
+## Milestones
+
+One row per milestone, in order; a change small enough for one has one. Each milestone is cut
+from the default branch and merges on its own, unless `needs` names one whose code it calls.
+Different files do not prove independence: an API and its caller conflict without a merge
+conflict.
+
+| Milestone | Features | needs |
+|-----------|----------|-------|
+| M1 <name> | F1, F2 | none |
+| M2 <name> | F3 | M1 (<what of M1 it calls>) |
+
 ## Risks
 
 | Risk | What we do | Where it lands |

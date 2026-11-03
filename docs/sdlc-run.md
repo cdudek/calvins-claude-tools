@@ -4,7 +4,7 @@
 
 There is also a [visual version of this page](sdlc-run-explained.html). It is a standalone HTML file: download it and open it in a browser.
 
-Version described: sdlc-run 3.2.0. The runbook it follows is in [`plugins/cct/skills/sdlc-run/`](../plugins/cct/skills/sdlc-run/) (`SKILL.md`, `references/stages.md`, `references/ci-blueprint.md`, `references/adopt.md`).
+Version described: sdlc-run 3.7.0. The runbook it follows is in [`plugins/cct/skills/sdlc-run/`](../plugins/cct/skills/sdlc-run/) (`SKILL.md`, `references/stages.md`, `references/ci-blueprint.md`, `references/adopt.md`).
 
 ## Stages and the two touchpoints
 
@@ -30,51 +30,51 @@ One change folder, `changes/<date>-<slug>/`, holds everything: intent, `spec/`, 
 | 3 Facts | Short, testable sentences. Each cites an ask, names its screen or state, and names the E2E test that proves it. | agent |
 | 4 Tech plan | Where the code goes and how the work splits into features. `done.json` holds "done" as data. | **You approve** stages 2, 3 and 4 in one review |
 | 5 Build | Per feature: write its tests, build, commit, start the next at once. No check, lint or test runs between features. Open questions go to `questions.md` with the default taken and never block. | agent, inside `/goal` |
-| 6 Milestone | Code review, UX review, accessibility, the full E2E suite once, every fact exercised in the built app, one fix round, `verify_gate.py milestone`, one PR. | agent, inside `/goal`; **you accept** (in one go only when a Critical or High finding would be deferred) |
-| 6p Project | Only for work spanning several milestones: rebase, re-run the milestone checks on the whole project diff, one PR to the default branch. | **you accept** |
+| 6 Milestone | Code review (Claude and Codex, the only one: nothing reviews in CI), UX review, accessibility, the full E2E suite once, every fact exercised in the built app, one fix round, `verify_gate.py milestone` on a frozen head, one push, one PR merged with a merge commit. | agent, inside `/goal`; **you accept** (in one go only when a Critical or High finding would be deferred) |
+| 6p Project | Only for work spanning several milestones, after the last one merged: the milestone checks once more on the whole project, on the default branch. No PR. With a project branch: merge the default branch in, same checks, one PR. | **you accept** |
 | 7 Outcome | Archive the folder when the change reaches the default branch. After release, read the success measure. A miss starts the next change. | agent, you read it |
 
 The two touchpoints are the intent and the plan. After the plan is approved, `lock.json` locks facts, `done.json` and the checks; only your words can open them.
 
 ## One /goal per milestone
 
-`delivery: "one-go"` is the default in `sdlc.json`. Everything you asked for at once is one change. One `/goal` builds every milestone in the plan, in order, each on its own branch `milestone/<slug>-<n>` cut from the previous one, so building never waits for a merge. Each feature is a commit. The milestone's checks run once, on the milestone diff.
+`delivery: "one-go"` is the default in `sdlc.json`. Everything you asked for at once is one change. One `/goal` builds every milestone in the plan, in order, each on its own local branch `milestone/<slug>-<n>` cut from the default branch, so it merges on its own. Only a milestone whose plan row says `needs: M<k>` is cut from that one; it builds at once and opens its PR after that one merges. Nothing is pushed before the milestone's gate passes. Each feature is a commit. The milestone's checks run once, on the milestone diff.
 
 `delivery: "feature-prs"` keeps the older shape: one PR per feature, auto-merged into the milestone branch. It suits teams building features in parallel.
 
-Builders are `cct:builder` agents, at most four at once, each in its own worktree and test slot. The supervisor edits no code and runs no test suite.
+Builders are `cct:builder` agents, at most four at once, each in its own worktree and test slot. Each gets a `Base: <sha>` line, the milestone head, and resets to it before any edit, because a worktree hook cuts from the default branch. The supervisor commits its records first, edits no code, runs no test suite, and merges builder branches back one at a time. The close is one `cct:builder` with `Mode: close`; nothing merges while it runs.
 
 ## Branches, commits and PRs
 
 ```mermaid
 flowchart BT
-  F["features: commits on the milestone branch"] --> M["milestone/slug"]
-  M -->|"milestone PR, auto-merge on green"| P["project/slug<br/>(only for several milestones)"]
-  P -->|"project PR: reviewed, tiered, you accept"| D["default branch"]
-  M -.->|"no project: the milestone PR goes straight here"| D
+  F["features: commits on the local milestone branch"] --> M["milestone/slug"]
+  M -->|"one push after the gate, one PR, merge commit, you accept"| D["default branch"]
+  M -.->|"only with project.branch: true"| P["project/slug"]
+  P -.->|"project PR: tiered, you accept"| D
 ```
 
 ```
-<default> ─── milestone/<slug> ─── <feature commits>              one milestone
-<default> ─── project/<slug> ─── milestone/<slug> ─── <features>  a project
+<default> ─── milestone/<slug>-<n> ─── <feature commits>              one milestone, or each milestone of a project
+<default> ─── project/<slug> ─── milestone/<slug>-<n> ─── <features>  a project that asked for a branch
 ```
 
 **Commits, not PRs.** While a milestone is open, everything that belongs to it is a commit on `milestone/<slug>`: features, fixes found during the build, test and flaky-spec repairs, CI timeout tweaks its tests need, and records (plans, handovers, gate lines, `findings.md`, `validation.md`, `questions.md`). No PR holds only a record, a fix or a test repair.
 
 **PRs that exist:**
 
-- The milestone PR, into `project/<slug>` or the default branch.
-- The project PR, into the default branch.
+- The milestone PR, into the default branch (or `project/<slug>` when the project has a branch).
+- The project PR, only when the project has a branch.
 - Feature PRs, only with `delivery: "feature-prs"`.
 - Other repositories, and a change you send to the default branch first.
 
-**Only the PR into the default branch is reviewed and tiered.** Everything below it is an interior merge inside one change and auto-merges on its checks alone.
+**Only the PR into the default branch is tiered.** Everything below it is an interior merge inside one change and auto-merges on its checks alone. The code review is not a PR step at all: it runs once, locally, at the milestone close. Nothing runs Claude in CI, so no repo needs `ANTHROPIC_API_KEY`.
 
-| PR | Checks | Claude review | Ship/Show/Ask | Who approves |
-|---|---|---|---|---|
-| feature to `milestone/*` (`feature-prs` only) | feature checks | no | no | nobody; auto-merge on green |
-| milestone to `project/*` | milestone checks | no | no | nobody; auto-merge on green |
-| `project/*` or `milestone/*` to the default branch | milestone checks | yes | yes | the tier decides |
+| PR | Checks | Ship/Show/Ask | Who approves |
+|---|---|---|---|
+| feature to `milestone/*` (`feature-prs` only) | feature checks | no | nobody; auto-merge on green |
+| milestone to `project/*` | milestone checks | no | nobody; auto-merge on green |
+| `project/*` or `milestone/*` to the default branch | milestone checks | yes | the tier decides |
 
 Acceptance is separate from PR approval: you accept each milestone at stage 6, and the project at 6p, even though the interior PRs merge themselves. A hotfix goes straight to the default branch with feature checks only.
 
@@ -98,7 +98,7 @@ Measured on one real repo, one day: 39 CI runs, 22 failed, about 25 minutes each
 
 - **B1, records and fixes ride along.** They are commits on the milestone branch and ship in its one PR. The archive move is the last commit of the PR into the default branch.
 - **C1, gate only on real code.** Wait for another PR only if this row's code imports, calls or edits something that exists only there. Then merge that branch locally and build on top. Tests, docs and unrelated rows are not dependencies.
-- **C2, never idle.** After a push: arm auto-merge (`gh pr merge <n> --squash --auto`), watch in the background, start the next independent row. A red check interrupts; otherwise keep going.
+- **C2, never idle.** After a push: arm auto-merge (`gh pr merge <n> --merge --auto` for a milestone PR), watch in the background, start the next independent row. A red check interrupts; otherwise keep going.
 - **C3, touched tests only.** A builder runs only the tests its change touched. The full suite runs once per milestone, and in CI only where A5 says.
 
 ## GitHub Actions setup
@@ -308,7 +308,7 @@ A repo with no CI gets `.github/workflows/ci.yml` from the template. `adopt` nev
 
 ## Staying current
 
-`adopt` writes `"sdlcVersion": "3.3.1"` into `sdlc.json`. Every time the skill runs in the repo, `status` and the verify gate compare the stamp with the installed plugin and print one line when it is missing or older, for example:
+`adopt` writes `"sdlcVersion": "3.7.0"` into `sdlc.json`. Every time the skill runs in the repo, `status` and the verify gate compare the stamp with the installed plugin and print one line when it is missing or older, for example:
 
 ```text
 This repo runs sdlc-run 3.2.0; the kit is 3.3.1. Run `adopt --upgrade` (changes: 3.3.1: adopt --upgrade never overwrites or moves anything; 3.3.0: the CI workflow ships as a template, ciPaths by file type, versioned repos).

@@ -94,14 +94,16 @@ def criteria_hash(change: Path, checks: object) -> dict[str, str]:
 
 def parent_tips(change: Path, cfg: dict) -> list[tuple[str, str]]:
     """(branch, sha) on origin of every branch a milestone must contain: the default branch,
-    and project/<slug> too when the change has a project. A branch origin lacks (no remote,
-    offline, project not created yet) is left out."""
+    and project/<slug> too when the change's project has a branch. A project without
+    `branch: true` is planning only (3.7.0), but one written before 3.7.0 has no `branch` key
+    and keeps its branch. A branch origin lacks (no remote, offline, project not created yet)
+    is left out."""
     names = [cfg.get("defaultBranch") or "main"]
     try:
         project = json.loads((change / "decisions.json").read_text(encoding="utf-8")).get("project")
     except (OSError, ValueError, AttributeError):
         project = None
-    if isinstance(project, dict) and project.get("slug"):
+    if isinstance(project, dict) and project.get("slug") and project.get("branch", True):
         prefix = (cfg.get("projects") or {}).get("branchPrefix", "project/")
         names.insert(0, f"{prefix}{project['slug']}")
     tips = []
@@ -306,6 +308,7 @@ def run(
     cache_path = out_dir / "cache.json"
     cache = json.loads(cache_path.read_text()) if cache_path.exists() else {}
     tree = sh("git", "rev-parse", "HEAD^{tree}")
+    head = sh("git", "rev-parse", "HEAD")
 
     for i, check in enumerate(checks, 1):
         name = check.get("name") or f"check-{i}"
@@ -371,7 +374,19 @@ def run(
             return finish("VERIFY BLOCKED reason=attempts", 3)
         return finish(f"VERIFY FAIL {scope} {change.name} check={name}", 1)
 
-    return finish(f"VERIFY PASS {scope} {change.name} {sh('git', 'rev-parse', 'HEAD')}", 0)
+    # A PASS names one frozen head: a merge or an edit during the checks means they tested
+    # something other than the commit the line would name.
+    still_dirty = [
+        line
+        for line in sh("git", "status", "--porcelain").splitlines()
+        if f"{change.name}/verify/" not in line
+    ]
+    if sh("git", "rev-parse", "HEAD") != head or still_dirty:
+        print(
+            "HEAD or the tree changed while the checks ran: nothing may merge or edit during a gate."
+        )
+        return finish(f"VERIFY FAIL {scope} {change.name} check=moved", 1)
+    return finish(f"VERIFY PASS {scope} {change.name} {head}", 0)
 
 
 def main(argv: list[str]) -> int:

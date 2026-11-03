@@ -109,7 +109,9 @@ class Repo:
         if not sha:
             return False
         rel = self.changes.relative_to(self.top).as_posix() + "/"
-        for report in self.changes.glob("*/verify/report.json"):
+        # archive/ too: the Stage 7 archive move is the last commit before the push (3.7.0)
+        found = [*self.changes.glob("*/verify/report.json"), *self.changes.glob("archive/*/verify/report.json")]
+        for report in found:
             try:
                 data = json.loads(report.read_text(encoding="utf-8"))
             except (OSError, ValueError):

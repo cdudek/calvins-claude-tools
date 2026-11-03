@@ -51,7 +51,6 @@
   "toolsCommand": "pnpm sdlc:tools",
   "tests": "vitest",
   "codeowners": [],
-  "claude": true,
   "claudeAllow": ["Bash(pnpm *)", "Bash(git:*)", "Bash(gh pr:*)"],
   "showChannel": "",
   "keep": [],

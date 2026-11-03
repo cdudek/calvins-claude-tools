@@ -41,7 +41,6 @@
   "toolsCommand": "make sdlc-tools",
   "tests": "pytest",
   "codeowners": [],
-  "claude": true,
   "claudeAllow": [
     "Bash(uv sync:*)",
     "Bash(uv run:*)",

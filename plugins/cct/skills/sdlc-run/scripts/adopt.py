@@ -941,6 +941,9 @@ def main() -> int:
         add_ci_paths(cfg, preset)
         add_ci_commands(cfg, preset)
         add_builders(cfg)
+        if "claude" in cfg:
+            cfg.pop("claude")
+            wrote.append("sdlc.json: claude removed (no Claude in CI since sdlc-run 3.7.0)")
         if not UPGRADE:
             migrate_test_cost(cfg, preset)
         elif "--repeat-each" in json.dumps(cfg.get("checks", {})):
@@ -1229,16 +1232,13 @@ def main() -> int:
         if cfg.get("showChannel")
         else "",
     }
-    # sdlc.json `claude` (default true): the three workflows that spend Anthropic tokens --
-    # claude-review.yml (+ its merge-gate), claude.yml (@claude), ci-triage.yml. False writes
-    # none of them and removes any that exist; ship-show-ask.yml follows `tiers`, not this.
-    CLAUDE_WORKFLOWS = ("claude-review.yml", "claude.yml", "ci-triage.yml")
-    claude_on = cfg.get("claude", True)
+    # No Claude in CI since 3.7.0: the milestone close reviews locally with Claude and Codex, so
+    # claude-review.yml (+ its merge-gate), claude.yml (@claude) and ci-triage.yml are taken out
+    # of every repo that still has them, and no repo needs ANTHROPIC_API_KEY.
+    for name in ("claude-review.yml", "claude.yml", "ci-triage.yml"):
+        remove(ROOT / ".github" / "workflows" / name, "no Claude in CI since sdlc-run 3.7.0")
     for src in sorted((TPL / "workflows").glob("*.yml")):
         dest = ROOT / ".github" / "workflows" / src.name
-        if src.name in CLAUDE_WORKFLOWS and not claude_on:
-            remove(dest, "sdlc.json claude=false")
-            continue
         if src.name == "ship-show-ask.yml" and not tiers_on:
             continue  # removed above, with the other tier files
         _write(dest, render(src.read_text(encoding="utf-8"), values))
@@ -1470,7 +1470,7 @@ def main() -> int:
     if not DRY and not any(archive.iterdir()):
         gitkeep.write_text("")
 
-    secrets = (["ANTHROPIC_API_KEY (org secret)"] if claude_on else []) + (
+    secrets = (
         [
             "CODE_MANAGER_APP_CLIENT_ID + CODE_MANAGER_APP_PRIVATE_KEY (secrets), SDLC_COOWNER (variable)"
             + (", SDLC_SLACK_BOT_TOKEN (secret)" if cfg.get("showChannel") else "")
@@ -1484,11 +1484,10 @@ def main() -> int:
                 cfg["toolsCommand"], docs
             ),
             *(["GitHub: " + ", ".join(secrets)] if secrets else []),
-            "ruleset on {}: required checks = CI{}; strict=false; thread resolution=false{}".format(
+            "ruleset on {}: required checks = CI (no merge-gate: remove it from the ruleset AND classic "
+            "branch protection if it is there); strict=false; thread resolution=false; allow merge "
+            "commits (milestone PRs merge with one){}".format(
                 cfg.get("defaultBranch", "master"),
-                " + merge-gate"
-                if claude_on
-                else " (no merge-gate: claude=false -- remove it from the ruleset AND classic branch protection if it is there)",
                 "; App as pull_request bypass actor" if tiers_on else "",
             ),
             "run `{}` and the guardrail test; commit as `feat(sdlc): adopt the chain`".format(
