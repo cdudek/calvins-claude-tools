@@ -13,7 +13,7 @@ description: >-
 allowed-tools: "Read Grep Glob Edit Write Agent Skill AskUserQuestion Bash(bash */sdlc-run/scripts/*) Bash(python3 */sdlc-run/scripts/*) Bash(python3 */sdlc-run/templates/scripts/sdlc_version.py*) Bash(python3 scripts/sdlc_version.py*) Bash(python3 scripts/verify_gate.py *) Bash(python3 scripts/sdlc_status.py *) Bash(git *) Bash(gh *) Bash(bd *) Bash(plannotator *) Bash(make *) Bash(pnpm *) Bash(uv *) Bash(npx *) EnterWorktree mcp__claude_ai_Linear__* mcp__linear__*"
 user_invocable: true
 metadata:
-  version: 3.6.1
+  version: 3.7.0
   author: calvindudek
 effort: high
 ---
@@ -86,13 +86,13 @@ carry on: it never blocks. `references/changelog.md` lists what each version cha
 
 | Stage | Steps | Touchpoint |
 |---|---|---|
-| 1 Intent | 1.0 preconditions · 1.1 one dialog: ticket, design file, size, kind, milestone (new, existing, milestone of one, hotfix) **and project (none, new, existing)** · 1.2 folder, Linear, worktree, project branch if any, milestone branch · 1.3 asks · 1.4 agent **drafts** `intent.md`: asks, job stories (observed/reported/assumed), success measure. Never skipped. | **Engineer confirms intent** |
+| 1 Intent | 1.0 preconditions · 1.1 one dialog: ticket, design file, size, kind, milestone (new, existing, milestone of one, hotfix) **and project (none, new, existing)** · 1.2 folder, Linear, worktree, the local milestone branch (a project branch only with `project.branch: true`) · 1.3 asks · 1.4 agent **drafts** `intent.md`: asks, job stories (observed/reported/assumed), success measure. Never skipped. | **Engineer confirms intent** |
 | 2 UX plan | `cct:ux-design` (brief, IA, interaction, screens), `cct:ux-sitemap-create diff`, `cct:ux-conformance spec` (components: exists / adapt / new, with paths), `cct:microcopy-write`, then `cct:ux-validate spec` as **one pass**, its findings into the plan. Size `none` or `ux: off` skips; size S does components and words only. Prototype images only when the plan marks the UI risky: `cct:designs-explore spec`. | none |
 | 3 Facts | Drafted after the UX plan. Each fact cites asks, names its screen or state, and names the E2E tag that proves it. `verify_gate.py lint` on intent, facts and plan. | none |
 | 4 Tech plan | `plan.md`: Where things go, Feature PRs, Done, Goal handover; `done.json` holds the criteria as data. Call when relevant: `architecture-review`, `data-model-create`, `api-design`, `security-review`, `dependency-review`, `tracking-apply` (the success-measure events). | **One gate for UX plan + facts + plan**, then `verify_gate.py approve` |
-| 5 Build | **One go (default):** one `/goal` (`templates/goal/run.txt`) builds every milestone of the plan in order, each on `milestone/<slug>-<n>` cut from the previous one: per feature, write its tests, build, commit, next feature at once. **No check, lint or test runs per feature or commit.** Open questions go to `questions.md` with the default taken and never block; answers become asks of the next milestone. Then Stage 6 for that milestone in the same goal. **Feature PRs:** per feature, inside `/goal` (`templates/goal/feature.txt`): `e2e-write`, `e2e-test-run` on the feature tags, `flaky-test-fix`; bugs via `behavior-test-writer` → locked test → `fix-implementer`; `verify_gate.py feature`; `pr-create --base milestone/<slug>`; `cct:ux-review` on that PR's screens, its Critical and High fixed before auto-merge is armed. No Claude review and no tier on this PR — it is interior. When it merges, the next feature starts. | none |
-| 6 Milestone | Inside `/goal` (the same one in one go; `templates/goal/milestone.txt` for feature PRs), on the milestone diff only, in parallel: `cct:ux-review`, `pr-review` + `review-fix-loop 1` (one round), `responsive-audit` full matrix, states, `accessibility-audit`, the full E2E suite once, ×3 only for changed and flaky specs (`../e2e-test-run/references/suite-speed-and-reliability.md` section G), `cct:ux-audit` when a screen is new, **validation**: every fact and ask exercised in the built app into `validation.md` (expected, observed, evidence, verdict; `not met` blocks), `cct:ux-validate build`, the `verifier` and `ac-auditor` agents for jobs and facts. **Last milestone of the goal only:** `security-review` on the whole goal diff when auth, money or consent is touched anywhere in it (in a project it waits for 6p). One findings list, one fix round, `verify_gate.py milestone`, one PR **to the milestone's parent** — `project/<slug>` in a project, else the default branch. | **Engineer accepts the milestone** (one go: only when a Critical or High would be deferred) |
-| 6p Project | Only in a project, and only once every milestone has merged into `project/<slug>`: rebase it on the default branch, re-run `checks.milestone` on the whole project diff, plus `security-review` on it when auth, money or consent is touched, then one PR to the default branch. This is the PR CI reviews and tiers. No second fix round — what is left starts the next project. | **Engineer accepts the project** |
+| 5 Build | **One go (default):** one `/goal` (`templates/goal/run.txt`) builds every milestone of the plan in order, each on a local `milestone/<slug>-<n>` cut from fresh `origin/<default>`, or from the previous milestone only when the plan says `needs: M<k>`: per feature, write its tests, build, commit, next feature at once. **No check, lint or test runs per feature or commit.** Open questions go to `questions.md` with the default taken and never block; answers become asks of the next milestone. Then Stage 6 for that milestone in the same goal. **Feature PRs:** per feature, inside `/goal` (`templates/goal/feature.txt`): `e2e-write`, `e2e-test-run` on the feature tags, `flaky-test-fix`; bugs via `behavior-test-writer` → locked test → `fix-implementer`; `verify_gate.py feature`; `pr-create --base milestone/<slug>`; `cct:ux-review` on that PR's screens, its Critical and High fixed before auto-merge is armed. No tier on this PR — it is interior. When it merges, the next feature starts. | none |
+| 6 Milestone | Inside `/goal` (the same one in one go; `templates/goal/milestone.txt` for feature PRs), on the milestone diff only, in parallel: `cct:ux-review`, `pr-review` (Claude and Codex, reading `REVIEW.md` when the repo has one) + `review-fix-loop 1` (one round), `responsive-audit` full matrix, states, `accessibility-audit`, the full E2E suite once, ×3 only for changed and flaky specs (`../e2e-test-run/references/suite-speed-and-reliability.md` section G), `cct:ux-audit` when a screen is new, **validation**: every fact and ask exercised in the built app into `validation.md` (expected, observed, evidence, verdict; `not met` blocks), `cct:ux-validate build`, the `verifier` and `ac-auditor` agents for jobs and facts. **Last milestone of the goal only:** `security-review` on the whole goal diff when auth, money or consent is touched anywhere in it (in a project it waits for 6p). One findings list, one fix round, `verify_gate.py milestone` on a frozen head, one push, one PR **to the milestone's parent** — the default branch, or `project/<slug>` when the project has a branch — merged with a merge commit. | **Engineer accepts the milestone** (one go: only when a Critical or High would be deferred) |
+| 6p Project | Only in a project, once its last milestone has merged: re-run `checks.milestone` on the whole project, on the default branch, plus `security-review` on it when auth, money or consent is touched. No PR. With `project.branch: true`: merge the default branch into `project/<slug>` locally, the same checks, then one PR to the default branch, the one that gets the tier. No second fix round — what is left starts the next project. | **Engineer accepts the project** |
 | 7 Outcome + archive | Archive the folder when the change reaches the default branch. After release, read the success measure from PostHog into `milestone.md`. A miss starts the next change at 1.3. | Engineer reads it |
 
 ## Agents and models
@@ -136,32 +136,42 @@ screenshots, including ADR refinements; milestone `owner-marks` checks `marks.js
 
 ## Branches
 
-Two shapes. **One milestone** is the default and is unchanged:
+**One milestone** is the default; a project is several of them, each merging on its own:
 
 ```
-<defaultBranch> ─── milestone/<slug> ─── <feature branches>
+<defaultBranch> ─── milestone/<slug>-<n> (local until VERIFY PASS) ─── <parallel builder worktrees>
 ```
 
-**A project** — work that spans several milestones — adds one level above it:
+Only a project that asks for a branch (`project.branch: true`) adds one level above it:
 
 ```
-<defaultBranch> ─── project/<slug> ─── milestone/<slug> ─── <feature branches>
+<defaultBranch> ─── project/<slug> ─── milestone/<slug>-<n> ─── <parallel builder worktrees>
 ```
 
-- `project/<slug>` is cut from `origin/<defaultBranch>` at 1.2 and rebased on it after every
-  default-branch merge. It exists only while `decisions.json` names a `project`; without one,
-  milestones are cut from `<defaultBranch>` exactly as before.
-- `milestone/<slug>` is cut from its **parent** — `origin/project/<slug>` in a project,
-  `origin/<defaultBranch>` otherwise — and rebased on it after every parent merge (a Stage 5
-  precondition). The tracker's milestone maps to it.
-- One go (default): the build works in one worktree on `milestone/<slug>-<n>` itself, a commit
-  per feature; milestone `n+1` is cut from `n`, and its PR opens after `n` merges (rebase
-  `--onto` the default branch). Parallel builders, when used, merge back locally.
+- **A project is planning by default, not a branch.** `decisions.json` `project.branch` is
+  `false` for a new project: its milestones go to the default branch one by one, unfinished work
+  behind a flag. With `branch: true` (and for every project written before 3.7.0, which has no
+  `branch` key), `project/<slug>` is cut from `origin/<defaultBranch>` at 1.2 and takes it in
+  by a local merge after every default-branch merge.
+- **A milestone branch is local until it passes.** `milestone/<slug>-<n>` is created in the
+  supervisor's worktree from fresh `origin/<parent>` (the project branch when there is one,
+  else the default branch), takes its parent in by a local merge (the sync row, a Stage 5
+  precondition), and is pushed once, at the close, after `VERIFY PASS`. Pushed branches are
+  never rebased. The tracker's milestone maps to it.
+- **Milestones are independent unless the plan says otherwise.** Each is cut from its parent and
+  merges on its own. A milestone whose `## Milestones` row says `needs: M<k>` is cut from the
+  local predecessor instead, builds at once, and opens its PR after the predecessor merges;
+  milestone PRs merge with a merge commit, so it needs no rebase.
+- One go (default): the build works in the supervisor's worktree on `milestone/<slug>-<n>`
+  itself, a commit per feature. Parallel builders, when used, start from the milestone head and
+  merge back locally, one at a time.
 - Feature PRs: feature worktrees branch from the milestone: `git worktree add` from
   `origin/milestone/<slug>`, then `EnterWorktree path=` (`references/stages.md` 1.2). Their
   branch names contain the change slug.
-- Builders are `cct:builder` agents, at most 4 at once; the supervisor edits no code and runs
-  no test suite. Every builder dispatch carries `sdlc.json` `builderModel` and `builderEffort`
+- Builders are `cct:builder` agents, at most 4 at once, each dispatched with
+  `isolation: "worktree"` and a `Base: <milestone head sha>` line, which it resets to before any
+  edit: a worktree hook cuts from the trunk. The supervisor commits its records first, edits no
+  code, runs no test suite, and is the one integrator. Every builder dispatch carries `sdlc.json` `builderModel` and `builderEffort`
   (default `sonnet`, `high`; set `opus` for a hard change, or let one plan's Approach override
   them for that change). With `sdlc.json` `builders: "codex"`, every feature row and fix part runs
   instead through `scripts/codex-build.sh` (the Codex CLI in the same worktree, network off,
@@ -177,17 +187,17 @@ Everything below the trunk is an **interior merge inside one change**: a feature
 `milestone/*`, a milestone PR into `project/*`. Those carry code that has not reached anyone
 yet, and they auto-merge on their checks alone.
 
-| PR | Checks | Claude review | Ship/Show/Ask | Who approves |
-|---|---|---|---|---|
-| feature → `milestone/*` | `checks.feature` | no | no | nobody; auto-merge on green |
-| milestone → `project/*` | `checks.milestone` | no | no | nobody; auto-merge on green |
-| `project/*` or `milestone/*` → `<defaultBranch>` | `checks.milestone` | **yes** | **yes** | the tier decides |
+| PR | Checks | Ship/Show/Ask | Who approves |
+|---|---|---|---|
+| feature → `milestone/*` | `checks.feature` | no | nobody; auto-merge on green |
+| milestone → `project/*` | `checks.milestone` | no | nobody; auto-merge on green |
+| `project/*` or `milestone/*` → `<defaultBranch>` | `checks.milestone` | **yes** | the tier decides |
 
-Both CI workflows enforce this themselves, by comparing
-`github.event.pull_request.base.ref` with the repository's default branch — so the rule holds
-even for a PR opened by hand. Reviewing every interior PR re-reads the same diff two or three
-times on its way up and costs ~$1 each time; the integration PR is where the whole change is
-first seen as one thing, and that is where it is read.
+`ship-show-ask.yml` enforces this itself, by comparing `github.event.pull_request.base.ref`
+with the repository's default branch, so the rule holds even for a PR opened by hand. The code
+review is not in CI at all (3.7.0): it runs once, locally, at the milestone close, with Claude
+and Codex on the whole milestone diff. A CI review re-read that diff for about $1 a PR and
+needed `ANTHROPIC_API_KEY` in every repo.
 
 ### Records, gates and waiting
 

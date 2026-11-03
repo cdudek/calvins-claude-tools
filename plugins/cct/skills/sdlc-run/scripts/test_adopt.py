@@ -85,9 +85,6 @@ GENERATED = [
     ".claude/hooks/verify-on-stop.sh",
     ".github/tiers.json",
     ".github/workflows/ship-show-ask.yml",
-    ".github/workflows/claude-review.yml",
-    ".github/workflows/claude.yml",
-    ".github/workflows/ci-triage.yml",
     "scripts/ship_show_ask.py",
     "scripts/verify_gate.py",
     "scripts/marks.py",
@@ -126,20 +123,12 @@ def test_adopt_renders_everything_without_leftover_tokens(
         and "sdlc-run" in (repo / "CLAUDE.md").read_text()
     )
     assert "docs/sdlc.md" in (repo / "CLAUDE.md").read_text()
-    assert "workflows: [Checks]" in (repo / ".github" / "workflows" / "ci-triage.yml").read_text()
+    for name in ("claude-review.yml", "claude.yml", "ci-triage.yml"):
+        assert not (repo / ".github" / "workflows" / name).exists(), f"{name}: no Claude in CI"
     assert not (repo / ".github" / "CODEOWNERS").exists(), "no codeowners named -> no file"
     assert "notify:" not in (repo / ".github" / "workflows" / "ship-show-ask.yml").read_text(), (
         "no showChannel -> no notify job"
     )
-    # claude.yml is rendered per preset. It was once committed rendered-in-place (63f3c1a),
-    # which gave every Python repo a pnpm setup step and a pnpm allow-list.
-    claude_yml = (repo / ".github" / "workflows" / "claude.yml").read_text()
-    if kind == "python":
-        assert "setup-uv" in claude_yml and "pnpm" not in claude_yml, (
-            "python preset rendered with a node setup"
-        )
-    else:
-        assert "pnpm install" in claude_yml and "setup-uv" not in claude_yml
 
 
 def test_second_run_writes_nothing(tmp_path: Path) -> None:
@@ -701,42 +690,52 @@ def test_migrates_legacy_change_ids_and_drops_pending(tmp_path: Path) -> None:
     assert not list((repo / "changes").glob("*-adopt-sdlc"))
 
 
-def test_claude_false_writes_no_claude_workflows_and_removes_existing_ones(tmp_path: Path) -> None:
-    """sdlc.json `claude: false`: the three token-spending workflows are neither written nor
-    kept; ship-show-ask.yml is untouched. Flipping back to true writes them again."""
+def test_adopt_removes_the_claude_workflows_and_the_claude_key(tmp_path: Path) -> None:
+    """3.7.0: no Claude in CI. A repo adopted before keeps claude-review.yml, claude.yml,
+    ci-triage.yml and `claude` in sdlc.json; adopt takes all of them out (git rm) and never asks
+    for ANTHROPIC_API_KEY. ship-show-ask.yml is untouched."""
     repo = _repo(tmp_path, "node")
     env = _env()
     assert _adopt(repo).returncode == 0
     wf = repo / ".github" / "workflows"
-    assert (wf / "claude-review.yml").exists() and (wf / "ci-triage.yml").exists()
+    for name in ("claude-review.yml", "claude.yml", "ci-triage.yml"):
+        (wf / name).write_text("name: old\n")
+    cfg = json.loads((repo / "sdlc.json").read_text())
+    cfg["claude"] = True
+    (repo / "sdlc.json").write_text(json.dumps(cfg, indent=2) + "\n")
     subprocess.run(["git", "add", "."], cwd=repo, check=True, env=env)
     subprocess.run(
-        ["git", "-c", "user.name=t", "-c", "user.email=t@t", "commit", "-qm", "adopted"],
+        ["git", "-c", "user.name=t", "-c", "user.email=t@t", "commit", "-qm", "adopted before 3.7"],
         cwd=repo,
         check=True,
         env=env,
     )
 
-    cfg = json.loads((repo / "sdlc.json").read_text())
-    cfg["claude"] = False
-    (repo / "sdlc.json").write_text(json.dumps(cfg, indent=2) + "\n")
-    out = _sections(_adopt(repo).stdout)
-    for name in ("claude-review.yml", "claude.yml", "ci-triage.yml"):
-        assert not (wf / name).exists(), name
+    for flag in ((), ("--upgrade",)):
+        res = _adopt(repo, *flag)
+        assert res.returncode == 0, res.stdout + res.stderr
+        out = _sections(res.stdout)
+        for name in ("claude-review.yml", "claude.yml", "ci-triage.yml"):
+            assert not (wf / name).exists(), name
+        assert "claude" not in json.loads((repo / "sdlc.json").read_text())
+        assert not any("ANTHROPIC_API_KEY" in m for m in out["MANUAL"])
+        if not flag:
+            assert any("claude-review.yml (removed" in w for w in out["WROTE"])
+            assert any("claude removed" in w for w in out["WROTE"])
+            assert any("no merge-gate" in m for m in out["MANUAL"])
     assert (wf / "ship-show-ask.yml").exists()
-    assert any("claude-review.yml (removed" in w for w in out["WROTE"])
-    assert any("no merge-gate" in m for m in out["MANUAL"]) and not any(
-        "ANTHROPIC_API_KEY" in m for m in out["MANUAL"]
-    )
     tracked = subprocess.run(
         ["git", "ls-files", ".github/workflows"], cwd=repo, capture_output=True, text=True, env=env
     ).stdout
     assert "claude-review.yml" not in tracked, "git rm, not just unlink"
 
-    cfg["claude"] = True
-    (repo / "sdlc.json").write_text(json.dumps(cfg, indent=2) + "\n")
-    assert _adopt(repo).returncode == 0
-    assert (wf / "claude-review.yml").exists()
+
+def test_milestone_and_project_prs_merge_with_a_merge_commit() -> None:
+    """3.7.0: a stacked milestone keeps its predecessor as ancestry only if milestone PRs are
+    merge commits; everything else still squashes."""
+    wf = (ADOPT.parent.parent / "templates/workflows/ship-show-ask.yml").read_text()
+    assert "milestone/*|project/*) how=--merge" in wf and "how=--squash" in wf
+    assert '--auto "$how"' in wf and "--auto --squash" not in wf
 
 
 TIER_FILES = (
@@ -777,7 +776,7 @@ def test_tiers_false_writes_no_tier_files_and_no_tier_docs(tmp_path: Path, kind:
         assert not (repo / rel).exists(), rel
     docs = (repo / "docs" / "sdlc.md").read_text()
     assert "Ship / Show / Ask" not in docs and "ship-show-ask" not in docs
-    assert "## Merging: auto-merge on green" in docs and "gh pr merge <n> --squash --auto" in docs
+    assert "## Merging: auto-merge on green" in docs and "gh pr merge <n> --merge --auto" in docs
     assert "CODE_MANAGER_APP" not in docs and "SDLC_COOWNER" not in docs
     assert "`ask` needs a human" not in (repo / "CLAUDE.md").read_text()
     for rel in ("docs/sdlc.md", "CLAUDE.md"):
@@ -843,7 +842,7 @@ def test_tiers_yes_renders_the_tiers(tmp_path: Path, kind: str) -> None:
     _adopt(default, tiers="yes")
     docs = (default / "docs" / "sdlc.md").read_text()
     assert "## Tiers: Ship / Show / Ask by blast radius" in docs and "## Merging" not in docs
-    assert "ship-show-ask.yml labels it" in docs and "CODE_MANAGER_APP_CLIENT_ID" in docs
+    assert "labels the PR, requests reviewers" in docs and "CODE_MANAGER_APP_CLIENT_ID" in docs
     for rel in TIER_FILES[:3]:
         assert (default / rel).exists(), rel
 
@@ -941,21 +940,6 @@ def test_tiers_no_keeps_files_in_keep_and_hand_written_ones(tmp_path: Path) -> N
 def test_tiers_no_on_a_repo_without_tier_files_prints_no_ruleset_note(tmp_path: Path) -> None:
     out = _sections(_adopt(_repo(tmp_path, "node"), "--tiers", "no").stdout)
     assert not any("bypass actors" in m for m in out["MANUAL"])
-
-
-def test_merge_gate_binds_a_self_tamper_pr_to_a_head_approval() -> None:
-    """A PR that changes claude-review.yml cannot be reviewed by it. With Ship/Show/Ask off
-    nothing else sends it to a human, so the gate needs a human approval on this exact head."""
-    gate = (ADOPT.parent.parent / "templates/workflows/claude-review.yml").read_text()
-    check = gate.index("grep -qx '.github/workflows/claude-review.yml'")
-    # Before the tally is read, so a stale bot tally cannot skip it.
-    assert check < gate.index("tally=$(gh api")
-    block = gate[check : gate.index("tally=$(gh api")]
-    assert "reviewDecision" not in gate
-    assert '.state == "APPROVED"' in block and ".commit.oid == env.HEAD" in block
-    assert ".author.login != $a" in block
-    assert "needs a human approval on head $HEAD from someone other than the author" in block
-    assert "exit 1" in block
 
 
 @pytest.mark.parametrize(

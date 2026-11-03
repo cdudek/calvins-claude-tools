@@ -124,8 +124,8 @@ Run `marks.py init <id>` for Snapmark/reference images; fill `marks.json` agains
 
 **Only the PR into the default branch is tiered or reviewed.** A feature PR into
 `milestone/*`, and a milestone PR into `project/*`, are interior merges inside one change:
-they auto-merge on their checks alone, with no Claude review and no code owner. Both
-workflows check the PR's base ref themselves, so this holds for a hand-opened PR too.
+they auto-merge on their checks alone, with no code owner. The workflow checks the PR's
+base ref itself, so this holds for a hand-opened PR too.
 
 | Tier | Paths | Who looks |
 | --- | --- | --- |
@@ -146,27 +146,31 @@ never `GITHUB_TOKEN`.
 
 One owner, so no tiers (`sdlc.json` `tiers: false`). Every PR merges itself once it is green.
 
-- **Arm it:** `gh pr merge <n> --squash --auto`.
+- **Arm it:** `gh pr merge <n> --merge --auto` for a milestone or project PR (a merge commit keeps a stacked milestone free of rebases), `--squash --auto` for anything else.
 - **What it waits for:** required checks on `{{DEFAULT_BRANCH}}`.
 {{/NO_TIERS}}
 
-## Claude in CI
+## Review
+
+The code is reviewed once per milestone, locally, before the push: `cct:pr-review` with
+Claude and Codex on the milestone diff, reading `REVIEW.md`. Nothing reviews in CI, so the repo
+needs no `ANTHROPIC_API_KEY`.
+{{#TIERS}}
 
 | Workflow | Does |
 | --- | --- |
-| `claude-review.yml` | one review against `REVIEW.md`; `merge-gate` reads the tally |
-| `claude.yml` | handles `@claude` comments |
-| `ci-triage.yml` | posts a short failure triage |
-{{#TIERS}}
-| `ship-show-ask.yml` | ship-show-ask.yml labels it, requests reviewers and arms auto-merge |
+| `ship-show-ask.yml` | labels the PR, requests reviewers and arms auto-merge (a merge commit for milestone and project PRs) |
 {{/TIERS}}
 
 ## Credentials
+{{#NO_TIERS}}
+
+None: no workflow needs a secret.
+{{/NO_TIERS}}
+{{#TIERS}}
 
 | Name | Unlocks |
 | --- | --- |
-| `ANTHROPIC_API_KEY` | Claude workflows |
-{{#TIERS}}
 | `CODE_MANAGER_APP_CLIENT_ID`, `CODE_MANAGER_APP_PRIVATE_KEY` | App auto-merge |
 | `SDLC_COOWNER` | show reviewer |
 | `SDLC_SLACK_BOT_TOKEN` | optional show Slack notice |

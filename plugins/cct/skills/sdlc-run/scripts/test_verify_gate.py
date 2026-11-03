@@ -446,3 +446,61 @@ def test_milestone_gate_fails_until_the_parent_is_merged_in(tmp_path: Path) -> N
     assert "git merge origin/master" in r.stdout
     _git(repo, "merge", "-q", "--no-edit", "origin/master")
     assert _last(_gate(repo, "milestone", ID)).startswith(f"VERIFY PASS milestone {ID}")
+
+
+@pytest.mark.parametrize(
+    "check",
+    [
+        "git -c user.name=t -c user.email=t@t commit --allow-empty -qm merged-mid-gate",
+        "echo stray > stray.txt",
+    ],
+)
+def test_a_head_that_moves_during_the_checks_fails(tmp_path: Path, check: str) -> None:
+    # 3.7.0: a PASS names one frozen head. A merge or an edit while the checks run means they
+    # tested something other than the commit the line would name.
+    repo = _repo(tmp_path, ["true", check])
+    _approve(repo)
+    r = _gate(repo, "feature", ID)
+    assert r.returncode == 1 and _last(r) == f"VERIFY FAIL feature {ID} check=moved"
+
+
+def _project_repo(tmp_path: Path, project: dict) -> Path:
+    repo = _repo(tmp_path, ["true"])
+    cfg = json.loads((repo / "sdlc.json").read_text())
+    (repo / "sdlc.json").write_text(
+        json.dumps({**cfg, "defaultBranch": "master", "checks": {"milestone": ["true"]}})
+    )
+    (repo / "changes" / ID / "decisions.json").write_text(json.dumps({"project": project}))
+    _git(repo, "add", ".")
+    _git(repo, "commit", "-qm", "milestone checks, project")
+    origin = tmp_path / "origin.git"
+    _git(tmp_path, "init", "-q", "--bare", "-b", "master", str(origin))
+    _git(repo, "remote", "add", "origin", str(origin))
+    _git(repo, "push", "-q", "origin", "master")
+    other = tmp_path / "other"
+    _git(tmp_path, "clone", "-q", str(origin), str(other))
+    _git(other, "checkout", "-qb", "project/big")
+    (other / "project.txt").write_text("on the project branch only\n")
+    _git(other, "add", ".")
+    _git(other, "commit", "-qm", "project work")
+    _git(other, "push", "-q", "origin", "project/big")
+    _git(repo, "checkout", "-qb", "milestone/big-1")
+    _approve(repo)
+    return repo
+
+
+def test_a_project_without_a_branch_is_no_parent(tmp_path: Path) -> None:
+    # 3.7.0: a project is planning unless it says branch: true; its milestones sync with the
+    # default branch only.
+    repo = _project_repo(tmp_path, {"slug": "big", "branch": False})
+    assert _last(_gate(repo, "milestone", ID)).startswith(f"VERIFY PASS milestone {ID}")
+
+
+@pytest.mark.parametrize("project", [{"slug": "big"}, {"slug": "big", "branch": True}])
+def test_a_project_with_a_branch_or_from_before_3_7_still_syncs(
+    tmp_path: Path, project: dict
+) -> None:
+    repo = _project_repo(tmp_path, project)
+    r = _gate(repo, "milestone", ID)
+    assert _last(r) == f"VERIFY FAIL milestone {ID} check=parent-sync"
+    assert "git merge origin/project/big" in r.stdout

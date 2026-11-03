@@ -31,7 +31,7 @@ Run from the repo root, on a branch. Idempotent: rerun after editing `sdlc.json`
 | `.claude/hooks/*.sh` (6) | `sdlc.json` (from the preset) |
 | the SDLC entries in `.claude/settings.json` | `.github/tiers.json` (preset defaults; only while `tiers` is not `false`) |
 | `.github/CODEOWNERS` (from `codeowners` × `ask`; removed when nobody is named or `tiers` is `false`) | `REVIEW.md` |
-| `.github/workflows/{ship-show-ask,claude-review,claude,ci-triage}.yml` (the first only while `tiers` is not `false`, the last three only while `claude` is not `false`) | `CLAUDE.md` section (appended once) |
+| `.github/workflows/ship-show-ask.yml` (only while `tiers` is not `false`); `claude-review.yml`, `claude.yml` and `ci-triage.yml` are removed when present (no Claude in CI since 3.7.0) | `CLAUDE.md` section (appended once) |
 | `scripts/ship_show_ask.py` (only while `tiers` is not `false`) | the "Repo-specific" tail of `docs/sdlc.md` |
 | `docs/sdlc.md` above the marker | the first change folder |
 | the guardrail test | `.github/ISSUE_TEMPLATE/{feature,bug,spike,simple-task}.md` + `config.yml` |
@@ -42,8 +42,8 @@ Run from the repo root, on a branch. Idempotent: rerun after editing `sdlc.json`
 ask and to show. With one owner, `adopt` writes none of the four tier files and removes any
 that exist (`git rm`). `docs/sdlc.md` then says "auto-merge on green" instead of the tiers,
 and MANUAL drops the App secrets, `SDLC_COOWNER`, the Slack token and the CODEOWNERS ruleset
-note. You arm `gh pr merge <n> --squash --auto` on each PR yourself. `claude` is a separate
-switch: `tiers: false` keeps the Claude review.
+note. You arm auto-merge on each PR yourself: `gh pr merge <n> --merge --auto` for a milestone or
+project PR, `--squash` for anything else.
 
 The four issue templates mirror the Linear templates in `cct:linear-manage`, so an issue reads
 the same whichever tracker it started in. They are kept once written — a team that adds a field to
@@ -77,10 +77,11 @@ table, which is what makes `F1` traceable from `facts.md` through the test to th
    archive it when the PR is green.
 4. Run `verify` and the guardrail test. Stage everything (`git ls-files` is part of the
    test). Commit `feat(sdlc): adopt the chain`.
-5. GitHub, by the user: secrets `ANTHROPIC_API_KEY` (org), `CODE_MANAGER_APP_CLIENT_ID`,
+5. GitHub, by the user: secrets `CODE_MANAGER_APP_CLIENT_ID`,
    `CODE_MANAGER_APP_PRIVATE_KEY`; variable `SDLC_COOWNER`; optional
-   `SDLC_SLACK_BOT_TOKEN`; ruleset on the default branch per `references/tiers.md`. With
-   `tiers: false` only `ANTHROPIC_API_KEY` and the ruleset's required checks.
+   `SDLC_SLACK_BOT_TOKEN`; ruleset on the default branch per `references/tiers.md`; "Allow
+   merge commits" on in the repo settings. With `tiers: false` only the ruleset's required
+   checks and merge commits. No `ANTHROPIC_API_KEY`: nothing runs Claude in CI.
 6. The adoption PR is `ask` (`.github/**`, `.claude/**`): a human merges it. With
    `tiers: false`, arm auto-merge on it like on any other PR.
 7. The CLAUDE.md section it appended states the process and `/goal`; if the repo's

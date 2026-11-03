@@ -293,8 +293,8 @@ PATCHES = [
      f"the `verifier` and `ac-auditor` agents for jobs and facts. **Last milestone of the goal only:** "
      f"`security-review` on the whole goal diff {SEC} anywhere in it (in a project it waits for 6p). One findings list"),
     ("skills/sdlc-run/SKILL.md",
-     "re-run `checks.milestone` on the whole project diff",
-     f"re-run `checks.milestone` on the whole project diff, plus `security-review` on it {SEC}"),
+     "re-run `checks.milestone` on the whole project, on the default branch",
+     f"re-run `checks.milestone` on the whole project, on the default branch, plus `security-review` on it {SEC}"),
     ("skills/sdlc-run/references/stages.md",
      f"`cct:verifier` and `cct:ac-auditor` agents for job\n   stories and facts, `cct:security-review` {SEC}.",
      "`cct:verifier` and `cct:ac-auditor` agents for job\n   stories and facts. `cct:security-review` runs only on the goal's last milestone, on the whole\n"

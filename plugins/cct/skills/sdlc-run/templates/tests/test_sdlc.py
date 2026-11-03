@@ -879,10 +879,9 @@ def test_codeowners_is_exactly_the_ask_tier() -> None:
 def test_docs_and_workflows_exist_and_are_linked() -> None:
     assert (REPO_ROOT / "docs" / "sdlc.md").is_file()
     assert "docs/sdlc.md" in (REPO_ROOT / "CLAUDE.md").read_text(encoding="utf-8")
-    claude_on = CFG.get("claude", True)
     for wf in ("claude-review.yml", "claude.yml", "ci-triage.yml"):
-        assert (REPO_ROOT / ".github" / "workflows" / wf).is_file() == claude_on, (
-            f"{wf} (sdlc.json claude={claude_on})"
+        assert not (REPO_ROOT / ".github" / "workflows" / wf).is_file(), (
+            f"{wf}: no Claude in CI since sdlc-run 3.7.0; run adopt --upgrade"
         )
     assert (REPO_ROOT / ".github" / "workflows" / "ship-show-ask.yml").is_file() == TIERS_ON, (
         f"ship-show-ask.yml (sdlc.json tiers={TIERS_ON})"

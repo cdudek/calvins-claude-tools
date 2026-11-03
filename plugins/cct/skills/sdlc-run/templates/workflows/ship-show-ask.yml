@@ -7,7 +7,8 @@
 # Bot PRs (image bumps, dependabot) are ship.
 #
 # This workflow decides WHO looks, not WHETHER it is safe: required checks (CI, docker
-# build, k8s validate, merge-gate) still have to pass before auto-merge fires.
+# build, k8s validate) still have to pass before auto-merge fires. Milestone and project PRs
+# merge with a merge commit (sdlc-run 3.7.0), everything else squashes.
 name: Ship / Show / Ask
 
 on:
@@ -104,8 +105,8 @@ jobs:
       # armed with it lands on master with no CI run and no deploy. That happened to #168
       # and #170 on 2026-09-05 (both merged by github-actions; master was never built).
       # deploy.yml records the same scar for opening PRs. ship/show PRs need no bypass --
-      # the checks still bind the App through branch protection, where merge-gate is
-      # required too. No --delete-branch: a branch may carry a stacked PR.
+      # the checks still bind the App through branch protection. No --delete-branch: a branch
+      # may carry a stacked PR.
       - name: Mint GitHub App token
         id: app-token
         uses: actions/create-github-app-token@bcd2ba49218906704ab6c1aa796996da409d3eb1 # v3.2.0
@@ -126,10 +127,13 @@ jobs:
         env:
           GH_TOKEN: ${{ steps.app-token.outputs.token }}
           REPO: ${{ github.repository }}
+          HEAD_REF: ${{ github.event.pull_request.head.ref }}
         run: |
           set -uo pipefail
+          # A milestone or project keeps its commits: a stacked milestone then needs no rebase.
+          case "$HEAD_REF" in milestone/*|project/*) how=--merge ;; *) how=--squash ;; esac
           for attempt in 1 2 3; do
-            if gh pr merge "$PR" --repo "$REPO" --auto --squash; then exit 0; fi
+            if gh pr merge "$PR" --repo "$REPO" --auto "$how"; then exit 0; fi
             echo "auto-merge attempt $attempt failed; retrying in 10s"; sleep 10
           done
           echo "::error::could not arm auto-merge on #$PR after 3 attempts"; exit 1

@@ -54,14 +54,18 @@ every stage:
      When the engineer names several things at once, they are features of **one** change and
      one milestone, not one change each; the plan orders them.
   6. Project, asked only when the milestone fork was `new`: `none` (**recommended** — the
-     milestone goes straight to the default branch), `new` (this change opens
-     `project/<slug>`), `existing` (name it). A project is for work that will span several
-     milestones; a single milestone never needs one.
+     milestone goes straight to the default branch), `new` (this change opens a project),
+     `existing` (name it). A project is for work that will span several milestones; a single
+     milestone never needs one. A project is planning, not a branch: its milestones still go
+     to the default branch one by one, unfinished work behind a flag. Only when the engineer
+     asks for a branch does the project get `project/<slug>` (`"branch": true`).
   7. Write `decisions.json` first: `{"size", "kind", "milestone": {"kind", "slug"}, "ticket",
-     "design"}`, plus `"project": {"kind", "slug"}` when the answer was not `none`. `design` is
+     "design"}`, plus `"project": {"kind", "slug", "branch": false}` when the answer was not `none`
+     (`true` only on the engineer's words; a project written before 3.7.0 has no `branch` key
+     and keeps its branch). `design` is
      the design file's path or `"none"`. The `milestone` key marks a folder on this process.
 - **Failure modes:** asking before searching the tracker; deciding a fork yourself; opening a
-  project branch for a single milestone, which adds a level and buys nothing.
+  project branch nobody asked for, which holds finished milestones back from the default branch.
 
 ### 1.2 Folder, tracker, worktree, project and milestone branches
 
@@ -70,22 +74,25 @@ every stage:
   2. Attach to the named issue, create one for `new` (minimal first, then update; retry twice),
      or none, at the level `references/trackers.md` gives for this tool. A Linear key: `git mv`
      to `changes/<today>-<KEY>-<slug>/` and set `linear:`; a GitHub or Beads id: `decisions.json` `ticket`.
-  3. Project first, when `decisions.json` has one and `kind` is `new`:
+  3. A project branch only when `decisions.json` `project.branch` is true and `kind` is `new`:
      `git push origin origin/<defaultBranch>:refs/heads/project/<slug>`. An `existing` project
-     is already on the remote; confirm it with `git ls-remote --exit-code origin
-     project/<slug>` rather than assuming.
-     Then `new` or `single`:
-     `git push origin <parent>:refs/heads/milestone/<slug>`, where `<parent>` is
-     `origin/project/<slug>` when the change has a project and `origin/<defaultBranch>`
-     otherwise. Create or attach the tracker's milestone for it. `hotfix` cuts no milestone
-     branch.
+     branch is already on the remote; confirm it with `git ls-remote --exit-code origin
+     project/<slug>` rather than assuming. Then create or attach the tracker's milestone.
+     **The milestone branch is not pushed here** (3.7.0): it is created locally in step 5 and
+     pushed once, at the close, after `VERIFY PASS`; `pr-gate.sh` refuses an earlier push.
+     Only `delivery: "feature-prs"` pushes it now, because feature PRs need a remote base:
+     `git push origin <parent>:refs/heads/milestone/<slug>`. `<parent>` is
+     `origin/project/<slug>` when the project has a branch, else `origin/<defaultBranch>`.
+     `hotfix` cuts no milestone branch.
   4. Write `milestone.md` from the template for `new` and `single`; for `existing`, add a row to
      the named milestone's `milestone.md`. When the change names a design, add one line for it
      under that design's `## Milestones` (the guardrail test and `status` both read it).
   5. The worktree, from the main checkout (`ExitWorktree keep` first when in one):
      `git fetch origin && git worktree add --no-track -b <branch> .worktrees/<slug> <base>`,
-     then `EnterWorktree path=<repo>/.worktrees/<slug>`. `<base>` is `origin/milestone/<slug>`
-     for a milestone change, `origin/<defaultBranch>` for a hotfix; `<branch>` contains the slug.
+     then `EnterWorktree path=<repo>/.worktrees/<slug>`. One go: `<branch>` is
+     `milestone/<slug>-<n>` itself and `<base>` is `<parent>` (or, for a milestone the plan
+     marks `needs: M<k>`, the local predecessor branch). Feature PRs: `<base>` is
+     `origin/milestone/<slug>`. Hotfix: `origin/<defaultBranch>`. `<branch>` contains the slug.
      Never `EnterWorktree name=<slug>@<branch>`: the tool allows only letters, digits, `.`,
      `_`, `-` and `/` in a name, and the WorktreeCreate hook always cuts from the default branch.
 - **Failure modes:** a duplicate ticket, a worktree outside `.worktrees/`, a branch name without
@@ -195,9 +202,11 @@ One `/goal` from `templates/goal/run.txt` (turns: `goal.runTurns`) runs Stage 5 
 for every milestone of the plan, back to back. The plan's `## Milestones` groups the features;
 a change small enough for one milestone has one.
 
-1. Milestone `n` works on `milestone/<slug>-<n>`, cut from `milestone/<slug>-<n-1>` (the first
-   from its parent on origin), so the build never waits for a merge. **Its first row is the
-   sync:** `git fetch origin && git merge origin/<default>`, in a project also
+1. Milestone `n` works on a local `milestone/<slug>-<n>`, cut from fresh `origin/<parent>`, so it
+   merges on its own. Only a milestone whose `## Milestones` row says `needs: M<k>` is cut from
+   the local `milestone/<slug>-<k>` instead; it builds at once and opens its PR after `k`
+   merges. Milestone PRs merge with a merge commit, so a stacked milestone needs no rebase.
+   **Its first row is the sync:** `git fetch origin && git merge origin/<default>`, in a project also
    `git merge origin/project/<slug>`, locally in the milestone's worktree. Repeat it whenever an
    earlier milestone merges. It is a commit, never a PR; `verify_gate.py milestone` fails with
    `check=parent-sync` until it is done, so it cannot be skipped.
@@ -206,11 +215,15 @@ a change small enough for one milestone has one.
    set the row in `milestone.md` to `done <sha>`, start the next feature at once. **Nothing
    runs between features**: no `verify_gate.py feature`, no lint, no tests, no CI, no UX review.
    A commit that breaks something is found by the milestone's checks, which is the point.
-3. Features that edit different files may build in parallel worktrees cut from the milestone
-   branch (Wall clock below); the supervisor merges them into the milestone branch locally.
+3. Features that edit different files may build in parallel (Wall clock below): the supervisor
+   commits its records, then dispatches each builder with a `Base: <milestone head sha>` line,
+   and merges the builders' branches into the milestone branch locally, one at a time. Commits
+   need Conventional Commit subjects: a merge commit keeps them, and the release reads them.
 4. When every feature of the milestone is `done`, the supervisor hands the milestone's local
-   pipeline to **one `cct:builder` subagent** (unit tests, the full E2E suite, the one fix
-   round, `verify_gate.py milestone`; it spawns no agents of its own). The supervisor dispatches
+   pipeline to **one `cct:builder` subagent with `Mode: close`** and the head it runs on
+   (unit tests, the full E2E suite, the one fix round, `verify_gate.py milestone`; it spawns no
+   agents of its own). Nothing merges into the milestone while it runs: the gate fails
+   `check=moved` if the head changes. The supervisor dispatches
    the Stage 6 reviews and the validation in parallel, writes the findings the subagent fixes, and
    goes on building the next milestone wherever that does not build on this one. Only a
    `VERIFY PASS milestone` head is pushed, once, with one PR and auto-merge armed. CI is the last
@@ -264,10 +277,10 @@ a change small enough for one milestone has one.
   8. Arm auto-merge and start the next independent feature at once (Records, gates and
      waiting, below). PR CI runs lint, types, unit tests and the specs this PR changed; the
      full E2E suite runs on the milestone head (`ci-blueprint.md`, A5). This PR is
-     **interior** — its base is `milestone/<slug>`, not the default branch — so neither the
-     Claude review nor Ship/Show/Ask runs on it, and no human is asked to approve it. Both
-     workflows skip themselves on the base ref (`references/tiers.md`). The code is reviewed
-     once, on the PR that reaches the default branch.
+     **interior** — its base is `milestone/<slug>`, not the default branch — so Ship/Show/Ask
+     does not run on it, and no human is asked to approve it. The workflow skips itself on the
+     base ref (`references/tiers.md`). The code is reviewed once, locally, at the milestone
+     close.
   9. On merge: the feature's row in `milestone.md` → `merged`; the next feature starts.
 - **Failure modes:** an edit outside `/goal` (refused), a protected-path edit (refused), a test
   edited to pass.
@@ -320,10 +333,14 @@ A milestone spent three hours between "every feature done" and "PR merged" (omr-
 shared one checkout and one port, so nothing could overlap. These rules make the waiting
 disappear.
 
-- **One worktree per builder.** Each feature or fix-part builder runs in its own worktree at
-  `<repo>/.worktrees/<feature>` (an `Agent` of type `cct:builder` with `isolation: "worktree"`, or the 1.2 recipe),
-  cuts its branch from `milestone/<slug>` there, and never checks out the milestone branch. The
-  supervisor's worktree holds the milestone branch and does the merges. Independent features
+- **One worktree per builder, from the milestone head.** Each feature or fix-part builder is an
+  `Agent` of type `cct:builder` with `isolation: "worktree"` and a `Base: <sha>` line in
+  its prompt: the milestone head after the supervisor committed its records. A worktree hook
+  (the owner's, or Claude Code's default) cuts that worktree from `origin/<default>`, and in one
+  go the milestone exists only locally, so the builder's first act is `git reset --hard <sha>`;
+  without it a second builder never sees the features already committed. It never checks out
+  the milestone branch. The supervisor's worktree holds the milestone branch and is the one
+  integrator: it merges builder branches one at a time and never while a close runs. Independent features
   build at the same time. Features that edit the same files run one after another, the second
   cut after the first has merged.
 - **The supervisor plans, dispatches, judges and merges.** The session that runs this skill edits
@@ -377,7 +394,7 @@ disappear.
 ## Stage 6 — Milestone, inside /goal
 
 Scope: `git diff <parent>...milestone/<slug>` only, where `<parent>` is
-`origin/project/<slug>` when the change has a project and `origin/<defaultBranch>` otherwise.
+`origin/project/<slug>` when the project has a branch and `origin/<defaultBranch>` otherwise.
 Diffing a project's milestone against the trunk pulls in the sibling milestones already
 merged into the project branch, and reviews them again.
 
@@ -387,7 +404,9 @@ person's own browser session. Never use Claude in Chrome or any tool driving tha
 
 1. One go: the same goal continues from Stage 5. Feature PRs: start `/goal` with
    `templates/goal/milestone.txt` filled (`goal.milestoneTurns`).
-2. Run on the diff, each once and in parallel: `cct:ux-review`, `cct:pr-review`,
+2. Run on the diff, each once and in parallel: `cct:ux-review`, `cct:pr-review` (Claude
+   and Codex; it reads the repo's `REVIEW.md` when there is one, the only code review the
+   change gets, since 3.7.0 nothing reviews in CI),
    `cct:responsive-audit` (the `responsiveTier` matrix, nothing overflows; reflow at
    320 × 640, WCAG 1.4.10 as written, never a 320 × 256 window), the states of
    every changed page, `cct:accessibility-audit`, the full E2E suite once, ×3 only for
@@ -431,7 +450,8 @@ person's own browser session. Never use Claude in Chrome or any tool driving tha
    the next milestone.
 5. Reopen recaptured images and rerun their visual checks. Then
    `python3 scripts/verify_gate.py milestone <id> --visual-check "<checker>" --visual-run "<run>"`
-   once, after the fixes, never between them; on `FAIL` fix and rerun until `VERIFY PASS` (passed
+   once, after the fixes, never between them, run by the close builder (`Mode: close`) on a
+   head nothing else touches; on `FAIL` fix and rerun until `VERIFY PASS` (passed
    checks on an unchanged tree are cached; the third failed run blocks with `reason=attempts`).
    Repeat `--visual-run` for every required current UX run; failures enter
    `verify/report.json` and `report.md` as failed checks. Resolve the checker from the installed
@@ -440,14 +460,16 @@ person's own browser session. Never use Claude in Chrome or any tool driving tha
    The milestone gate also runs `marks.py check` as `owner-marks` when sessions or `marks.json`
    exist, independently of `sdlc.json` checks or UX skips. Paste `python3 scripts/marks.py table <id>`
    into the milestone report, including accepted gaps. A file check proves coverage, not pixels.
-6. One push and one PR `milestone/<slug>` → **its parent** (`project/<slug>`, else the default
-   branch) with the report, `validation.md` and `Closes <KEY>` for the change's issue, only once
-   the gate passed on that exact head. One go: milestone `n` opens its PR once milestone `n-1` has
-   merged and `n` has merged the new parent in (its sync row, run again); the build of `n+1` goes
-   on meanwhile. A red CI check: read its log, one fix commit, the gate again, one push. Never
+6. One push and one PR `milestone/<slug>` → **its parent** (`project/<slug>` when the project
+   has a branch, else the default branch) with the report, `validation.md` and `Closes <KEY>`
+   for the change's issue, only once the gate passed on that exact head; it merges with a merge
+   commit (`gh pr merge <n> --merge --auto`). This push is the milestone branch's first. A
+   milestone that `needs` an earlier one opens its PR once that one has merged and this one has
+   merged the new parent in (its sync row, run again); an independent milestone opens its PR at
+   once. A red CI check: read its log, one fix commit, the gate again, one push. Never
    rerun a job to see whether it passes.
    Into a project it is an interior PR:
-   no Claude review, no tier, auto-merge armed on green. Into the default branch the tier
+   no tier, auto-merge armed on green. Into the default branch the tier
    decides. **The engineer accepts the milestone** in one `AskUserQuestion`: "Accept
    (Recommended)" with the one-line reason, or "Hold" with what is left. One go: no dialog;
    auto-merge is armed on green and the engineer reads `validation.md` in the PR. The dialog
@@ -455,20 +477,22 @@ person's own browser session. Never use Claude in Chrome or any tool driving tha
 
 ## Stage 6p — Project, inside /goal
 
-Only when `decisions.json` has a `project`, and only once every milestone of it has merged
-into `project/<slug>`.
+Only when `decisions.json` has a `project`, and only once its last milestone has merged.
 
-1. Nothing is pushed to `project/<slug>`: every milestone already merged the default branch in
-   (its sync row), so the project branch carries it.
-2. Re-run `checks.milestone` locally on a checkout of `origin/project/<slug>` merged with
-   `origin/<defaultBranch>` — the whole project as one diff. The per-milestone reviews each saw
-   one slice; this is the first time anything looks at the seams between them. Run `cct:security-review` on the same diff when auth, money or consent is touched;
-   it is the project's only security review. The gate line goes
-   in the project PR's description. A blocking finding becomes one more milestone, closed and
-   merged like any other, never a commit pushed to `project/<slug>`.
-3. One PR `project/<slug>` → default branch. **This is the PR that CI reviews and tiers** — the
-   first and only one in the whole chain that does. If the default branch moved after the last
-   sync, `gh pr update-branch <n>` once. Auto-merge armed when the tier allows.
+1. **Without a project branch (the default):** every milestone already reached the default
+   branch. Re-run `checks.milestone` locally on a fresh checkout of `origin/<defaultBranch>`,
+   the whole project as it shipped. The per-milestone reviews each saw one slice; this is the
+   first time anything looks at the seams between them. Run `cct:security-review` on the same diff when auth, money or consent is touched;
+   it is the project's only security review. The gate line goes in the project's
+   tracker entry. No PR. Remove the flags that hid unfinished work as the project's last
+   change, or record when they go.
+2. **With `project.branch: true`:** nothing is pushed to `project/<slug>` directly: every
+   milestone merged the default branch in (its sync row), so the project branch carries it.
+   Re-run `checks.milestone` on a checkout of `origin/project/<slug>` merged with
+   `origin/<defaultBranch>`, then one PR `project/<slug>` → default branch with the gate line
+   in its description, merged with a merge commit. This is the PR that gets a tier. If the
+   default branch moved after the last sync, merge it in locally once; never rebase it.
+3. A blocking finding becomes one more milestone, closed and merged like any other.
 4. **The engineer accepts the project** in one `AskUserQuestion`. No second fix round: what is
    left becomes the next project's first change.
 

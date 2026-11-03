@@ -862,9 +862,8 @@ describe("docs and workflows", () => {
   it("exist and are linked from CLAUDE.md", () => {
     expect(existsSync(join(ROOT, "docs", "sdlc.md"))).toBe(true);
     expect(readFileSync(join(ROOT, "CLAUDE.md"), "utf8")).toContain("docs/sdlc.md");
-    const claudeOn = (cfg as { claude?: boolean }).claude !== false;
     for (const wf of ["claude-review.yml", "claude.yml", "ci-triage.yml"])
-      expect(existsSync(join(ROOT, ".github", "workflows", wf)), `${wf} (sdlc.json claude=${claudeOn})`).toBe(claudeOn);
+      expect(existsSync(join(ROOT, ".github", "workflows", wf)), `${wf}: no Claude in CI since sdlc-run 3.7.0; run adopt --upgrade`).toBe(false);
     for (const wf of ["ship-show-ask.yml"])
       expect(existsSync(join(ROOT, ".github", "workflows", wf)), `${wf} (sdlc.json tiers=${TIERS_ON})`).toBe(TIERS_ON);
   });
