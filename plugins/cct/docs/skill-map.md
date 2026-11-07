@@ -2,7 +2,7 @@
 
 Where every skill, agent and command in this plugin came from. Call each one as `cct:<name>`.
 
-Description budget: 68 skills, 32,724 characters of descriptions, read on every prompt.
+Description budget: 71 skills, 34,543 characters of descriptions, read on every prompt.
 
 | Name | Kind | Source |
 | --- | --- | --- |
@@ -72,7 +72,6 @@ Description budget: 68 skills, 32,724 characters of descriptions, read on every 
 | `security-review` | skill | omr-dev:security-review |
 | `squash` | skill | omr-dev:squash |
 | `state-machine` | skill | interaction-design:state-machine |
-| `tracking-apply` | skill | omr-dev:tracking-apply |
 | `transcripts-fix` | skill | omr-core:transcripts-fix |
 | `ux-audit` | skill | omr-ux:audit |
 | `ux-conformance` | skill | omr-ux:conformance |
@@ -88,4 +87,8 @@ Description budget: 68 skills, 32,724 characters of descriptions, read on every 
 | `ux-writing` | skill | designer-toolkit:ux-writing |
 | `variants-create` | skill | omr-dev:variants-create |
 | `write-ticket` | skill | omr-pm:write-ticket |
-| `project-kickoff` | skill | cct |
+| `posthog-manage` | skill | hand-written (overlay) |
+| `project-kickoff` | skill | hand-written (overlay) |
+| `tracking-apply` | skill | hand-written (overlay) |
+| `tracking-audit` | skill | hand-written (overlay) |
+| `tracking-setup` | skill | hand-written (overlay) |

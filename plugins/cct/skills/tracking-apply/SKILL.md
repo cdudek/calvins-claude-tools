@@ -1,159 +1,122 @@
 ---
 name: tracking-apply
-description: Implement or audit OMR analytics tracking across any team's frontend, per the OMR Event Tracking Conventions (GA4 + PostHog, category-based routing through the typed @ramp106/omrjs-tracking wrapper). Use when the user says "add tracking", "implement tracking", "track this", "instrument", "new tracking event", "how do I fire an event", "use the tracking wrapper", "tracking audit", "audit tracking", "review tracking", "event naming", "GA4 event", "PostHog event", or when a PR/spec adds or changes analytics events.
-allowed-tools: "Read Grep Glob Edit Write Bash(gh *) Bash(git *)"
+description: Adds the analytics a feature needs: from a feature, plan or success measure, decides the events and properties (which tool, new event or property), adds them to the central tracking registry, wires call sites through the typed helper, adds tests (right event fired, nothing before consent), regenerates the tracking plan and names the success-measure query. Outputs an events table for a tech plan. Use for "add tracking", "instrument this", "what should we track", "new event", "success measure". Skip when no registry exists yet (tracking-setup) or for a read-only check (tracking-audit).
+allowed-tools: "Read Grep Glob Edit Write Bash(git *) Bash(gh *) Bash(pnpm *) Bash(npm *) Bash(npx *) Bash(yarn *) Bash(bun *) Bash(uv *) Bash(python3 *)"
 user_invocable: true
 metadata:
-  version: 1.0.0
-  author: Calvin Dudek
+  version: 2.0.0
 ---
 
-# Use Tracking
+# Tracking apply
 
-Instrument analytics on any OMR frontend, or audit existing tracking, so every event
-follows the OMR Event Tracking Conventions. Two tools on purpose: **GA4** for ad
-attribution, **PostHog** for product behaviour. Events route by **category**, decided once
-in the typed registry — never by a per-callsite tool choice, and never by calling GA4 or
-PostHog directly.
+Adds the tracking one change needs, through the project's central tracking library. Events are defined in the registry, never at the call site.
 
-This skill is org-wide. It applies to every team's tracking (reviews, eventmanager,
-festival, platform, …), not one product.
+Read first:
 
-## Reference files — read before doing anything
+- `../tracking-setup/references/conventions.md`: the two decisions, naming, categories, properties, identity, privacy, lifecycle, limits.
+- `../tracking-setup/references/library.md`: the registry fields, the helper, the test adapter.
+- The project's registry, its tracking doc (`docs/tracking.md`) and the generated plan (`docs/tracking-plan.md`).
 
-- **`references/tracking-conventions.md`** — the full conventions: the four-point idea,
-  naming, the six categories + routing, properties, identity, consent/PII, event lifecycle,
-  ownership, anti-patterns, hard limits, worked examples, and end-to-end journeys. The
-  authority for *what to name things and where they route*.
-- **`references/using-the-wrapper.md`** — how to actually fire events in code with the
-  shipped `@ramp106/omrjs-tracking` wrapper: the two-layer package architecture,
-  `initTracking` / `track` / `identify`, adding a new event, building a team package,
-  renames/migrations (`legacyAlias`, `dataLayerName`, …), and what the wrapper enforces.
-  The authority for *how to implement*.
+No registry yet (direct SDK calls, or no tracking at all)? Run `cct:tracking-setup` first and come back.
 
-Read `using-the-wrapper.md` for Implement work, `tracking-conventions.md` for Audit work —
-in practice both, since implementing correctly means obeying the conventions.
+## 1. Start from the question
 
-## Source of truth, in order
+Take the input: a feature description, a plan, a PR, or a success measure (in the SDLC, the one in `intent.md`). Write down, in plain words:
 
-1. **The typed registry in code** — `@ramp106/omrjs-tracking`'s `CORE_EVENTS` plus each
-   team's `defineTeamEvents({ ... })` registry (e.g. `packages/tracking-reviews/src/registry.ts`
-   in the omr-js monorepo). This is what actually exists and fires.
-2. **The event catalogue** — the canonical list of proposed names/categories/props per
-   product. A living proposal; diverging is fine when the alternative follows the rules —
-   but then the catalogue is updated in the same change.
-3. **The conventions** (`references/tracking-conventions.md`) — the rules everything must
-   satisfy. Fixed; changes need sign-off (Calvin).
+- the success measure: the number that says this change worked, and over what window;
+- the questions behind it: what someone will ask of the data (where do people drop off, which option wins, does it bring people back).
 
-The hard requirement is **self-consistency**: registry, catalogue, and spec must always
-agree on names, categories, and lifecycle states. Divergence without updating the others is
-a violation; divergence *with* the update is a normal decision.
+No question, no event. A change with no success measure and no question gets no new events; say so in one line.
 
-## Mode selection
+## 2. Reuse before inventing
 
-- User wants to instrument something new, wire up an app, or add/fire an event → **Implement mode**.
-- User has a PR, spec, diff, or codebase with tracking calls to check → **Audit mode**.
-- Ambiguous → ask which. Usually audit first (design/implement follows).
+Search the registry for each question. An existing event often answers it with one new property (Decision 2). Funnel steps that already exist (`checkout_start`, `purchase`) are reused, never duplicated under a feature-specific name.
 
-## Hard rules (non-negotiable — enforceable violations, not style)
+## 3. Decide each event
 
-| Rule | Wrong | Right |
-|---|---|---|
-| Lowercase `snake_case` | `ReviewSubmit`, `submit-review` | `review_submit` |
-| Present tense verb | `review_submitted`, `ai_message_sent` | `review_submit`, `assistant_message_send` |
-| Object first (`object_verb`) | `submit_review`, `apply_filter` | `review_submit`, `filter_apply` |
-| **One event, never one per variant** | `share_twitter`/`share_linkedin`, `signup_google` | `share` + `share_channel`, `signup` + `signup_method` |
-| No values in the name | `reengage_after_30d`, any `*_v2` name | `session_reengage` + property; carrier names live in the registry, not the event name |
-| No PII in a property value | raw email, person name, phone, free text | opaque IDs, `email_hash`, derived numbers (`review_length_chars`) |
-| A fixed string, never a variable | `track(name)` | `track('review_submit')` |
-| No reserved prefixes/names | `ga_*`, `google_*`, `firebase_*`, `$*`; GA4 reserved names `user_engagement`, `session_start`, `first_open`, `first_visit`, `app_remove`, `app_update` | plain names |
-| Route through the wrapper only | `dataLayer.push(...)`, `gtag(...)`, `posthog.capture(...)` in an app | `track(...)` from the team package |
+For every candidate, in order (`conventions.md`, "Checks / While designing"):
 
-Naming is never compromised — not for migration convenience, not for GA4 report continuity.
-Renames go through the 30-day dual-fire / deprecation window instead (see the wrapper guide).
+1. **The question it answers.** One sentence. It goes in the registry.
+2. **Category, and so the tool** (Decision 1): lifecycle, acquisition, meaningful action go to both; engagement, retention, friction to product analytics only.
+3. **New event or property** (Decision 2). A variant is a property. A detail-page view is `page_view` + `page_type`.
+4. **Name**: `object_verb`, present tense, `snake_case`, no values, 40 characters or fewer.
+5. **Properties**: `object_adjective`, `is_`/`has_`, units in the name, a fixed set of values wherever possible, IDs not names. No free text, no email, no token. 25 or fewer if it goes to marketing.
+6. **Surface** from the recorded list; propose a new value in the same change if none fits.
+7. **Client or server**: revenue and state the database already knows go server-side.
+8. **Marketing name** if it has a recommended equivalent (`sign_up`, `generate_lead`, `purchase`).
 
-## Categories and routing (the one decision that matters)
+## 4. The events table
 
-Category answers "what business question does this serve" and mechanically decides the tool.
-Work down the list, stop at the first match:
+This is the output for a tech plan (`plan.md` in the SDLC, stage 4) and the PR body. Keep it short:
 
-| Category | Test | Routes to |
-|---|---|---|
-| `lifecycle` | session / page-frame (`page_view`, `consent_update`) | Both |
-| `acquisition` | anonymous becomes known, ad-attributable (`signup`, `lead_generate`) | Both |
-| `meaningful_action` | a leadership dashboard reports it **OR** marketing bids on it | Both |
-| `engagement` | a smaller step toward a meaningful action (`filter_apply`) | PostHog |
-| `retention` | users returning / adopting (`session_reengage`, `notification_click`) | PostHog |
-| `friction` | where users get stuck (`login_fail`) | PostHog |
+```markdown
+### Tracking
 
-`cta_click` is the single per-call exception (`meaningful_action` for high-intent,
-`engagement` otherwise). Category labels are internal routing attributes — never sent as
-event names or payload fields, so `engagement` does not collide with GA4's reserved
-`user_engagement`.
+Success measure: checkout conversion (purchase / checkout_start), 14 days after release, by payment_method.
 
-## New event, or a property on an existing one?
+| Event | New? | Category | Goes to | Side | Properties | Fired when | Question |
+| --- | --- | --- | --- | --- | --- | --- | --- |
+| `checkout_start` | reused | engagement | product | client | + `has_saved_card` | checkout page opens with items | Do saved cards start more checkouts? |
+| `purchase` | reused | meaningful_action | both | server | (none new) | payment webhook confirms | Did conversion move? |
+| `payment_method_select` | new | engagement | product | client | `payment_method` | a method is picked | Which methods do people try first? |
 
-Same action, only the kind differs (rating, method, channel) → **property**. A genuinely
-different action, or a distinct funnel step with its own drop-off → **new event**. Funnel
-steps (`review_start` → `review_submit`) are separate events, not variants. Detail-page
-views are `page_view` + `page_type` + entity id, never `article_view` / `item_view`.
+Query: see "Success-measure query" below.
+```
 
-## Implement mode
+In the SDLC this table is the whole of the tracking work at the plan stage; the build stage does steps 5 to 8.
 
-1. Read `references/using-the-wrapper.md` (and consult `tracking-conventions.md` for
-   naming/category calls).
-2. **Locate the team package.** Apps import `track` / `identify` from their team package
-   (e.g. `@ramp106/omrjs-tracking-reviews`), never from `@ramp106/omrjs-tracking`. Confirm
-   the app is initialised once with `initTracking({ app, posthog, debug })`.
-3. **Reuse before inventing.** Grep the registry + catalogue for an existing event first.
-4. **Design the event** with the conventions' checklist: category (→ routing), new-event-
-   vs-property, `object_verb` name, typed props (`object_adjective`, `is_`/`has_` booleans,
-   unit suffixes, fixed value sets), a `surface` from the list, PII check on every value.
-5. **Add it to the team registry** via `defineTeamEvents({ ... })` — canonical name,
-   `category`, `state: 'proposed'`, typed props. New page type → augment `PageTypeExtensions`;
-   new prop on a core event → augment the extension interface. A rename gets a `legacyAlias`
-   (+ `sunsetDate`, and a `legacyPayload` if the legacy GTM fields differ) — never a `live`→
-   `removed` jump.
-6. **Fire it** at the call site: `track('name', { surface, ...props })`. Never pass `app`,
-   `experiment_variant`, or identity fields — the wrapper adds them. Identity is set once at
-   login via `identify(...)`, reset on logout via `resetIdentity()`.
-7. **Update the catalogue in the same change** if the registry now diverges from it.
-8. Verify: `tsc` compiles (the typed registry accepts the event + props), and in `debug`
-   mode the dev-validate warnings are clean.
+## 5. Add to the registry
 
-## Audit mode
+One entry per new event, with every field: `name`, `category`, `capture`, `owner`, `status: "proposed"`, `question`, `since` (the next release version), `props` with their kinds, `optional`, `marketingName` when it applies. A new property on an existing event goes into that entry's `props`.
 
-1. Read both reference files.
-2. **Collect the events under review** — from a PR (`gh pr diff` / `gh pr view`), a spec, or
-   by grepping the code for `track(`, and for leaks: `dataLayer.push`, `gtag(`, `capture(`.
-3. **Check each event**, in order:
-   hard rules → category/routing (apply the category test yourself; don't trust the label) →
-   catalogue/registry conformance (name + category match a row; flag drift) → properties
-   (`snake_case`, `object_adjective`, `is_`/`has_`, unit suffixes, **no PII**) → lifecycle
-   (new = `proposed`; renames have a deprecation path, never `live`→`removed`) → identity
-   (set once at login, never repeated per-event; the contract fields only) → **wrapper
-   discipline** (no direct GA4/PostHog calls in app code).
-4. **Report findings by severity:**
-   - **Violation** — breaks a hard rule (naming, PII, one-per-variant, lifecycle, direct
-     tool call). Must fix.
-   - **Inconsistency** — diverges from catalogue/registry without updating it, or uses
-     states/categories inconsistently. Fix by picking one and updating every source in the
-     same change.
-   - **Suggestion** — compliant but improvable.
-   Each finding: event name, what's wrong, the compliant alternative, and which convention
-   section (or wrapper rule) it violates.
+A rename is never an edit of the old name. Add the new entry, mark the old one `deprecated` with `replacedBy` and a sunset 30 or more days out; the library dual-fires both until then. Note the dashboards to repoint in the tracking doc's migration table.
 
-## Ownership guard
+New surface or page type: add it to the lists in the library in the same change.
 
-Per-event category calls belong to the team — apply the category test, record the decision
-once (registry + catalogue, same change). Only two things escalate: changes to the
-conventions themselves (naming rules, routing table, identity model — sign-off: Calvin), and
-new events entering the catalogue (gated by the catalogue owner once assigned). An audit
-checks that the decision rule was applied and recorded consistently, not who made it.
+## 6. Wire the call sites
 
-## Sources
+```ts
+track(events.paymentMethodSelect, { surface: "checkout", payment_method: "paypal" });
+```
 
-Written from scratch by OMR. The bundled `references/tracking-conventions.md` is a snapshot
-of the OMR Event Tracking Conventions (Knowledge Hub topic "Tracking Architecture Reset");
-`references/using-the-wrapper.md` documents the `@ramp106/omrjs-tracking` package in the
-[ramp106/omr-js](https://github.com/ramp106/omr-js) monorepo.
+- Import from the library only. No SDK import, no `gtag`, no `dataLayer.push`, no string literal or variable as the event.
+- Fire on the user's action or the confirmed state change, not on render. Fire once: guard effects that run twice in development.
+- Server events go through `trackServer` where the state changes (the webhook, the job), never also from the client.
+- Never pass `app`, the category, `experiment_variant` or identity; the library adds them.
+
+## 7. Tests
+
+With the memory adapter (`library.md`, "Tests"):
+
+- one test per new call site: the action fires the right event with the expected properties, once;
+- if the change touches a flow that runs before consent (landing, sign-up), a test that nothing is sent before consent;
+- the registry test passes with the new entries (naming, fields, limits, unique names).
+
+For E2E coverage, assert on the memory adapter or on intercepted requests to the analytics hosts, in the spec that already covers the flow.
+
+## 8. Regenerate and check
+
+1. Run the plan generator (`tracking:plan` or the project's equivalent) and commit `docs/tracking-plan.md` with the change.
+2. Run the project's typecheck, lint and tests.
+3. Run `cct:tracking-audit` on the diff when the change adds more than a couple of events.
+
+## 9. Success-measure query
+
+Name how the measure is read after release, so the outcome step can run it unchanged. For PostHog, a HogQL query that `cct:posthog-manage` can run:
+
+```sql
+SELECT
+  countIf(event = 'purchase') / nullIf(countIf(event = 'checkout_start'), 0) AS conversion
+FROM events
+WHERE event IN ('checkout_start', 'purchase')
+  AND timestamp >= toDateTime('2026-01-15') AND timestamp < toDateTime('2026-01-29')
+```
+
+Or name the saved insight to create (type, events, breakdown, window). For a funnel, give the steps in order and the conversion window.
+
+## Output
+
+- The events table (for the plan or the PR).
+- Registry entries, call sites, tests, the regenerated tracking plan.
+- The success-measure query or insight definition.
+- Anything left open, in one line each (a new surface to agree, a dashboard to repoint).
