@@ -1,18 +1,65 @@
 #!/usr/bin/env bash
-# Usage: ph check                                  - says which of POSTHOG_API_KEY, POSTHOG_HOST, POSTHOG_PROJECT_ID are set, never their values
-#        ph query 'HogQL'                          - runs a HogQL query in the project
-#        ph METHOD /path [json-body|@file.json]    - a PostHog REST call; "{project}" in the path becomes POSTHOG_PROJECT_ID
-# Purpose: call the PostHog API with the user's personal API key without the key reaching stdout, stderr or the process list.
-# Output: the raw JSON response (pipe to jq), with anything that looks like a personal API key redacted.
+# Usage: ph help                  - every subcommand
+#        ph <area> <verb> [args]  - flags, experiments, dashboards, insights, trend, funnel, retention, events, query,
+#                                   recordings, playlists, persons, cohorts, annotations, surveys, errors, properties, actions
+#        ph METHOD /path [json|@file.json] - any PostHog REST call; "{project}" in the path becomes the project id
+# Purpose: the PostHog API with the user's personal API key, without the key reaching stdout, stderr or the process list.
+# Output: one compact JSON object per line (no output = no rows); --table or --csv for lists. Keys shaped like ph?_... are redacted.
+# Writes: every change prints the request and stops unless --yes is given.
 set -euo pipefail
+
+die() { echo "posthog-manage: $1" >&2; exit "${2:-1}"; }
+command -v jq >/dev/null 2>&1 || die "needs jq (brew install jq, apt install jq)"
+
+YES="" FMT=json ARGS=()
+for a in "$@"; do
+  case $a in --yes) YES=1 ;; --table) FMT=table ;; --csv) FMT=csv ;; *) ARGS+=("$a") ;; esac
+done
+set -- "${ARGS[@]+"${ARGS[@]}"}"
 
 # Values come from the environment; if unset, from the user's interactive zsh profile (its banner goes to /dev/null, only the value comes back on fd 3).
 zshvar() { command -v zsh >/dev/null 2>&1 && zsh -ic "print -rn -- \"\$$1\" >&3" 3>&1 >/dev/null 2>&1 || true; }
 
-# Not exported: the key only ever reaches curl through the here-string below.
+# Not exported: the key only ever reaches curl through a here-string.
 key="${POSTHOG_API_KEY:-$(zshvar POSTHOG_API_KEY)}"
 host="${POSTHOG_HOST:-$(zshvar POSTHOG_HOST)}"
 project="${POSTHOG_PROJECT_ID:-$(zshvar POSTHOG_PROJECT_ID)}"
+
+usage() {
+  cat <<'EOF'
+Setup       ph check | whoami | projects | use <project-id>
+Flags       ph flags list [--active] [--search S] | get <key|id> | evaluate <flag> <distinct-id>
+            ph flags create <key> [--name N] [--rollout PCT] [--prop k=v|k~v]... [--variants a:50,b:50] [--active]
+            ph flags rollout <flag> <PCT> [--condition N] | enable <flag> | disable <flag> | delete <flag>
+Experiments ph experiments list [--status S] | get <id> | results <id>
+            ph experiments create <name> --flag <key> [--variants control:50,test:50] [--event E | --funnel e1,e2]
+                                  [--description D] [--allow-unknown-events]
+            ph experiments launch <id> | stop <id> [--conclusion won|lost|inconclusive|stopped_early|invalid] [--comment C]
+            ph experiments archive <id> [--disable-flag] | delete <id>
+Dashboards  ph dashboards list | get <id> | url <id> | create <name> [--description D] | add <dashboard-id> <insight-id> | delete <id>
+Insights    ph insights list [--search S] | get <id|short-id> | url <id|short-id> | delete <id>
+            ph insights create trend <event> | funnel <e1> <e2>... | hogql 'SQL'   --name N [--dashboard ID] [report options]
+Reports     ph trend <event> [--days N] [--interval hour|day|week|month] [--breakdown PROP] [--math total|dau|weekly_active|monthly_active]
+            ph funnel <e1> <e2>... [--days N] [--window DAYS]
+            ph retention <event> [--return-event E] [--period Day|Week|Month] [--intervals N]
+            ph events top [--days N] [--limit N]
+            ph query 'HogQL'
+Recordings  ph recordings list [--days N] [--person ID|EMAIL] [--min-duration SEC] [--errors] [--url TEXT] [--limit N]
+            ph recordings get <session-id> | console <session-id> [--level error|warn|info|log] | events <session-id>
+            ph recordings export <session-id> <file>     (personal data: a new file outside any git repo)
+            ph playlists list | add <playlist-short-id> <session-id>
+People      ph persons find <distinct-id|email> | events <distinct-id|email> [--days N] [--limit N]
+            ph cohorts list | create-static <name> <distinct-id>... | create-static <name> @ids.txt
+Other       ph annotations list | create <text> [--date ISO] | delete <id>
+            ph surveys list | get <id> | results <id> [--days N]
+            ph errors list [--status active|resolved|archived] [--limit N]
+            ph events list [--search S] | describe <name> | verify <name>
+            ph properties list [--event NAME] [--search S]
+            ph actions list
+Raw         ph METHOD /path [json|@file.json]        (anything but GET and POST .../query/ needs --yes)
+Global      --yes sends a write; --table or --csv for lists
+EOF
+}
 
 if [[ "${1:-}" == check ]]; then
   for pair in "POSTHOG_API_KEY=$key" "POSTHOG_HOST=$host" "POSTHOG_PROJECT_ID=$project"; do
@@ -20,44 +67,607 @@ if [[ "${1:-}" == check ]]; then
   done
   exit 0
 fi
+[[ "${1:-help}" =~ ^(help|-h|--help)$ ]] && { usage; exit 0; }
 
-if [[ -z "$key" || -z "$host" ]]; then
-  echo "posthog-manage: export POSTHOG_API_KEY and POSTHOG_HOST in your shell profile (see the skill's key setup)" >&2
-  exit 1
-fi
+[[ -n "$key" ]] || die "export POSTHOG_API_KEY in your shell profile (see the skill's first run)"
+
+# ── The one place that talks to PostHog ───────────────────────────────────────
+redact() { sed -E 's/ph[a-z]_[A-Za-z0-9_-]{8,}/ph_[redacted]/g'; }
+
+curl_args() { # METHOD URL [BODY] -> CURL array
+  CURL=(-sS --proto =https --max-redirs 0 -X "$1" "$2" -H "Content-Type: application/json")
+  if [[ -n "${3:-}" ]]; then CURL+=(--data "$3"); fi
+}
+
+host_detected=""
+detect_host() {
+  local h code
+  for h in https://eu.posthog.com https://us.posthog.com; do
+    curl_args GET "$h/api/users/@me/"
+    code=$(curl "${CURL[@]}" -o /dev/null -w '%{http_code}' -H @- <<<"Authorization: Bearer $key" 2>/dev/null || true)
+    if [[ "$code" == 200 ]]; then
+      host=$h host_detected=1
+      echo "posthog-manage: the key works on $h; add  export POSTHOG_HOST=$h  to your profile to skip this check" >&2
+      return
+    fi
+  done
+  die "the key works on neither https://eu.posthog.com nor https://us.posthog.com; set POSTHOG_HOST to your self-hosted URL"
+}
+
+if [[ -z "$host" ]]; then detect_host; fi
 host="${host%/}"
-if [[ ! "$host" =~ ^https://[A-Za-z0-9.-]+(:[0-9]+)?$ ]]; then
-  echo "posthog-manage: POSTHOG_HOST must be a bare https origin, e.g. https://eu.posthog.com" >&2
+[[ "$host" =~ ^https://[A-Za-z0-9.-]+(:[0-9]+)?$ ]] || die "POSTHOG_HOST must be a bare https origin, e.g. https://eu.posthog.com"
+[[ ! "$host" =~ \.i\.posthog\.com$ ]] || die "POSTHOG_HOST is an ingestion host; the API lives at https://eu.posthog.com or https://us.posthog.com"
+
+# raw METHOD PATH [BODY]: one call, response on stdout with keys redacted; on an HTTP error the body goes to stderr and it exits.
+raw() {
+  local method=$1 path=$2 body=${3:-} out code
+  case "$method" in GET|POST|PATCH|PUT|DELETE) ;; *) die "method must be GET, POST, PATCH, PUT or DELETE" 2 ;; esac
+  # The path is glued to the host: one not starting with a single "/" ("@evil.com/x", ".evil.com/x", "//evil.com") would send the key elsewhere.
+  [[ "$path" == /* && "$path" != //* ]] || die "path must be an absolute API path starting with one /, e.g. /api/projects/{project}/..." 2
+  if [[ "$path" == *"{project}"* ]]; then
+    [[ -n "$project" ]] || die "no project selected: export POSTHOG_PROJECT_ID (ph projects lists them)"
+    path=${path//\{project\}/$project}
+  fi
+  curl_args "$method" "$host$path" "$body"
+  # The header comes from a here-string, so the key is never on the command line or in an error message.
+  out=$(curl "${CURL[@]}" -w '\n%{http_code}' -H @- <<<"Authorization: Bearer $key") || die "$method ${path%%\?*}: no connection to $host"
+  code=${out##*$'\n'}; out=${out%$'\n'*}
+  out=$(printf '%s' "$out" | redact)
+  if [[ ! "$code" =~ ^2 ]]; then
+    printf '%s\n' "$out" | head -c 2000 >&2; echo >&2
+    case $code in
+      401|403) die "$method ${path%%\?*}: HTTP $code, the key is wrong or lacks the scope this call needs" ;;
+      *) die "$method ${path%%\?*}: HTTP $code" ;;
+    esac
+  fi
+  printf '%s\n' "$out"
+}
+
+# write METHOD PATH BODY WHAT: a change. Without --yes it shows the request and stops before calling the API.
+write() {
+  local method=$1 path=$2 body=$3 what=$4
+  if [[ -z "$YES" ]]; then
+    echo "DRY RUN, nothing sent. $what"
+    echo "Request: $method ${path//\{project\}/$project}"
+    if [[ -n "$body" ]]; then echo "Body: $body"; fi
+    echo "Re-run with --yes to send it."
+    exit 0
+  fi
+  raw "$method" "$path" "$body"
+}
+
+q() { jq -rn --arg v "$1" '$v|@uri'; }
+
+# Lists: a JSON array on stdin -> one object per line, or --table / --csv with a header row.
+rows() {
+  case $FMT in
+    json) jq -c '.[]' ;;
+    table) jq -r 'if length == 0 then "(no rows)" else (.[0]|keys_unsorted) as $k | ($k|@tsv),
+             (.[] | [.[$k[]] | if . == null or . == "" then "-" elif type == "string" then . else tojson end] | @tsv) end' | column -t -s $'\t' ;;
+    csv) jq -r 'if length == 0 then empty else (.[0]|keys_unsorted) as $k | ($k|@csv),
+             (.[] | [.[$k[]] | if type == "string" or type == "number" then . elif . == null then "" else tojson end] | @csv) end' ;;
+  esac
+}
+
+# parse "bool-options" "value-options" args...: sets o_<name> (a repeated value joins with newlines) and POS.
+parse() {
+  local bools=" $1 " vals=" $2 " n v cur; shift 2
+  POS=()
+  for n in $bools $vals; do unset "o_${n//-/_}"; done
+  while (($#)); do
+    case $1 in
+      --*)
+        n=${1#--}
+        if [[ "$bools" == *" $n "* ]]; then printf -v "o_${n//-/_}" 1; shift
+        elif [[ "$vals" == *" $n "* ]]; then
+          (($# >= 2)) || die "$1 needs a value" 2
+          v="o_${n//-/_}"; cur=${!v:-}
+          printf -v "$v" '%s' "${cur:+$cur$'\n'}$2"; shift 2
+        else die "unknown option $1 (ph help)" 2; fi ;;
+      *) POS+=("$1"); shift ;;
+    esac
+  done
+}
+need() { (( ${#POS[@]} >= $1 )) || die "usage: ph $2" 2; }
+id_ok() { [[ "$1" =~ ^[A-Za-z0-9_-]+$ ]] || die "not a valid id or key: $1" 2; }
+int_ok() { [[ "$1" =~ ^[0-9]+$ ]] || die "$2 must be a whole number" 2; }
+pct_ok() { [[ "$1" =~ ^[0-9]{1,3}(\.[0-9]+)?$ ]] && jq -en "$1 <= 100" >/dev/null || die "a rollout is a number from 0 to 100" 2; }
+bool() { if [[ -n "${1:-}" ]]; then echo true; else echo false; fi; }
+
+app() { printf '%s/project/%s/%s' "$host" "$project" "$1"; }
+
+hogql() { # SQL [values-json] -> a JSON array of row objects
+  local vals=${2:-} body
+  [[ -n "$vals" ]] || vals='{}'
+  body=$(jq -cn --arg q "$1" --argjson v "$vals" '{query: {kind: "HogQLQuery", query: $q, values: $v}}')
+  raw POST "/api/projects/{project}/query/" "$body" | jq -c '[.columns as $c | .results[] | [$c, .] | transpose | map({(.[0]): .[1]}) | add]'
+}
+run_query() { raw POST "/api/projects/{project}/query/" "$(jq -cn --argjson q "$1" '{query: $q}')"; }
+
+# ── Projects ──────────────────────────────────────────────────────────────────
+all_projects() {
+  local me orgs oid oname out
+  me=$(raw GET "/api/users/@me/")
+  orgs=$(jq -r '.organizations[] | "\(.id)\t\(.name)"' <<<"$me")
+  while IFS=$'\t' read -r oid oname; do
+    [[ "$oid" =~ ^[A-Za-z0-9-]+$ ]] || continue
+    if out=$(raw GET "/api/organizations/$oid/projects/?limit=200" 2>/dev/null); then
+      jq -c --arg o "$oname" '.results[] | {id, name, organization: $o}' <<<"$out"
+    else echo "posthog-manage: skipped organization $oname (this key cannot list its projects)" >&2; fi
+  done <<<"$orgs" | jq -s .
+}
+
+need_project() {
+  [[ -z "$project" ]] || return 0
+  local all n
+  all=$(all_projects); n=$(jq length <<<"$all")
+  if [[ "$n" == 1 ]]; then
+    project=$(jq -r '.[0].id' <<<"$all")
+    echo "posthog-manage: using your only project $project; add  export POSTHOG_PROJECT_ID=$project  to your profile" >&2
+    return 0
+  fi
+  echo "posthog-manage: you can reach $n projects; pick one with  export POSTHOG_PROJECT_ID=<id>  (ph use <id>):" >&2
+  jq -c '.[]' <<<"$all" >&2
   exit 1
-fi
-if [[ "$host" =~ \.i\.posthog\.com$ ]]; then
-  echo "posthog-manage: POSTHOG_HOST is an ingestion host; the API lives at https://eu.posthog.com or https://us.posthog.com" >&2
-  exit 1
-fi
+}
 
-if [[ "${1:-}" == query ]]; then
-  [[ $# -eq 2 ]] || { echo "usage: ph query 'HogQL'" >&2; exit 2; }
-  body=$(jq -cn --arg q "$2" '{query: {kind: "HogQLQuery", query: $q}}')
-  set -- POST "/api/projects/{project}/query/" "$body"
-fi
+# ── Feature flags ─────────────────────────────────────────────────────────────
+flag_get() { # key or id -> flag JSON
+  local f=$1 out
+  id_ok "$f"
+  if [[ "$f" =~ ^[0-9]+$ ]]; then raw GET "/api/projects/{project}/feature_flags/$f/"; return; fi
+  out=$(raw GET "/api/projects/{project}/feature_flags/?key=$(q "$f")&limit=100" | jq -c --arg k "$f" '[.results[] | select(.key == $k)][0] // empty')
+  [[ -n "$out" ]] || die "no feature flag with key $f"
+  printf '%s\n' "$out"
+}
+FLAG_SUMMARY='{id, key, name, active, rollout: [.filters.groups[]? | .rollout_percentage],
+  conditions: [.filters.groups[]? | (.properties // []) | if length == 0 then "everyone" else map("\(.key) \(.operator // "exact") \(.value | tostring)") | join(" and ") end],
+  variants: ([.filters.multivariate.variants[]? | "\(.key):\(.rollout_percentage)"] | join(",")), version}'
 
-if [[ $# -lt 2 ]]; then
-  echo "usage: ph check | ph query 'HogQL' | ph METHOD /path [json-body|@file.json]" >&2
-  exit 2
-fi
+cmd_flags() {
+  local verb=${1:-list} f id body k p c; shift || true
+  case $verb in
+    list)
+      parse "active" "limit search" "$@"
+      raw GET "/api/projects/{project}/feature_flags/?limit=${o_limit:-100}${o_search:+&search=$(q "$o_search")}${o_active:+&active=true}" \
+        | jq -c "[.results[] | $FLAG_SUMMARY | del(.version)]" | rows ;;
+    get)
+      parse "" "" "$@"; need 1 "flags get <key|id>"; f=$(flag_get "${POS[0]}")
+      jq -c --arg u "$(app feature_flags/)" "$FLAG_SUMMARY + {filters, url: (\$u + (.id | tostring))}" <<<"$f" ;;
+    evaluate)
+      parse "" "" "$@"; need 2 "flags evaluate <flag> <distinct-id>"; f=$(flag_get "${POS[0]}"); id=$(jq -r .id <<<"$f")
+      body=$(raw POST "/api/projects/{project}/feature_flags/$id/test_evaluation/" "$(jq -cn --arg d "${POS[1]}" '{distinct_id: $d}')")
+      jq -c --argjson e "$body" "$FLAG_SUMMARY + {evaluation: \$e}" <<<"$f" ;;
+    create)
+      parse "active" "name rollout prop variants" "$@"; need 1 "flags create <key> [options]"
+      k=${POS[0]}; id_ok "$k"; p=${o_rollout:-0}; pct_ok "$p"
+      body=$(jq -cn --arg k "$k" --arg n "${o_name:-$k}" --argjson r "$p" --argjson a "$(bool "${o_active:-}")" \
+        --arg props "${o_prop:-}" --arg vars "${o_variants:-}" '
+        def prop: if test("~") then capture("^(?<k>[^~]+)~(?<v>.*)$") | {key: .k, value: .v, operator: "icontains", type: "person"}
+                  else capture("^(?<k>[^=]+)=(?<v>.*)$") | {key: .k, value: [.v], operator: "exact", type: "person"} end;
+        {key: $k, name: $n, active: $a,
+         filters: ({groups: [{properties: [$props | split("\n")[] | select(length > 0) | prop], rollout_percentage: $r}]}
+           + (if $vars == "" then {} else {multivariate: {variants: [$vars | split(",")[] | split(":") | {key: .[0], rollout_percentage: (.[1] | tonumber)}]}} end))}')
+      write POST "/api/projects/{project}/feature_flags/" "$body" \
+        "Creates flag $k, active=$(bool "${o_active:-}"), served to $p% of matching users. An active flag reaches real users at once." ;;
+    rollout)
+      parse "" "condition" "$@"; need 2 "flags rollout <flag> <percent> [--condition N]"
+      p=${POS[1]}; pct_ok "$p"; c=${o_condition:-0}; int_ok "$c" "--condition"
+      f=$(flag_get "${POS[0]}"); id=$(jq -r .id <<<"$f")
+      body=$(jq -c --argjson c "$c" --argjson p "$p" '{condition_index: $c, rollout_percentage: $p, version}' <<<"$f")
+      write POST "/api/projects/{project}/feature_flags/$id/set_release_condition_rollout/" "$body" \
+        "Flag $(jq -r .key <<<"$f") (active=$(jq .active <<<"$f")): condition $c rollout $(jq --argjson c "$c" '.filters.groups[$c].rollout_percentage' <<<"$f")% -> $p%. If active, real users see it at once." ;;
+    enable|disable)
+      parse "" "" "$@"; need 1 "flags $verb <flag>"; f=$(flag_get "${POS[0]}"); id=$(jq -r .id <<<"$f")
+      write POST "/api/projects/{project}/feature_flags/$id/$verb/" "$(jq -c '{version}' <<<"$f")" \
+        "Flag $(jq -r .key <<<"$f"): active $(jq .active <<<"$f") -> $([[ $verb == enable ]] && echo true || echo false), rollout $(jq -c '[.filters.groups[]?.rollout_percentage]' <<<"$f")% of matching users. Real users see the change at once." ;;
+    delete)
+      parse "" "" "$@"; need 1 "flags delete <flag>"; f=$(flag_get "${POS[0]}"); id=$(jq -r .id <<<"$f")
+      write PATCH "/api/projects/{project}/feature_flags/$id/" '{"deleted":true}' \
+        "Deletes flag $(jq -r .key <<<"$f") (soft delete; active=$(jq .active <<<"$f")). Code still asking for it gets false." ;;
+    *) die "unknown: flags $verb (ph help)" 2 ;;
+  esac
+}
 
-method=$1 path=$2 body=${3:-}
-case "$method" in GET|POST|PATCH|PUT|DELETE) ;; *) echo "posthog-manage: method must be GET, POST, PATCH, PUT or DELETE" >&2; exit 2;; esac
-# A path must stay on POSTHOG_HOST: "@x" or "//x" would hand the key to another host.
-if [[ "$path" != /* || "$path" == //* || "$path" == *"@"* ]]; then
-  echo "posthog-manage: path must be an absolute API path, e.g. /api/projects/{project}/..." >&2
-  exit 2
-fi
-if [[ "$path" == *"{project}"* ]]; then
-  [[ -n "$project" ]] || { echo "posthog-manage: export POSTHOG_PROJECT_ID, or put the project id in the path" >&2; exit 1; }
-  path=${path//\{project\}/$project}
-fi
-args=(-sS --fail-with-body --proto =https --max-redirs 0 -X "$method" "$host$path" -H "Content-Type: application/json")
-[[ -n "$body" ]] && args+=(--data "$body")
-# The header comes from a here-string, so the key is never on the command line or in an error message.
-curl "${args[@]}" -H @- <<<"Authorization: Bearer $key" | sed -E 's/ph[a-z]_[A-Za-z0-9_-]{8,}/ph_[redacted]/g'
+# ── Experiments ───────────────────────────────────────────────────────────────
+EXP_SUMMARY='{id, name, status, flag: .feature_flag_key, start_date, end_date, archived,
+  variants: ([.feature_flag.filters.multivariate.variants[]? // .parameters.feature_flag_variants[]? | "\(.key):\(.rollout_percentage)"] | join(",")),
+  metrics: [(.metrics // [])[] | .name // (.source.event // ([.series[]?.event] | join(" > ")))]}'
+METRIC_NAME='(.name // .source.event // ([.series[]?.event] | join(" > ")))'
+
+exp_get() { int_ok "$1" "experiment id"; raw GET "/api/projects/{project}/experiments/$1/"; }
+
+cmd_experiments() {
+  local verb=${1:-list} e id body name v; shift || true
+  case $verb in
+    list)
+      parse "" "status limit search" "$@"
+      raw GET "/api/projects/{project}/experiments/?limit=${o_limit:-100}${o_status:+&status=$(q "$o_status")}${o_search:+&search=$(q "$o_search")}" \
+        | jq -c "[.results[] | $EXP_SUMMARY | del(.metrics)]" | rows ;;
+    get)
+      parse "" "" "$@"; need 1 "experiments get <id>"; id=${POS[0]}; e=$(exp_get "$id")
+      jq -c --arg u "$(app experiments/)$id" "$EXP_SUMMARY + {description, conclusion, url: \$u}" <<<"$e" ;;
+    results)
+      parse "" "" "$@"; need 1 "experiments results <id>"; id=${POS[0]}; e=$(exp_get "$id")
+      [[ $(jq '(.metrics // []) + (.metrics_secondary // []) | length' <<<"$e") -gt 0 ]] || die "experiment $id has no metrics in the current format; open it in the app"
+      jq -c '[(.metrics // [])[] | {m: ., primary: true}] + [(.metrics_secondary // [])[] | {m: ., primary: false}] | .[]' <<<"$e" | while read -r item; do
+        run_query "$(jq -c --argjson id "$id" '{kind: "ExperimentQuery", experiment_id: $id, metric: .m}' <<<"$item")" \
+          | jq -c --argjson it "$item" "([.baseline] + (.variant_results // []))[] | select(. != null)
+              | {metric: (\$it.m | $METRIC_NAME), primary: \$it.primary, variant: .key, exposures: .number_of_samples, value: .sum,
+                 rate: (if (.number_of_samples // 0) > 0 then ((.sum / .number_of_samples) * 10000 | round / 10000) else null end),
+                 chance_to_win, p_value, significant, interval: (.credible_interval // .confidence_interval)}"
+      done | jq -s . | rows ;;
+    create)
+      parse "allow-unknown-events" "flag variants event funnel description" "$@"; need 1 "experiments create <name> --flag <key> [options]"
+      name=${POS[0]}; [[ -n "${o_flag:-}" ]] || die "--flag <key> is required" 2; id_ok "$o_flag"
+      [[ -z "${o_event:-}" || -z "${o_funnel:-}" ]] || die "give --event or --funnel, not both" 2
+      v=${o_variants:-control:50,test:50}
+      body=$(jq -cn --arg n "$name" --arg k "$o_flag" --arg v "$v" --arg ev "${o_event:-}" --arg fu "${o_funnel:-}" --arg d "${o_description:-}" \
+        --argjson u "$(bool "${o_allow_unknown_events:-}")" '
+        {name: $n, feature_flag_key: $k, type: "product", description: $d,
+         feature_flag: {filters: {multivariate: {variants: [$v | split(",")[] | split(":") | {key: .[0], rollout_percentage: (.[1] | tonumber)}]}}},
+         metrics: (if $ev != "" then [{kind: "ExperimentMetric", metric_type: "mean", name: $ev, source: {kind: "EventsNode", event: $ev}}]
+                   elif $fu != "" then [{kind: "ExperimentMetric", metric_type: "funnel", name: ($fu | split(",") | join(" > ")), series: [$fu | split(",")[] | {kind: "EventsNode", event: .}]}]
+                   else [] end)}
+        + (if $u then {allow_unknown_events: true} else {} end)')
+      write POST "/api/projects/{project}/experiments/" "$body" \
+        "Creates draft experiment \"$name\" on flag $o_flag (a new flag if the key is free) with variants $v. Nobody is enrolled until launch." ;;
+    launch)
+      parse "" "" "$@"; need 1 "experiments launch <id>"; id=${POS[0]}; e=$(exp_get "$id")
+      write POST "/api/projects/{project}/experiments/$id/launch/" "" \
+        "Launches \"$(jq -r .name <<<"$e")\" (now $(jq -r .status <<<"$e")): activates flag $(jq -r .feature_flag_key <<<"$e") and sets start_date to now. Real users start getting variants." ;;
+    stop)
+      parse "" "conclusion comment" "$@"; need 1 "experiments stop <id>"; id=${POS[0]}; e=$(exp_get "$id")
+      body=$(jq -cn --arg c "${o_conclusion:-}" --arg m "${o_comment:-}" '{} + (if $c != "" then {conclusion: $c} else {} end) + (if $m != "" then {conclusion_comment: $m} else {} end)')
+      write POST "/api/projects/{project}/experiments/$id/end/" "$body" \
+        "Ends \"$(jq -r .name <<<"$e")\": end_date = now, results freeze. The flag is NOT changed; users keep their variants until flag $(jq -r .feature_flag_key <<<"$e") changes." ;;
+    archive)
+      parse "disable-flag" "" "$@"; need 1 "experiments archive <id> [--disable-flag]"; id=${POS[0]}; e=$(exp_get "$id")
+      write POST "/api/projects/{project}/experiments/$id/archive/" "{\"disable_feature_flag\":$(bool "${o_disable_flag:-}")}" \
+        "Archives \"$(jq -r .name <<<"$e")\" (it must be ended)$([[ -n "${o_disable_flag:-}" ]] && echo ", and disables flag $(jq -r .feature_flag_key <<<"$e")")." ;;
+    delete)
+      parse "" "" "$@"; need 1 "experiments delete <id>"; id=${POS[0]}; e=$(exp_get "$id")
+      write PATCH "/api/projects/{project}/experiments/$id/" '{"deleted":true}' \
+        "Deletes experiment \"$(jq -r .name <<<"$e")\" (soft delete). Flag $(jq -r .feature_flag_key <<<"$e") stays; remove it with ph flags delete." ;;
+    *) die "unknown: experiments $verb (ph help)" 2 ;;
+  esac
+}
+
+# ── Queries behind the reports and insights ───────────────────────────────────
+trend_q() { # event days interval breakdown math
+  jq -cn --arg e "$1" --arg d "-${2}d" --arg i "$3" --arg b "$4" --arg m "$5" '
+    {kind: "TrendsQuery", series: [{kind: "EventsNode", event: $e, name: $e, math: $m}], dateRange: {date_from: $d}, interval: $i}
+    + (if $b != "" then {breakdownFilter: {breakdown: $b, breakdown_type: "event"}} else {} end)'
+}
+funnel_q() { # days window events...
+  local d=$1 w=$2; shift 2
+  jq -cn --arg d "-${d}d" --argjson w "$w" '{kind: "FunnelsQuery", series: [$ARGS.positional[] | {kind: "EventsNode", event: ., name: .}],
+    dateRange: {date_from: $d}, funnelsFilter: {funnelWindowInterval: $w, funnelWindowIntervalUnit: "day"}}' --args "$@"
+}
+retention_q() { # event return-event period intervals
+  jq -cn --arg e "$1" --arg r "$2" --arg p "$3" --argjson n "$4" '
+    {kind: "RetentionQuery", dateRange: {date_from: "-\($n)\($p[0:1] | ascii_downcase)"},
+     retentionFilter: {period: $p, totalIntervals: $n, targetEntity: {id: $e, type: "events"}, returningEntity: {id: $r, type: "events"}}}'
+}
+REPORT_VALS="days interval breakdown math window period intervals return-event"
+report_opts() { # after parse: defaults, validated
+  days=${o_days:-30}; int_ok "$days" "--days"
+  interval=${o_interval:-day}; [[ "$interval" =~ ^(hour|day|week|month)$ ]] || die "--interval is hour, day, week or month" 2
+  math=${o_math:-total}; [[ "$math" =~ ^(total|dau|weekly_active|monthly_active)$ ]] || die "--math is total, dau, weekly_active or monthly_active" 2
+  window=${o_window:-14}; int_ok "$window" "--window"
+  period=${o_period:-Week}; [[ "$period" =~ ^(Day|Week|Month)$ ]] || die "--period is Day, Week or Month" 2
+  intervals=${o_intervals:-8}; int_ok "$intervals" "--intervals"
+}
+
+cmd_trend() {
+  parse "" "$REPORT_VALS" "$@"; report_opts; need 1 "trend <event> [options]"
+  run_query "$(trend_q "${POS[0]}" "$days" "$interval" "${o_breakdown:-}" "$math")" \
+    | jq -c '[.results[] | . as $s | range(0; ($s.days // []) | length) | {series: ($s.breakdown_value // $s.label | if type == "string" then . else tojson end | gsub("\\$\\$_posthog_breakdown_null_\\$\\$"; "(none)")), date: $s.days[.], value: $s.data[.]}]' | rows
+}
+cmd_funnel() {
+  parse "" "$REPORT_VALS" "$@"; report_opts; need 2 "funnel <event1> <event2>... [options]"
+  run_query "$(funnel_q "$days" "$window" "${POS[@]}")" \
+    | jq -c '.results | (if (.[0] | type) == "array" then .[0] else . end) as $s
+        | [$s[] | {step: (.order + 1), event: .name, count, of_first: (if $s[0].count > 0 then (.count / $s[0].count * 1000 | round / 1000) else null end), median_seconds: .median_conversion_time}]' | rows
+}
+cmd_retention() {
+  parse "" "$REPORT_VALS" "$@"; report_opts; need 1 "retention <event> [options]"
+  run_query "$(retention_q "${POS[0]}" "${o_return_event:-${POS[0]}}" "$period" "$intervals")" \
+    | jq -c '[.results[] | {cohort: .date, size: .values[0].count, retained: [.values[] | .count]}]' | rows
+}
+
+# ── Dashboards and insights ───────────────────────────────────────────────────
+insight_get() { # id or short id [refresh]
+  local i=$1 refresh=${2:-}; id_ok "$i"
+  if [[ "$i" =~ ^[0-9]+$ ]]; then raw GET "/api/projects/{project}/insights/$i/${refresh:+?refresh=blocking}"
+  else raw GET "/api/projects/{project}/insights/?short_id=$(q "$i")${refresh:+&refresh=blocking}" | jq -c '.results[0] // empty'; fi
+}
+
+cmd_dashboards() {
+  local verb=${1:-list} id d; shift || true
+  case $verb in
+    list)
+      parse "" "limit search" "$@"
+      raw GET "/api/projects/{project}/dashboards/?limit=${o_limit:-100}${o_search:+&search=$(q "$o_search")}" \
+        | jq -c '[.results[] | {id, name, pinned, tags, last_viewed_at}]' | rows ;;
+    get)
+      parse "" "" "$@"; need 1 "dashboards get <id>"; id=${POS[0]}; int_ok "$id" "dashboard id"
+      d=$(raw GET "/api/projects/{project}/dashboards/$id/")
+      jq -c --arg u "$(app dashboard/)$id" '{id, name, description, url: $u,
+        tiles: [.tiles[] | select(.deleted != true) | if .insight then {tile: .id, insight: .insight.id, short_id: .insight.short_id, name: (.insight.name // .insight.derived_name), kind: .insight.query.source.kind}
+                                                      else {tile: .id, text: (.text.body // "" | .[0:120])} end]}' <<<"$d" ;;
+    url) parse "" "" "$@"; need 1 "dashboards url <id>"; int_ok "${POS[0]}" "dashboard id"; echo "$(app dashboard/)${POS[0]}" ;;
+    create)
+      parse "" "description" "$@"; need 1 "dashboards create <name>"
+      write POST "/api/projects/{project}/dashboards/" "$(jq -cn --arg n "${POS[0]}" --arg x "${o_description:-}" '{name: $n, description: $x}')" "Creates dashboard \"${POS[0]}\"." ;;
+    add)
+      parse "" "" "$@"; need 2 "dashboards add <dashboard-id> <insight-id>"; int_ok "${POS[0]}" "dashboard id"; int_ok "${POS[1]}" "insight id"
+      write POST "/api/projects/{project}/dashboards/${POS[0]}/add_insight/" "{\"insight_id\":${POS[1]}}" "Adds insight ${POS[1]} as a tile on dashboard ${POS[0]}." ;;
+    delete)
+      parse "" "" "$@"; need 1 "dashboards delete <id>"; id=${POS[0]}; int_ok "$id" "dashboard id"
+      d=$(raw GET "/api/projects/{project}/dashboards/$id/")
+      write PATCH "/api/projects/{project}/dashboards/$id/" '{"deleted":true}' "Deletes dashboard \"$(jq -r .name <<<"$d")\" (soft delete; its insights stay)." ;;
+    *) die "unknown: dashboards $verb (ph help)" 2 ;;
+  esac
+}
+
+cmd_insights() {
+  local verb=${1:-list} i body src kind; shift || true
+  case $verb in
+    list)
+      parse "" "limit search" "$@"
+      raw GET "/api/projects/{project}/insights/?limit=${o_limit:-100}${o_search:+&search=$(q "$o_search")}" \
+        | jq -c '[.results[] | {id, short_id, name: (.name // .derived_name), kind: (.query.source.kind // .query.kind), last_modified_at}]' | rows ;;
+    get)
+      parse "" "" "$@"; need 1 "insights get <id|short-id>"; i=$(insight_get "${POS[0]}" refresh); [[ -n "$i" ]] || die "no insight ${POS[0]}"
+      jq -c --arg u "$(app insights/)" '{id, short_id, name: (.name // .derived_name), kind: (.query.source.kind // .query.kind), url: ($u + .short_id), last_refresh, query: (.query.source // .query), result}' <<<"$i" ;;
+    url)
+      parse "" "" "$@"; need 1 "insights url <id|short-id>"; i=$(insight_get "${POS[0]}"); [[ -n "$i" ]] || die "no insight ${POS[0]}"
+      echo "$(app insights/)$(jq -r .short_id <<<"$i")" ;;
+    create)
+      kind=${1:-}; shift || true
+      parse "" "name dashboard $REPORT_VALS" "$@"; report_opts
+      [[ -n "${o_name:-}" ]] || die "--name is required" 2
+      case $kind in
+        trend) need 1 "insights create trend <event> --name N"
+               src=$(jq -cn --argjson s "$(trend_q "${POS[0]}" "$days" "$interval" "${o_breakdown:-}" "$math")" '{kind: "InsightVizNode", source: $s}') ;;
+        funnel) need 2 "insights create funnel <e1> <e2>... --name N"
+                src=$(jq -cn --argjson s "$(funnel_q "$days" "$window" "${POS[@]}")" '{kind: "InsightVizNode", source: $s}') ;;
+        hogql) need 1 "insights create hogql 'SQL' --name N"
+               src=$(jq -cn --arg q "${POS[0]}" '{kind: "DataVisualizationNode", source: {kind: "HogQLQuery", query: $q}}') ;;
+        *) die "usage: ph insights create trend|funnel|hogql ... --name N" 2 ;;
+      esac
+      if [[ -n "${o_dashboard:-}" ]]; then int_ok "$o_dashboard" "--dashboard"; fi
+      body=$(jq -cn --arg n "$o_name" --argjson q "$src" --arg d "${o_dashboard:-}" '{name: $n, query: $q} + (if $d != "" then {dashboards: [$d | tonumber]} else {} end)')
+      write POST "/api/projects/{project}/insights/" "$body" "Creates $kind insight \"$o_name\"${o_dashboard:+ on dashboard $o_dashboard}." ;;
+    delete)
+      parse "" "" "$@"; need 1 "insights delete <id>"; int_ok "${POS[0]}" "insight id"
+      i=$(insight_get "${POS[0]}")
+      write PATCH "/api/projects/{project}/insights/${POS[0]}/" '{"deleted":true}' "Deletes insight \"$(jq -r '.name // .derived_name' <<<"$i")\" (soft delete; it leaves every dashboard)." ;;
+    *) die "unknown: insights $verb (ph help)" 2 ;;
+  esac
+}
+
+# ── Events, properties, actions ───────────────────────────────────────────────
+cmd_events() {
+  local verb=${1:-top} d p; shift || true
+  case $verb in
+    top)
+      parse "" "days limit" "$@"; int_ok "${o_days:-7}" "--days"; int_ok "${o_limit:-50}" "--limit"
+      hogql "SELECT event, count() AS count, uniq(distinct_id) AS users, max(timestamp) AS last_seen FROM events
+             WHERE timestamp > now() - INTERVAL ${o_days:-7} DAY GROUP BY event ORDER BY count DESC LIMIT ${o_limit:-50}" | rows ;;
+    list)
+      parse "" "search limit" "$@"
+      raw GET "/api/projects/{project}/event_definitions/?limit=${o_limit:-100}${o_search:+&search=$(q "$o_search")}" \
+        | jq -c '[.results[] | {id, name, last_seen_at, verified, tags, description}]' | rows ;;
+    describe)
+      parse "" "" "$@"; need 1 "events describe <name>"
+      d=$(raw GET "/api/projects/{project}/event_definitions/by_name/?name=$(q "${POS[0]}")")
+      p=$(raw GET "/api/projects/{project}/property_definitions/?type=event&filter_by_event_names=true&limit=200&event_names=$(q "$(jq -cn --arg n "${POS[0]}" '[$n]')")")
+      jq -c --argjson p "$p" '{id, name, description, verified, tags, last_seen_at, properties: [$p.results[] | {name, property_type}]}' <<<"$d" ;;
+    verify)
+      parse "" "" "$@"; need 1 "events verify <name>"
+      d=$(raw GET "/api/projects/{project}/event_definitions/by_name/?name=$(q "${POS[0]}")")
+      write PATCH "/api/projects/{project}/event_definitions/$(jq -r .id <<<"$d")/" '{"verified":true}' \
+        "Marks event $(jq -r .name <<<"$d") verified (now $(jq .verified <<<"$d"); a paid-plan feature)." ;;
+    *) die "unknown: events $verb (ph help)" 2 ;;
+  esac
+}
+
+cmd_properties() {
+  [[ "${1:-list}" == list ]] || die "usage: ph properties list [--event NAME] [--search S]" 2; shift || true
+  parse "" "event search limit" "$@"
+  local qs="limit=${o_limit:-200}&type=event${o_search:+&search=$(q "$o_search")}"
+  if [[ -n "${o_event:-}" ]]; then qs+="&filter_by_event_names=true&event_names=$(q "$(jq -cn --arg n "$o_event" '[$n]')")"; fi
+  raw GET "/api/projects/{project}/property_definitions/?$qs" | jq -c '[.results[] | {name, property_type, is_numerical, verified}]' | rows
+}
+
+cmd_actions() {
+  [[ "${1:-list}" == list ]] || die "usage: ph actions list" 2; shift || true
+  parse "" "limit" "$@"
+  raw GET "/api/projects/{project}/actions/?limit=${o_limit:-100}" | jq -c '[.results[] | {id, name, description, steps: (.steps | length), last_calculated_at}]' | rows
+}
+
+# ── Recordings ────────────────────────────────────────────────────────────────
+person_find() { # distinct id or email -> person JSON, or nothing
+  local p
+  p=$(raw GET "/api/projects/{project}/persons/?distinct_id=$(q "$1")" | jq -c '.results[0] // empty')
+  if [[ -z "$p" && "$1" == *@* ]]; then p=$(raw GET "/api/projects/{project}/persons/?email=$(q "$1")" | jq -c '.results[0] // empty'); fi
+  printf '%s' "$p"
+}
+sid_ok() { [[ "$1" =~ ^[A-Za-z0-9-]+$ ]] || die "not a session id: $1" 2; }
+
+cmd_recordings() {
+  local verb=${1:-list} s p preds qs file dir src n start end; shift || true
+  case $verb in
+    list)
+      parse "errors" "days person min-duration url limit" "$@"
+      int_ok "${o_days:-1}" "--days"; int_ok "${o_limit:-20}" "--limit"
+      if [[ -n "${o_min_duration:-}" ]]; then int_ok "$o_min_duration" "--min-duration"; fi
+      preds=$(jq -cn --arg d "${o_min_duration:-}" --arg e "${o_errors:-}" --arg u "${o_url:-}" '
+        [ (if $d != "" then {key: "duration", type: "recording", operator: "gt", value: ($d | tonumber)} else empty end),
+          (if $e != "" then {key: "console_error_count", type: "recording", operator: "gt", value: 0} else empty end),
+          (if $u != "" then {key: "first_url", type: "recording", operator: "icontains", value: $u} else empty end) ]')
+      qs="date_from=-${o_days:-1}d&limit=${o_limit:-20}&order=start_time&order_direction=DESC&having_predicates=$(q "$preds")"
+      if [[ -n "${o_person:-}" ]]; then
+        p=$(person_find "$o_person"); [[ -n "$p" ]] || die "no person with distinct id or email $o_person"
+        qs+="&person_uuid=$(q "$(jq -r .uuid <<<"$p")")"
+      fi
+      raw GET "/api/projects/{project}/session_recordings/?$qs" | jq -c --arg u "$(app replay/)" '[.results[] | {id, start_time, duration: .recording_duration, active_seconds,
+          clicks: .click_count, keys: .keypress_count, console_errors: .console_error_count, start_url, distinct_id, url: ($u + .id)}]' | rows ;;
+    get)
+      parse "" "" "$@"; need 1 "recordings get <session-id>"; s=${POS[0]}; sid_ok "$s"
+      raw GET "/api/projects/{project}/session_recordings/$s/" | jq -c --arg u "$(app replay/)$s" '{id, start_time, end_time, duration: .recording_duration, active_seconds, inactive_seconds,
+          clicks: .click_count, keys: .keypress_count, mouse: .mouse_activity_count, console_logs: .console_log_count, console_warnings: .console_warn_count,
+          console_errors: .console_error_count, start_url, distinct_id, person_uuid: .person.uuid, event_count, ongoing, viewed, url: $u}' ;;
+    console)
+      parse "" "level limit" "$@"; need 1 "recordings console <session-id>"; s=${POS[0]}; sid_ok "$s"; int_ok "${o_limit:-100}" "--limit"
+      raw GET "/api/projects/{project}/session_recordings/$s/console_logs/?limit=${o_limit:-100}${o_level:+&level=$(q "$o_level")}" \
+        | jq -c '(.results // .) | if type == "array" then . else [.] end' | rows ;;
+    events)
+      parse "" "limit" "$@"; need 1 "recordings events <session-id>"; s=${POS[0]}; sid_ok "$s"; int_ok "${o_limit:-500}" "--limit"
+      hogql "SELECT timestamp, event, properties.\$current_url AS url, properties.\$event_type AS dom_event,
+                    properties.\$exception_types AS exception_types, properties.\$exception_values AS exception_values
+             FROM events WHERE \$session_id = {sid} AND timestamp > now() - INTERVAL 90 DAY ORDER BY timestamp LIMIT ${o_limit:-500}" \
+        "$(jq -cn --arg s "$s" '{sid: $s}')" | rows ;;
+    export)
+      parse "" "" "$@"; need 2 "recordings export <session-id> <file>"; s=${POS[0]}; sid_ok "$s"; file=${POS[1]}
+      dir=$(cd "$(dirname "$file")" 2>/dev/null && pwd) || die "the folder of $file does not exist"
+      [[ ! -e "$file" ]] || die "$file exists; give a new file name"
+      if git -C "$dir" rev-parse --is-inside-work-tree >/dev/null 2>&1; then
+        die "$dir is inside a git repository; a recording holds personal data, so write it outside any repo"
+      fi
+      src=$(raw GET "/api/projects/{project}/session_recordings/$s/snapshots/")
+      n=$(jq '.sources | length' <<<"$src"); ((n > 0)) || die "recording $s has no snapshot data"
+      (umask 077 && : >"$file")
+      # A personal API key may fetch at most 21 blocks per call (end_blob_key - start_blob_key <= 20).
+      # shortcut: each call's blocks pass through a shell variable; fine for normal sessions, slow for multi-hour ones.
+      for ((start = 0; start < n; start += 21)); do
+        end=$((start + 20 < n - 1 ? start + 20 : n - 1))
+        raw GET "/api/projects/{project}/session_recordings/$s/snapshots/?source=blob_v2&start_blob_key=$start&end_blob_key=$end" >>"$file"
+      done
+      jq -cn --arg f "$file" --argjson n "$n" --argjson l "$(wc -l <"$file" | tr -d ' ')" '{file: $f, blocks: $n, lines: $l, format: "JSON lines, each [window_id, rrweb event]"}' ;;
+    *) die "unknown: recordings $verb (ph help)" 2 ;;
+  esac
+}
+
+cmd_playlists() {
+  local verb=${1:-list}; shift || true
+  case $verb in
+    list)
+      parse "" "limit" "$@"
+      raw GET "/api/projects/{project}/session_recording_playlists/?limit=${o_limit:-100}" \
+        | jq -c '[.results[] | {short_id, name: (.name // .derived_name), type, pinned}]' | rows ;;
+    add)
+      parse "" "" "$@"; need 2 "playlists add <playlist-short-id> <session-id>"; id_ok "${POS[0]}"; sid_ok "${POS[1]}"
+      write POST "/api/projects/{project}/session_recording_playlists/${POS[0]}/recordings/${POS[1]}/" "" "Adds recording ${POS[1]} to playlist ${POS[0]}." ;;
+    *) die "unknown: playlists $verb (ph help)" 2 ;;
+  esac
+}
+
+# ── People and cohorts ────────────────────────────────────────────────────────
+cmd_persons() {
+  local verb=${1:-} p; shift || true
+  [[ "$verb" =~ ^(find|events)$ ]] || die "usage: ph persons find|events <distinct-id|email>" 2
+  parse "" "days limit" "$@"; need 1 "persons $verb <distinct-id|email>"
+  p=$(person_find "${POS[0]}"); [[ -n "$p" ]] || die "no person with distinct id or email ${POS[0]}"
+  if [[ $verb == find ]]; then
+    jq -c '{uuid, distinct_ids: .distinct_ids[0:5], distinct_id_count: (.distinct_ids | length), is_identified, created_at, last_seen_at}' <<<"$p"
+  else
+    int_ok "${o_days:-30}" "--days"; int_ok "${o_limit:-100}" "--limit"
+    hogql "SELECT timestamp, event, properties.\$current_url AS url, \$session_id AS session_id FROM events
+           WHERE person_id = {pid} AND timestamp > now() - INTERVAL ${o_days:-30} DAY ORDER BY timestamp DESC LIMIT ${o_limit:-100}" \
+      "$(jq -c '{pid: .uuid}' <<<"$p")" | rows
+  fi
+}
+
+cmd_cohorts() {
+  local verb=${1:-list} ids uuids; shift || true
+  case $verb in
+    list)
+      parse "" "limit" "$@"
+      raw GET "/api/projects/{project}/cohorts/?limit=${o_limit:-100}" | jq -c '[.results[] | {id, name, count, is_static, created_at}]' | rows ;;
+    create-static)
+      parse "" "" "$@"; need 2 "cohorts create-static <name> <distinct-id>... | @file"
+      if [[ "${POS[1]}" == @* ]]; then
+        [[ -r "${POS[1]#@}" ]] || die "cannot read ${POS[1]#@}"
+        ids=$(jq -R -s -c 'split("\n") | map(select(length > 0))' <"${POS[1]#@}")
+      else ids=$(jq -cn '$ARGS.positional' --args "${POS[@]:1}"); fi
+      uuids=$(hogql "SELECT DISTINCT person_id AS id FROM person_distinct_ids WHERE distinct_id IN {ids}" "$(jq -cn --argjson i "$ids" '{ids: $i}')" | jq -c '[.[].id]')
+      [[ $(jq length <<<"$uuids") -gt 0 ]] || die "none of these distinct ids is a known person in this project"
+      write POST "/api/projects/{project}/cohorts/" "$(jq -cn --arg n "${POS[0]}" --argjson u "$uuids" '{name: $n, is_static: true, _create_static_person_ids: $u}')" \
+        "Creates static cohort \"${POS[0]}\" with $(jq length <<<"$uuids") persons found for $(jq length <<<"$ids") distinct ids." ;;
+    *) die "unknown: cohorts $verb (ph help)" 2 ;;
+  esac
+}
+
+# ── Annotations, surveys, error tracking ─────────────────────────────────────
+cmd_annotations() {
+  local verb=${1:-list} d; shift || true
+  case $verb in
+    list)
+      parse "" "limit" "$@"
+      raw GET "/api/projects/{project}/annotations/?limit=${o_limit:-50}" | jq -c '[.results[] | {id, date_marker, content, scope}]' | rows ;;
+    create)
+      parse "" "date" "$@"; need 1 "annotations create <text> [--date ISO]"; d=${o_date:-$(date -u +%Y-%m-%dT%H:%M:%SZ)}
+      write POST "/api/projects/{project}/annotations/" "$(jq -cn --arg c "${POS[0]}" --arg d "$d" '{content: $c, date_marker: $d, scope: "project", creation_type: "USR"}')" \
+        "Creates annotation \"${POS[0]}\" at $d on every chart in the project." ;;
+    delete)
+      parse "" "" "$@"; need 1 "annotations delete <id>"; int_ok "${POS[0]}" "annotation id"
+      d=$(raw GET "/api/projects/{project}/annotations/${POS[0]}/")
+      write PATCH "/api/projects/{project}/annotations/${POS[0]}/" '{"deleted":true}' "Deletes annotation ${POS[0]} \"$(jq -r .content <<<"$d")\"." ;;
+    *) die "unknown: annotations $verb (ph help)" 2 ;;
+  esac
+}
+
+cmd_surveys() {
+  local verb=${1:-list}; shift || true
+  case $verb in
+    list)
+      parse "" "limit" "$@"
+      raw GET "/api/projects/{project}/surveys/?limit=${o_limit:-100}" | jq -c '[.results[] | {id, name, type, start_date, end_date, archived}]' | rows ;;
+    get)
+      parse "" "" "$@"; need 1 "surveys get <id>"; id_ok "${POS[0]}"
+      raw GET "/api/projects/{project}/surveys/${POS[0]}/" | jq -c --arg u "$(app surveys/)${POS[0]}" '{id, name, type, start_date, end_date, archived,
+        linked_flag: .linked_flag.key, questions: [.questions[]? | {type, question, choices}], url: $u}' ;;
+    results)
+      parse "" "days" "$@"; need 1 "surveys results <id>"; id_ok "${POS[0]}"; int_ok "${o_days:-30}" "--days"
+      raw GET "/api/projects/{project}/surveys/${POS[0]}/stats/?include_per_question_stats=true&date_from=-${o_days:-30}d" | jq -c . ;;
+    *) die "unknown: surveys $verb (ph help)" 2 ;;
+  esac
+}
+
+cmd_errors() {
+  [[ "${1:-list}" == list ]] || die "usage: ph errors list [--status S] [--limit N]" 2; shift || true
+  parse "" "status limit" "$@"
+  raw GET "/api/projects/{project}/error_tracking/issues/?limit=${o_limit:-50}" \
+    | jq -c --arg s "${o_status:-}" --arg u "$(app error_tracking/)" '[.results[] | select($s == "" or .status == $s)
+        | {id, status, name, description: (.description // "" | .[0:160]), first_seen, url: ($u + .id)}]' | rows
+}
+
+# ── Dispatch ──────────────────────────────────────────────────────────────────
+cmd=${1:-}; shift || true
+case $cmd in
+  whoami)
+    me=$(raw GET /api/users/@me/); all=$(all_projects)
+    jq -c --argjson p "$all" --arg h "$host" --arg d "$host_detected" --arg cur "$project" \
+      '{email, host: $h, organizations: [.organizations[].name], projects: $p, project: (if $cur == "" then null else $cur end)}
+       + (if $d != "" then {export: "export POSTHOG_HOST=\($h)"} else {} end)' <<<"$me" ;;
+  projects) all_projects | rows ;;
+  use)
+    p=${1:-}; int_ok "$p" "project id"
+    raw GET "/api/projects/$p/" | jq -c '{id, name}' >&2
+    echo "export POSTHOG_PROJECT_ID=$p" ;;
+  GET|POST|PATCH|PUT|DELETE)
+    [[ $# -ge 1 ]] || die "usage: ph METHOD /path [json-body|@file.json]" 2
+    if [[ "$1" == *"{project}"* ]]; then need_project; fi
+    if [[ "$cmd" == GET || ( "$cmd" == POST && "$1" =~ /query/?(\?.*)?$ ) ]]; then raw "$cmd" "$1" "${2:-}"
+    else write "$cmd" "$1" "${2:-}" "A raw $cmd call."; fi ;;
+  flags|experiments|dashboards|insights|events|properties|actions|recordings|playlists|persons|cohorts|annotations|surveys|errors|trend|funnel|retention)
+    need_project; "cmd_$cmd" "$@" ;;
+  query)
+    need_project; [[ $# -eq 1 ]] || die "usage: ph query 'HogQL'" 2
+    hogql "$1" | rows ;;
+  *) usage >&2; exit 2 ;;
+esac
