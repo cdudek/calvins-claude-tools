@@ -1,0 +1,52 @@
+#!/usr/bin/env bash
+# Usage: ph check                                  - says which of POSTHOG_API_KEY, POSTHOG_HOST, POSTHOG_PROJECT_ID are set, never their values
+#        ph query 'HogQL'                          - runs a HogQL query in the project
+#        ph METHOD /path [json-body|@file.json]    - a PostHog REST call; "{project}" in the path becomes POSTHOG_PROJECT_ID
+# Purpose: call the PostHog API with the user's personal API key without the key reaching stdout, stderr or the process list.
+# Output: the raw JSON response (pipe to jq), with anything that looks like a personal API key redacted.
+set -euo pipefail
+
+# Values come from the environment; if unset, from the user's interactive zsh profile (its banner goes to /dev/null, only the value comes back on fd 3).
+zshvar() { command -v zsh >/dev/null 2>&1 && zsh -ic "print -rn -- \"\$$1\" >&3" 3>&1 >/dev/null 2>&1 || true; }
+
+export POSTHOG_API_KEY="${POSTHOG_API_KEY:-$(zshvar POSTHOG_API_KEY)}"
+host="${POSTHOG_HOST:-$(zshvar POSTHOG_HOST)}"
+project="${POSTHOG_PROJECT_ID:-$(zshvar POSTHOG_PROJECT_ID)}"
+
+if [[ "${1:-}" == check ]]; then
+  for pair in "POSTHOG_API_KEY=$POSTHOG_API_KEY" "POSTHOG_HOST=$host" "POSTHOG_PROJECT_ID=$project"; do
+    [[ -n "${pair#*=}" ]] && echo "${pair%%=*}: set" || echo "${pair%%=*}: missing"
+  done
+  exit 0
+fi
+
+if [[ -z "$POSTHOG_API_KEY" || -z "$host" ]]; then
+  echo "posthog-manage: export POSTHOG_API_KEY and POSTHOG_HOST in your shell profile (see the skill's key setup)" >&2
+  exit 1
+fi
+host="${host%/}"
+if [[ "$host" =~ \.i\.posthog\.com$ ]]; then
+  echo "posthog-manage: POSTHOG_HOST is an ingestion host; the API lives at https://eu.posthog.com or https://us.posthog.com" >&2
+  exit 1
+fi
+
+if [[ "${1:-}" == query ]]; then
+  [[ $# -eq 2 ]] || { echo "usage: ph query 'HogQL'" >&2; exit 2; }
+  body=$(jq -cn --arg q "$2" '{query: {kind: "HogQLQuery", query: $q}}')
+  set -- POST "/api/projects/{project}/query/" "$body"
+fi
+
+if [[ $# -lt 2 ]]; then
+  echo "usage: ph check | ph query 'HogQL' | ph METHOD /path [json-body|@file.json]" >&2
+  exit 2
+fi
+
+method=$1 path=$2 body=${3:-}
+if [[ "$path" == *"{project}"* ]]; then
+  [[ -n "$project" ]] || { echo "posthog-manage: export POSTHOG_PROJECT_ID, or put the project id in the path" >&2; exit 1; }
+  path=${path//\{project\}/$project}
+fi
+args=(-sS --fail-with-body -X "$method" "$host$path" -H "Content-Type: application/json")
+[[ -n "$body" ]] && args+=(--data "$body")
+# The header comes from a here-string, so the key is never on the command line or in an error message.
+curl "${args[@]}" -H @- <<<"Authorization: Bearer $POSTHOG_API_KEY" | sed -E 's/phx_[A-Za-z0-9_-]+/phx_[redacted]/g'

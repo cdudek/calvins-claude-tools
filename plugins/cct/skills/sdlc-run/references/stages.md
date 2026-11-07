@@ -503,7 +503,7 @@ Only when `decisions.json` has a `project`, and only once its last milestone has
    `changes(<id>): archived`: no separate PR after the merge. After it merges: comment the merge
    SHA in the tracker, `ExitWorktree keep`, then `git worktree remove .worktrees/<slug>` (a worktree entered by path
 is never removed by `ExitWorktree`). Move the tracker forward only, never backwards.
-2. After release: read the success measure from PostHog (`posthog-*` (OMR AI Kit only, no product uses PostHog; not in cct) or the insight
+2. After release: read the success measure from PostHog (`posthog-*` (OMR AI Kit only, cct reads PostHog with posthog-manage; not in cct) or the insight
    named in `intent.md`) and write it in the tracker at once and under `## Outcome` in the
    archived `milestone.md`, committed with the next change's PR, never a PR of its own.
 3. A miss starts the next change at 1.3, with the measurement as its first ask.

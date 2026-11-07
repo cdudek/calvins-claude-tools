@@ -89,8 +89,10 @@ def keep_license(origin, root):
 # ── OMR AI Kit: the SDLC itself ──────────────────────────────────────────────
 # OMR-internal systems (Toggl, Billwerk, OMR's secret registry, OMR's warehouse, Jev, reviews-agents traces)
 OMR_ONLY = {"time-log", "secret-set", "engineering-metrics-track", "jev-integrate", "billing-manage", "langsmith-analyze"}
+# The kit's tracking-apply is bound to OMR's own wrapper package; overlay/ has a universal one in its place
+REPLACED = {"tracking-apply"}
 for d in dirs(KIT / "omr-dev/skills"):
-    if d.name not in OMR_ONLY:
+    if d.name not in OMR_ONLY | REPLACED:
         copy_skill("omr-dev", d)
 for d in dirs(KIT / "omr-ux/skills"):
     copy_skill("omr-ux", d, "ux-" + d.name)
@@ -342,7 +344,11 @@ for cmd, agent in (("review-pr", "pr-review-toolkit-code-reviewer"), ("feature-d
     f.write_text(re.sub(r"(?<![\w:-])code-reviewer\b", agent, f.read_text()))
 
 # ── Hand-written files, the skill map, the README ────────────────────────────
-assert not (OUT / "skills/project-kickoff").exists()
+# Overlay skills are whole skills of their own, except these two, whose overlay files are laid on the kit's copy
+LAYERED = {"aws-manage", "cloudflare-manage"}
+OWN = [d.name for d in dirs(REPO / "overlay/skills") if d.name not in LAYERED]
+clash = [n for n in OWN if (OUT / "skills" / n).exists()]
+assert not clash, f"a copied skill has an overlay skill's name: {clash}"
 shutil.copytree(REPO / "overlay", OUT, dirs_exist_ok=True)
 shutil.copy2(REPO / "README.md", OUT / "README.md")
 # ── Keep only what the SDLC reaches: sdlc-run and project-kickoff, followed through every reference ──
@@ -354,10 +360,11 @@ have_a = {f.stem for f in (OUT / "agents").iterdir()}
 ROOTS = [
     "sdlc-run", "project-kickoff",
     "aws-manage", "cloudflare-manage",  # overlay skills: without a root the prune deleted them (PR #12)
+    "posthog-manage", "tracking-setup", "tracking-audit",  # overlay skills; tracking-apply is rooted below
     "ux-run", "ux-laws-apply",  # design: ux-run was the one omr-ux skill nothing reached
     *PM,
-    # Engineering Calvin runs by hand, outside the SDLC chain. Left out on purpose: posthog-*, sentry-issues-fix (no
-    # product uses PostHog or Sentry, checked 2026-11-02), payments-integrate, vectorstore-scaffold, gsap-animate,
+    # Engineering Calvin runs by hand, outside the SDLC chain. Left out on purpose: the kit's posthog-* skills (the
+    # overlay's posthog-manage covers the API), sentry-issues-fix (no product uses Sentry, checked 2026-11-02), payments-integrate, vectorstore-scaffold, gsap-animate,
     # scroll-animate (take when a product needs one), the AWS, Cloudflare and Fastly CDNs beyond the overlay, OMR's
     # on-call and cluster skills, and the pattern catalogues nobody asks for by name.
     "release-cut", "codex-run", "github-manage", "dependency-review", "api-design", "data-model-create",
@@ -420,7 +427,7 @@ NOT_CARRIED = {
     "omr-context": "OMR's GTM knowledge", "time-log": "OMR's Toggl", "secret-set": "OMR's secret registry",
     "engineering-metrics-track": "OMR's warehouse", "jev-integrate": "OMR's Jev", "billing-manage": "OMR's Billwerk",
     "langsmith-analyze": "OMR's reviews-agents traces", "overview": "OMR AI OS",
-    "posthog-*": "no product uses PostHog", "review-design": "the old name of ux-audit",
+    "posthog-*": "cct reads PostHog with posthog-manage", "review-design": "the old name of ux-audit",
     "vue-code-write": "Vue is not in the stack",
 }
 PLUGINS = r"omr-(?:dev|ux|pm|core|data|content|gtm|reviews|context|ai-os|cs)"
@@ -490,7 +497,7 @@ if renames:
 rows += ["| Name | Kind | Source |", "| --- | --- | --- |"]
 for (origin, kind, name), new in sorted(names.items(), key=lambda kv: (kv[0][1], kv[1])):
     rows.append(f"| `{new}` | {kind} | {origin}:{name} |")
-rows.append("| `project-kickoff` | skill | cct |")
+rows += [f"| `{n}` | skill | hand-written (overlay) |" for n in OWN]
 (OUT / "docs/skill-map.md").write_text("\n".join(rows) + "\n")
 # The interface contracts the review skills' tests read sit at skills/CLAUDE.md, as in the kit. Copied after the prune
 # and the skill map, which both treat every entry under skills/ as a skill folder.
