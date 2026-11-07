@@ -2,7 +2,7 @@
 
 Where every skill, agent and command in this plugin came from. Call each one as `cct:<name>`.
 
-Description budget: 71 skills, 34,577 characters of descriptions, read on every prompt.
+Description budget: 71 skills, 34,523 characters of descriptions, read on every prompt.
 
 | Name | Kind | Source |
 | --- | --- | --- |
