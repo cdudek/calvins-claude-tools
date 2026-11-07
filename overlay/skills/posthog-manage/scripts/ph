@@ -9,22 +9,27 @@ set -euo pipefail
 # Values come from the environment; if unset, from the user's interactive zsh profile (its banner goes to /dev/null, only the value comes back on fd 3).
 zshvar() { command -v zsh >/dev/null 2>&1 && zsh -ic "print -rn -- \"\$$1\" >&3" 3>&1 >/dev/null 2>&1 || true; }
 
-export POSTHOG_API_KEY="${POSTHOG_API_KEY:-$(zshvar POSTHOG_API_KEY)}"
+# Not exported: the key only ever reaches curl through the here-string below.
+key="${POSTHOG_API_KEY:-$(zshvar POSTHOG_API_KEY)}"
 host="${POSTHOG_HOST:-$(zshvar POSTHOG_HOST)}"
 project="${POSTHOG_PROJECT_ID:-$(zshvar POSTHOG_PROJECT_ID)}"
 
 if [[ "${1:-}" == check ]]; then
-  for pair in "POSTHOG_API_KEY=$POSTHOG_API_KEY" "POSTHOG_HOST=$host" "POSTHOG_PROJECT_ID=$project"; do
+  for pair in "POSTHOG_API_KEY=$key" "POSTHOG_HOST=$host" "POSTHOG_PROJECT_ID=$project"; do
     [[ -n "${pair#*=}" ]] && echo "${pair%%=*}: set" || echo "${pair%%=*}: missing"
   done
   exit 0
 fi
 
-if [[ -z "$POSTHOG_API_KEY" || -z "$host" ]]; then
+if [[ -z "$key" || -z "$host" ]]; then
   echo "posthog-manage: export POSTHOG_API_KEY and POSTHOG_HOST in your shell profile (see the skill's key setup)" >&2
   exit 1
 fi
 host="${host%/}"
+if [[ ! "$host" =~ ^https://[A-Za-z0-9.-]+(:[0-9]+)?$ ]]; then
+  echo "posthog-manage: POSTHOG_HOST must be a bare https origin, e.g. https://eu.posthog.com" >&2
+  exit 1
+fi
 if [[ "$host" =~ \.i\.posthog\.com$ ]]; then
   echo "posthog-manage: POSTHOG_HOST is an ingestion host; the API lives at https://eu.posthog.com or https://us.posthog.com" >&2
   exit 1
@@ -42,11 +47,17 @@ if [[ $# -lt 2 ]]; then
 fi
 
 method=$1 path=$2 body=${3:-}
+case "$method" in GET|POST|PATCH|PUT|DELETE) ;; *) echo "posthog-manage: method must be GET, POST, PATCH, PUT or DELETE" >&2; exit 2;; esac
+# A path must stay on POSTHOG_HOST: "@x" or "//x" would hand the key to another host.
+if [[ "$path" != /* || "$path" == //* || "$path" == *"@"* ]]; then
+  echo "posthog-manage: path must be an absolute API path, e.g. /api/projects/{project}/..." >&2
+  exit 2
+fi
 if [[ "$path" == *"{project}"* ]]; then
   [[ -n "$project" ]] || { echo "posthog-manage: export POSTHOG_PROJECT_ID, or put the project id in the path" >&2; exit 1; }
   path=${path//\{project\}/$project}
 fi
-args=(-sS --fail-with-body -X "$method" "$host$path" -H "Content-Type: application/json")
+args=(-sS --fail-with-body --proto =https --max-redirs 0 -X "$method" "$host$path" -H "Content-Type: application/json")
 [[ -n "$body" ]] && args+=(--data "$body")
 # The header comes from a here-string, so the key is never on the command line or in an error message.
-curl "${args[@]}" -H @- <<<"Authorization: Bearer $POSTHOG_API_KEY" | sed -E 's/phx_[A-Za-z0-9_-]+/phx_[redacted]/g'
+curl "${args[@]}" -H @- <<<"Authorization: Bearer $key" | sed -E 's/ph[a-z]_[A-Za-z0-9_-]{8,}/ph_[redacted]/g'
