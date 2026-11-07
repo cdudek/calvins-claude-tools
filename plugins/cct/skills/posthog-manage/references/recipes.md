@@ -1,12 +1,12 @@
 # PostHog recipes
 
-All calls go through `bash <skill>/scripts/ph` (written `ph` below). Lists print one JSON object per line; `--table` aligns them with a header, `--csv` gives CSV. Single objects print as one JSON line. Writes print `DRY RUN` and the request until `--yes`.
+All calls go through `bash <skill>/scripts/ph` (written `ph` below). Lists print one JSON object per line; `--table` aligns them with a header, `--csv` gives CSV. Single objects print as one JSON line. Writes print `DRY RUN`, the request and an approval code; the same command with `--yes <code>` sends it, and refuses if the request or the object changed since. A stderr line `posthog-manage: partial ...` means more rows exist than were shown.
 
 ## Setup
 
 ```bash
 ph check                       # POSTHOG_API_KEY / POSTHOG_HOST / POSTHOG_PROJECT_ID: set or missing
-ph whoami                      # {email, host, organizations, projects: [{id, name, organization}], project}
+ph whoami                      # {host, organizations, projects: [{id, name, organization}], project}; --personal adds email
 ph projects --table
 ph use <id>                    # checks the project, prints: export POSTHOG_PROJECT_ID=<id>
 ```
@@ -16,12 +16,12 @@ ph use <id>                    # checks the project, prints: export POSTHOG_PROJ
 ```bash
 ph flags list --table          # id, key, name, active, rollout (per condition), conditions, variants
 ph flags get new-checkout      # + filters, version, url
-ph flags evaluate new-checkout <distinct-id>   # + evaluation: {result, reason, condition_index, payload}
+ph flags evaluate new-checkout <distinct-id>   # + evaluation: {result, reason, reason_description, condition_index, payload}
 ```
 
 `evaluate` asks PostHog how the flag resolves for that person now (`test_evaluation`, a read). It needs the person to exist in PostHog; an inactive flag answers `flag_not_found`, a person outside the rollout `out_of_rollout_bound`. The public `/flags` endpoint takes the project key and is for apps, not for this skill.
 
-Writes (dry run first, ask the user, then `--yes`):
+Writes (dry run first, ask the user, then `--yes <code>`):
 
 ```bash
 ph flags create new-checkout --name "New checkout" --rollout 10 --prop plan=pro --prop email~@acme.com
@@ -32,7 +32,7 @@ ph flags delete new-checkout                                        # soft delet
 ```
 
 - `create` makes the flag **inactive at 0 %** unless `--active` and `--rollout` say otherwise. `--prop k=v` is an exact match, `k~v` contains; both on person properties, all ANDed in one condition. For several conditions, cohorts or group flags, create it in the app or send the full `filters` with the raw call.
-- `rollout`, `enable` and `disable` send the `version` from the read just before; if someone changed the flag in between, PostHog answers 409. Read again and re-decide.
+- The approval code covers the flag's conditions, rollout and `version` as previewed: a flag changed after the dry run refuses `--yes`. `rollout`, `enable` and `disable` also send that `version`, so a change in the last second gets a 409. Either way: read again and re-decide.
 - On a multivariate flag, `rollout` sets how many matching users get any variant, not the split between variants.
 
 ## Experiments
@@ -43,7 +43,7 @@ ph experiments get <id>                         # + metrics, description, conclu
 ph experiments results <id>                     # one row per metric and variant
 ```
 
-A results row: `{metric, primary, variant, exposures, value, rate, chance_to_win, p_value, significant, interval}`. `exposures` is the number of people in the variant, `value` the metric sum (conversions for a funnel metric), `rate` = value / exposures. Bayesian projects fill `chance_to_win` and a credible interval, frequentist ones `p_value` and a confidence interval. No rows or zero exposures: not launched yet, or nobody saw it.
+A results row: `{metric, type, primary, variant, method, exposures, numerator, denominator, estimate, estimate_is, chance_to_win, p_value, significant, interval, validation_failures}`. `exposures` is the number of people in the variant. The estimate follows the metric type: a funnel gives a conversion rate (conversions / exposures), a mean metric the mean per exposure (sum / exposures), a ratio metric sum / `denominator_sum`. Bayesian projects fill `chance_to_win` and a credible interval, frequentist ones `p_value` and a confidence interval. `validation_failures` (`not-enough-exposures`, `not-enough-metric-data`, `baseline-mean-is-zero`) mean the numbers are not a result yet. No rows or zero exposures: not launched yet, or nobody saw it.
 
 Writes:
 
@@ -56,7 +56,7 @@ ph experiments archive <id> [--disable-flag]    # only after stop
 ph experiments delete <id>                      # soft delete; the flag stays (ph flags delete)
 ```
 
-`create` makes a draft and the flag if its key is free. PostHog rejects a metric on an event the project never received; `--allow-unknown-events` overrides that only after the user confirms the event is coming. Shipping a variant (rolling the winner to everyone) is a flag change: `ph flags ...` or the app.
+`create` makes a draft. A free flag key gets a new flag with `--variants`. An existing flag is reused as it is: PostHog rejects flag settings on create in that case, so none are sent, `--variants` is refused, and the flag must already be multivariate with a `control` variant; the dry run shows whether it is active (an active flag already serves real users). PostHog rejects a metric on an event the project never received; `--allow-unknown-events` overrides that only after the user confirms the event is coming. Shipping a variant (rolling the winner to everyone) is a flag change: `ph flags ...` or the app.
 
 ## Dashboards and insights
 
@@ -87,7 +87,8 @@ A public share link (no login) is a sharing setting on the dashboard; turning it
 ph trend purchase --days 30 --interval day                   # {series, date, value}
 ph trend '$pageview' --days 7 --breakdown '$browser' --table # one series per value; "(none)" = property not set
 ph trend '$pageview' --days 28 --interval week --math dau
-ph funnel visit signup purchase --days 30 --window 14        # {step, event, count, of_first, median_seconds}
+ph funnel visit signup purchase --days 30 --window 14        # {step, event, count, of_first, median_seconds}: people, steps in order
+ph funnel checkout_start purchase --from 2026-01-15 --to 2026-02-12 --window 14 --breakdown has_saved_card   # + breakdown
 ph retention signup --return-event '$pageview' --period Week --intervals 8   # {cohort, size, retained: [per period]}
 ph events top --days 7 --table                               # {event, count, users, last_seen}
 ph query "SELECT ..." --csv
@@ -99,7 +100,7 @@ Quote event names that start with `$` in single quotes. Event names come from `p
 
 `ph query` runs PostHog's SQL over `events` (and `persons`, `sessions`, `session_replay_events`). Event properties are `properties.<name>`, person properties `person.properties.<name>` (keep them out of output: personal data). Times are UTC.
 
-A conversion rate between two events (quick, ignores order):
+An event-volume comparison between two events (quick: it ignores order and the conversion window, so it is not a funnel conversion; use `ph funnel` for that):
 
 ```sql
 SELECT uniqIf(person_id, event = 'checkout_start') AS started,
@@ -174,15 +175,15 @@ ph actions list --table
 ph events verify purchase                       # write; verified, descriptions and tags need a paid plan
 ```
 
-Description and tags sync from a registry: the raw call, `ph PATCH '/api/projects/{project}/event_definitions/<id>/' '{"description":"...","tags":["meaningful_action"]}'` (dry run, then `--yes`).
+Description and tags sync from a registry: the raw call, `ph PATCH '/api/projects/{project}/event_definitions/<id>/' '{"description":"...","tags":["meaningful_action"]}'` (dry run, then `--yes <code>`). Hidden (for `proposed` and `removed` events) is the `hidden` field where the plan supports it.
 
 ## Session recordings
 
 ```bash
-ph recordings list --days 1 --errors --table                 # id, start_time, duration, active_seconds, clicks, keys, console_errors, start_url, distinct_id, url
+ph recordings list --days 1 --errors --table                 # id, start_time, duration, active_seconds, clicks, keys, console_errors, start_url (no query string), url; --personal adds distinct_id
 ph recordings list --days 7 --person ana@example.com --min-duration 60 --url /checkout
 ph recordings get <session-id>                               # + inactive_seconds, mouse, console counts, person_uuid, event_count, url
-ph recordings console <session-id> --level error             # the browser console, oldest first
+ph recordings console <session-id> --level error             # {timestamp, level, message, truncated}, oldest first; emails become [email]
 ph recordings events <session-id> --table                    # timestamp, event, url, dom_event, exception types and values
 ph playlists list --table ; ph playlists add <short-id> <session-id>   # add is a write
 ```
@@ -197,12 +198,12 @@ ph playlists list --table ; ph playlists add <short-id> <session-id>   # add is 
 ph recordings export <session-id> ~/Downloads/session-<id>.jsonl
 ```
 
-It refuses an existing file and any folder inside a git repository, creates the file readable by the user only, and prints `{file, blocks, lines, format}`. Under the hood: `GET .../session_recordings/<id>/snapshots/` lists the blocks (`sources: [{source: "blob_v2", blob_key, start_timestamp, end_timestamp}]`), then `?source=blob_v2&start_blob_key=A&end_blob_key=B` returns them as JSON lines, at most 21 blocks per call for a personal key. Each line is `[window_id, rrweb_event]`: full DOM snapshots, incremental mutations, mouse moves and clicks, scrolls, inputs (masked as the project's replay settings say), console and network plugin events. An rrweb player or a script can replay or search it.
+It refuses an existing name or symlink, any folder inside a git repository and any folder others can write to, creates the file exclusively with mode 600, removes it again if a download fails, and prints `{file, blocks, lines, format}`. Under the hood: `GET .../session_recordings/<id>/snapshots/` lists the blocks (`sources: [{source: "blob_v2", blob_key, start_timestamp, end_timestamp}]`), then `?source=blob_v2&start_blob_key=A&end_blob_key=B` returns them as JSON lines, at most 21 blocks per call for a personal key. Each line is `[window_id, rrweb_event]`: full DOM snapshots, incremental mutations, mouse moves and clicks, scrolls, inputs (masked as the project's replay settings say), console and network plugin events. An rrweb player or a script can replay or search it.
 
 ## Persons and cohorts
 
 ```bash
-ph persons find <distinct-id|email>             # {uuid, distinct_ids (first 5), distinct_id_count, is_identified, created_at, last_seen_at}
+ph persons find <distinct-id|email>             # {uuid, distinct_id_count, is_identified, created_at, last_seen_at}; --personal adds distinct_ids (first 5)
 ph persons events <distinct-id|email> --days 7 --table   # timestamp, event, url, session_id
 ph cohorts list --table                          # id, name, count, is_static, created_at
 ph cohorts create-static "Beta testers" user-1 user-2 user-3     # write
@@ -236,7 +237,7 @@ Occurrence counts and trends per issue come from HogQL over `$exception` events 
 
 ```bash
 ph GET '/api/projects/{project}/feature_flags/?limit=500' | jq ...
-ph PATCH '/api/projects/{project}/feature_flags/<id>/' @flag.json      # dry run; --yes sends
+ph PATCH '/api/projects/{project}/feature_flags/<id>/' @flag.json      # dry run; --yes <code> sends
 ```
 
-Anything but `GET` and a `POST` to `/query/` is a write and needs `--yes`. Paths start with one `/`. The API reference is at posthog.com/docs/api; the live schema at `<host>/api/schema/`.
+Anything but `GET` and a `POST` to `/query/` is a write and needs `--yes <code>`; an `@file` body is read and shown in the dry run, and the code binds its bytes. A raw read prints the API's answer unfiltered (personal data included): project it with `jq`. Paths start with one `/`. The API reference is at posthog.com/docs/api; the live schema at `<host>/api/schema/`.
