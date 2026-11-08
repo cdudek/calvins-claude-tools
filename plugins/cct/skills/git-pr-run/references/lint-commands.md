@@ -1,5 +1,7 @@
 # Lint Commands by Language
 
+Verification and every push follow the [local-first contract](../../sdlc-run/references/local-first.md); read it before running checks or preparing a push.
+
 Detection and lint commands for common project types. Always check for a `Makefile` lint target or `package.json` lint script first — those represent the project's preferred way to lint.
 
 ## Detection Priority

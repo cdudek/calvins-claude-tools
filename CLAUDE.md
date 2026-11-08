@@ -1,5 +1,7 @@
 # calvins-claude-tools
 
+Verification and every push follow the [local-first contract](plugins/cct/skills/sdlc-run/references/local-first.md); read it before running checks or preparing a push.
+
 One Claude Code plugin (`cct`) in `plugins/cct/`. It is the source of truth: edit it directly. Nothing in this repo reads from, builds from or needs access to any other repository.
 
 ## Naming a skill or agent (enforced by the tests)

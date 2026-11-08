@@ -1,5 +1,8 @@
 # Blueprint
 
+Verification follows [local-first](local-first.md). These are legacy workflow examples; migrate
+verification before enabling them in a new repo. GitHub keeps cloud and scheduled work.
+
 Working CI/CD and project setup copied from the HeyDiff repos on 2026-10-31. Copy what fits into a new repo, then change the names. Each folder keeps the original repo's paths.
 
 | Folder | From | What it shows |

@@ -1,5 +1,8 @@
 # heydiff-web
 
+Verification follows [local-first](https://github.com/cdudek/calvins-claude-tools/blob/main/plugins/cct/skills/sdlc-run/references/local-first.md). These are legacy workflow examples; migrate
+verification before enabling them in a new repo. GitHub keeps cloud and scheduled work.
+
 HeyDiff: the web app, the landing page, the operator area, the API and the MCP server.
 
 ## Strategy lives in heydiff-context
@@ -66,7 +69,7 @@ Each contributor has their own Cloud SQL database `<firstname_lastname>_dev`; `m
 
     npm run format && npm run lint && npm run typecheck && npm test
 
-Run it before reporting done. If a test fails, fix the code, not the test. The Stop hook runs
+Run it before reporting done and before every push under the linked local-first contract. The Stop hook runs
 `npm run format && npm run lint && npm run typecheck` for dirty source files.
 
 <!-- BEGIN BEADS INTEGRATION v:1 profile:minimal hash:ca08a54f -->
@@ -97,7 +100,7 @@ bd close <id>         # Complete work
 **MANDATORY WORKFLOW:**
 
 1. **File issues for remaining work** - Create issues for anything that needs follow-up
-2. **Run quality gates** (if code changed) - Tests, linters, builds
+2. **Run the full local gate before every push** - Follow the linked targeted failure loop first; batch fixes, then run the suite once on the final head.
 3. **Update issue status** - Close finished work, update in-progress items
 4. **PUSH TO REMOTE** - This is MANDATORY:
    ```bash

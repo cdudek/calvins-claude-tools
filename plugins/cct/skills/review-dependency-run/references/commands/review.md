@@ -2,6 +2,8 @@
 description: Review a Dependabot dependency-update PR — research changes, cross-check usage, fix failures, report
 ---
 
+Verification and every push follow the [local-first contract](../../../sdlc-run/references/local-first.md); read it before running checks or preparing a push.
+
 The user input is: $ARGUMENTS
 
 Parse the input as: `<pr_number>`
@@ -168,7 +170,7 @@ For each failing check:
    - **Filter the output**: CI logs are verbose. Use grep to extract actual failures, error messages, and assertion mismatches.
    - **Extract the seed**: Look for randomization seed — critical for reproduction.
 
-2. **Verify flakiness**: Re-run the failing test with a different (random) seed. If it passes with a different seed, it's most likely flaky and unrelated to the PR.
+2. **Reproduce locally**: Run the exact failing test with its reported seed and fixture first. Compare with the base when needed; passing with another seed alone does not prove the update is unrelated. Follow the linked local-first failure loop.
 
 3. Categorize as:
    - **Dependency-related**: Caused by the version update (breaking API, changed behavior) — fails consistently across seeds
@@ -183,7 +185,7 @@ For each failing check:
 
 5. For **pre-existing/flaky failures**:
    - Note them in the report but do not attempt fixes
-   - Re-run failed checks: `gh run rerun <run_id> --failed`
+   - Reproduce that failure locally; never retry the pipeline to clear a flaky check. Report a reproduction blocker instead of pushing a speculative fix.
    - Ask the user if they want a Linear issue created to track the flaky test. If yes, create one with: failing test file and line, error message, seed for reproduction, link to CI run
 
 ### 7c: Fix cross-check issues
@@ -205,7 +207,7 @@ If lint fails:
 **WARNING — Behavioral rules**: Some linter rules look like style fixes but change runtime behavior. After applying lint fixes, **always run the full test suite** (Step 7e) to catch breakage.
 
 ### 7e: Run full test suite
-After all fixes (code, lint, cross-check), run the **full** test suite using ecosystem-specific test command, not just targeted tests. Lint fixes from behavioral rules can break tests in unexpected places far from the changed files.
+During diagnosis run only failing tests plus the directly affected suite until green. After batching all fixes (code, lint, cross-check), run the **full local gate once before pushing**, using the repo's `scripts/ci-local` or full local suite. Lint fixes from behavioral rules can break tests in unexpected places far from the changed files.
 
 Report pass/fail status.
 

@@ -9,6 +9,8 @@ effort: high
 color: yellow
 ---
 
+Verification and every push follow the [local-first contract](../skills/sdlc-run/references/local-first.md); read it before running checks or preparing a push.
+
 You write ONE test that encodes a single expected behavior, then run it.
 
 Your prompt supplies the **Behavior** (what should happen, stated without implementation details) and the relevant files (the `Files:` key). You do NOT receive a diagnosis or fix suggestion — write the test from the behavior alone, so it stays honest about whether the code is actually correct.

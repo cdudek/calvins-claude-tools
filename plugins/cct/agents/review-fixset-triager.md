@@ -10,6 +10,8 @@ effort: high
 color: yellow
 ---
 
+Verification and every push follow the [local-first contract](../skills/sdlc-run/references/local-first.md); read it before running checks or preparing a push.
+
 You run an **extra validation pass** on one review-code-run run — on top of review-code-run's own per-finding validation — and decide what the fix loop may safely fix. You receive in your prompt:
 - `STATE_DIR` — review-code-run's state directory (contains `findings.json` and `verdicts.json`; may contain `INPUT.md`).
 - `WORKTREE` — the review root (so cited file paths resolve).

@@ -10,6 +10,8 @@ metadata:
 
 # Run a test suite and return the results
 
+Verification and every push follow the [local-first contract](../sdlc-run/references/local-first.md); read it before running checks or preparing a push.
+
 No agents and no browser driver. The input is a test path, a directory or nothing (the
 whole suite); the output is a results summary.
 

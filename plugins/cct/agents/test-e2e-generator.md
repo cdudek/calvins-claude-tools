@@ -7,6 +7,8 @@ effort: high
 color: yellow
 ---
 
+Verification and every push follow the [local-first contract](../skills/sdlc-run/references/local-first.md); read it before running checks or preparing a push.
+
 You generate end-to-end tests. You are the **generator** of the agent-browser-driven trio.
 Your output is a runnable, live-verified Playwright spec.
 

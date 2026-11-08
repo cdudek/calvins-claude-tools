@@ -1154,30 +1154,28 @@ def test_ci_template_changes_script_and_actionlint() -> None:
         assert lint.returncode == 0, lint.stdout
 
 
-def test_adopt_writes_the_ci_template_when_the_repo_has_no_ci(tmp_path: Path) -> None:
+def test_adopt_keeps_verification_local_for_a_repo_without_ci(tmp_path: Path) -> None:
     repo = _repo(tmp_path, "python")
     (repo / ".github/workflows/ci.yml").unlink()
     res = _adopt(repo)
     assert res.returncode == 0, res.stderr
-    ci = (repo / ".github/workflows/ci.yml").read_text()
-    assert "STACK: python" in ci and "needs.changes.outputs" in ci
+    assert not (repo / ".github/workflows/ci.yml").exists()
+    manual = " ".join(_sections(res.stdout)["MANUAL"])
+    assert "scripts/ci-local" in manual and "pre-push hook" in manual
+    assert "local-ci and decision4" in manual and "never post them by hand" in manual
     cfg = json.loads((repo / "sdlc.json").read_text())
     assert cfg["ciCommands"]["lint"] and cfg["ciCommands"]["e2eTouched"]
-    # second run: the file is the repo's now, nothing is rewritten and no gap list is printed
-    ci_edit = ci.replace("SHARDS: '4'", "SHARDS: '2'")
-    (repo / ".github/workflows/ci.yml").write_text(ci_edit)
-    again = _adopt(repo)
-    assert (repo / ".github/workflows/ci.yml").read_text() == ci_edit
-    assert not any("CI:" in m for m in _sections(again.stdout)["MANUAL"])
+    assert _adopt(repo).returncode == 0
+    assert not (repo / ".github/workflows/ci.yml").exists()
 
 
-def test_adopt_prints_the_ci_gap_list_for_a_repo_with_its_own_ci(tmp_path: Path) -> None:
+def test_adopt_preserves_existing_required_ci_during_migration(tmp_path: Path) -> None:
     repo = _repo(tmp_path, "node")
     before = (repo / ".github/workflows/ci.yml").read_text()
     res = _adopt(repo)
     manual = " ".join(_sections(res.stdout)["MANUAL"])
-    assert "Copy the `changes` and `check` jobs from" in manual
-    assert "github-actions.yml" in manual and "no job named `check`" in manual
+    assert "Keep existing required checks until migration is applied" in manual
+    assert "GitHub keeps cloud/GitHub work and schedules" in manual
     assert (repo / ".github/workflows/ci.yml").read_text() == before
 
 
@@ -1271,16 +1269,12 @@ def test_sdlc_version_line_for_missing_older_equal_and_newer(tmp_path: Path) -> 
     )
 
 
-def test_blueprint_excerpt_is_a_real_excerpt_of_the_template() -> None:
-    """The YAML in ci-blueprint.md must be lines of templates/ci/github-actions.yml, not a copy
-    that drifts: every line that is not an ellipsis comment appears in the template."""
-    text = (SCRIPTS.parent / "references" / "ci-blueprint.md").read_text()
-    block = re.search(r"```yaml\n(.*?)```", text, re.S).group(1)
-    template = (SCRIPTS.parent / "templates" / "ci" / "github-actions.yml").read_text().splitlines()
-    for line in block.splitlines():
-        if line.strip() in ("", "# …") or line.strip().startswith("# checkout and the stack"):
-            continue
-        assert line in template, line
+def test_ci_blueprint_points_to_local_contract_and_labels_legacy_workflow() -> None:
+    text = (SCRIPTS.parent / "references/ci-blueprint.md").read_text()
+    assert "[local-first contract](local-first.md)" in text
+    assert "local-ci" in text and "decision4" in text
+    assert "not the default" in text
+    assert "Do not delete an existing required check" in text
 
 
 def _tree(repo: Path) -> dict[str, bytes | None]:

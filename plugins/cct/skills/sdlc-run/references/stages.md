@@ -1,5 +1,7 @@
 # sdlc-run stages — the milestone process
 
+Verification and every push follow the [local-first contract](local-first.md); read it before running checks or preparing a push.
+
 The detailed runbook for `SKILL.md`, as the owner approved it on 2026-10-09. Rules that hold in
 every stage:
 
@@ -10,8 +12,8 @@ every stage:
 - **One go is the default** (`sdlc.json` `delivery: "one-go"`, the owner's call on
   2026-10-25). Everything the engineer asked for goes into one change; the engineer pastes
   **one** `/goal` (`templates/goal/run.txt`) that builds every milestone of the plan in order.
-  Features are commits; **no check, lint or test runs per feature or per commit**. Checks,
-  E2E and validation run once per milestone, on that milestone's diff. One PR and one release
+  Features are commits; **run touched tests and required pre-commit checks**. The full
+  local gate runs once on the final head before every push (see [local-first](local-first.md)). One PR and one release
   per milestone. `delivery: "feature-prs"` keeps the older per-feature PRs (Stage 5, second
   half) for repos where several people build one milestone at once.
 - **Questions never block.** When the build meets a question only the engineer can answer, it
@@ -237,9 +239,8 @@ a change small enough for one milestone has one.
    not built but written to `questions.md` with its options, and the item is skipped. Write the
    tests for its facts (`cct:test-e2e-coverage-run`, tagged `@F<n>`;
    bugs: `test-behavior-writer`, then `review-fix-implementer`), build in the plan's folders, commit,
-   set the row in `milestone.md` to `done <sha>`, start the next feature at once. **Nothing
-   runs between features**: no `verify_gate.py feature`, no lint, no tests, no CI, no UX review.
-   A commit that breaks something is found by the milestone's checks, which is the point.
+   set the row in `milestone.md` to `done <sha>`, start the next feature at once. **Run touched tests and required pre-commit checks between features**; do not
+   repeat the full suite while diagnosing one failure. Before pushing, use the full local gate.
 3. Features that edit different files may build in parallel (Wall clock below): the supervisor
    commits its records, then dispatches each builder with a `Base: <milestone head sha>` line,
    and merges the builders' branches into the milestone branch locally, one at a time. Commits
@@ -273,7 +274,7 @@ a change small enough for one milestone has one.
      slot, in the foreground (see Wall clock below); `test-flake-fix` for an inconsistent test.
   5. `python3 scripts/verify_gate.py feature <id>`, once per feature at the end, never after a
      task group; between edits run only the test files the change touched, since the gate is
-     the only full check. On `FAIL`, fix (a commit) and rerun until `VERIFY PASS`: passed checks on an
+     the final full check. On `FAIL`, use the targeted failure loop in [local-first](local-first.md), then rerun the full gate once: passed checks on an
      unchanged tree are cached, and the third failed run blocks with `reason=attempts`. On `BLOCKED`: one
      `AskUserQuestion` naming the reason in plain words, two or three ways forward, your pick
      first as `(Recommended)` with why.
@@ -300,8 +301,8 @@ a change small enough for one milestone has one.
      `sdlc.json` `ux` is `off`, the size is `none`, or the PR changes no interface file.
      Supplied marks and reference images still require comparison, even when the UX skill is skipped.
   8. Arm auto-merge and start the next independent feature at once (Records, gates and
-     waiting, below). PR CI runs lint, types, unit tests and the specs this PR changed; the
-     full E2E suite runs on the milestone head (`ci-blueprint.md`, A5). This PR is
+     waiting, below). Local checks run lint, types, unit tests and the specs this PR changed; the
+     full E2E suite runs in the local gate before push (`local-first.md`). This PR is
      **interior** — its base is `milestone/<slug>`, not the default branch — so Ship/Show/Ask
      does not run on it, and no human is asked to approve it. The workflow skips itself on the
      base ref (`references/tiers.md`). The code is reviewed once, locally, at the milestone
@@ -348,8 +349,7 @@ while a dependency PR's CI ran. Four rules, for every stack.
   branch, then go back. Independent rows build in parallel builders, at most 4 (Wall clock).
 - **Agents run what they touched.** A builder runs only the tests or specs its change touched
   (the command per stack: `../../test-e2e-policy/references/suite-speed-and-reliability.md`
-  section K, column "Touched tests"). The full suite runs once per milestone, and in CI only
-  on the PRs `ci-blueprint.md` A5 names.
+  section K, column "Touched tests"). The full local gate runs once on the final head before each push. Existing remote CI only confirms it; see [local-first](local-first.md).
 
 ## Wall clock: one worktree per builder
 
@@ -488,7 +488,7 @@ person's own browser session. Never use Claude in Chrome or any tool driving tha
 5. Reopen recaptured images and rerun their visual checks. Then
    `python3 scripts/verify_gate.py milestone <id> --visual-check "<checker>" --visual-run "<run>"`
    once, after the fixes, never between them, run by the close builder (`Mode: close`) on a
-   head nothing else touches; on `FAIL` fix and rerun until `VERIFY PASS` (passed
+   head nothing else touches; on `FAIL` use the targeted local failure loop, then the full gate once until `VERIFY PASS` (passed
    checks on an unchanged tree are cached; the third failed run blocks with `reason=attempts`).
    Repeat `--visual-run` for every required current UX run; failures enter
    `verify/report.json` and `report.md` as failed checks. Resolve the checker from the installed
@@ -506,8 +506,9 @@ person's own browser session. Never use Claude in Chrome or any tool driving tha
    commit (`gh pr merge <n> --merge --auto`). This push is the milestone branch's first. A
    milestone that `needs` an earlier one opens its PR once that one has merged and this one has
    merged the new parent in (its sync row, run again); an independent milestone opens its PR at
-   once. A red CI check: read its log, one fix commit, the gate again, one push. Never
-   rerun a job to see whether it passes.
+   once. A red CI check: read the exact failed job/test and reason, reproduce locally,
+   fix and rerun that test plus the directly affected suite until green, then the full local
+   gate once and one batched push. Never rerun the pipeline or push a speculative fix.
    Into a project it is an interior PR:
    no tier, auto-merge armed on green. Into the default branch the tier
    decides. **The engineer accepts the milestone** in one `AskUserQuestion`: "Accept

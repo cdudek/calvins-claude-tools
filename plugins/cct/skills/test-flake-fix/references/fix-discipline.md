@@ -1,5 +1,7 @@
 # Fix Discipline
 
+Verification and every push follow the [local-first contract](../../sdlc-run/references/local-first.md); read it before running checks or preparing a push.
+
 The problem-solving workflow this skill follows, and the protocol for each fix step.
 
 **Constraint (applies throughout):** [Protect tests](../../role-code-analysis/references/protect-tests.md). Tests are sacrosanct; change them only as a last resort, and never to accommodate broken code. For a flaky test the fix usually is in the test or its fixtures, so keep it to the cause of the flakiness and leave assertions as they are.

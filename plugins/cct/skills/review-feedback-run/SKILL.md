@@ -10,6 +10,8 @@ metadata:
 
 # Address Feedback
 
+Verification and every push follow the [local-first contract](../sdlc-run/references/local-first.md); read it before running checks or preparing a push.
+
 Investigates and addresses code feedback from any source — PR reviews + CI, conversation context, or free text. Triages into an actionable summary, then executes fixes using Phase RED/GREEN.
 
 Each subcommand selects the references it needs. The `pr` subcommand additionally handles worktree entry, CI failure classification, staleness (merge base, since the PR already exists), PR finalize (push + body update), and per-thread resolve/comment actions on GitHub (with confidence proposals + user override). The `chat`, `message`, and `fix-set` subcommands always run in-place in the current directory. The `fix-set` subcommand is **autonomous** — it consumes a pre-triaged fix set from a review-code-run run (`$STATE_DIR/fix-set.json`), so it skips the user-selection gate and never files Linear tickets (deferred items become DISCUSS).

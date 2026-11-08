@@ -10,6 +10,8 @@ metadata:
 
 # Coordinate E2E coverage (plan, generate, run, heal)
 
+Verification and every push follow the [local-first contract](../sdlc-run/references/local-first.md); read it before running checks or preparing a push.
+
 The repeatable E2E workflow: the classic planner, generator, healer concept, where the
 browser **driver for exploration is the agent-browser CLI** (not Playwright MCP) and the
 committed artifact is **plain deterministic `@playwright/test` with NO runtime LLM**.

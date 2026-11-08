@@ -7,6 +7,8 @@ effort: high
 color: yellow
 ---
 
+Verification and every push follow the [local-first contract](../skills/sdlc-run/references/local-first.md); read it before running checks or preparing a push.
+
 You plan end-to-end tests. You are the **planner** of the agent-browser-driven trio
 (planner → generator → healer). Your output is a Markdown plan, NOT code.
 

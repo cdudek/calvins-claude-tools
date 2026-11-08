@@ -1,5 +1,7 @@
 # The playbook, and where each play lives here
 
+Verification and every push follow the [local-first contract](local-first.md); read it before running checks or preparing a push.
+
 Anthropic, *The AI-Native SDLC Playbook* — <https://academy.claude.com/courses/ai-native-sdlc-playbook>
 (blog: <https://claude.com/blog/the-ai-native-sdlc-playbook>). Six stages, twelve plays; each
 stage ends by committing an artifact, the commit starts the next stage, humans sit at gates.

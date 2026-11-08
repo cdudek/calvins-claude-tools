@@ -56,7 +56,7 @@ is `scope-growth`.
 ## Feature PRs
 
 In order, grouped under `### Milestone <n> — <what a user can do after it>`. One go (the
-default): each row is a commit on `milestone/<slug>-<n>` with no checks between rows; each
+default): each row is a commit on `milestone/<slug>-<n>` with touched tests and required pre-commit checks between rows; each
 milestone gets the checks and validation once, and one PR that releases it. For E2E, run
 the full suite once, ×3 only for changed and flaky specs. Use the committed
 `e2e/flaky-specs.txt` list per `cct:test-e2e-policy`, `suite-speed-and-reliability.md`
@@ -134,3 +134,5 @@ where the artifact is this PR's diff and there was never a build to hand over.
 ## Revisions
 
 Only after approval. One line per change: `YYYY-MM-DD — what changed, and why`.
+
+Verification follows the [local-first contract](https://github.com/cdudek/calvins-claude-tools/blob/main/plugins/cct/skills/sdlc-run/references/local-first.md).

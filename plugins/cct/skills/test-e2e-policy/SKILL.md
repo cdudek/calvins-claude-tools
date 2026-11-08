@@ -10,6 +10,8 @@ metadata:
 
 # The e2e standard
 
+Verification and every push follow the [local-first contract](../sdlc-run/references/local-first.md); read it before running checks or preparing a push.
+
 An end-to-end test is the most expensive test we write and the one most likely to fail for
 a reason unrelated to the product. It earns its place only by proving something no cheaper
 test can: that the real build, database, auth, routing and browser work together for a

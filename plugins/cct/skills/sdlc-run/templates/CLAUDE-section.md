@@ -1,4 +1,11 @@
+
+
+Verification and every push follow the [local-first contract](https://github.com/cdudek/calvins-claude-tools/blob/main/plugins/cct/skills/sdlc-run/references/local-first.md); read it before running checks or preparing a push.
+
 ## How work moves: the SDLC
+
+
+
 
 This repo uses `cct:sdlc-run`, configured by `sdlc.json`. A change is one PR and one folder:
 `{{CHANGES_DIR}}/<date>-<KEY>-<slug>/` (no key when there is no Linear issue). Designs that outlive
@@ -38,5 +45,5 @@ New keys: `checks`, `milestones`, `projects`, `hotfix`, `goal`, `languages`, `re
 
     {{VERIFY}}
 
-Run it before reporting done. If a test fails, fix the code, not the test. The Stop hook runs
+Run it before reporting done and before pushing. Use the linked targeted local failure loop; the full gate runs once on the final head before push. The Stop hook runs
 `{{VERIFY_STOP}}` for dirty source files.
