@@ -5,6 +5,14 @@ version warning, the **Mechanical** lines are what `adopt` does for you (it adds
 with the stack's defaults and never overwrites a value), the **Manual** lines are printed for
 the engineer. A version with no migration lines needs nothing but a re-run of `adopt`.
 
+## 3.9.2 — Worktrunk-first worktree lifecycle
+
+- Worktrunk when installed; a single installation question in preflight/setup, with Git fallback on decline.
+- Shared policy covers exact paths, fresh bases, PR heads, noninteractive JSON, local builder integration and cleanup.
+- Remove hooks refuse dirty worktrees, never force removal, and retain unmerged branches.
+- Mechanical: none.
+- Manual: none.
+
 ## 3.9.1 — local-first verification and local gate adoption
 
 - One shared local-first contract: reproduce the exact failure locally, run only failing tests and the directly affected suite until green, then the full local gate once before a batched push.

@@ -16,7 +16,7 @@ Show findings first. Post only when the user says so, naming findings by `F<id>`
 
 ## Worktrees — `pr` modes
 
-`pr-deep` and `pr-max` enter the PR head with `EnterWorktree`. Both routes in `mode-pr.md` (`name:` and the bot-branch `path:` fallback) run the repo's worktree-setup hook (`make worktree_setup` / Docker) the same way: it fires on the `EnterWorktree` call itself, not on the parameter. Do not `ExitWorktree` yourself. The user removes the worktree and branch.
+`pr-deep` and `pr-max` follow the [shared worktree policy](../../../references/worktree-usage.md) and `mode-pr.md`: Worktrunk JSON commands when installed, Git fallback, then `EnterWorktree path=` for session setup (`make worktree_setup` / Docker). Do not `ExitWorktree` yourself. The user removes the worktree and branch.
 
 ## Codex co-review — every mode except `pr-quick`
 

@@ -8,17 +8,13 @@ Collects the review surface for `pr-deep` and `pr-max`. Sets `$STATE_DIR`, `$ROO
 
 Already on the head branch, or told to review in place → `$ROOT` = current dir. Skip the rest of this step.
 
-Otherwise:
-1. `head=$(gh pr view <pr_number> --json headRefName --jq .headRefName)`
-2. `git fetch origin "$head:$head"`
-3. Enter a worktree on a real local branch, so `review-feedback-run` can push fixes later.
+Otherwise follow the same three-case dispatch as [PR worktree entry](../../review-feedback-run/references/pr-worktree.md), using the [shared worktree policy](../../../references/worktree-usage.md).
 
-| `head` contains `/`? | Do |
-|---|---|
-| no | `EnterWorktree(name: <head>)`. Safe to repeat. |
-| yes (bot branches) | Check `git worktree list` first. Already in it → use current dir. Exists elsewhere → `EnterWorktree(path: <it>)`. Else `git worktree add -b <head> <workspace>/<prefix>pr-<n>-<slug> origin/<head>`, then `EnterWorktree(path: <it>)`. |
+1. `head=$(gh pr view <pr_number> --json headRefName --jq .headRefName)`.
+2. List with `wt list --format json` (Git fallback), then reuse the current matching checkout or enter the existing path. Fetch an absent branch with `git fetch origin "$head:$head"` only after checking the listing.
+3. If absent, `wt switch <head> --no-cd --format json` with the exact `<repo>/.worktrees/pr-<n>-<slug>` path override, or `git worktree add <path> <head>` without Worktrunk. Read `.path`, then `EnterWorktree path=<path>` on the real local branch so `review-feedback-run` can push later. Verify the PR head SHA. Never reset dirty or divergent work automatically.
 
-Both routes run the repo's worktree-setup hook (`make worktree_setup` / Docker) the same way: it fires on the `EnterWorktree` call itself, not on the parameter. The bot-branch row is the same 3-case dispatch as `review-feedback-run/references/pr-worktree.md`; change both together.
+All branch shapes use path entry. The repo's worktree-setup hook (`make worktree_setup` / Docker) fires on `EnterWorktree`; direct CLI creation alone does not replace session setup. Change both review entry references together.
 
 `$ROOT` = the worktree path.
 

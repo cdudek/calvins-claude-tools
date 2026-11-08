@@ -53,7 +53,7 @@ Skills are named `<family>-<object>-<verb>` (see [`docs/adr/0001-skill-taxonomy.
 - **vendor and browser adapters** (vendor tools and the browser): `aws-manage`, `browser-automate`, `cloudflare-manage`, `codex-run`, `github-manage`, `linear-manage`, `posthog-manage`.
 - **role-*** (internal helpers agents preload): `role-code-analysis`, `role-review-vocabulary`.
 
-- **Hooks:** worktrees always under `<repo>/.worktrees/<name>`, and a lint on every edit.
+- **Hooks:** [Worktrunk-first worktrees with Git fallback](plugins/cct/references/worktree-usage.md), and a lint on every edit.
 - **Docs:** `docs/stack.md`, `docs/working-rules.md`, `skills/CLAUDE.md` (the interface contracts the review skills' tests read).
 - **Blueprint:** `blueprint/` has the Dockerfile, GitHub Actions, deploy docs and release config for Next.js on Cloud Run, Electron, WXT and a HeroUI design-system kit.
 - **Examples:** `examples/heydiff/` has a real context repo, brand guide exports and UX docs.

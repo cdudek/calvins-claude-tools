@@ -10,8 +10,11 @@ Wires a repo to the rulebook at https://github.com/cdudek/blueprints (`core/BLUE
 
 The script `${CLAUDE_SKILL_DIR}/scripts/project_setup.py` is deterministic, stdlib only, and writes nothing without `--yes`. Without it, it prints the plan.
 
+Read the [shared worktree policy](../../references/worktree-usage.md). Check Worktrunk during setup and include its installation question below only when missing and not already answered this session.
+
 ## Ask first (one AskUserQuestion, recommended option first)
 
+- **Worktrunk, when missing:** use the installation prompt and decline fallback in the shared policy.
 - **Plugins:** `cct@cct` only (recommended), or more as `name@marketplace` (a non-cct marketplace also needs `NAME=OWNER/REPO`).
 - **Pin the cct marketplace?** No, follow `main` (recommended), or a tag or ref.
 - **Decision4 contract and boundary map?** Yes (recommended) or no.
