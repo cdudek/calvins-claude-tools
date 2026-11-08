@@ -69,6 +69,9 @@ def contract_changes(root):
     heading = "## Decision4 handoff contract (v1)"
     if heading not in text:
         changes.append((path, text.rstrip() + ("\n\n" if text else "") + CONTRACT))
+    elif "## Decision4 records (§7 and §9)" not in text:
+        records = CONTRACT[CONTRACT.index("## Decision4 records (§7 and §9)") :]
+        changes.append((path, text.rstrip() + "\n\n" + records))
     claude = root / "CLAUDE.md"
     if claude.exists():
         old = claude.read_text()
@@ -91,6 +94,10 @@ def contract_changes(root):
 def asset_changes(root):
     """Exactly the consuming-repo set: no checker code or test fixtures."""
     changes = contract_changes(root)
+    lock = root / ".decision4.lock"
+    pinned = (BUNDLE / "decision4.lock").read_text()
+    if not lock.exists() or lock.read_text() != pinned:
+        changes.append((lock, pinned))
     dest = root / "boundary-map.yaml"
     if not dest.exists():
         changes.append((dest, STARTER_MAP))

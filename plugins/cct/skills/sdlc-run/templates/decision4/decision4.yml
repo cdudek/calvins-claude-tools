@@ -10,4 +10,4 @@ permissions:
   pull-requests: read
 jobs:
   decision4:
-    uses: cdudek/blueprints/.github/workflows/decision4-check.yml@770383e955d0b66199f13bbae0e825aa9fface08 # shared Decision4 v1
+    uses: cdudek/blueprints/.github/workflows/decision4-check.yml@65c1d72827d34c9eba3fcf5236e09ca65fcd5311 # shared Decision4 v1
