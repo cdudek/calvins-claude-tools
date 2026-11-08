@@ -5,6 +5,14 @@ version warning, the **Mechanical** lines are what `adopt` does for you (it adds
 with the stack's defaults and never overwrites a value), the **Manual** lines are printed for
 the engineer. A version with no migration lines needs nothing but a re-run of `adopt`.
 
+## 3.9.4 — gate branch publication on a clean, verified HEAD
+
+- The plugin's Bash PreToolUse hook blocks `git push`, `gh pr create` and `gh pr ready` in repositories declaring a local gate unless the common Git directory holds `ci-local/<HEAD>.ok` and the worktree is clean.
+- Tag-only and deletion pushes remain allowed; repositories without a gate retain the local-first policy.
+- Regression fixtures cover linked worktrees, current and stale markers, package gates, dirty trees, command working directories and exemptions.
+- Mechanical: none (the hook ships with the plugin).
+- Manual: ensure the repository-owned full local gate writes its marker for the final clean committed HEAD after all checks pass; run the gate and publication as separate Bash calls.
+
 ## 3.9.3 — readable Decision4 PRs and offline scaffolding
 
 - Project setup and adopt share the final blueprints PR #20 checker and regression cases, with the readable PR section and its writing-rules comment.
