@@ -5,6 +5,12 @@ version warning, the **Mechanical** lines are what `adopt` does for you (it adds
 with the stack's defaults and never overwrites a value), the **Manual** lines are printed for
 the engineer. A version with no migration lines needs nothing but a re-run of `adopt`.
 
+## 3.9.7 — preserve repository-owned CODEOWNERS
+
+- CODEOWNERS is repository-owned: adopt never creates, edits or deletes it, including older generated files and tier changes. Generated guards no longer impose owner routing.
+- Mechanical: none; every existing CODEOWNERS file is preserved.
+- Manual: refresh generated SDLC guard tests with adopt; manage CODEOWNERS and required owner-review rules as a team-repo choice.
+
 ## 3.9.6 — upstream-faithful Decision4 by reference
 
 - One contract in AGENTS.md, one PR section, a boundary-map scaffold and a pinned shared caller or checksum-verified local fetch; checker code and fixtures stay in the shared host.

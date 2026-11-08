@@ -33,7 +33,6 @@ const cfg = JSON.parse(readFileSync(join(ROOT, "sdlc.json"), "utf8")) as {
   verifyDirty: string[];
   lintOnEdit: Record<string, string>;
   blocked: { match: string; message: string; samples: string[] }[];
-  codeowners: string[];
   toolsCommand: string;
   tiers?: boolean;
 };
@@ -47,7 +46,6 @@ const TIER_FILES = [
   ".github/workflows/ship-show-ask.yml",
   "scripts/ship_show_ask.py",
   ".github/tiers.json",
-  ".github/CODEOWNERS",
 ];
 const TIERS = (
   TIERS_ON
@@ -840,22 +838,7 @@ describe.skipIf(!TIERS_ON)("tiers", () => {
   ] as [string[], string][])("classifies %j as %s", (files, expected) => {
     expect(classify(files)).toBe(expected);
   });
-  it("CODEOWNERS is exactly the ask tier, generated from sdlc.json", () => {
-    const path = join(ROOT, ".github", "CODEOWNERS");
-    if (cfg.codeowners.length === 0) {
-      expect(existsSync(path), "no codeowners in sdlc.json, so no CODEOWNERS file").toBe(false);
-      return;
-    }
-    const rules = readFileSync(path, "utf8")
-      .split("\n")
-      .map((l) => l.split("#")[0].trim())
-      .filter(Boolean)
-      .map((l) => l.split(/\s+/));
-    const normalise = (p: string) =>
-      p.replace(/^\//, "").endsWith("/") ? p.replace(/^\//, "") + "**" : p.replace(/^\//, "");
-    expect(new Set(rules.map((r) => normalise(r[0])))).toEqual(new Set(TIERS.ask));
-    for (const r of rules) expect(r.slice(1)).toEqual(cfg.codeowners);
-  });
+
 });
 
 describe("docs and workflows", () => {

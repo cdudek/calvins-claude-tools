@@ -36,7 +36,7 @@ Run from the repo root, on a branch. Idempotent: rerun after editing `sdlc.json`
 |---|---|
 | `.claude/hooks/*.sh` (6) | `sdlc.json` (from the preset) |
 | the SDLC entries in `.claude/settings.json` | `.github/tiers.json` (preset defaults; only while `tiers` is not `false`) |
-| `.github/CODEOWNERS` (from `codeowners` × `ask`; removed when nobody is named or `tiers` is `false`) | `REVIEW.md` |
+| | `REVIEW.md` |
 | `.github/workflows/ship-show-ask.yml` (only while `tiers` is not `false`); `claude-review.yml`, `claude.yml` and `ci-triage.yml` are removed when present (no Claude in CI since 3.7.0) | `CLAUDE.md` section (appended once) |
 | `scripts/ship_show_ask.py` (only while `tiers` is not `false`) | the "Repo-specific" tail of `docs/sdlc.md` |
 | `docs/sdlc.md` above the marker | the first change folder |
@@ -45,11 +45,15 @@ Run from the repo root, on a branch. Idempotent: rerun after editing `sdlc.json`
 |  | anything in `sdlc.json` `keep` |
 
 **One owner? Answer "No" (`tiers: false`).** Ship/Show/Ask needs a second person to
-ask and to show. With one owner, `adopt` writes none of the four tier files and removes any
+ask and to show. With one owner, `adopt` writes none of the three tier files and removes any
 that exist (`git rm`). `docs/sdlc.md` then says "auto-merge on green" instead of the tiers,
-and MANUAL drops the App secrets, `SDLC_COOWNER`, the Slack token and the CODEOWNERS ruleset
-note. You arm auto-merge on each PR yourself: `gh pr merge <n> --merge --auto` for a milestone or
+and MANUAL drops the App secrets, `SDLC_COOWNER` and the Slack token setup notes. You arm auto-merge on each PR yourself: `gh pr merge <n> --merge --auto` for a milestone or
 project PR, `--squash` for anything else.
+
+**CODEOWNERS is a team-repo choice, never installer-managed.** Adopt never creates, edits or
+deletes it, including older generated files, regardless of `codeowners`, `tiers`, `keep`,
+upgrade or dry-run settings. Team repos maintain their own routing and required owner
+review rule; solo-owner repos need no self-approval listing.
 
 The four issue templates mirror the Linear templates in `cct:linear-manage`, so an issue reads
 the same whichever tracker it started in. They are kept once written — a team that adds a field to
