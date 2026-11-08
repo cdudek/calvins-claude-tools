@@ -1,28 +1,44 @@
+<!--
+Scannable layout: What, Why, Proof, Before merge (only if open), then Decision4
+when boundary-map.yaml exists, then Decision record only at Migrate/Answer.
+Every section uses lists with bold labels; one idea per bullet, at most two lines.
+Proof names each check and result. Links belong on labels or results.
+Keep repo-specific requirements and human checklists; never tick human attestations.
+-->
 ## What
 
-<one or two sentences: what changes for the user or the system>
+- **Change:** <what changes for the user or system>
+- **Issue:** Fixes <LINEAR-ID>
 
-Fixes <LINEAR-ID>
+### Out of scope
 
-## Which requirements this satisfies
+- **Excluded:** <what this PR deliberately does not do>
 
-> One row per requirement from `changes/<id>/facts.md`, or from the issue when there is no change
-> folder. A requirement with no proof is not done, and a proof with no requirement is scope creep.
+## Why
 
-| Requirement | Proof |
-|---|---|
-| F1 | `<test file> › <test name>` |
-| F2 | manual: <who checked, and how> |
+- **Reason:** <the problem and why this change resolves it>
 
-## Verification
+## Proof
 
-- [ ] `<verify command>` exits 0
-- [ ] Every `F`/`N` above has a proof in the table
-- [ ] No `[NEEDS CLARIFICATION]` marker is left in the change folder or the issue
+- **Local gate:** <verify command and actual result on this head>
 
-## Out of scope
+### Which requirements this satisfies
 
-- <what this PR deliberately does not do>
+- **Traceability:** One row per requirement from `changes/<id>/facts.md` or the issue; every requirement needs proof and every proof needs a requirement.
+
+  | Requirement | Proof |
+  |---|---|
+  | F1 | `<test file> › <test name>` |
+  | F2 | manual: <who checked, and how> |
+
+## Before merge
+
+<!-- Remove this section only when no checks or actions remain open. -->
+### Verification
+
+- [ ] **Verify:** `<verify command>` exits 0.
+- [ ] **Requirements:** Every `F`/`N` above has a proof in the table.
+- [ ] **Clarifications:** No `[NEEDS CLARIFICATION]` marker is left in the change folder or issue.
 
 <!--
 Decision4 writing rules:
@@ -55,3 +71,11 @@ Migrate — Move data, state, or users back
 Answer — Cannot fully recover; a named person is accountable
 
 </details>
+
+<!-- Keep Decision record only at Migrate/Answer; remove it at Undo/Repair. -->
+## Decision record
+
+- **Chose:** <selected option>
+- **Over:** <alternative considered>
+- **Because:** <reason for this choice>
+- **Commits us to:** <follow-up or lasting obligation>

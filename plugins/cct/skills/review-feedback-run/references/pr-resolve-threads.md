@@ -49,7 +49,7 @@ Default action from confidence:
 | Confidence | Proposed action |
 |---|---|
 | ≥ 80 | `resolve` (silent — no reply) |
-| 50–79 | `comment+resolve` — reply `"Addressed in {sha}"` then resolve |
+| 50–79 | `comment+resolve` — reply `"- **Addressed:** {sha}"` then resolve |
 | 20–49 | `comment-only` — reply with one-line note; do **not** resolve |
 | < 20 | `leave` — no GitHub action |
 
@@ -58,7 +58,7 @@ Default action from confidence:
 These OVERRIDE the proposal mapping above. Apply in order:
 
 1. `action = SKIP` → propose `leave`. Reviewer's concern wasn't addressed; thread stays open.
-2. `action = DEFER` → propose `comment-only` with body `"Tracked as Linear ticket {ticket_id} — deferred from this PR."`; never resolve.
+2. `action = DEFER` → propose `comment-only` with body `"- **Deferred:** Tracked as Linear ticket {ticket_id}; remains outside this PR."`; never resolve.
 3. `action = DISCUSS` → propose `comment-only` with the DISCUSS reasoning; never resolve.
 4. Thread's first comment `author == pr_author` (PR author commented on their own PR) → propose `leave` (these are notes, not review requests).
 5. `viewerCanResolve = false` → propose `leave` (no permission; show as informational).
@@ -113,6 +113,12 @@ Capture the confirmed plan (thread_id → action) for *Apply thread actions*.
 
 Use the SHA captured during *Finalize (push + body)* for `comment+resolve` reply bodies.
 
+### Scannable replies
+
+Use a short bold-labelled bullet for a one-line reply. Longer review comments use What,
+Why and Proof lists under the [body rules](../../sdlc-run/references/pr-body.md); name the
+check and result, and link the label or result. Never claim a deferred concern is fixed.
+
 ### Execution recipes
 
 Run sequentially per thread (one Bash call each). Resolve actions are idempotent (resolving an already-resolved thread is a no-op).
@@ -129,7 +135,7 @@ bash ${CLAUDE_SKILL_DIR}/scripts/reply-thread.sh "{pr_number}" "{first_comment_i
 
 **comment+resolve** — run reply, then resolve:
 ```bash
-bash ${CLAUDE_SKILL_DIR}/scripts/reply-thread.sh "{pr_number}" "{first_comment_id}" "Addressed in {sha}"
+bash ${CLAUDE_SKILL_DIR}/scripts/reply-thread.sh "{pr_number}" "{first_comment_id}" "- **Addressed:** {sha}"
 ```
 ```bash
 bash ${CLAUDE_SKILL_DIR}/scripts/resolve-thread.sh "{thread_id}"

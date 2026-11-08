@@ -115,3 +115,9 @@ into `lock.json`. The `/goal` closes only work **up to that class**. A decision 
 built: write it to `questions.md` with the options and what it would take, skip the item, go on.
 Raising the class during the build is always allowed and recorded; lowering it needs the
 engineer's words in `decisions.json` `protectedEdit`.
+
+## Decision record in a PR
+
+At Migrate/Answer put the lasting choice under `## Decision record` with bold-labelled
+Chose, Over, Because and Commits us to bullets; see [the full body example](pr-body.md).
+Do not add a decision record at Undo/Repair or use “Repair, choice story:” headings.

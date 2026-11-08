@@ -15,6 +15,18 @@ Verification and every push follow the [local-first contract](../sdlc-run/refere
 
 Creates a GitHub pull request from local changes through a complete workflow: branch creation, syntax checking, commit, PR submission, and CI monitoring. Each step respects repo-specific conventions when they exist, falling back to widely-adopted defaults.
 
+## Scannable PR text (required)
+
+- **Order:** `## What` → `## Why` → `## Proof` → `## Before merge` (only while something is open) → the repo's Decision4 section (only with `boundary-map.yaml`) → `## Decision record` (only at Migrate/Answer).
+- **Bullets:** Every section is a list; start each bullet with a bold label (`- **Source plan:** 0 adds, 8 updates, 38 destroys.`). Keep one idea per bullet, at most two lines, and no paragraph longer than two sentences. Keep checklist syntax and bold-label the item.
+- **Proof:** Name the check and result (`- **Unit tests:** 1,320 passed.`). Put links on the label or result, never a bare URL in prose. Preserve claims and human checklist attestations when restructuring an existing body.
+- **Decision4:** When the repo has a boundary map, read it and copy the exact readable section from its PR template. Select its highest applicable class in bold with one colour circle and a sentence explaining recovery; use bold-labelled Recovery steps (numbered for multiple steps), optional Work preserved, Responsible for recovery (a named person at Answer), and Classification change. Keep the Recovery levels legend collapsed. Never author old plain `Decision-Class:` lines.
+- **Decision record:** At Migrate/Answer use `## Decision record` with bold-labelled bullets: Chose, Over, Because, Commits us to. Never use “Repair, choice story:” headings; Repair needs no decision record.
+- **Milestone and review text:** The same layout covers milestone-close PRs, issue bodies and PR comments. Put addressed feedback under What, its rationale under Why and its check results under Proof. A short thread reply can be one bold-labelled bullet; include only applicable sections.
+- **Validation:** Validate the proposed body before pushing and the actual body after creation or edits through the repo's Decision4 gate when installed. Use `--body-file`; scannable formatting applies even without Decision4.
+
+Read the full [body example](../sdlc-run/references/pr-body.md) before writing a PR, milestone-close body, issue or review reply.
+
 ## Core Principles
 
 - **Repo conventions first** — always check for project-specific configuration before falling back to defaults
@@ -125,7 +137,7 @@ Before committing, check whether the staged changes will make any repo documenta
 3. Apply findings per severity:
    - **Critical** — auto-fix the docs (the doc states something demonstrably false; correcting it is safe). Re-stage the fixed doc files so they fold into the upcoming commit. Add a one-line note to the commit body: `Doc updates: <N> file(s)`.
    - **Warning / Info** — list them to the user and ask: "Apply N? Reply `apply <ids>`, `apply all`, `skip`, or `defer` (mention in PR description)."
-4. If the user picks `defer`, continue to Step 5 but include a "Pending doc updates" section in the PR description (Step 6) listing the unapplied findings.
+4. If the user picks `defer`, continue to Step 5 but list the unapplied findings as bold-labelled bullets under `## Before merge` in the PR description (Step 6).
 5. If the user picks `skip`, continue with no further action.
 
 This step is **not** a hard gate — if the audit cannot run (e.g. `git diff` is empty, or no patterns match), proceed silently to Step 5.
@@ -211,32 +223,29 @@ Then create the PR as a draft:
 
 ```bash
 cat > "${TMPDIR:-/tmp}/proposed-pr-body.md" <<'EOF'
-## ℹ️ Description
-<1-3 bullet points describing what changed and why>
+## What
 
-### Changes
-<list of key changes, grouped logically, don't create list by commits take a look on whole PR changes in general>
+- **Change:** <what changes and for whom>
+- **Related issue:** <issue link, if any>
 
-#### Related issue
-<!---
-Put ticket number or github issue here if detected. eg. BUY-123, #123
--->
+## Why
 
-### :white_check_mark: Checklist
-<!---
-Strike through checklist items that are not applicable.
-Leave "Self-reviewed PR" UNCHECKED — only the human author may tick it after reviewing the draft.
--->
-- [ ] All acceptance criteria are met
-- [ ] Self-reviewed PR
-- [ ] Unit test for changes in a method
-- [ ] Functional test for each functional change on the components
-- [ ] E2E test for new feature or edited feature simulating user interaction
+- **Reason:** <the concrete problem this change resolves>
 
-## Test plan
-- [ ] <how to verify this works>
+## Proof
 
-🤖 Generated with [Claude Code](https://claude.com/claude-code)
+- **Local gate:** <command and actual result on this head>
+- **Requirements:** <requirement id and its test or other evidence>
+
+## Before merge
+
+- [ ] **Acceptance:** All acceptance criteria are met.
+- [ ] **Self-review:** Self-reviewed PR (human only).
+- [ ] **Unit tests:** Unit test for changes in a method.
+- [ ] **Functional tests:** Functional test for each functional change on the components.
+- [ ] **E2E tests:** E2E test for new feature or edited feature simulating user interaction.
+
+🤖 Generated with Codex
 EOF
 # Fill the readable Decision4 section when required, then validate the body locally.
 gh pr create --draft --title "<conventional-title>" --body-file "${TMPDIR:-/tmp}/proposed-pr-body.md"

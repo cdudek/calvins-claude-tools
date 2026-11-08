@@ -5,6 +5,13 @@ version warning, the **Mechanical** lines are what `adopt` does for you (it adds
 with the stack's defaults and never overwrites a value), the **Manual** lines are printed for
 the engineer. A version with no migration lines needs nothing but a re-run of `adopt`.
 
+## 3.9.5 — scannable PR bodies, comments and decision records
+
+- PR writers, milestone close and review feedback use bold-labelled What, Why and Proof lists and a full example; Before merge is conditional and Decision record appears only at Migrate/Answer.
+- Blueprint and adopting templates keep their readable recovery section and human checklists; refreshing recovery text preserves the existing decision record without duplicating it.
+- Mechanical: none.
+- Manual: refresh copied CLAUDE, SDLC docs and PR templates with `adopt --upgrade`; apply the same scannable shape to issues and review replies.
+
 ## 3.9.4 — gate branch publication on a clean, verified HEAD
 
 - The plugin's Bash PreToolUse hook blocks `git push`, `gh pr create` and `gh pr ready` in repositories declaring a local gate unless the common Git directory holds `ci-local/<HEAD>.ok` and the worktree is clean.
