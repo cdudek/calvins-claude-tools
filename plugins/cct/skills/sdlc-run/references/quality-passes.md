@@ -118,6 +118,4 @@ engineer's words in `decisions.json` `protectedEdit`.
 
 ## Decision record in a PR
 
-At Migrate/Answer put the lasting choice under `## Decision record` with bold-labelled
-Chose, Over, Because and Commits us to bullets; see [the full body example](pr-body.md).
-Do not add a decision record at Undo/Repair or use “Repair, choice story:” headings.
+Follow [Decision4 PR writing](decision4-pr.md) for the class-specific Decision record: Repair choice story; Migrate options or forced constraint; Answer labelled evidence and challenges, with no recommendation. Omit it at Undo.

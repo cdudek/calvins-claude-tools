@@ -1239,17 +1239,18 @@ def main() -> int:
             src.read_text(encoding="utf-8"),
             keep=True,
         )
-    # Share the offline Decision4 bundle with project-repository-run. Existing
+    # Share the referenced Decision4 assets with project-repository-run. Existing
     # boundary policy and the repository's way of running the gate stay its own.
     from decision4_assets import asset_changes
 
     for path, text in asset_changes(ROOT):
         _write(path, text)
     manual.append(
-        "Decision4: review the starter boundary-map.yaml only if newly created; existing maps "
-        "and check runners are preserved. Install PyYAML for .github/scripts/decision4.py, "
-        "run bash tests/decision4/run.sh, and wire actual PR-body/changed-path validation "
-        "into the repo-owned local gate; fixtures use a synthetic test map."
+        "Decision4: review the starter map; the AGENTS contract and PR section are installed. "
+        "Actions callers use a pinned shared workflow; an existing local gate gets a checksum-verified "
+        "fetch helper. Wire scripts/ci-local --decision4 to bash scripts/decision4-shared.sh with "
+        "the actual body/files/map arguments. Install PyYAML and jsonschema in that environment. "
+        "Never vendor checker code or fixtures; existing boundary maps stay repo-owned."
     )
 
     # --- REVIEW.md (kept once written), docs, CLAUDE.md

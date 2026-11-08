@@ -1498,9 +1498,10 @@ def test_adopt_installs_decision4_without_replacing_repo_policy(tmp_path: Path) 
     assert "## Team checklist\n- [ ] Human review" in template.read_text()
     assert "Decision4 writing rules:" in template.read_text()
     assert "PULL_REQUEST_TEMPLATE.md" not in [p.name for p in (repo / ".github").iterdir()]
-    fixtures = subprocess.run(["bash", "tests/decision4/run.sh"], cwd=repo,
-                              capture_output=True, text=True)
-    assert fixtures.returncode == 0, fixtures.stdout + fixtures.stderr
+    assert not (repo / ".github/scripts/decision4.py").exists()
+    assert not (repo / "tests/decision4").exists()
+    assert "decision4-check.yml@" in (repo / ".github/workflows/decision4.yml").read_text()
+    assert "Decision4 handoff contract (v1)" in (repo / "AGENTS.md").read_text()
     before = template.read_text()
     assert _adopt(repo).returncode == 0
     assert template.read_text() == before
@@ -1514,7 +1515,8 @@ def test_adopt_creates_missing_decision4_map_and_keeps_check_invocation(tmp_path
     runner.write_text("# custom repo gate\n")
     result = _adopt(repo)
     assert result.returncode == 0, result.stderr
-    assert "floor: Migrate" in (repo / "boundary-map.yaml").read_text()
+    assert "floor: Repair" in (repo / "boundary-map.yaml").read_text()
     assert runner.read_text() == "# custom repo gate\n"
-    assert (repo / ".github/scripts/decision4.py").is_file()
+    assert not (repo / ".github/scripts/decision4.py").exists()
+    assert (repo / ".github/workflows/decision4.yml").is_file()
     assert "Decision4 writing rules:" in (repo / ".github/PULL_REQUEST_TEMPLATE.md").read_text()

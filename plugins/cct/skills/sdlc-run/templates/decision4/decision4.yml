@@ -1,0 +1,13 @@
+name: Decision4
+on:
+  pull_request:
+    types: [opened, edited, synchronize, reopened]
+concurrency:
+  group: decision4-${{ github.event.pull_request.number }}
+  cancel-in-progress: true
+permissions:
+  contents: read
+  pull-requests: read
+jobs:
+  decision4:
+    uses: cdudek/blueprints/.github/workflows/decision4-check.yml@770383e955d0b66199f13bbae0e825aa9fface08 # shared Decision4 v1

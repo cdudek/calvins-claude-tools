@@ -41,7 +41,8 @@ class Decision4Assets(unittest.TestCase):
         self.assertTrue(refreshed.startswith(before))
         self.assertTrue(refreshed.endswith(after))
         self.assertEqual(refreshed.count(assets.HEADING), 1)
-        self.assertIn(assets.pr_section().rstrip(), refreshed)
+        self.assertIn("**Recovery steps**", refreshed)
+        self.assertEqual(refreshed.count("## Decision record"), 1)
         self.assertEqual(assets.merge_pr_template(refreshed), refreshed)
 
     def test_pr_writers_and_reviewers_consult_the_same_rules(self):

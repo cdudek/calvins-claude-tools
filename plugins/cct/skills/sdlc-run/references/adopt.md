@@ -96,10 +96,11 @@ table, which is what makes `F1` traceable from `facts.md` through the test to th
    remote workflow for a repository without CI. Implement and audit `scripts/ci-local`,
    its pre-push hook and real Decision4 validation using the [local-first contract](local-first.md).
    Adopt installs the shared readable PR section (including its writing-rules comment),
-   `.github/scripts/decision4.py`, a starter boundary map only when absent, and
-   `tests/decision4` regression cases. Existing maps and check runners remain repo-owned.
-   The checker requires PyYAML; run `bash tests/decision4/run.sh` for synthetic fixtures,
-   then wire actual PR-body and changed-path validation into the repo's own gate.
+   a starter boundary map only when absent, and a pinned reusable-workflow caller. A repo
+   with `scripts/ci-local` gets a checksum-verified fetch helper and a shell dispatch for
+   `--decision4`; integrate actual body, changed paths and map arguments in the full gate.
+   There is no vendored checker or fixture tree. PyYAML and jsonschema belong in the local
+   gate environment. Existing boundary maps remain repo-owned.
    Follow [Decision4 PR writing](decision4-pr.md) for new PRs and milestone close.
    Require `local-ci` and `decision4` on default and protected interior branches; never post
    them by hand. Verify the script, hook and applied rulesets before retiring any existing

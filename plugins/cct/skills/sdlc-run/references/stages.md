@@ -604,5 +604,4 @@ milestone or project PR. Use What → Why → Proof → Before merge (only if op
 repo's exact Decision4 section when `boundary-map.yaml` exists. The milestone report,
 validation link, `Closes <KEY>` and exact-head gate results are bold-labelled bullets in
 the appropriate sections; preserve each required gate line verbatim inside its bullet.
-At Migrate/Answer, put the choice under `## Decision record` using Chose, Over, Because
-and Commits us to as bold labels. Never use “Repair, choice story:” as a heading.
+Follow [Decision4 PR writing](decision4-pr.md) for the class-specific Decision record: Repair choice story, Migrate options or forced constraint, Answer labelled evidence and challenges with no recommendation.
