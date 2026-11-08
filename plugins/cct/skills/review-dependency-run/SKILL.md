@@ -12,7 +12,11 @@ effort: high
 background: false
 ---
 
+
+
 # Dependabot Review Skill
+
+Verification and every push follow the [local-first contract](../sdlc-run/references/local-first.md); read it before running checks or preparing a push.
 
 Reviews dependency update PRs with changelog research, project usage cross-checking, automated fix/lint, and risk assessment. Auto-detects the package ecosystem from changed files.
 

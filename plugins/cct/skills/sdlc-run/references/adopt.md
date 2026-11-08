@@ -1,8 +1,10 @@
 # adopt — install the chain into a repo
 
+Verification and every push follow the [local-first contract](local-first.md); read it before running checks or preparing a push.
+
 **Re-run it whenever the kit moves.** `adopt` copies hooks, workflows, the tiers classifier
-and the guardrail test into the repo, because CI runs them on a GitHub runner where no
-plugin is installed. The copies are what actually enforce the rules, and they do not update
+and the guardrail test into the repo, so local checks and remaining GitHub jobs run
+without requiring the plugin to be installed. The copies are what actually enforce the rules, and they do not update
 themselves. `adopt` stamps `kitTemplates` in `sdlc.json` with a fingerprint of the templates
 it copied; `status.sh` compares it against the installed kit and prints `templates=stale`.
 Chain step 0 reads that line, so a stale repo is refreshed before any change starts.
@@ -90,15 +92,13 @@ table, which is what makes `F1` traceable from `facts.md` through the test to th
    `tiers: false`, arm auto-merge on it like on any other PR.
 7. The CLAUDE.md section it appended states the process and `/goal`; if the repo's
    CLAUDE.md said "ask before merging", change it to "the tier decides".
-8. **CI.** A repo with no CI gets `templates/ci/github-actions.yml` written to
-   `.github/workflows/ci.yml` with `STACK` and the default branch set (only the `node` and
-   `python` presets exist; for Ruby, Rails, Rust, Kotlin or Scala set `STACK` by hand and take
-   `ciCommands` from `templates/ci-commands.json`, section K). A repo with its own CI keeps it:
-   adopt prints the gap list (no single `check` job, steps not gated on `ciPaths`,
-   `paths-ignore`, E2E not sharded) and "copy the `changes` and `check` jobs from
-   `templates/ci/github-actions.yml`". Recommend each gap to the engineer; the setup steps are
-   the top of `ci-blueprint.md`. Add a ruleset that gives `project/*` (and `milestone/*` with
-   `delivery: "feature-prs"`) the same required `check`.
+8. **Local CI gate.** `adopt` preserves existing CI and does not install the legacy full
+   remote workflow for a repository without CI. Implement and audit `scripts/ci-local`,
+   its pre-push hook and real Decision4 validation using the [local-first contract](local-first.md).
+   Require `local-ci` and `decision4` on default and protected interior branches; never post
+   them by hand. Verify the script, hook and applied rulesets before retiring any existing
+   required checks. Keep GitHub for cloud/GitHub work and scheduled jobs; `ci-blueprint.md`
+   describes setup and the legacy template's migration role.
 9. **Version.** adopt stamps `sdlcVersion` in `sdlc.json`. `adopt --upgrade` on a repo with an
    older stamp (or none) is the safe path: it adds the missing `sdlc.json` keys with the stack's
    defaults, never overwriting a value, stamps the version, and writes nothing else and moves no

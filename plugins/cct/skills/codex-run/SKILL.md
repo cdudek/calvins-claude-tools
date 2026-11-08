@@ -16,6 +16,8 @@ metadata:
 
 # Run Codex CLI (Headless)
 
+Verification and every push follow the [local-first contract](../sdlc-run/references/local-first.md); read it before running checks or preparing a push.
+
 Run the OpenAI Codex CLI in non-interactive mode via `codex exec`, from inside Claude Code. This skill does one thing: it hands a prompt and a target to Codex with the model, reasoning effort, and sandbox you choose, then returns Codex's output.
 
 It does **not** run a competing Claude analysis or reconcile two models. If you want a full review pipeline that does — Claude reviewers and Codex on the same surface, merged, then validated per finding — that is `review-code-run`, which co-reviews with Codex whenever the CLI is available (`--codex` to require it, `--no-codex` to skip it). Keeping this skill to a single Codex run is deliberate — no task-type branching, no duplicated review flow.

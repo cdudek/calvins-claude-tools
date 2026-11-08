@@ -10,6 +10,8 @@ metadata:
 
 # Set up the e2e harness
 
+Verification and every push follow the [local-first contract](../sdlc-run/references/local-first.md); read it before running checks or preparing a push.
+
 Installs the mechanical half of the e2e standard. The rules it enforces are written in
 `cct:test-e2e-policy` (`${CLAUDE_SKILL_DIR}/../test-e2e-policy/references/`); this skill
 does not restate them. It writes no specs and edits no application source.

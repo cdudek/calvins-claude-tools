@@ -10,6 +10,8 @@ metadata:
 
 # Frontend Design
 
+Verification and every push follow the [local-first contract](../sdlc-run/references/local-first.md); read it before running checks or preparing a push.
+
 **Arguments:** `<what to build or the spec> [alternatives=N]`
 
 `alternatives` defaults to 1 (one implementation). With `alternatives=3` to `5`, produce that many

@@ -10,6 +10,8 @@ metadata:
 
 # Write the journey inventory
 
+Verification and every push follow the [local-first contract](../sdlc-run/references/local-first.md); read it before running checks or preparing a push.
+
 Drafts or refreshes `e2e/journeys.md`, the list of claims the suite makes, before any spec
 is written. Use it when the file is missing, when a repo first adopts the standard, or at a
 milestone to catch drift. It writes the inventory only: no specs, and no edits to

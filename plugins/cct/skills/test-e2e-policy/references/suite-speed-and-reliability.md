@@ -1,5 +1,7 @@
 # Suite speed and reliability
 
+Verification and every push follow the [local-first contract](../../sdlc-run/references/local-first.md); read it before running checks or preparing a push.
+
 Use this before tuning a suite, replacing its data or diagnosing a wave of failures.
 Measure the cost, establish a control, then fix the code, harness or fixture responsible.
 For fixture failure classification and temporary probes, read
@@ -151,10 +153,11 @@ product fix. A correct failing test is evidence to preserve.
 The rules are language-neutral; this table is where the commands live. `sdlc-run`
 (`../../sdlc-run/references/ci-blueprint.md`) says when each applies. Fill `sdlc.json`
 `checks.feature`, `checks.milestone` and `ciCommands` (what each job of `sdlc-run/templates/ci/github-actions.yml` runs; defaults per stack in `sdlc-run/templates/ci-commands.json`) from the row for the repo's stack.
-Which changed paths switch each CI job on is the blueprint's step-to-globs table; the commands below fill those jobs.
+The commands below serve local checks; `ciPaths` still helps select targeted diagnosis and existing remote confirmation jobs.
 
-- **Touched tests**: what an agent or a feature PR runs; which changed files count as test or code comes from `sdlc.json` `ciPaths`, the same lists the CI `changes` job reads. Never the whole suite; the full suite
-  runs once per milestone and on the PRs the blueprint's A5 names.
+- **Touched tests**: local diagnosis runs the changed spec and its neighbours, plus the
+  directly affected suite, until green. The full local gate runs once on the final head
+  before pushing. Existing remote jobs confirm it; they are not a retry loop.
 - **Production target**: what system and E2E tests start. Never a server that compiles or
   reloads on demand: it times differently and hides build-only failures.
 - **Shard**: one job per slice, each with its own database service (section H). A suite on

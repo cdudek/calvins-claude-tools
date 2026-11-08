@@ -1,5 +1,8 @@
 # Deploy: images, Cloud Run, CI
 
+Verification follows [local-first](https://github.com/cdudek/calvins-claude-tools/blob/main/plugins/cct/skills/sdlc-run/references/local-first.md). These are legacy workflow examples; migrate
+verification before enabling them in a new repo. GitHub keeps cloud and scheduled work.
+
 How heydiff-web becomes a running service. Modelled on a golden-path app blueprint, with Cloud Run instead of Kubernetes, and GitHub Actions doing what ArgoCD does there. The infrastructure is in [pokbytes/terraform-infra](https://github.com/pokbytes/terraform-infra). The design is section 13 of [the HeyDiff design](designs/2026-10-27-snapmark-online.md) once the plan lands here.
 
 ## Region and domain
@@ -131,7 +134,7 @@ used only as the administrative connection and its tables are never reset.
 
 | Workflow       | When                        | What                                                                                                                                                                                                            |
 | -------------- | --------------------------- | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| `ci.yml`       | every PR and push to `main` | format, lint, typecheck, test; lockfile and secret scan; hadolint, Trivy config; image build, scan and smoke test once the app exists. `check` is the one required status.                                      |
+| `ci.yml`       | every PR and push to `main` | format, lint, typecheck, test; lockfile and secret scan; hadolint, Trivy config; image build, scan and smoke test once the app exists. Legacy remote example: migrate checks locally and require `local-ci` + `decision4` before use.                                      |
 | `preview.yml`  | PR opened or updated        | builds, deploys a tagged revision `pr-<n>` of staging with no traffic, comments its address; removes the tag when the PR closes. No migrations; no previews for forks.                                          |
 | `deploy.yml`   | push to `main` (merge)      | **CD**: verify → build → **staging**: migrate, deploy with no traffic, wait for the sha, 100% traffic, wait again → **production**: the same images and steps on the public service, only after staging passed. |
 | `rollback.yml` | by hand                     | routes 100% of traffic to an earlier revision (default: the one before the serving revision).                                                                                                                   |

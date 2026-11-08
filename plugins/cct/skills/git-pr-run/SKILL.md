@@ -1,7 +1,7 @@
 ---
 name: git-pr-run
 description: "Coordinates opening a GitHub pull request from local changes: branch creation per repo conventions, staging without secrets, lint and syntax checks, documentation freshness check (delegated to cct:docs-audit), commit, draft PR publication and CI monitoring. It always opens a draft; only the author marks it ready. Use when someone says 'create a PR', 'open a pull request', 'submit this as a PR', 'push this as a PR', 'send this for review'. Skip for: reviewing an existing PR, owned by cct:review-code-run; acting on feedback of an open PR, owned by cct:review-feedback-run."
-allowed-tools: "Bash(gh *) Bash(git *) Bash(npx *) Bash(npm *) Bash(yarn *) Bash(pnpm *) Bash(bundle *) Bash(rubocop *) Bash(uv *) Bash(ruff *) Bash(make *) Bash(cargo *) Read Glob Grep Agent"
+allowed-tools: "Bash(scripts/ci-local *) Bash(gh *) Bash(git *) Bash(npx *) Bash(npm *) Bash(yarn *) Bash(pnpm *) Bash(bundle *) Bash(rubocop *) Bash(uv *) Bash(ruff *) Bash(make *) Bash(cargo *) Read Glob Grep Agent"
 user_invocable: true
 metadata:
   version: 1.1.0
@@ -10,6 +10,8 @@ effort: low
 ---
 
 # PR Creator
+
+Verification and every push follow the [local-first contract](../sdlc-run/references/local-first.md); read it before running checks or preparing a push.
 
 Creates a GitHub pull request from local changes through a complete workflow: branch creation, syntax checking, commit, PR submission, and CI monitoring. Each step respects repo-specific conventions when they exist, falling back to widely-adopted defaults.
 
@@ -95,9 +97,9 @@ git add <specific-files>
 
 If there are no changes to stage (everything is already committed), skip to Step 5.
 
-### Step 4: Run Syntax Checks
+### Step 4: Run Local Checks
 
-Before committing, catch obvious errors. Detect the project's language and run the appropriate linter. See `references/lint-commands.md` for the full lookup table.
+Before committing, run the repo's format, lint, typecheck and relevant tests. Before pushing, run `scripts/ci-local` or the full local suite under the linked contract; syntax checks alone are insufficient. Detect the project's language and run the appropriate linter. See `references/lint-commands.md` for the full lookup table.
 
 **Detection order:**
 1. Check for a `Makefile` with a `lint` target — if it exists, run `make lint`
@@ -169,6 +171,10 @@ EOF
 If the branch already has commits with a clear history, create an additional commit rather than amending. The goal is a clean, reviewable history — not necessarily a single commit.
 
 ### Step 6: Push and Create the PR
+
+Run `scripts/ci-local` (or the full local suite if it is not installed) on the final head,
+including when the branch already has commits. The script owns the push and exact-SHA
+statuses; the raw push below is only for repositories still migrating.
 
 ```bash
 # Push the branch (set upstream on first push)
@@ -298,7 +304,7 @@ gh run view $RUN_ID --log-failed
 For each fix iteration (max 3):
 1. Read the failure logs
 2. Determine if the failure is something you can fix (test failure, lint error, type error, build issue)
-3. If fixable: make the fix, stage, commit with a descriptive message (e.g., `fix: resolve type error in auth middleware`), push
+3. If fixable: reproduce the exact failure locally, fix it, rerun only failing tests plus the directly affected suite until green, then run the full local gate once and push the batched fixes
 4. If not fixable (infrastructure issue, flaky test, external service): inform the user immediately — don't waste iterations
 5. After pushing the fix, update the PR description to reflect the new commit
 6. Re-check CI status
@@ -307,7 +313,7 @@ Track the iteration count explicitly. After 3 failed fix attempts:
 - Stop trying
 - Summarize what failed and what you attempted
 - Show the user the failure logs
-- Suggest next steps (e.g., "This looks like a flaky integration test — you may want to re-run it manually")
+- Suggest next steps (e.g., "Reproduce this specific integration test locally with its seed and fixture")
 
 ## Important Notes
 

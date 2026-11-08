@@ -11,6 +11,8 @@ effort: high
 
 # Fix a flaky test
 
+Verification and every push follow the [local-first contract](../sdlc-run/references/local-first.md); read it before running checks or preparing a push.
+
 Reproduces, diagnoses, and fixes flaky or failing tests with a verified confirmation workflow.
 
 

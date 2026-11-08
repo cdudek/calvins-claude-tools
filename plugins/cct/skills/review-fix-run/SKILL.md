@@ -10,6 +10,8 @@ metadata:
 
 # Review-Fix Loop
 
+Verification and every push follow the [local-first contract](../sdlc-run/references/local-first.md); read it before running checks or preparing a push.
+
 Meta-orchestrator that runs review → address → commit in a loop with strict context isolation, on **local work** (committed branch changes or a file set). A fix-and-commit loop belongs on local work — pulling a remote PR to fix in place is out of scope; use `review-code-run` standalone for PR review. Each iteration uses fresh subagents — no shared memory between stages, or between iterations.
 
 Every mode runs the **same three-stage pipeline** over the same artifacts:

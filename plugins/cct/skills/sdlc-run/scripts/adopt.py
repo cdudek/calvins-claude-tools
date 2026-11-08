@@ -745,43 +745,18 @@ def ci_gaps(text: str) -> list[str]:
 
 
 def adopt_ci(cfg: dict, preset: str) -> None:
-    """A repo with no CI gets templates/ci/github-actions.yml with its STACK and default branch
-    set. A repo with its own CI keeps it; adopt prints what it lacks and which jobs to copy."""
+    """Preserve remote CI; report the repo-owned local gate setup, never fake statuses."""
     wf = ROOT / ".github" / "workflows"
     kit_names = {p.name for p in (TPL / "workflows").glob("*.yml")}
     own = sorted(p for p in (*wf.glob("*.yml"), *wf.glob("*.yaml")) if p.name not in kit_names)
-    ci = wf / "ci.yml"
-    if ci.exists() and ci.read_text(encoding="utf-8").startswith(KIT_CI_MARKER):
-        kept.append(".github/workflows/ci.yml (the kit's template, the repo's now)")
-        return
-    template = TPL / "ci" / "github-actions.yml"
-    if not own and UPGRADE:
-        manual.append(
-            f"CI: the repo has no CI workflow; copy {template} to .github/workflows/ci.yml "
-            f"(set STACK {preset}) or run `adopt`"
-        )
-        return
-    if not own:
-        text = template.read_text(encoding="utf-8")
-        text = text.replace("  STACK: node #", f"  STACK: {preset} #", 1)
-        text = text.replace(
-            "branches: [main] # the default branch",
-            f"branches: [{cfg.get('defaultBranch', 'main')}] # the default branch",
-            1,
-        )
-        write(ci, text)
-        manual.append(
-            "CI: .github/workflows/ci.yml was written from the kit's template (STACK "
-            f"{preset}); check sdlc.json ciCommands and ciPaths, then make `check` the only required status (ci-blueprint.md, A6)"
-        )
-        return
-    gaps = ci_gaps("\n".join(p.read_text(encoding="utf-8") for p in own))
+    if own:
+        kept.extend(str(p.relative_to(ROOT)) + " (existing CI, left alone)" for p in own)
     manual.append(
-        "CI: the repo has its own workflow(s) ("
-        + ", ".join(p.name for p in own)
-        + "), left alone. "
-        + (f"Gaps: {'; '.join(gaps)}. " if gaps else "No gaps found by grep. ")
-        + f"Copy the `changes` and `check` jobs from {template} and gate each job on its flag (references/ci-blueprint.md)"
+        "CI: implement and audit scripts/ci-local and its pre-push hook; run the full local "
+        "suite, validate Decision4, push, then publish exact-SHA local-ci and decision4 "
+        "statuses. Require both in rulesets; never post them by hand. Keep existing required "
+        "checks until migration is applied. GitHub keeps cloud/GitHub work and schedules "
+        "(references/local-first.md; references/ci-blueprint.md)."
     )
 
 

@@ -2,6 +2,8 @@
 description: Compose a clean commit message from a GitHub PR's context and squash-merge it server-side via gh
 ---
 
+Verification and every push follow the [local-first contract](../../../sdlc-run/references/local-first.md); read it before running checks or preparing a push.
+
 The user input is: $ARGUMENTS
 
 Squash-merges a GitHub pull request — gathers PR context, enriches with ticket data, composes a conventional commit message, optionally refreshes the PR title/body, then squash-merges via `gh pr merge --squash`.

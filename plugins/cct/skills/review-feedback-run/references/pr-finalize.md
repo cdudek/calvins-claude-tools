@@ -4,6 +4,8 @@ description: PR-finalize recipes — merge base, finalize (push + body), re-requ
 
 # PR Finalize
 
+Verification and every push follow the [local-first contract](../../sdlc-run/references/local-first.md); read it before running checks or preparing a push.
+
 Each H2 is a named recipe dispatched from `references/commands/pr.md`. Run only the block named by the active step.
 
 ## Merge base
@@ -31,6 +33,10 @@ PREOF
 ```
 
 ### Push
+
+Run the full local gate on the final head after merging the base and batching all fixes.
+`scripts/ci-local` owns push and status publication when installed; the raw push below is
+only for repositories still using a full local suite without that script.
 
 ```bash
 git push

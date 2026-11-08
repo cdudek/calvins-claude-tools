@@ -106,9 +106,7 @@ def test_goal_templates_name_the_gate_script_they_run() -> None:
 # Layer 2: the agents the stages call exist and are read-only where the stages say so
 def test_agents_named_in_the_stages_exist() -> None:
     agents = SKILL.parents[1] / "agents"
-    named = set(
-        re.findall(r"cct:([\w-]+)` agent", (SKILL / "references/stages.md").read_text())
-    )
+    named = set(re.findall(r"cct:([\w-]+)` agent", (SKILL / "references/stages.md").read_text()))
     assert not [a for a in named if not (agents / f"{a}.md").exists()]
     assert "Edit" not in _frontmatter(agents / "review-code-reviewer.md")["tools"]
 
@@ -164,3 +162,62 @@ def test_requests_for_the_chain_hit_a_trigger_term(request_text: str) -> None:
 @pytest.mark.parametrize("request_text", SHOULD_NOT_TRIGGER)
 def test_requests_for_other_skills_hit_none(request_text: str) -> None:
     assert not _hits(request_text)
+
+
+# Guard: verification entry points must share the owner contract, not a remote retry loop.
+def test_local_first_contract_covers_failure_loop_and_exact_sha_gate() -> None:
+    text = (SKILL / "references/local-first.md").read_text()
+    for phrase in (
+        'Never push to "see what CI says"',
+        "Reproduce that test locally",
+        "directly affected suite",
+        "spec and its neighbours",
+        "full local gate once",
+        "Never rerun a whole pipeline",
+        "speculative",
+        "confirmation, not a debugger",
+        "scripts/ci-local",
+        "pre-push hook",
+        "local-ci",
+        "decision4",
+        "Never post them by hand",
+        "exact SHA",
+        "dirty or moved head",
+        "failed status publication",
+    ):
+        assert phrase in text, phrase
+
+
+@pytest.mark.parametrize(
+    "relative",
+    [
+        "SKILL.md",
+        "references/stages.md",
+        "references/ci-blueprint.md",
+        "templates/CLAUDE-section.md",
+        "templates/docs-sdlc.md",
+        "templates/goal/run.txt",
+        "templates/goal/feature.txt",
+        "templates/goal/milestone.txt",
+        "../../agents/sdlc-feature-builder.md",
+        "../../agents/review-fix-implementer.md",
+        "../../agents/test-e2e-healer.md",
+        "../../agents/test-e2e-generator.md",
+        "../git-pr-run/SKILL.md",
+        "../review-fix-run/SKILL.md",
+        "../review-feedback-run/references/execution-tail.md",
+        "../review-feedback-run/references/pr-finalize.md",
+        "../test-flake-fix/SKILL.md",
+        "../test-e2e-coverage-run/SKILL.md",
+        "../test-e2e-policy/SKILL.md",
+        "../test-e2e-setup/SKILL.md",
+        "../../blueprint/local-first.md",
+        "../../../../docs/sdlc-run.md",
+    ],
+)
+def test_verification_entry_points_link_the_local_first_contract(relative: str) -> None:
+    text = (SKILL / relative).read_text()
+    assert "local-first.md" in text
+    assert "No check, lint or test runs" not in text
+    assert "no check, lint or test runs" not in text
+    assert "make `check` the only required status" not in text

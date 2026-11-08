@@ -1,5 +1,7 @@
 # The e2e strategy
 
+Verification and every push follow the [local-first contract](../../sdlc-run/references/local-first.md); read it before running checks or preparing a push.
+
 **This file is the single source for what an e2e suite tests, how big it may grow, who owns
 it, and how it survives copy, token and AI-driven change.** `locator-policy.md` owns how a
 spec binds to the page; this file owns everything around that. The three agents read both
@@ -333,7 +335,7 @@ A flaky test is a defect with an owner, not weather.
 - **Expiry is enforced.** On expiry the test is fixed or deleted, and its journey records
   the coverage gap until it is replaced. A quarantine that only grows is a slow deletion
   without the honesty.
-- **Return needs proof:** 20 consecutive green runs on CI hardware, not on a laptop.
+- **Return needs proof:** 20 consecutive green runs in a controlled environment matching the gate, recorded locally before a push; never 20 pipeline reruns.
 
 Google, Slack, Atlassian and GitLab all run some version of this loop. Slack cut failing
 test jobs from 57% to under 5% with automatic detection and suppression
@@ -343,7 +345,7 @@ test jobs from 57% to under 5% with automatic detection and suppression
 
 | Lane | What | When | Blocks |
 |---|---|---|---|
-| PR gate | T1 specs against the production build (`next build`, then `next start` or the standalone server) and a freshly migrated, seeded database, sharded over N jobs | every PR into the default branch or `project/*`; a feature PR into `milestone/*` runs only the specs it changed; a docs-only PR runs none (`sdlc-run` `references/ci-blueprint.md`) | yes |
+| PR gate | T1 specs against the production build (`next build`, then `next start` or the standalone server) and a freshly migrated, seeded database, sharded over N jobs | the full local gate before every push; during diagnosis run changed specs and neighbours until green (the linked local-first contract) | yes |
 | Milestone gate | T1 and T2; repeat scope per `suite-speed-and-reliability.md` section G | before a milestone PR merges | yes |
 | Nightly | T1, T2, quarantine, second-locale smoke, integration evidence against sandboxes | nightly | no, but it pages the owner |
 | Preview | T1 read-only journeys against the deployed preview | after each preview deploy | advisory |

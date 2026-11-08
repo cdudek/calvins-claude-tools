@@ -9,7 +9,11 @@ metadata:
 effort: low
 ---
 
+
+
 # GitHub CLI
+
+Verification and every push follow the [local-first contract](../sdlc-run/references/local-first.md); read it before running checks or preparing a push.
 
 Always use the `gh` CLI for GitHub operations. Never use raw `curl` to the GitHub API, never construct URLs manually, and never ask the user to open a browser when `gh` can do it.
 
@@ -153,8 +157,9 @@ gh run watch 789
 # View failed step logs
 gh run view 789 --log-failed
 
-# Re-run failed jobs
-gh run rerun 789 --failed
+# Diagnose failures locally
+# Diagnose the exact failed test locally under the linked local-first contract.
+# Never rerun a pipeline to retry a flaky or failed test.
 
 # Trigger a workflow manually
 gh workflow run deploy.yml -f environment=staging

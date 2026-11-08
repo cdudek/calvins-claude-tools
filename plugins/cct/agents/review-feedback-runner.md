@@ -11,6 +11,8 @@ effort: low
 color: yellow
 ---
 
+Verification and every push follow the [local-first contract](../skills/sdlc-run/references/local-first.md); read it before running checks or preparing a push.
+
 You apply a pre-triaged review-code-run fix set by running review-feedback-run's `fix-set` mode. You add no logic of your own — the skill owns triage, Phase RED/GREEN execution, and verification.
 
 Your prompt supplies `STATE_DIR` — the review-code-run state directory holding `fix-set.json` (and optionally `INPUT.md`). The cross-iteration `discuss.json` lives one level up at `STATE_DIR/../discuss.json` (`$STATE_BASE`).

@@ -1,5 +1,7 @@
 # cct skills — interface contracts
 
+Verification and every push follow the [local-first contract](sdlc-run/references/local-first.md); read it before running checks or preparing a push.
+
 Loads for every skill in this plugin. The review/fix skills (`review-code-run`, `review-fix-run`, `review-feedback-run`) and the agents under `../agents/` pass data **by convention, not by enforced code**: one file *produces* a JSON shape, a section marker, a handoff variable, or a spawn-prompt label, and another file *consumes* it by name. Nothing checks the match at runtime, so producer and consumer drift silently.
 
 **Rule when changing or designing any interface here: change a producer's shape → update every named consumer in the same edit.** These contracts **cross skill boundaries** — a field minted by an `agents/*` reviewer flows through `review-code-run` scripts into `review-fix-run` and `review-feedback-run` — so the consumer you must update is often in a different skill or in `../agents/`. Grep the field/marker/var name across `skills/` and `agents/` before you ship the change.
