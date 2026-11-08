@@ -30,7 +30,9 @@ Read the [shared worktree policy](../../references/worktree-usage.md). Check Wor
    python3 ${CLAUDE_SKILL_DIR}/scripts/project_setup.py <same options> --yes
    ```
 
-   This merges `extraKnownMarketplaces` and `enabledPlugins` into `.claude/settings.json` (existing keys stay), adds the Decision4 v1 section to the canonical agent file (CLAUDE.md, else AGENTS.md; only a pointer line when an imported file already carries it) and writes `boundary-map.yaml` unless one exists.
+   This merges `extraKnownMarketplaces` and `enabledPlugins` into `.claude/settings.json` (existing keys stay), adds the Decision4 v1 section to the canonical agent file (CLAUDE.md, else AGENTS.md; only a pointer line when an imported file already carries it) and writes `boundary-map.yaml` unless one exists. It also installs the readable PR section with its writing-rules HTML comment, `.github/scripts/decision4.py`, and `tests/decision4/*` from the shared offline SDLC bundle. Existing boundary maps and check runners stay repo-owned; existing PR templates retain their other sections. This is the successor to project-setup.
+
+   Install PyYAML in the repository's check environment and run `bash tests/decision4/run.sh`. Wire actual body/changed-path validation into the repo's own local gate (the fixture map is synthetic). Follow [Decision4 PR writing](../sdlc-run/references/decision4-pr.md) for PR bodies and recovery claims.
 2. `/cct:sdlc-run adopt` (skip with `--no-sdlc`).
 3. Anti-slop, TypeScript only: `npx skills add dmmulroy/anti-slop --skill install-anti-slop`, then run that skill. The script never vendors code.
 4. Review `boundary-map.yaml` with the owner: add floors for the repo's schema, contracts, credentials and production ground (`core/references/structure.md`, STR-26).

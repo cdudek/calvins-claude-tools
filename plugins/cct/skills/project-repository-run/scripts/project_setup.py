@@ -13,6 +13,7 @@ from __future__ import annotations
 import argparse
 import copy
 import json
+import importlib.util
 import re
 import sys
 from pathlib import Path
@@ -23,7 +24,7 @@ VERSION_RE = re.compile(r"Decision4 handoff contract \(v(\d+)\)")
 HEADING = "## Decision4 handoff contract (v1)"
 SOURCE = ("Source: Decision4 v1.0.1 (https://github.com/Habitat-Thinking/decision4/blob/v1.0.1/DECISION4.md), "
           "Habitat Thinking, CC BY 4.0.")
-# Verbatim from AGENTS-snippet.md at tag v1.0.1
+# Handoff rules adapted from AGENTS-snippet.md at tag v1.0.1
 CONTRACT = f"""{HEADING}
 
 For every decision you make, ask: "If this turns out to be wrong,
@@ -50,21 +51,20 @@ Rules:
 {SOURCE}
 
 The boundary map is `boundary-map.yaml` at the repo root; read it before classifying.
+For PRs, fill the repository's readable Decision4 section and follow its writing-rules
+HTML comment. Choose the highest applicable class from the whole diff and the map.
+Validate the proposed body with `.github/scripts/decision4.py` before pushing; keep the
+repository's own local gate and check invocation. PyYAML is required by the checker.
+Run `bash tests/decision4/run.sh` for the synthetic regression fixtures; validate actual
+changed paths separately with the repository's `boundary-map.yaml`.
 """
-STARTER_MAP = """# Decision4 boundary map v1: the floor class per ground. Changing it needs the owner's review.
-version: 1
-precedence: highest-floor-wins
-entries:
-  - select:
-      paths:
-        - "boundary-map.yaml"
-        - ".github/**"
-        - ".claude/hooks/**"
-        - ".claude/settings.json"
-    floor: Migrate
-    put_right: "Restoring a lowered floor or gate needs the owner"
-    answerer: "The repo owner"
-"""
+# Load the same offline assets used by sdlc-run adopt.
+_spec = importlib.util.spec_from_file_location(
+    "decision4_assets", Path(__file__).resolve().parents[2] / "sdlc-run/scripts/decision4_assets.py"
+)
+_assets = importlib.util.module_from_spec(_spec)
+_spec.loader.exec_module(_assets)
+STARTER_MAP = _assets.STARTER_MAP
 ANTI_SLOP_CMD = "npx skills add dmmulroy/anti-slop --skill install-anti-slop"
 
 
@@ -124,7 +124,7 @@ def decision4_changes(root, problems):
 
 
 def map_problems(t: str) -> list[str]:
-    # Shape only; the schema check is CI's decision4 job. shortcut: line-based, no YAML parser in the stdlib.
+    # Shape only; the repo's Decision4 gate validates the schema. shortcut: line-based, no YAML parser in the stdlib.
     out = [m for ok, m in ((re.search(r"^version:\s*1\s*$", t, re.M), "version: 1 missing"),
                            (re.search(r"^entries:\s*$", t, re.M), "entries: missing")) if not ok]
     floors = [f.strip("'\"") for f in re.findall(r"^\s*floor:\s*(\S+)\s*$", t, re.M)]
@@ -177,6 +177,9 @@ def main(argv=None) -> int:
     changes = settings_changes(root, plugins, a.marketplace_ref, sources, problems)
     if a.decision4:
         changes += decision4_changes(root, problems) + map_changes(root, problems)
+        changes += [("update" if path.exists() else "create", path, text,
+                     "install readable Decision4 template, checker and fixtures", True)
+                    for path, text in _assets.asset_changes(root) if path != root / "boundary-map.yaml"]
 
     if a.check:
         missing = [f"{p.relative_to(root)}: {why}" for _, p, _, why, required in changes if required] + problems

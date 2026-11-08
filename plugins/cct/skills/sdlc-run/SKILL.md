@@ -13,7 +13,7 @@ description: >-
 allowed-tools: "Read Grep Glob Edit Write Agent Skill AskUserQuestion Bash(bash */sdlc-run/scripts/*) Bash(python3 */sdlc-run/scripts/*) Bash(python3 */sdlc-run/templates/scripts/sdlc_version.py*) Bash(python3 scripts/sdlc_version.py*) Bash(python3 scripts/verify_gate.py *) Bash(python3 scripts/sdlc_status.py *) Bash(scripts/ci-local *) Bash(wt *) Bash(git *) Bash(gh *) Bash(bd *) Bash(plannotator *) Bash(make *) Bash(pnpm *) Bash(uv *) Bash(npx *) EnterWorktree mcp__claude_ai_Linear__* mcp__linear__*"
 user_invocable: true
 metadata:
-  version: 3.9.2
+  version: 3.9.3
   author: calvindudek
 effort: high
 ---
@@ -269,6 +269,7 @@ local debugging loop. Existing remote CI remains confirmation during migration. 
 - `references/adopt.md` — what `adopt` writes, what stays manual, migrations.
 - `references/ci-blueprint.md` — local gate setup, required `local-ci` + `decision4` statuses, cloud workflows and migration from existing remote CI.
 - `references/local-first.md` — the shared local verification and targeted debugging contract.
+- `references/decision4-pr.md` — readable PR recovery section, writing rules, legacy aliases and validation.
 - `references/changelog.md` — what each sdlc-run version changed and what a repo must do (`adopt --upgrade` reads it).
 - `references/tiers.md` — Ship / Show / Ask by path.
 - `references/playbook.md` — playbook mapping and metrics.

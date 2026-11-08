@@ -172,14 +172,11 @@ If the branch already has commits with a clear history, create an additional com
 
 ### Step 6: Push and Create the PR
 
+Prepare the body and validate Decision4 as described below before invoking the local gate.
 Run `scripts/ci-local` (or the full local suite if it is not installed) on the final head,
 including when the branch already has commits. The script owns the push and exact-SHA
-statuses; the raw push below is only for repositories still migrating.
-
-```bash
-# Push the branch (set upstream on first push)
-git push -u origin $(git branch --show-current)
-```
+statuses; a raw `git push -u origin <branch>` is only for repositories still migrating,
+after their full local suite and proposed-body validation pass.
 
 **Check for a PR template.** GitHub accepts it in the repo root, `.github/` or `docs/`, `.md` or `.txt`, in any case, plus a `PULL_REQUEST_TEMPLATE/` directory of them under each. List the candidates first, then read the one you will use:
 
@@ -191,6 +188,8 @@ git push -u origin $(git branch --show-current)
 ```
 
 Nothing back means no template. One path back is the template — `cat` it. Several means the repo offers a choice: GitHub applies exactly one per PR, so pick the one that fits this change and `cat` that. Never `cat` two together — concatenating them makes a body the repo never intended, with two of every heading.
+
+**Write Decision4 before pushing.** Follow [Decision4 PR writing and validation](../sdlc-run/references/decision4-pr.md): read the template's writing-rules HTML comment and the repo's boundary map, compute the highest changed-path floor, and fill the readable section. Validate the proposed body locally before the push; after creation validate the actual body before the gate publishes success. Use a body file. If there is no template but a boundary map exists, copy the readable section from `../sdlc-run/templates/github/PULL_REQUEST_TEMPLATE.md` and fill it under those same rules.
 
 **Always create PRs as drafts** (`gh pr create --draft`). A draft can't be merged and signals "not yet ready for review". The author must self-review the PR and then mark it ready (`gh pr ready` or the "Ready for review" button) themselves — that human gate is the whole point of opening as a draft. Never mark a PR ready on the user's behalf, and never skip `--draft` unless the user explicitly asks for a non-draft PR.
 
@@ -211,7 +210,7 @@ git diff $(gh repo view --json defaultBranchRef -q .defaultBranchRef.name)..HEAD
 Then create the PR as a draft:
 
 ```bash
-gh pr create --draft --title "<conventional-title>" --body "$(cat <<'EOF'
+cat > "${TMPDIR:-/tmp}/proposed-pr-body.md" <<'EOF'
 ## ℹ️ Description
 <1-3 bullet points describing what changed and why>
 
@@ -239,7 +238,8 @@ Leave "Self-reviewed PR" UNCHECKED — only the human author may tick it after r
 
 🤖 Generated with [Claude Code](https://claude.com/claude-code)
 EOF
-)"
+# Fill the readable Decision4 section when required, then validate the body locally.
+gh pr create --draft --title "<conventional-title>" --body-file "${TMPDIR:-/tmp}/proposed-pr-body.md"
 ```
 
 The PR title should follow the same convention as commit messages (e.g., `feat(auth): add JWT authentication`). The PR opens as a draft; tell the user to self-review and mark it ready when satisfied.

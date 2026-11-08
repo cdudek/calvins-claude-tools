@@ -78,6 +78,12 @@ Output: **subject** (one line, conventional commit header) and **body** (multi-l
 
 #### Step A: Stale PR title/body?
 
+When updating the PR body, retain the repository template and its readable Decision4 section.
+Follow [Decision4 PR writing](../../../sdlc-run/references/decision4-pr.md), including the
+template's writing-rules comment and highest whole-diff boundary-map floor; refresh recovery
+claims after scope changes and revalidate the actual body. The composed squash message is
+commit text; it does not replace the PR template.
+
 Compare composed subject/body to the PR's current title/body (from `-#-#- PR -#-#-` and the `BEGIN PR_BODY`/`END` block):
 
 - Compute approximate Levenshtein-style divergence on title (rough word-overlap is fine).

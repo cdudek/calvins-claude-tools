@@ -23,6 +23,8 @@ bash ${CLAUDE_SKILL_DIR}/../github-manage/scripts/pr-readiness.sh {number}
 bash ${CLAUDE_SKILL_DIR}/scripts/gather-pr-feedback.sh {number}
 ```
 
+Read [Decision4 PR writing and review](../../sdlc-run/references/decision4-pr.md) with the body and repo boundary map. Read the readable section and legacy aliases, ignore HTML comments, and compare the declaration and recovery claims with the highest changed-path floor and actual diff.
+
 ## Parsing
 
 Parse outputs by `-#-#- SECTION -#-#-` markers (see CLAUDE.md scripts rule). Sections you'll consume:

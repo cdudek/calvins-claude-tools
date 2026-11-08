@@ -47,6 +47,8 @@ After creating or retrieving any resource (PR, issue, release, repo), always inc
 
 ### Pull Requests
 
+For every PR body, follow [Decision4 PR writing and validation](../sdlc-run/references/decision4-pr.md). Read the repository's template writing-rules comment and boundary map, compute the highest changed-path floor, fill the readable section and validate the proposed body locally before pushing. Preserve the section when editing; use `--body-file` and validate the actual body before publishing successful checks.
+
 #### Create a PR
 
 PRs are always opened as **drafts** — `--draft` is not an option here, it's the default. Only the author marks a PR ready for review, after reading their own diff. No hook enforces it any more (removed 2026-09-07 — it kept prompting in sdlc-run repos, where PRs open ready on purpose); `gh pr ready` stays out of the allow-list, so it prompts on its own.

@@ -1,0 +1,13 @@
+# Decision4 boundary map v1: the floor class per ground. Changing it needs the owner's review.
+version: 1
+precedence: highest-floor-wins
+entries:
+  - select:
+      paths:
+        - "boundary-map.yaml"
+        - ".github/**"
+        - ".claude/hooks/**"
+        - ".claude/settings.json"
+    floor: Migrate
+    put_right: "Restoring a lowered floor or gate needs the owner"
+    answerer: "The repo owner"

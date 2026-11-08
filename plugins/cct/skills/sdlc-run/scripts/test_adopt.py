@@ -1484,3 +1484,37 @@ def test_rules_must_be_a_list_of_paths(tmp_path: Path) -> None:
     subprocess.run(["git", "add", "."], cwd=repo, check=True, env=_env())
     res = _adopt(repo, "--upgrade")
     assert res.returncode != 0 and "rules must be a list of repo paths" in res.stderr
+
+
+def test_adopt_installs_decision4_without_replacing_repo_policy(tmp_path: Path) -> None:
+    repo = _repo(tmp_path, "python")
+    policy = "version: 1\nentries:\n  - select:\n      paths: ['src/**']\n    floor: Answer\n"
+    (repo / "boundary-map.yaml").write_text(policy)
+    template = repo / ".github/pull_request_template.md"
+    template.write_text("## Team checklist\n- [ ] Human review\n")
+    result = _adopt(repo)
+    assert result.returncode == 0, result.stderr
+    assert (repo / "boundary-map.yaml").read_text() == policy
+    assert "## Team checklist\n- [ ] Human review" in template.read_text()
+    assert "Decision4 writing rules:" in template.read_text()
+    assert "PULL_REQUEST_TEMPLATE.md" not in [p.name for p in (repo / ".github").iterdir()]
+    fixtures = subprocess.run(["bash", "tests/decision4/run.sh"], cwd=repo,
+                              capture_output=True, text=True)
+    assert fixtures.returncode == 0, fixtures.stdout + fixtures.stderr
+    before = template.read_text()
+    assert _adopt(repo).returncode == 0
+    assert template.read_text() == before
+    assert (repo / "boundary-map.yaml").read_text() == policy
+
+
+def test_adopt_creates_missing_decision4_map_and_keeps_check_invocation(tmp_path: Path) -> None:
+    repo = _repo(tmp_path, "node")
+    runner = repo / "tests/decision4/run.sh"
+    runner.parent.mkdir(parents=True)
+    runner.write_text("# custom repo gate\n")
+    result = _adopt(repo)
+    assert result.returncode == 0, result.stderr
+    assert "floor: Migrate" in (repo / "boundary-map.yaml").read_text()
+    assert runner.read_text() == "# custom repo gate\n"
+    assert (repo / ".github/scripts/decision4.py").is_file()
+    assert "Decision4 writing rules:" in (repo / ".github/PULL_REQUEST_TEMPLATE.md").read_text()

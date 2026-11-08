@@ -23,6 +23,8 @@ If conflicts arise, stop and show them to the user. Ask them to resolve manually
 
 ### Update PR body
 
+Preserve and refresh the readable Decision4 section using [Decision4 PR writing](../../sdlc-run/references/decision4-pr.md) and the template's writing-rules comment. Recompute the whole-diff boundary-map floor after fixes, update the concrete recovery steps and responsible role/person, record a classification change when needed, and validate the actual body before publishing successful statuses.
+
 Propose appending an "Addressed feedback" section to the PR body listing what was fixed.
 
 ```bash

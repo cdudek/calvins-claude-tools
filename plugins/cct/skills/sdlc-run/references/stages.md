@@ -505,7 +505,14 @@ person's own browser session. Never use Claude in Chrome or any tool driving tha
 5. **Enforcement audit**, once, before the gate: `python3 scripts/verify_gate.py audit`
    (read-only; see "Enforcement audit" below). Paste its last line into `validation.md`. A
    `problems` count above 0 is a finding for the fix round, not a gate.
-6. One push and one PR `milestone/<slug>` → **its parent** (`project/<slug>` when the project
+6. Compose the PR body from the repo's template, including its readable Decision4 section
+   and writing-rules HTML comment, following [Decision4 PR writing](decision4-pr.md).
+   Compute the highest boundary-map floor across the entire milestone diff against its
+   parent. Describe concrete recovery, ordered Recovery steps, actual Work preserved only,
+   Responsible for recovery (a named person for Answer), and Classification change (`None`
+   unless changed, then from -> to, by whom and why). Validate the proposed body locally
+   before pushing, then the actual body before the gate publishes successful statuses.
+   One push and one PR `milestone/<slug>` → **its parent** (`project/<slug>` when the project
    has a branch, else the default branch) with the report, `validation.md` and `Closes <KEY>`
    for the change's issue, only once the gate passed on that exact head; it merges with a merge
    commit (`gh pr merge <n> --merge --auto`). This push is the milestone branch's first. A
