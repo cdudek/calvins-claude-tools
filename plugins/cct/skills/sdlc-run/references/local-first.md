@@ -54,3 +54,30 @@ suite and Decision4 validator, test their failure paths, install the pre-push ho
 the rulesets and verify both required statuses before removing an existing required check.
 A repository's existing required remote checks remain required until that migration is
 complete. See [CI setup](ci-blueprint.md) and [adoption](adopt.md).
+
+## Publication hook
+
+The plugin's Bash `PreToolUse` hook checks `git push`, `gh pr create` and
+`gh pr ready`. In a repository declaring `scripts/ci-local` or a `package.json`
+`ci:local` script, publication requires a clean worktree and a regular file at
+`$(git rev-parse --git-common-dir)/ci-local/<HEAD>.ok`. The common Git directory
+keeps markers available in linked worktrees; each worktree must still have its
+own current HEAD verified and its own tree clean. Staged changes, unstaged changes
+and untracked files invalidate publication, even with a marker. Ignored files
+do not count as changes. A commit, merge or rebase changes HEAD and requires
+a fresh full gate.
+
+The repository-owned gate writes that marker only after all required checks pass
+on the final committed, clean HEAD. The hook never runs checks or creates evidence
+itself. For a package script, run the repository's `ci:local` command when the hook
+says `Run scripts/ci-local first: no green local run for HEAD <sha>`. Run the gate
+and publication in separate Bash calls so the hook can inspect the resulting
+HEAD and tree; commands that could modify them before publication are refused.
+
+Repositories without either gate declaration are allowed and still follow the
+local-first verification rule above. Tag-only pushes and deletion pushes are
+exempt; mixed branch/tag pushes and `--follow-tags` require the gate. The hook
+resolves the Bash working directory, `cd` and Git's `-C` without evaluating shell
+input or opening environment files. It inspects ordinary shell invocations and
+`sh`/`bash`/`zsh -c` wrappers; it is a workflow guard, not a sandbox for arbitrary
+scripts or dynamically constructed commands.
