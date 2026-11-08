@@ -1,0 +1,51 @@
+{
+  "_comment": "Default sdlc.json ciCommands per stack: what each job of templates/ci/github-actions.yml runs from the repo root. Filled from test-e2e-policy/references/suite-speed-and-reliability.md section K. {shard} and {total} in e2e, {files} in e2eTouched. install may be empty. Set a step the repo does not have to true.",
+  "typescript": {
+    "install": "pnpm install --frozen-lockfile",
+    "lint": "pnpm format:check && pnpm lint && pnpm typecheck",
+    "unit": "pnpm test",
+    "build": "pnpm build",
+    "e2e": "pnpm exec playwright install --with-deps chromium && pnpm exec playwright test --shard={shard}/{total}",
+    "e2eTouched": "pnpm exec playwright install --with-deps chromium && pnpm exec playwright test {files}"
+  },
+  "python": {
+    "install": "uv sync --frozen",
+    "lint": "uv run ruff check . && uv run ruff format --check . && uv run mypy src",
+    "unit": "uv run pytest tests",
+    "build": "uv build",
+    "e2e": "uv run pytest e2e --splits {total} --group {shard} --reruns 1",
+    "e2eTouched": "uv run pytest {files} --reruns 1"
+  },
+  "rust": {
+    "install": "",
+    "lint": "cargo fmt --check && cargo clippy --all-targets -- -D warnings",
+    "unit": "cargo nextest run --workspace",
+    "build": "cargo build --release",
+    "e2e": "cargo nextest run --release --test e2e --partition count:{shard}/{total} --retries 1",
+    "e2eTouched": "cargo nextest run --release --test e2e --retries 1"
+  },
+  "rails": {
+    "install": "bin/rails db:prepare",
+    "lint": "bundle exec rubocop",
+    "unit": "bundle exec rspec --exclude-pattern 'spec/system/**/*_spec.rb'",
+    "build": "RAILS_ENV=test bin/rails assets:precompile",
+    "e2e": "RAILS_ENV=test bin/rails assets:precompile && bundle exec parallel_tests spec/system --only-group {shard} --group-by runtime -n {total} --type rspec",
+    "e2eTouched": "RAILS_ENV=test bin/rails assets:precompile && bundle exec rspec {files}"
+  },
+  "kotlin": {
+    "install": "",
+    "lint": "./gradlew ktlintCheck detekt",
+    "unit": "./gradlew test",
+    "build": "./gradlew installDist",
+    "e2e": "./gradlew installDist e2eTest -Pshard={shard} -Ptotal={total}",
+    "e2eTouched": "./gradlew installDist e2eTest --tests '{files}'"
+  },
+  "scala": {
+    "install": "",
+    "lint": "sbt scalafmtCheckAll 'scalafixAll --check'",
+    "unit": "sbt test",
+    "build": "sbt stage",
+    "e2e": "sbt stage 'IntegrationTest/testOnly -- -Dshard={shard} -Dtotal={total}'",
+    "e2eTouched": "sbt stage 'IntegrationTest/testOnly {files}'"
+  }
+}

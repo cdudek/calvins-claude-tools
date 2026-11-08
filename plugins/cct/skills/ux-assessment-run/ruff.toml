@@ -1,0 +1,15 @@
+# Format and lint rules for this skill's Python scripts (Ruff).
+#
+# The kit CI (.github/workflows/validate-plugins.yml, job "lint") checks every skill folder
+# that carries a ruff.toml with `ruff format --check` and `ruff check`. Locally, in this
+# folder: `ruff format .` and `ruff check .`. CI pins Ruff 0.16.6; use the same version.
+
+target-version = "py310"
+line-length = 100
+src = ["scripts"]
+extend-exclude = ["*.md"]
+
+[lint]
+select = ["E", "W", "F", "I", "B", "UP"]
+# Long message strings stay readable in one piece; the formatter handles the rest.
+ignore = ["E501"]

@@ -1,0 +1,128 @@
+name: CI
+
+# Every PR and every push to main. `check` is the one required status: it passes only when every job before it passed
+# or was skipped on purpose (see `changes`).
+# A step runs only when code or config it covers changed. `changes` reads the paths a PR touches (scripts/ci-scope.sh, lists in
+# sdlc.json `ciPaths`, the shape of the kit's sdlc-run 3.3.1) and sets one flag per step (lint, unit): a PR that touches neither
+# code nor config (Markdown, docs, plans, images) runs only `changes`, the secret scan and `check`. publish.yml has its own gate.
+# Safety net: every push to main, and a PR into main or project/* (or from milestone/*) that touches any code or config, runs
+# every step; any other PR (a feature into a milestone) runs the steps its files cover.
+# Security: no github.event.* expression is expanded inside a `run:` script.
+
+on:
+  pull_request:
+  push:
+    branches: [main]
+
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: true
+
+permissions:
+  contents: read
+  packages: read
+
+jobs:
+  secrets-scan:
+    name: Secret scan
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+          # gitleaks scans the git history, so a shallow clone would scan almost nothing
+          fetch-depth: 0
+      # Its own job, before any repository code runs. The binary lives outside the checkout,
+      # pinned by version and sha256 (the gitleaks action needs a paid licence for organisations),
+      # and a PR cannot quietly switch rules off with its own config or ignore file.
+      - name: gitleaks
+        run: |
+          test ! -e .gitleaks.toml -a ! -e gitleaks.toml -a ! -e .gitleaksignore \
+            || { echo '::error::gitleaks config or ignore file in the repo; rules change only in this workflow'; exit 1; }
+          curl -sSfL -o "$RUNNER_TEMP/gitleaks.tgz" https://github.com/gitleaks/gitleaks/releases/download/v8.30.1/gitleaks_8.30.1_linux_x64.tar.gz
+          echo "551f6fc83ea457d62a0d98237cbad105af8d557003051f41f3e7ca7b3f2470eb  $RUNNER_TEMP/gitleaks.tgz" | sha256sum -c -
+          tar -xzf "$RUNNER_TEMP/gitleaks.tgz" -C "$RUNNER_TEMP" gitleaks
+          "$RUNNER_TEMP/gitleaks" git . --redact --no-banner --verbose --exit-code 1 --config .github/gitleaks.toml
+
+  changes:
+    name: Changed paths
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    outputs:
+      lint: ${{ steps.scope.outputs.lint }}
+      unit: ${{ steps.scope.outputs.unit }}
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+          # a pull request is checked out as its merge into the base: HEAD^1 is the base, HEAD^2 the PR head
+          fetch-depth: 2
+      - id: scope
+        env:
+          EVENT: ${{ github.event_name }}
+          BASE_REF: ${{ github.base_ref }}
+          HEAD_REF: ${{ github.head_ref }}
+        run: |
+          if [ "$EVENT" = pull_request ]; then git diff --no-renames --name-only HEAD^1 HEAD; fi | bash scripts/ci-scope.sh | tee -a "$GITHUB_OUTPUT"
+
+  static:
+    name: Format, lint, typecheck
+    needs: changes
+    if: needs.changes.outputs.lint == 'true'
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
+        with:
+          node-version-file: .nvmrc
+          registry-url: https://npm.pkg.github.com
+          scope: '@pokbytes'
+          cache: npm
+      - run: npm ci --ignore-scripts
+        env:
+          NODE_AUTH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+      - run: npm run format:check
+      - run: npm run lint
+      - run: npm run typecheck
+
+  unit:
+    name: Unit tests
+    needs: changes
+    if: needs.changes.outputs.unit == 'true'
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
+        with:
+          node-version-file: .nvmrc
+          registry-url: https://npm.pkg.github.com
+          scope: '@pokbytes'
+          cache: npm
+      - run: npm ci --ignore-scripts
+        env:
+          NODE_AUTH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+      # fabric's render tests need node-canvas; only its install script runs
+      - run: npm rebuild canvas
+      - run: npm test
+
+  check:
+    name: check
+    if: always()
+    needs: [secrets-scan, changes, static, unit]
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - env:
+          RESULTS: ${{ join(needs.*.result, ' ') }}
+        run: |
+          # skipped is fine: a flag said the step was not needed. failure or cancelled is not.
+          case " $RESULTS " in *" failure "*|*" cancelled "*) echo "::error::a job failed: $RESULTS"; exit 1 ;; esac
+          echo "all jobs passed or were skipped on purpose: $RESULTS"

@@ -1,0 +1,142 @@
+name: Deploy
+
+# CD on merge to main (owner, 2026-10-28: "I want a CI and a CD on merge to Master"), Cloud Run,
+# no ArgoCD:
+#   1. verify: the same checks as CI, so a broken main never builds an image
+#   2. build: web:<sha> + migrate:<content-tag>, scanned, pushed with SBOM and provenance
+#   3. staging: migrate job, revision with no traffic, /readyz serves the sha, 100% traffic
+#   4. production: the same images and steps on the public service, only after staging passed
+# Each deploy switches traffic back to the revision that served before when its check fails.
+# Migrations are expand-and-contract, so the old revision keeps working while they run, and a
+# rollback (rollback.yml) never has to undo one. Off until the repo variable DEPLOY_ENABLED is
+# `true` (set it once terraform-infra is applied and the app has a Dockerfile target).
+# Security: no github.event.* expression is expanded inside a `run:` script.
+
+on:
+  push:
+    branches: [main]
+  workflow_dispatch:
+
+concurrency:
+  group: deploy-main
+  cancel-in-progress: false # never stop a deploy halfway; the next one queues
+
+permissions:
+  contents: read
+  packages: read
+
+env:
+  PROJECT: GCP_PROJECT_ID
+  REGION: europe-west1
+  WIF_PROVIDER: projects/PROJECT_NUMBER/locations/global/workloadIdentityPools/WIF_POOL/providers/WIF_PROVIDER_NAME
+  DEPLOYER_SA: deployer@GCP_PROJECT_ID.iam.gserviceaccount.com
+
+jobs:
+  verify:
+    if: vars.DEPLOY_ENABLED == 'true'
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
+        with:
+          node-version-file: .nvmrc
+          cache: npm
+      - run: npm ci --ignore-scripts
+        env:
+          NODE_AUTH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+      - run: npm run format:check
+      - run: npm run lint
+      - run: npm run typecheck
+      - run: npm test
+
+  build:
+    needs: verify
+    permissions:
+      contents: read
+      id-token: write
+      packages: read
+    uses: ./.github/workflows/build.yml
+
+  staging:
+    needs: build
+    runs-on: ubuntu-latest
+    environment:
+      name: staging
+      url: ${{ steps.deploy.outputs.url }}
+    permissions:
+      contents: read
+      id-token: write
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - uses: google-github-actions/auth@7c6bc770dae815cd3e89ee6cdf493a5fab2cc093 # v3
+        with:
+          workload_identity_provider: ${{ env.WIF_PROVIDER }}
+          service_account: ${{ env.DEPLOYER_SA }}
+      - uses: google-github-actions/setup-gcloud@aa5489c8933f4cc7a4f7d45035b3b1440c9c10db # v3.0.1
+      - name: Migrate the staging database
+        env:
+          IMAGE: ${{ needs.build.outputs.migrate-image }}
+        run: |
+          set -euo pipefail
+          gcloud run jobs update APP-migrate-staging --project "$PROJECT" --region "$REGION" --quiet --container migrate --image "$IMAGE"
+          gcloud run jobs execute APP-migrate-staging --project "$PROJECT" --region "$REGION" --wait
+      - id: tag
+        env:
+          SHA: ${{ needs.build.outputs.sha }}
+        run: echo "tag=sha-${SHA:0:12}" >>"$GITHUB_OUTPUT"
+      - id: deploy
+        uses: ./.github/actions/cloud-run-deploy
+        with:
+          service: APP-staging
+          image: ${{ needs.build.outputs.web-image }}
+          tag: ${{ steps.tag.outputs.tag }}
+          expect-sha: ${{ needs.build.outputs.sha }}
+          promote: 'true'
+          private: 'true'
+          workload-identity-provider: ${{ env.WIF_PROVIDER }}
+          service-account: ${{ env.DEPLOYER_SA }}
+
+  production:
+    needs: [build, staging]
+    runs-on: ubuntu-latest
+    environment:
+      name: production
+      url: ${{ steps.deploy.outputs.url }}
+    permissions:
+      contents: read
+      id-token: write
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - uses: google-github-actions/auth@7c6bc770dae815cd3e89ee6cdf493a5fab2cc093 # v3
+        with:
+          workload_identity_provider: ${{ env.WIF_PROVIDER }}
+          service_account: ${{ env.DEPLOYER_SA }}
+      - uses: google-github-actions/setup-gcloud@aa5489c8933f4cc7a4f7d45035b3b1440c9c10db # v3.0.1
+      - name: Migrate the production database
+        env:
+          IMAGE: ${{ needs.build.outputs.migrate-image }}
+        run: |
+          set -euo pipefail
+          gcloud run jobs update APP-migrate-prod --project "$PROJECT" --region "$REGION" --quiet --container migrate --image "$IMAGE"
+          gcloud run jobs execute APP-migrate-prod --project "$PROJECT" --region "$REGION" --wait
+      - id: tag
+        env:
+          SHA: ${{ needs.build.outputs.sha }}
+        run: echo "tag=sha-${SHA:0:12}" >>"$GITHUB_OUTPUT"
+      - id: deploy
+        uses: ./.github/actions/cloud-run-deploy
+        with:
+          service: APP-prod
+          image: ${{ needs.build.outputs.web-image }}
+          tag: ${{ steps.tag.outputs.tag }}
+          expect-sha: ${{ needs.build.outputs.sha }}
+          promote: 'true'
+          private: 'false'
+          workload-identity-provider: ${{ env.WIF_PROVIDER }}
+          service-account: ${{ env.DEPLOYER_SA }}

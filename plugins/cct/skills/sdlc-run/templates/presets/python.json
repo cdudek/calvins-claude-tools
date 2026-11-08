@@ -1,0 +1,89 @@
+{
+  "_comment": "Read by the sdlc-run skill, the hooks in .claude/hooks/ and the guardrail test. Commands run from the repo root; {file} is the edited file. docs/sdlc.md explains every key.",
+  "linear": {
+    "team": "CPTO-Office",
+    "project": ""
+  },
+  "defaultBranch": "master",
+  "changesDir": "changes",
+  "designsDir": "docs/designs",
+  "docs": "docs/sdlc.md",
+  "verify": "make verify",
+  "verifyStop": "uv run ruff format --check . && uv run ruff check .",
+  "verifyDirty": ["*.py"],
+  "lintOnEdit": {
+    "*.py": "uv run --quiet ruff format --quiet {file}"
+  },
+  "blocked": [
+    {
+      "match": "(^|[[:space:];&|(])(uv([[:space:]]+[^[:space:];&|]+)*[[:space:]]+(add|remove)|pip3?([[:space:]]+[^[:space:];&|]+)*[[:space:]]+install)([[:space:]]|$)",
+      "message": "dependency changes are Ask-tier: a human runs uv add in a branch and commits pyproject.toml + uv.lock; the PR gets the ask label. Say which package and why, then stop.",
+      "samples": [
+        "uv add httpx",
+        "uv remove httpx",
+        "pip install requests",
+        "cd x && uv add y",
+        "uv --directory app add x"
+      ]
+    },
+    {
+      "match": "(^|[[:space:];&|(])kubectl([[:space:]]+[^[:space:];&|]+)*[[:space:]]+(apply|delete|patch|scale)([[:space:]]|$)",
+      "message": "the cluster changes through Argo CD from a merged PR, never from a shell. Edit k8s/ in a branch. Read-only kubectl (get, describe, logs) is fine.",
+      "samples": [
+        "kubectl apply -f x.yaml",
+        "kubectl delete pod x",
+        "kubectl patch deploy x",
+        "kubectl -n prod delete job migrate",
+        "kubectl --context=c patch application app --type merge"
+      ]
+    }
+  ],
+  "toolsCommand": "make sdlc-tools",
+  "tests": "pytest",
+  "codeowners": [],
+  "claudeAllow": [
+    "Bash(uv sync:*)",
+    "Bash(uv run:*)",
+    "Bash(make verify)",
+    "Bash(git:*)",
+    "Bash(gh pr:*)"
+  ],
+  "showChannel": "",
+  "keep": [],
+  "milestones": {
+    "branchPrefix": "milestone/",
+    "rebaseOnDefault": true
+  },
+  "projects": {
+    "branchPrefix": "project/",
+    "rebaseOnDefault": true
+  },
+  "hotfix": true,
+  "delivery": "one-go",
+  "builders": "claude",
+  "builderModel": "sonnet",
+  "builderEffort": "high",
+  "goal": {
+    "runTurns": 150,
+    "featureTurns": 40,
+    "milestoneTurns": 30
+  },
+  "languages": ["en"],
+  "responsiveTier": "full",
+  "ux": "off",
+  "checks": {
+    "feature": [
+      "uv run ruff format --check .",
+      "uv run ruff check .",
+      "uv run mypy src",
+      "uv run pytest -q"
+    ],
+    "milestone": [
+      "uv run ruff format --check .",
+      "uv run ruff check .",
+      "uv run mypy src",
+      "uv run pytest -q"
+    ]
+  },
+  "product": ""
+}

@@ -1,0 +1,212 @@
+{
+  "_comment": "Read by the sdlc-run skill and the hooks in .claude/hooks/. Adopted in milestone 1 of online-release-1 (plan in pokbytes/heydiff-web). Tracker: Beads (bd).",
+  "linear": {
+    "team": "",
+    "project": ""
+  },
+  "defaultBranch": "main",
+  "changesDir": "changes",
+  "designsDir": "docs/designs",
+  "docs": "docs/sdlc.md",
+  "verify": "npm run format && npm run lint && npm run typecheck && npm test",
+  "verifyDirty": [
+    "*.ts",
+    "*.tsx",
+    "*.js",
+    "*.mjs",
+    "*.vue",
+    "*.json"
+  ],
+  "lintOnEdit": {
+    "*.ts *.tsx *.js *.mjs *.css *.json": "npx biome format --write --vcs-enabled=false {file}"
+  },
+  "blocked": [
+    {
+      "match": "(^|[[:space:];&|(])(pnpm|yarn)([[:space:]]+[^[:space:];&|]+)*[[:space:]]+(add|remove)([[:space:]]|$)|(^|[[:space:];&|(])npm([[:space:]]+[^[:space:];&|]+)*[[:space:]]+(i|install|uninstall)[[:space:]]+[^-[:space:]]",
+      "message": "dependency changes are Ask-tier: a human adds the package in a branch and commits package.json + the lockfile; the PR gets the ask label. Say which package and why, then stop.",
+      "samples": [
+        "pnpm add x",
+        "yarn add y",
+        "npm install left-pad",
+        "cd a && pnpm remove x",
+        "pnpm --filter web add x",
+        "npm --prefix ./app install left-pad"
+      ]
+    }
+  ],
+  "toolsCommand": "npm run sdlc:tools",
+  "tests": "vitest",
+  "codeowners": [],
+  "claude": false,
+  "claudeAllow": [
+    "Bash(npm *)",
+    "Bash(git:*)",
+    "Bash(gh pr:*)"
+  ],
+  "showChannel": "",
+  "keep": [],
+  "tiers": false,
+  "kitTemplates": "8165782d8151",
+  "tracker": {
+    "kind": "beads",
+    "initiative": "",
+    "project": ""
+  },
+  "product": "HeyDiff",
+  "planGate": "owner",
+  "feedback": [],
+  "milestones": {
+    "branchPrefix": "milestone/",
+    "rebaseOnDefault": true
+  },
+  "projects": {
+    "branchPrefix": "project/",
+    "rebaseOnDefault": true
+  },
+  "hotfix": true,
+  "delivery": "one-go",
+  "goal": {
+    "runTurns": 500,
+    "featureTurns": 40,
+    "milestoneTurns": 30
+  },
+  "languages": [
+    "en"
+  ],
+  "responsiveTier": "full",
+  "ux": "on",
+  "checks": {
+    "feature": [
+      "npm run format:check",
+      "npm run lint",
+      "npm run typecheck",
+      "npm test"
+    ],
+    "milestone": [
+      "npm run format:check",
+      "npm run lint",
+      "npm run typecheck",
+      "npm test",
+      "npm run smoke:background"
+    ]
+  },
+  "verifyStop": "npm run format && npm run lint && npm run typecheck",
+  "ciPaths": {
+    "_comment": "Shell globs (* also crosses /), the shape of the kit's sdlc-run 3.3.1. A file in `docs`, or in neither `code` nor `config`, runs NOTHING. A file in `all` runs every step. Any other code or config file runs the steps whose include it matches and whose exclude it does not; one no step lists (package.json, tsconfig, biome.json, *.config.ts, .nvmrc, .npmrc) runs every step. Steps: lint = format, lint, typecheck; unit = vitest; e2e = build the extension and the Playwright specs (the whole suite where the safety net applies, else only the changed specs). Safety net: a push to main, and a PR into main or project/* (or from milestone/*) that touches any code or config, run every step. Edit the lists here, not in scripts/ci-scope.sh.",
+    "docs": [
+      "changes/*",
+      "docs/*",
+      "plans/*",
+      ".claude/*",
+      ".beads/*",
+      "design-explorations/*",
+      "*.md",
+      "*.txt"
+    ],
+    "all": [
+      ".github/workflows/*",
+      "sdlc.json",
+      "package-lock.json"
+    ],
+    "code": [
+      "src/*",
+      "public/*",
+      "test/*",
+      "tests/*",
+      "e2e/*",
+      "scripts/*",
+      "*.ts",
+      "*.tsx",
+      "*.js",
+      "*.mjs",
+      "*.cjs",
+      "*.css"
+    ],
+    "config": [
+      "package.json",
+      "tsconfig*.json",
+      "wxt.config.*",
+      "vitest.config.*",
+      "playwright.config.*",
+      "biome.json",
+      ".nvmrc",
+      ".npmrc"
+    ],
+    "specs": [
+      "e2e/*.spec.ts"
+    ],
+    "lint": {
+      "include": [
+        "src/*",
+        "test/*",
+        "tests/*",
+        "e2e/*"
+      ],
+      "exclude": []
+    },
+    "unit": {
+      "include": [
+        "src/*",
+        "test/*",
+        "tests/*",
+        "scripts/*"
+      ],
+      "exclude": [
+        "e2e/*"
+      ]
+    },
+    "e2e": {
+      "include": [
+        "src/*",
+        "public/*",
+        "e2e/*"
+      ],
+      "exclude": [
+        "test/*",
+        "tests/*"
+      ]
+    },
+    "build": {
+      "include": [
+        "src/*",
+        "app/*",
+        "public/*",
+        "Dockerfile",
+        "next.config.*"
+      ],
+      "exclude": [
+        "e2e/*",
+        "test/*",
+        "*.test.*",
+        "*.css",
+        "*.scss"
+      ]
+    },
+    "deploy": {
+      "include": [
+        "src/*",
+        "app/*",
+        "public/*",
+        "Dockerfile",
+        "deploy/*",
+        "next.config.*",
+        "*.sql",
+        "drizzle/*"
+      ],
+      "exclude": [
+        "e2e/*",
+        "test/*",
+        "*.test.*"
+      ]
+    }
+  },
+  "ciCommands": {
+    "install": "npm ci --ignore-scripts",
+    "lint": "npm run format:check && npm run lint && npm run typecheck",
+    "unit": "npm test",
+    "build": "npm run build",
+    "e2e": "npx playwright install --with-deps chromium && npm run e2e",
+    "e2eTouched": "npx playwright install --with-deps chromium && npm run e2e -- {files}"
+  },
+  "sdlcVersion": "3.4.1"
+}

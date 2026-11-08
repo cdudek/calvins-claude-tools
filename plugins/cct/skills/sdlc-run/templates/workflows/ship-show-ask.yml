@@ -1,0 +1,169 @@
+# Ship / Show / Ask by blast radius (docs/sdlc.md, "Tiers").
+#
+# Every PR gets exactly one label from the paths it touches (.github/tiers.json):
+#   ask   a code owner must approve (CODEOWNERS + ruleset master-protection); never auto-merged
+#   show  auto-merge on green; the co-owner (vars.SDLC_COOWNER) is requested as reviewer and reads after
+#   ship  auto-merge on green, nobody notified
+# Bot PRs (image bumps, dependabot) are ship.
+#
+# This workflow decides WHO looks, not WHETHER it is safe: required checks (CI, docker
+# build, k8s validate) still have to pass before auto-merge fires. Milestone and project PRs
+# merge with a merge commit (sdlc-run 3.7.0), everything else squashes.
+name: Ship / Show / Ask
+
+on:
+  pull_request:
+    types: [opened, synchronize, reopened, ready_for_review, closed]
+
+permissions:
+  contents: read # the App token arms auto-merge; github.token only labels
+  pull-requests: write # labels, reviewers
+  issues: write # `gh label create`
+
+jobs:
+  tier:
+    name: label
+    # ONLY on the PR into the default branch. The tiers answer "who must look before
+    # this reaches the trunk", and nothing reaches the trunk from `milestone/*` or
+    # `project/*` — those are interior merges inside one change. Tiering them asks a
+    # code owner to approve the same code two or three times on its way up.
+    if: >-
+      github.event.action != 'closed' &&
+      github.event.pull_request.base.ref == github.event.repository.default_branch
+    runs-on: ubuntu-24.04
+    outputs:
+      tier: ${{ steps.classify.outputs.tier }}
+      arm: ${{ steps.classify.outputs.arm }}
+    env:
+      GH_TOKEN: ${{ github.token }}
+      PR: ${{ github.event.pull_request.number }}
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+
+      - name: Classify changed paths
+        id: classify
+        env:
+          IS_BOT: ${{ github.event.pull_request.user.type == 'Bot' }}
+        run: |
+          set -euo pipefail
+          if [ "$IS_BOT" = "true" ]; then
+            tier=ship
+          else
+            files=$(gh pr view "$PR" --json files --jq '.files[].path')
+            # shellcheck disable=SC2086 -- paths are one per line, no spaces in this repo
+            tier=$(python3 scripts/ship_show_ask.py classify $files)
+          fi
+          echo "tier=$tier" | tee -a "$GITHUB_OUTPUT"
+          # One decision, read by both the mint and the arm step, so they cannot drift.
+{{#ASK_GATES_MERGE}}
+          if [ "$tier" != "ask" ] && [ "$IS_BOT" != "true" ]; then echo "arm=true"; else echo "arm=false"; fi | tee -a "$GITHUB_OUTPUT"
+{{/ASK_GATES_MERGE}}
+{{#ASK_MERGES_ON_GREEN}}
+          # sdlc.json `askGatesMerge: false` — the tier says who reads, not who may
+          # merge. Every human PR arms auto-merge and lands on green, ask included.
+          if [ "$IS_BOT" != "true" ]; then echo "arm=true"; else echo "arm=false"; fi | tee -a "$GITHUB_OUTPUT"
+{{/ASK_MERGES_ON_GREEN}}
+
+      - name: Apply the one label
+        env:
+          TIER: ${{ steps.classify.outputs.tier }}
+        run: |
+          set -euo pipefail
+          gh label create ask  --color B60205 --description "needs a code-owner approval"        --force
+          gh label create show --color FBCA04 --description "auto-merges on green; reviewed after" --force
+          gh label create ship --color 0E8A16 --description "auto-merges on green"                --force
+          for old in ask show ship; do
+            [ "$old" = "$TIER" ] || gh pr edit "$PR" --remove-label "$old" 2>/dev/null || true
+          done
+          gh pr edit "$PR" --add-label "$TIER"
+
+      - name: Request the co-owner (show)
+        if: steps.classify.outputs.tier == 'show' && vars.SDLC_COOWNER != ''
+        env:
+          COOWNER: ${{ vars.SDLC_COOWNER }}
+        run: gh pr edit "$PR" --add-reviewer "$COOWNER" || echo "::notice::could not request $COOWNER (own PR?)"
+
+  # Separate job, NO checkout: the `tier` job executes PR-authored code
+  # (scripts/ship_show_ask.py from the PR's merge ref), and a PR could rewrite PATH from
+  # there. The App token is a ruleset-bypass identity; it must never be minted where
+  # anything the PR controls has run. Only the two outputs cross the boundary.
+  arm:
+    name: auto-merge
+    needs: tier
+    if: needs.tier.outputs.arm == 'true'
+    runs-on: ubuntu-24.04
+    permissions:
+      contents: read
+      pull-requests: read
+    env:
+      PR: ${{ github.event.pull_request.number }}
+    steps:
+      # The App token arms auto-merge, NOT github.token. Auto-merge merges as whoever
+      # armed it, and a push made by GITHUB_TOKEN never triggers workflows -- so a merge
+      # armed with it lands on master with no CI run and no deploy. That happened to #168
+      # and #170 on 2026-09-05 (both merged by github-actions; master was never built).
+      # deploy.yml records the same scar for opening PRs. ship/show PRs need no bypass --
+      # the checks still bind the App through branch protection. No --delete-branch: a branch
+      # may carry a stacked PR.
+      - name: Mint GitHub App token
+        id: app-token
+        uses: actions/create-github-app-token@bcd2ba49218906704ab6c1aa796996da409d3eb1 # v3.2.0
+        with:
+          # client-id, not app-id: `app-id` carries a deprecationMessage in
+          # create-github-app-token's action.yml and warns on every run. NOT a rename --
+          # client-id takes the App's Client ID (Iv23li...), a different value from the
+          # numeric App ID, so the secret is a different one.
+          client-id: ${{ secrets.CODE_MANAGER_APP_CLIENT_ID }}
+          private-key: ${{ secrets.CODE_MANAGER_APP_PRIVATE_KEY }}
+          # Scoped: arming auto-merge needs nothing else.
+          permission-contents: write
+          permission-pull-requests: write
+
+      # Retries: enabling auto-merge right after a ruleset evaluation has raced before
+      # (#154 "not mergeable", fine on retry). Three tries, then red and visible.
+      - name: Arm auto-merge (ship / show)
+        env:
+          GH_TOKEN: ${{ steps.app-token.outputs.token }}
+          REPO: ${{ github.repository }}
+          HEAD_REF: ${{ github.event.pull_request.head.ref }}
+        run: |
+          set -uo pipefail
+          # A milestone or project keeps its commits: a stacked milestone then needs no rebase.
+          case "$HEAD_REF" in milestone/*|project/*) how=--merge ;; *) how=--squash ;; esac
+          for attempt in 1 2 3; do
+            if gh pr merge "$PR" --repo "$REPO" --auto "$how"; then exit 0; fi
+            echo "auto-merge attempt $attempt failed; retrying in 10s"; sleep 10
+          done
+          echo "::error::could not arm auto-merge on #$PR after 3 attempts"; exit 1
+
+{{#notify}}
+  notify:
+    name: slack (show merged)
+    if: >-
+      github.event.action == 'closed' && github.event.pull_request.merged == true &&
+      contains(github.event.pull_request.labels.*.name, 'show')
+    runs-on: ubuntu-24.04
+    permissions:
+      contents: read
+    env:
+      TITLE: ${{ github.event.pull_request.title }}
+      URL: ${{ github.event.pull_request.html_url }}
+      AUTHOR: ${{ github.event.pull_request.user.login }}
+      CHANNEL: "{{SHOW_CHANNEL}}"
+      SLACK_BOT_TOKEN: ${{ secrets.SDLC_SLACK_BOT_TOKEN }}
+    steps:
+      # Ships dark: a missing token or a Slack refusal is a notice on an already-merged
+      # PR, never a red check nobody can fix.
+      - name: Post to the show channel
+        run: |
+          set -euo pipefail
+          if [ -z "$SLACK_BOT_TOKEN" ]; then echo "::notice::SDLC_SLACK_BOT_TOKEN not set; show-tier merge not announced"; exit 0; fi
+          payload=$(python3 -I -c 'import json,os; e=os.environ; print(json.dumps({"channel": e["CHANNEL"], "text": ":white_check_mark: show-tier PR merged by %s: <%s|%s> — review after the fact." % (e["AUTHOR"], e["URL"], e["TITLE"])}))')
+          curl -sS --max-time 20 -X POST https://slack.com/api/chat.postMessage \
+            -H "Authorization: Bearer $SLACK_BOT_TOKEN" -H 'Content-type: application/json; charset=utf-8' \
+            -d "$payload" \
+            | python3 -I -c 'import json,sys; r=json.load(sys.stdin); print("posted" if r.get("ok") else "::notice::Slack refused the show-tier notice: %s" % json.dumps(r.get("error", r)))' \
+            || echo "::notice::Slack call failed; show-tier merge not announced"
+{{/notify}}

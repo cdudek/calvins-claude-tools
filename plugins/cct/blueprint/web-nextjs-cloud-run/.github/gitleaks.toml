@@ -1,0 +1,6 @@
+# The secret scan's rules. CI passes this file with --config; a gitleaks config or ignore
+# file anywhere else in the repo fails the scan. Every default rule stays on.
+title = "heydiff-web"
+
+[extend]
+useDefault = true

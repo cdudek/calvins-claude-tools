@@ -1,0 +1,10 @@
+{
+  "version": 2,
+  "name": "c4-generator",
+  "owner": "pagerguild",
+  "repo": "guilde-lite",
+  "path": "marketplace/plugins/diagram-generation/skills/c4-generator",
+  "branch": "main",
+  "sha": "b1483fd6ef5c15da17475aefede50994c0da5b59",
+  "source": "manual"
+}

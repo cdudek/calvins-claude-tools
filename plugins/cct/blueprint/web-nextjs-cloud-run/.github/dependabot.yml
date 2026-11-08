@@ -1,0 +1,19 @@
+version: 2
+updates:
+  - package-ecosystem: npm
+    directory: /
+    schedule: { interval: weekly }
+    open-pull-requests-limit: 10
+  - package-ecosystem: github-actions
+    directories: [/, /.github/actions/*]
+    schedule: { interval: weekly }
+  # Bumps the digest-pinned node and distroless bases in the Dockerfile. When distroless
+  # retires a Debian release, Dependabot will not move to the next one: check the Node version.
+  - package-ecosystem: docker
+    directory: /
+    schedule: { interval: weekly }
+    # The build stage must match the distroless runtime's Node major (24, the active LTS);
+    # a major move is a deliberate change of both FROM lines together.
+    ignore:
+      - dependency-name: node
+        update-types: [version-update:semver-major]

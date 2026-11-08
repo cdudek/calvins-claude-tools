@@ -1,0 +1,141 @@
+name: Build images
+
+# Reusable: builds web:<sha> and migrate:<content-tag>, scans them, and pushes them with an
+# SBOM and provenance to Artifact Registry. Called by deploy.yml and preview.yml.
+# An image whose tag already exists is reused: tags are immutable, so it can only be this build.
+# Security: no github.event.* expression is expanded inside a `run:` script.
+
+on:
+  workflow_call:
+    inputs:
+      service-account:
+        description: Service account to push as; defaults to DEPLOYER_SA. preview.yml passes its own preview account.
+        type: string
+        default: ''
+    outputs:
+      web-image:
+        value: ${{ jobs.build.outputs.web-image }}
+      migrate-image:
+        value: ${{ jobs.build.outputs.migrate-image }}
+      sha:
+        value: ${{ jobs.build.outputs.sha }}
+
+env:
+  REGISTRY: europe-west1-docker.pkg.dev
+  REPOSITORY: europe-west1-docker.pkg.dev/GCP_PROJECT_ID/IMAGES_REPO
+  WIF_PROVIDER: projects/PROJECT_NUMBER/locations/global/workloadIdentityPools/WIF_POOL/providers/WIF_PROVIDER_NAME
+  DEPLOYER_SA: deployer@GCP_PROJECT_ID.iam.gserviceaccount.com
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      id-token: write
+      packages: read
+    outputs:
+      web-image: ${{ steps.tags.outputs.web }}
+      migrate-image: ${{ steps.tags.outputs.migrate }}
+      sha: ${{ steps.tags.outputs.sha }}
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+
+      - id: tags
+        name: Compute image tags
+        run: bash scripts/image-tags.sh HEAD "$REPOSITORY" >>"$GITHUB_OUTPUT"
+
+      # auth writes gha-creds-*.json into the workspace, which is the Docker build context: .dockerignore excludes it,
+      # so no layer and no cache entry can contain it.
+      - uses: google-github-actions/auth@7c6bc770dae815cd3e89ee6cdf493a5fab2cc093 # v3
+        with:
+          workload_identity_provider: ${{ env.WIF_PROVIDER }}
+          service_account: ${{ inputs.service-account || env.DEPLOYER_SA }}
+      - uses: google-github-actions/setup-gcloud@aa5489c8933f4cc7a4f7d45035b3b1440c9c10db # v3.0.1
+      - run: gcloud auth configure-docker "$REGISTRY" --quiet
+      - uses: docker/setup-buildx-action@f87e5991a6d7451dcb8d9637bfbc97413f497069 # v4.4.1
+
+      - id: exists
+        name: Reuse images that already exist
+        env:
+          WEB: ${{ steps.tags.outputs.web }}
+          MIGRATE: ${{ steps.tags.outputs.migrate }}
+        run: |
+          for kind in web migrate; do
+            ref="WEB"; [ "$kind" = migrate ] && ref="MIGRATE"
+            if docker manifest inspect "${!ref}" >/dev/null 2>&1; then echo "$kind=true"; else echo "$kind=false"; fi
+          done >>"$GITHUB_OUTPUT"
+
+      # Build into the runner first, scan, and push only a clean image.
+      - name: Build web
+        if: steps.exists.outputs.web == 'false'
+        uses: docker/build-push-action@c3c9e263c25d99ce0380d002d59b67737d91b0dc # v7.4.0
+        with:
+          context: .
+          target: runtime
+          secrets: |
+            npm_token=${{ secrets.GITHUB_TOKEN }}
+          build-args: GIT_SHA=${{ steps.tags.outputs.sha }}
+          tags: ${{ steps.tags.outputs.web }}
+          load: true
+          cache-from: type=gha,scope=web
+          cache-to: type=gha,scope=web,mode=max
+      - name: Build migrate
+        if: steps.exists.outputs.migrate == 'false'
+        uses: docker/build-push-action@c3c9e263c25d99ce0380d002d59b67737d91b0dc # v7.4.0
+        with:
+          context: .
+          target: migrate
+          secrets: |
+            npm_token=${{ secrets.GITHUB_TOKEN }}
+          build-args: GIT_SHA=${{ steps.tags.outputs.sha }}
+          tags: ${{ steps.tags.outputs.migrate }}
+          load: true
+          cache-from: type=gha,scope=web
+      - name: Scan web (HIGH and CRITICAL with a fix fail the build)
+        if: steps.exists.outputs.web == 'false'
+        uses: aquasecurity/trivy-action@ed142fd0673e97e23eac54620cfb913e5ce36c25 # v0.36.0
+        with:
+          image-ref: ${{ steps.tags.outputs.web }}
+          severity: HIGH,CRITICAL
+          ignore-unfixed: true
+          exit-code: '1'
+      - name: Scan migrate
+        if: steps.exists.outputs.migrate == 'false'
+        uses: aquasecurity/trivy-action@ed142fd0673e97e23eac54620cfb913e5ce36c25 # v0.36.0
+        with:
+          image-ref: ${{ steps.tags.outputs.migrate }}
+          severity: HIGH,CRITICAL
+          ignore-unfixed: true
+          exit-code: '1'
+
+      # Same layers from the cache, now pushed with an SBOM and provenance attached.
+      - name: Push web
+        if: steps.exists.outputs.web == 'false'
+        uses: docker/build-push-action@c3c9e263c25d99ce0380d002d59b67737d91b0dc # v7.4.0
+        with:
+          context: .
+          target: runtime
+          secrets: |
+            npm_token=${{ secrets.GITHUB_TOKEN }}
+          build-args: GIT_SHA=${{ steps.tags.outputs.sha }}
+          tags: ${{ steps.tags.outputs.web }}
+          push: true
+          provenance: mode=max
+          sbom: true
+          cache-from: type=gha,scope=web
+      - name: Push migrate
+        if: steps.exists.outputs.migrate == 'false'
+        uses: docker/build-push-action@c3c9e263c25d99ce0380d002d59b67737d91b0dc # v7.4.0
+        with:
+          context: .
+          target: migrate
+          secrets: |
+            npm_token=${{ secrets.GITHUB_TOKEN }}
+          build-args: GIT_SHA=${{ steps.tags.outputs.sha }}
+          tags: ${{ steps.tags.outputs.migrate }}
+          push: true
+          provenance: mode=max
+          sbom: true
+          cache-from: type=gha,scope=web

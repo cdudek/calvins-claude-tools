@@ -1,0 +1,9 @@
+{
+  "_comment": "The approved criteria as data. Locked by verify_gate.py approve; checks read it.",
+  "facts": [
+    {"id": "F1", "tag": "@F1", "screen": "<screen or none>", "states": ["<state>"]}
+  ],
+  "pages": ["<route>"],
+  "widths": {"feature": [390, 1280], "milestone": "responsiveTier"},
+  "turns": {"feature": 40, "milestone": 30}
+}

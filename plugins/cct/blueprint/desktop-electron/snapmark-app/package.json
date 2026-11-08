@@ -1,0 +1,86 @@
+{
+  "name": "snapmark",
+  "version": "0.4.0",
+  "private": true,
+  "description": "Capture, annotate and collect screenshots into Markdown sessions",
+  "main": "dist/src/main.js",
+  "scripts": {
+    "build": "node scripts/link-hoisted.cjs && tsc && cp src/editor.html src/viewer.html src/area.html src/scroll.html src/bar.html src/settings.html src/shortcuts.html src/countdown.html src/tokens.css dist/src/ && esbuild src/md-notes.ts --bundle --format=iife --global-name=MdNotes --minify --log-level=warning --outfile=dist/src/md-notes.js",
+    "start": "npm run build && electron .",
+    "lint": "eslint .",
+    "typecheck": "tsc --noEmit",
+    "test": "npm run build && node dist/test/sessions.test.js && node dist/test/menu.test.js && node dist/test/keys.test.js && node dist/test/capture.test.js && node dist/test/focus.test.js && node dist/test/exporter.test.js && node dist/test/stitch.test.js && node dist/test/parts.test.js && node dist/test/beautify.test.js && node dist/test/redact.test.js && node dist/test/ocr.test.js && node dist/test/uuid.test.js && node dist/test/colour.test.js && node dist/test/guide.test.js && node dist/test/style.test.js && sh test/prune.test.sh",
+    "smoke": "npm run build && electron dist/test/smoke.js",
+    "smoke:background": "sh test/smoke-background.sh",
+    "dist": "npm run build && sh scripts/electron-builder.sh --mac --publish never -c.mac.identity=-"
+  },
+  "devDependencies": {
+    "@eslint/js": "^10.0.1",
+    "@milkdown/kit": "^7.22.3",
+    "@types/node": "^24.19.2",
+    "electron": "^45.0.0",
+    "electron-builder": "^26.18.0",
+    "esbuild": "^0.28.2",
+    "eslint": "^10.13.0",
+    "prettier": "^3.9.10",
+    "semantic-release": "^25.0.9",
+    "typescript": "~6.0",
+    "typescript-eslint": "^8.72.0",
+    "vitest": "^5.0.5"
+  },
+  "dependencies": {
+    "electron-updater": "^6.8.11",
+    "fabric": "^7.4.0",
+    "marked": "^18.1.1"
+  },
+  "author": "Calvin Dudek",
+  "repository": "github:cdudek/snapmark-mac",
+  "build": {
+    "appId": "com.cdudek.snapmark",
+    "afterPack": "scripts/after-pack.cjs",
+    "productName": "Snapmark",
+    "copyright": "© 2026 Calvin Dudek",
+    "files": [
+      "dist/src/**",
+      "assets/*.png",
+      "package.json"
+    ],
+    "directories": {
+      "buildResources": "build",
+      "output": "release"
+    },
+    "mac": {
+      "category": "public.app-category.productivity",
+      "target": [
+        {
+          "target": "dmg",
+          "arch": [
+            "arm64",
+            "x64"
+          ]
+        },
+        {
+          "target": "zip",
+          "arch": [
+            "arm64",
+            "x64"
+          ]
+        }
+      ],
+      "hardenedRuntime": true,
+      "extendInfo": {
+        "LSUIElement": true
+      },
+      "entitlements": "build/entitlements.mac.plist",
+      "entitlementsInherit": "build/entitlements.mac.plist",
+      "artifactName": "${productName}-${version}-${arch}.${ext}"
+    },
+    "dmg": {
+      "title": "Snapmark ${version}"
+    },
+    "publish": {
+      "provider": "generic",
+      "url": "https://storage.googleapis.com/UPDATES_BUCKET/mac"
+    }
+  }
+}

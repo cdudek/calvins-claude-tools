@@ -1,0 +1,38 @@
+# Keeps the build context small and secrets out of every layer, even after a `COPY . .`.
+
+# VCS, CI, editors, agents
+.git
+.github
+.worktrees
+.beads
+.claude
+.vscode
+.idea
+
+# Secrets: never in an image; Cloud Run reads them from Secret Manager at runtime
+.env
+.env.*
+!.env.example
+.secrets/
+service-account*.json
+gha-creds-*.json
+*-sa-key.json
+*.pem
+*.key
+*.p12
+
+# Build output and dependencies (rebuilt inside the image)
+node_modules
+.next
+coverage
+playwright-report
+test-results
+*.log
+npm-debug.log*
+
+# Not needed to build or run the app
+changes
+docs
+design-explorations
+*.md
+.DS_Store

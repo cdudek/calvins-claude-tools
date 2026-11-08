@@ -1,0 +1,132 @@
+name: Preview
+
+# Each PR gets a tagged revision of APP-staging with no traffic, at
+# https://pr-<n>---<staging host>. It shares the staging database and runs no migrations:
+# expand-and-contract means a PR's code must already work against the schema on main.
+# The tag is removed when the PR closes. PRs from forks get no preview (no OIDC token).
+# A PR that changes no code (docs, test/, e2e/; scripts/ci-scope.sh, the same rule as ci.yml) builds and deploys nothing.
+# Security: no github.event.* expression is expanded inside a `run:` script.
+# Least privilege: previews sign in as PREVIEW_SA, a service account of their own that may only deploy the staging
+# service (never the production deployer). Same-repo PR code runs in the build job, which pushes images with that
+# account; the deploy and cleanup jobs run no PR code: the local action comes from the base commit, not the PR.
+
+on:
+  pull_request:
+    types: [opened, synchronize, reopened, closed]
+
+concurrency:
+  group: preview-${{ github.event.pull_request.number }}
+  cancel-in-progress: true
+
+permissions:
+  contents: read
+
+env:
+  PROJECT: GCP_PROJECT_ID
+  REGION: europe-west1
+  SERVICE: APP-staging
+  WIF_PROVIDER: projects/PROJECT_NUMBER/locations/global/workloadIdentityPools/WIF_POOL/providers/WIF_PROVIDER_NAME
+  PREVIEW_SA: preview-deployer@GCP_PROJECT_ID.iam.gserviceaccount.com
+
+jobs:
+  scope:
+    if: >-
+      vars.DEPLOY_ENABLED == 'true' &&
+      github.event.action != 'closed' &&
+      github.event.pull_request.head.repo.full_name == github.repository
+    runs-on: ubuntu-latest
+    outputs:
+      image: ${{ steps.scope.outputs.image }}
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+          # a pull request is checked out as its merge into the base: HEAD^1 is the base
+          fetch-depth: 2
+      - id: scope
+        env:
+          EVENT: ${{ github.event_name }}
+          BASE_REF: ${{ github.base_ref }}
+          HEAD_REF: ${{ github.head_ref }}
+        run: git diff --no-renames --name-only HEAD^1 HEAD | bash scripts/ci-scope.sh | tee -a "$GITHUB_OUTPUT"
+
+  build:
+    needs: scope
+    if: needs.scope.outputs.image == 'true'
+    permissions:
+      contents: read
+      id-token: write
+      packages: read
+    uses: ./.github/workflows/build.yml
+    with:
+      # the same value as PREVIEW_SA (a reusable workflow's inputs cannot read env)
+      service-account: preview-deployer@GCP_PROJECT_ID.iam.gserviceaccount.com
+
+  deploy:
+    needs: build
+    runs-on: ubuntu-latest
+    environment:
+      name: preview
+      url: ${{ steps.deploy.outputs.url }}
+    permissions:
+      contents: read
+      id-token: write
+      pull-requests: write
+    steps:
+      # Credentials follow: only trusted code may run beside them. Check out the base commit's .github/actions, not the
+      # PR's merge commit, so a PR cannot change what the deploy step executes.
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          ref: ${{ github.event.pull_request.base.sha }}
+          sparse-checkout: .github/actions
+          persist-credentials: false
+      - uses: google-github-actions/auth@7c6bc770dae815cd3e89ee6cdf493a5fab2cc093 # v3
+        with:
+          workload_identity_provider: ${{ env.WIF_PROVIDER }}
+          service_account: ${{ env.PREVIEW_SA }}
+      - uses: google-github-actions/setup-gcloud@aa5489c8933f4cc7a4f7d45035b3b1440c9c10db # v3.0.1
+      - id: deploy
+        uses: ./.github/actions/cloud-run-deploy
+        with:
+          service: ${{ env.SERVICE }}
+          image: ${{ needs.build.outputs.web-image }}
+          tag: pr-${{ github.event.pull_request.number }}
+          expect-sha: ${{ needs.build.outputs.sha }}
+          promote: 'false'
+          private: 'true'
+          workload-identity-provider: ${{ env.WIF_PROVIDER }}
+          service-account: ${{ env.PREVIEW_SA }}
+      - name: Post the preview address
+        env:
+          GH_TOKEN: ${{ github.token }}
+          PR: ${{ github.event.pull_request.number }}
+          URL: ${{ steps.deploy.outputs.url }}
+          SHA: ${{ needs.build.outputs.sha }}
+        run: |
+          gh pr comment "$PR" --repo "$GITHUB_REPOSITORY" --edit-last --create-if-none \
+            --body "Preview of ${SHA:0:12}: ${URL} (private: sign in with an allowed Google account)"
+
+  cleanup:
+    if: >-
+      vars.DEPLOY_ENABLED == 'true' &&
+      github.event.action == 'closed' &&
+      github.event.pull_request.head.repo.full_name == github.repository
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      id-token: write
+    steps:
+      - uses: google-github-actions/auth@7c6bc770dae815cd3e89ee6cdf493a5fab2cc093 # v3
+        with:
+          workload_identity_provider: ${{ env.WIF_PROVIDER }}
+          service_account: ${{ env.PREVIEW_SA }}
+      - uses: google-github-actions/setup-gcloud@aa5489c8933f4cc7a4f7d45035b3b1440c9c10db # v3.0.1
+      - name: Remove the preview tag
+        env:
+          TAG: pr-${{ github.event.pull_request.number }}
+        run: |
+          set -euo pipefail
+          if gcloud run services describe "$SERVICE" --project "$PROJECT" --region "$REGION" --format=json \
+              | jq -e --arg t "$TAG" '.status.traffic[] | select(.tag == $t)' >/dev/null; then
+            gcloud run services update-traffic "$SERVICE" --project "$PROJECT" --region "$REGION" --remove-tags "$TAG" --quiet
+          fi

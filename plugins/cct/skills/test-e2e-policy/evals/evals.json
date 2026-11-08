@@ -1,0 +1,47 @@
+{
+  "skill_name": "test-e2e-policy",
+  "evals": [
+    {
+      "id": 1,
+      "prompt": "we're adding a 'redeem lead' button to our partner portal (Next.js + Playwright, partners have owner/admin/viewer roles, redeeming spends the partner's prepaid budget). the repo has ~60 playwright specs but no e2e/journeys.md or anything like it. what should I do first, and what should the e2e coverage for redeem look like? give me the concrete plan, not theory.",
+      "expected_output": "Drafts the journey inventory by audience/persona first; redeem is T1 (money); lists lifecycle + refusal states (over budget, closed booking, viewer refused) with how to force them; defect to put back; journey row in the same PR.",
+      "assertions": [
+        "Says to create/draft e2e/journeys.md before writing new specs",
+        "Groups journeys by audience or persona (partner roles named)",
+        "Classifies redeem as the top tier (T1 or equivalent) because it moves money",
+        "Lists at least two refusal states (e.g. over budget, closed booking, viewer not allowed)",
+        "Says how to reach states deterministically (factory/seed data, clock, or route) rather than walking the UI",
+        "Requires proving the test can fail (put the defect back / mutation)",
+        "Says the feature's journey row is added or updated in the same PR",
+        "Uses copy keys / catalogue lookups rather than hardcoded button text"
+      ]
+    },
+    {
+      "id": 2,
+      "prompt": "this keeps flaking on CI, can you fix it and explain what's wrong?\n\n```ts\ntest('save webinar', async ({ operatorPage: page }) => {\n  await page.goto('/webinars/new')\n  await page.getByRole('button', { name: 'Save' }).click()   // sometimes does nothing at all\n  await page.waitForTimeout(2000)\n  expect(await page.getByText('Saved').isVisible()).toBe(true)\n  await page.getByRole('button', { name: 'Export' }).click()\n  const res = await page.waitForResponse('**/api/export')\n  expect(res.status()).toBe(200)\n  await page.waitForLoadState('networkidle')\n})\n```\nNext.js app router, playwright 1.5x. retries are set to 2 on CI.",
+      "expected_output": "Removes waitForTimeout/networkidle; web-first assertion on the toast; waitForResponse started before click; diagnoses the lost click as hydration and fixes it with an app readiness marker in the fixture; retries 1 + failOnFlakyTests; copy via keys.",
+      "assertions": [
+        "Removes waitForTimeout and replaces it with a web-first assertion (await expect(...).toBeVisible/toHaveText)",
+        "Removes or rejects waitForLoadState('networkidle')",
+        "Starts waitForResponse (or the download/response promise) before the click",
+        "Identifies the lost click as a hydration race",
+        "Proposes an app-published readiness signal (e.g. data-hydrated) asserted once in a fixture, not force:true or a sleep",
+        "Recommends fewer retries and/or failOnFlakyTests so flakes fail instead of hiding",
+        "Does not recommend force: true or raising timeouts as the fix"
+      ]
+    },
+    {
+      "id": 3,
+      "prompt": "design renamed our colour tokens and changed the selected-row colour, and now 14 e2e tests fail on stuff like `await expect(row).toHaveClass(/bg-primary-100/)` and `toHaveCSS('background-color', 'rgb(237, 233, 254)')`. same week marketing changed 'Save changes' to 'Save' and 9 more broke. how do we fix these so a redesign or copy edit doesn't break the suite again? we're EN + DE with next-intl.",
+      "expected_output": "State via ARIA first (aria-selected), paint via resolved token not hex/class, contrast ratio, screenshots last; copy via t('key') from the real catalogue with a throwing helper and lint; one locale end to end; key renames fail loudly.",
+      "assertions": [
+        "Says to stop asserting class names",
+        "Recommends asserting selection through ARIA state (aria-selected / aria-current) first",
+        "Recommends comparing computed style against a resolved design token rather than a hex/rgb literal",
+        "Recommends resolving visible strings from the next-intl catalogue by key (t('...')) instead of literals, including name: in getByRole",
+        "Mentions enforcement (lint rule or a helper that throws on a missing key)",
+        "Keeps screenshots/visual diffs as a last resort rather than the main fix"
+      ]
+    }
+  ]
+}

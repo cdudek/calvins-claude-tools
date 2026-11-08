@@ -1,0 +1,7 @@
+blank_issues_enabled: true
+contact_links:
+  - name: Product or planning work
+    url: https://linear.app
+    about: >-
+      PRDs, ADRs, RFCs, projects and initiatives live in Linear, not in GitHub issues.
+      Use /cct:linear-manage and say which one you need.

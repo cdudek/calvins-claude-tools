@@ -1,0 +1,65 @@
+name: Rollback
+
+# One click back: routes 100% of traffic to an earlier revision. No image is rebuilt and no
+# migration is undone; expand-and-contract keeps the earlier revision compatible with the schema.
+# Without a revision, it picks the newest ready revision older than the one serving now.
+
+on:
+  workflow_dispatch:
+    inputs:
+      environment:
+        type: choice
+        options: [production, staging]
+        required: true
+      revision:
+        description: Revision name (optional; default the one before the serving revision)
+        required: false
+
+concurrency:
+  group: deploy-main
+  cancel-in-progress: false
+
+permissions:
+  contents: read
+
+env:
+  PROJECT: GCP_PROJECT_ID
+  REGION: europe-west1
+  WIF_PROVIDER: projects/PROJECT_NUMBER/locations/global/workloadIdentityPools/WIF_POOL/providers/WIF_PROVIDER_NAME
+  DEPLOYER_SA: deployer@GCP_PROJECT_ID.iam.gserviceaccount.com
+
+jobs:
+  rollback:
+    runs-on: ubuntu-latest
+    environment: ${{ inputs.environment }}
+    permissions:
+      contents: read
+      id-token: write
+    steps:
+      - uses: google-github-actions/auth@7c6bc770dae815cd3e89ee6cdf493a5fab2cc093 # v3
+        with:
+          workload_identity_provider: ${{ env.WIF_PROVIDER }}
+          service_account: ${{ env.DEPLOYER_SA }}
+      - uses: google-github-actions/setup-gcloud@aa5489c8933f4cc7a4f7d45035b3b1440c9c10db # v3.0.1
+      - name: Route traffic back
+        env:
+          ENVIRONMENT: ${{ inputs.environment }}
+          REVISION: ${{ inputs.revision }}
+        run: |
+          set -euo pipefail
+          service=APP-prod
+          [ "$ENVIRONMENT" = staging ] && service=APP-staging
+          if [ -z "$REVISION" ]; then
+            serving="$(gcloud run services describe "$service" --project "$PROJECT" --region "$REGION" --format=json \
+              | jq -r '[.status.traffic[] | select(.percent == 100)][0].revisionName')"
+            REVISION="$(gcloud run revisions list --service "$service" --project "$PROJECT" --region "$REGION" --format=json \
+              | jq -r --arg s "$serving" '
+                  (map(select(.metadata.name == $s))[0].metadata.creationTimestamp) as $t
+                  | map(select(.metadata.creationTimestamp < $t)
+                        | select(any(.status.conditions[]; .type == "Ready" and .status == "True")))
+                  | sort_by(.metadata.creationTimestamp) | last | .metadata.name // ""')"
+          fi
+          [[ "$REVISION" =~ ^[a-z0-9-]+$ ]] || { echo "::error::no valid revision to roll back to"; exit 1; }
+          gcloud run services update-traffic "$service" --project "$PROJECT" --region "$REGION" \
+            --to-revisions "${REVISION}=100" --quiet
+          echo "Traffic on ${service} is now 100% ${REVISION}."

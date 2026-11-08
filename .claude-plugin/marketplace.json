@@ -1,0 +1,12 @@
+{
+  "name": "cct",
+  "owner": { "name": "Calvin Dudek" },
+  "description": "Calvin's Claude Tools: the AI-native SDLC as one Claude Code plugin.",
+  "plugins": [
+    {
+      "name": "cct",
+      "source": "./plugins/cct",
+      "description": "The SDLC in one self-contained plugin: sdlc-run and every skill, agent and hook it runs, including the UX suite, the product skills, the engineering and data skills run by hand, a project kickoff and the Docker + GitHub Actions blueprint."
+    }
+  ]
+}

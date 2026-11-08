@@ -1,0 +1,36 @@
+{
+  "name": "@pokbytes/heydiff-tokens",
+  "version": "0.0.0",
+  "type": "module",
+  "description": "HeyDiff kit: tokens",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/pokbytes/heydiff-kit.git",
+    "directory": "packages/tokens"
+  },
+  "exports": {
+    ".": "./src/index.ts",
+    "./tokens.css": "./css/tokens.css",
+    "./motion.css": "./css/motion.css",
+    "./tailwind.css": "./css/tailwind-theme.css",
+    "./heroui.css": "./css/heroui-theme.css",
+    "./motion": "./src/motion.ts",
+    "./lint": "./src/lint/scan.mjs",
+    "./lint/*": "./lint/*"
+  },
+  "files": [
+    "src",
+    "css",
+    "lint"
+  ],
+  "publishConfig": {
+    "registry": "https://npm.pkg.github.com",
+    "access": "restricted"
+  },
+  "bin": {
+    "heydiff-lint-tokens": "./src/lint/cli.mjs"
+  },
+  "scripts": {
+    "build": "node scripts/build.mjs"
+  }
+}

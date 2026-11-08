@@ -1,0 +1,179 @@
+{
+  "_comment": "Read by the run-sdlc skill, the hooks in .claude/hooks/ and the guardrail test. Commands run from the repo root; {file} is the edited file. docs/sdlc.md explains every key. Tracker: Beads (bd). E2E (smoke) runs only in the milestone checks, in the background (owner, 2026-10-25); CI runs it (under xvfb) on a full run: a PR into main or from milestone/* that changes code or config, and every push to main.",
+  "linear": {
+    "team": "",
+    "project": ""
+  },
+  "defaultBranch": "main",
+  "changesDir": "changes",
+  "designsDir": "docs/designs",
+  "docs": "docs/sdlc.md",
+  "verify": "npm run format && npm run lint && npm run typecheck && npm test",
+  "verifyDirty": ["*.ts", "*.tsx", "*.js", "*.mjs", "*.vue", "*.json"],
+  "lintOnEdit": {
+    "*.ts *.tsx *.js *.mjs *.css *.json *.md *.html": "npx prettier --write {file}"
+  },
+  "blocked": [
+    {
+      "match": "(^|[[:space:];&|(])(pnpm|yarn)([[:space:]]+[^[:space:];&|]+)*[[:space:]]+(add|remove)([[:space:]]|$)|(^|[[:space:];&|(])npm([[:space:]]+[^[:space:];&|]+)*[[:space:]]+(i|install|uninstall)[[:space:]]+[^-[:space:]]",
+      "message": "dependency changes are Ask-tier: a human adds the package in a branch and commits package.json + the lockfile; the PR gets the ask label. Say which package and why, then stop.",
+      "samples": [
+        "pnpm add x",
+        "yarn add y",
+        "npm install left-pad",
+        "cd a && pnpm remove x",
+        "pnpm --filter web add x",
+        "npm --prefix ./app install left-pad"
+      ]
+    }
+  ],
+  "toolsCommand": "npm run sdlc:tools",
+  "tests": "vitest",
+  "codeowners": [],
+  "claude": false,
+  "claudeAllow": ["Bash(npm *)", "Bash(git:*)", "Bash(gh pr:*)"],
+  "showChannel": "",
+  "keep": [],
+  "tiers": false,
+  "kitTemplates": "8165782d8151",
+  "tracker": {
+    "kind": "beads",
+    "initiative": "",
+    "project": "snap-bmr"
+  },
+  "product": "Snapmark",
+  "planGate": "owner",
+  "feedback": ["docs/ux/owner-words.md"],
+  "milestones": {
+    "branchPrefix": "milestone/",
+    "rebaseOnDefault": true
+  },
+  "projects": {
+    "branchPrefix": "project/",
+    "rebaseOnDefault": true
+  },
+  "hotfix": true,
+  "delivery": "one-go",
+  "goal": {
+    "runTurns": 200,
+    "featureTurns": 40,
+    "milestoneTurns": 30
+  },
+  "languages": ["en"],
+  "responsiveTier": "full",
+  "ux": "on",
+  "checks": {
+    "feature": ["npm run format:check", "npm run lint", "npm run typecheck", "npm test"],
+    "milestone": ["npm run format:check", "npm run lint", "npm run typecheck", "npm test", "npm run smoke:background"]
+  },
+  "verifyStop": "npm run format && npm run lint && npm run typecheck",
+  "ciPaths": {
+    "_comment": "Which changed files run which CI step (shell globs, * also crosses /). A file in neither code nor config runs nothing. The steps are lint = format, lint and typecheck; unit = npm test; e2e = the Electron smoke test; build and deploy are not CI steps here (the DMG is built by release.yml on macOS). Smoke is not sharded and has no per-spec file list, so it runs only on a full run. Owner rule (2026-11-01): if no code or config was touched, do not run the CI.",
+    "docs": ["changes/*", "docs/*", "design-explorations/*", "*.md", "*.txt"],
+    "all": [".github/workflows/*", "sdlc.json", "package-lock.json"],
+    "code": [
+      "snapmark-app/src/*",
+      "snapmark-app/test/*",
+      "snapmark-app/assets/*",
+      "snapmark-app/design/*",
+      "snapmark-app/scripts/*",
+      "snapmark-app/build/*",
+      "tests/*",
+      "scripts/*",
+      ".claude/hooks/*",
+      ".claude/settings.json",
+      "*.ts",
+      "*.js",
+      "*.mjs",
+      "*.cjs",
+      "*.css",
+      "*.sh",
+      "*.py"
+    ],
+    "config": [
+      "package.json",
+      "snapmark-app/package.json",
+      "*tsconfig*.json",
+      "*eslint.config.*",
+      ".prettierrc.json",
+      ".prettierignore",
+      ".releaserc.json"
+    ],
+    "specs": [],
+    "lint": {
+      "include": [
+        "snapmark-app/src/*",
+        "snapmark-app/test/*",
+        "snapmark-app/design/*",
+        "snapmark-app/scripts/*",
+        "tests/*",
+        "scripts/*",
+        ".claude/settings.json",
+        "*.ts",
+        "*.js",
+        "*.mjs",
+        "*.cjs",
+        "*.css",
+        "*package.json",
+        "*tsconfig*.json",
+        "*eslint.config.*",
+        ".prettierrc.json",
+        ".prettierignore",
+        ".releaserc.json"
+      ],
+      "exclude": []
+    },
+    "unit": {
+      "include": [
+        "snapmark-app/src/*",
+        "snapmark-app/test/*",
+        "snapmark-app/assets/*",
+        "snapmark-app/design/*",
+        "snapmark-app/scripts/*",
+        "tests/*",
+        "scripts/*",
+        ".claude/hooks/*",
+        ".claude/settings.json",
+        "*.ts",
+        "*.js",
+        "*.mjs",
+        "*.cjs",
+        "*.sh",
+        "*.py",
+        "*package.json",
+        "*tsconfig*.json"
+      ],
+      "exclude": []
+    },
+    "build": {
+      "include": [],
+      "exclude": []
+    },
+    "e2e": {
+      "include": [
+        "snapmark-app/src/*",
+        "snapmark-app/assets/*",
+        "snapmark-app/design/*",
+        "snapmark-app/build/*",
+        "snapmark-app/scripts/*",
+        "snapmark-app/test/smoke*",
+        "*package.json",
+        "*tsconfig*.json"
+      ],
+      "exclude": []
+    },
+    "deploy": {
+      "include": [],
+      "exclude": []
+    }
+  },
+  "ciCommands": {
+    "install": "npm ci",
+    "lint": "npm run format:check && npm run lint && npm run typecheck",
+    "unit": "npm test",
+    "build": "npm run build",
+    "e2e": "xvfb-run -a npm run smoke",
+    "e2eTouched": "pnpm exec playwright install --with-deps chromium && pnpm exec playwright test {files}"
+  },
+  "sdlcVersion": "3.4.1"
+}

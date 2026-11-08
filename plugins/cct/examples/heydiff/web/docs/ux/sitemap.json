@@ -1,0 +1,4404 @@
+{
+  "generated": "2026-10-29 (copied from the approved spec sitemap of 2026-10-28; six pages marked as built)",
+  "mode": "diff (spec sitemap, with the router read for what is built)",
+  "source": {
+    "stack": "next-app-router with next-intl",
+    "routeRoot": "src/app/[locale]",
+    "ref": "changes/2026-10-27-online-release-1/spec/sitemap.json, 2026-10-28",
+    "inputs": ["spec/ia.md", "spec/interaction.md", "spec/brief.md", "design-explorations/2026-10-28-feedback-journey/"]
+  },
+  "locales": ["en"],
+  "defaultLocale": "en",
+  "localePrefix": "as-needed",
+  "hosts": [
+    {
+      "host": "https://heydiff.com (production, Cloud Run heydiff-web; release 1, A72)",
+      "areas": ["public", "auth", "app", "account", "operator"]
+    },
+    {
+      "host": "staging's private run.app address (Cloud Run heydiff-web-staging; noindex; S163)",
+      "areas": ["public", "auth", "app", "account", "operator"]
+    },
+    {
+      "host": "http://localhost:3000 (development)",
+      "areas": ["public", "auth", "app", "account", "operator"]
+    }
+  ],
+  "reservedFirstSegments": [
+    "blog",
+    "privacy",
+    "terms",
+    "imprint",
+    "waitlist",
+    "sign-in",
+    "sign-out",
+    "invite",
+    "authorize",
+    "welcome",
+    "account",
+    "operator",
+    "api",
+    "mcp",
+    "internal",
+    "help",
+    "settings",
+    "new",
+    ".well-known",
+    "en",
+    "de"
+  ],
+  "navigation": [
+    {
+      "area": "public",
+      "items": [
+        {
+          "label": {
+            "en": "Privacy"
+          },
+          "route": "/privacy",
+          "group": null,
+          "position": "foot",
+          "status": "proposed"
+        },
+        {
+          "label": {
+            "en": "Terms"
+          },
+          "route": "/terms",
+          "group": null,
+          "position": "foot",
+          "status": "proposed"
+        },
+        {
+          "label": {
+            "en": "Imprint"
+          },
+          "route": "/imprint",
+          "group": null,
+          "position": "foot",
+          "status": "proposed"
+        },
+        {
+          "label": {
+            "en": "Sign In"
+          },
+          "route": "/sign-in",
+          "group": null,
+          "position": "foot",
+          "status": "proposed"
+        }
+      ],
+      "settings": [],
+      "commandMenu": [],
+      "account": null,
+      "signOut": null
+    },
+    {
+      "area": "auth",
+      "items": [],
+      "settings": [],
+      "commandMenu": [],
+      "account": null,
+      "signOut": null
+    },
+    {
+      "area": "app",
+      "items": [
+        {
+          "label": {
+            "en": "Workspace switcher"
+          },
+          "route": null,
+          "group": null,
+          "position": "top",
+          "status": "proposed",
+          "note": "Organisation › Workspace; More: Workspace Settings"
+        },
+        {
+          "label": {
+            "en": "Search"
+          },
+          "route": null,
+          "group": null,
+          "position": "top",
+          "status": "proposed",
+          "note": "opens the command menu, ⌘K"
+        },
+        {
+          "label": {
+            "en": "Inbox"
+          },
+          "route": "/[org]/inbox",
+          "group": null,
+          "position": "body",
+          "status": "proposed",
+          "badge": "count of new items",
+          "key": "G I"
+        },
+        {
+          "label": {
+            "en": "My Work"
+          },
+          "route": "/[org]/my-work",
+          "group": null,
+          "position": "body",
+          "status": "proposed",
+          "key": "G M"
+        },
+        {
+          "label": {
+            "en": "Comments"
+          },
+          "route": "/[org]/[ws]/comments",
+          "group": null,
+          "position": "body",
+          "status": "proposed",
+          "key": "G C"
+        },
+        {
+          "label": {
+            "en": "Decisions"
+          },
+          "route": "/[org]/[ws]/decisions",
+          "group": null,
+          "position": "body",
+          "status": "proposed",
+          "badge": "count of voting",
+          "key": "G D"
+        },
+        {
+          "label": {
+            "en": "Revisions"
+          },
+          "route": "/[org]/[ws]/revisions",
+          "group": null,
+          "position": "body",
+          "status": "proposed",
+          "key": "G R"
+        },
+        {
+          "label": {
+            "en": "Sessions"
+          },
+          "route": "/[org]/[ws]/sessions",
+          "group": null,
+          "position": "body",
+          "status": "proposed",
+          "condition": "shown once the workspace has a session"
+        },
+        {
+          "label": {
+            "en": "Settings"
+          },
+          "route": "/[org]/settings/general",
+          "group": null,
+          "position": "foot",
+          "status": "proposed",
+          "key": "G S",
+          "condition": "hidden for guests"
+        },
+        {
+          "label": {
+            "en": "Avatar menu"
+          },
+          "route": null,
+          "group": null,
+          "position": "foot",
+          "status": "proposed",
+          "note": "Profile, Sign-In Methods, Connected Apps, Notifications, Keyboard Shortcuts, Sign Out"
+        }
+      ],
+      "settings": [
+        {
+          "label": {
+            "en": "General"
+          },
+          "route": "/[org]/settings/general",
+          "scope": "organisation"
+        },
+        {
+          "label": {
+            "en": "Members"
+          },
+          "route": "/[org]/settings/members",
+          "scope": "organisation"
+        },
+        {
+          "label": {
+            "en": "Workspaces"
+          },
+          "route": "/[org]/settings/workspaces",
+          "scope": "organisation"
+        },
+        {
+          "label": {
+            "en": "General"
+          },
+          "route": "/[org]/[ws]/settings/general",
+          "scope": "workspace"
+        },
+        {
+          "label": {
+            "en": "Repos"
+          },
+          "route": "/[org]/[ws]/settings/repos",
+          "scope": "workspace"
+        },
+        {
+          "label": {
+            "en": "Environments"
+          },
+          "route": "/[org]/[ws]/settings/environments",
+          "scope": "workspace"
+        },
+        {
+          "label": {
+            "en": "Route Rules"
+          },
+          "route": "/[org]/[ws]/settings/route-rules",
+          "scope": "workspace"
+        },
+        {
+          "label": {
+            "en": "Modules"
+          },
+          "route": "/[org]/[ws]/settings/modules",
+          "scope": "workspace"
+        }
+      ],
+      "commandMenu": [
+        "/[org]/inbox",
+        "/[org]/my-work",
+        "/[org]/[ws]/comments",
+        "/[org]/[ws]/comments/[n]",
+        "/[org]/[ws]/decisions",
+        "/[org]/[ws]/revisions",
+        "/[org]/[ws]/sessions",
+        "settings pages",
+        "switch workspace",
+        "actions on this page"
+      ],
+      "account": {
+        "route": "/account/profile",
+        "position": "foot",
+        "menu": ["Profile", "Sign-In Methods", "Connected Apps", "Notifications", "Keyboard Shortcuts", "Sign Out"]
+      },
+      "signOut": {
+        "position": "foot",
+        "in": "avatar menu"
+      }
+    },
+    {
+      "area": "account",
+      "items": [],
+      "settings": [
+        {
+          "label": {
+            "en": "Profile"
+          },
+          "route": "/account/profile"
+        },
+        {
+          "label": {
+            "en": "Sign-In Methods"
+          },
+          "route": "/account/sign-in-methods"
+        },
+        {
+          "label": {
+            "en": "Connected Apps"
+          },
+          "route": "/account/connected-apps"
+        },
+        {
+          "label": {
+            "en": "Notifications"
+          },
+          "route": "/account/notifications"
+        }
+      ],
+      "commandMenu": ["/account/*"],
+      "account": null,
+      "signOut": null
+    },
+    {
+      "area": "operator",
+      "items": [
+        {
+          "label": {
+            "en": "Waitlist"
+          },
+          "route": "/operator/waitlist",
+          "group": null,
+          "position": "body",
+          "status": "proposed"
+        },
+        {
+          "label": {
+            "en": "Invitations"
+          },
+          "route": "/operator/invitations",
+          "group": null,
+          "position": "body",
+          "status": "proposed"
+        },
+        {
+          "label": {
+            "en": "Organisations"
+          },
+          "route": "/operator/organisations",
+          "group": null,
+          "position": "body",
+          "status": "proposed"
+        },
+        {
+          "label": {
+            "en": "Users"
+          },
+          "route": "/operator/users",
+          "group": null,
+          "position": "body",
+          "status": "proposed"
+        },
+        {
+          "label": {
+            "en": "Feature Flags"
+          },
+          "route": "/operator/flags",
+          "group": null,
+          "position": "body",
+          "status": "proposed"
+        },
+        {
+          "label": {
+            "en": "Usage"
+          },
+          "route": "/operator/usage",
+          "group": null,
+          "position": "body",
+          "status": "proposed"
+        },
+        {
+          "label": {
+            "en": "Back to App"
+          },
+          "route": "/[org]/inbox",
+          "group": null,
+          "position": "head",
+          "status": "proposed"
+        }
+      ],
+      "settings": [],
+      "commandMenu": null,
+      "account": null,
+      "signOut": null,
+      "note": "Own layout and sidebar. Whether the command menu exists in the operator layout is not specified."
+    }
+  ],
+  "pages": [
+    {
+      "id": "public.landing",
+      "area": "public",
+      "route": "/",
+      "params": [],
+      "query": [
+        {
+          "name": "ref",
+          "kind": "prefill",
+          "values": null
+        }
+      ],
+      "labels": {
+        "en": "HeyDiff"
+      },
+      "type": "public",
+      "purpose": "Placeholder (A58): the name, one line, the waitlist form, legal links; the joined state replaces the form in place",
+      "roles": ["visitor"],
+      "tabs": [],
+      "sections": [
+        {
+          "en": "Name and one line"
+        },
+        {
+          "en": "Waitlist form"
+        },
+        {
+          "en": "Footer: Privacy, Terms, Imprint, Sign In"
+        }
+      ],
+      "views": [],
+      "states": ["default", "loading", "error-invalid-email", "error-server", "joined", "signed-in"],
+      "reachedFrom": [
+        {
+          "kind": "external",
+          "from": null,
+          "detail": "search, a shared link",
+          "source": "spec/ia.md Move Table"
+        },
+        {
+          "kind": "link",
+          "from": "every public page",
+          "detail": "logo",
+          "source": "spec/ia.md Move Table"
+        },
+        {
+          "kind": "link",
+          "from": "404 and invitation error pages",
+          "detail": "Go to HeyDiff",
+          "source": "spec/ia.md Move Table"
+        }
+      ],
+      "breadcrumb": [],
+      "back": null,
+      "access": {
+        "roles": ["visitor"],
+        "host": null,
+        "public": true
+      },
+      "inboundLinks": [],
+      "status": "as-built",
+      "redirectTo": null,
+      "proposed": null,
+      "decide": null,
+      "source": "src/app/[locale]/(public)/page.tsx:1",
+      "assumptions": [],
+      "reason": "J8, A17, A58: release 1 ships a basic placeholder; the marketing draft was rejected"
+    },
+    {
+      "id": "public.privacy",
+      "area": "public",
+      "route": "/privacy",
+      "params": [],
+      "query": [],
+      "labels": {
+        "en": "Privacy"
+      },
+      "type": "public",
+      "purpose": "Legal page: privacy",
+      "roles": ["visitor"],
+      "tabs": [],
+      "sections": [],
+      "views": [],
+      "states": ["default"],
+      "reachedFrom": [
+        {
+          "kind": "link",
+          "from": "footer of every public page",
+          "detail": "Privacy",
+          "source": "spec/ia.md Screen Inventory, Move Table"
+        }
+      ],
+      "breadcrumb": [],
+      "back": null,
+      "access": {
+        "roles": ["visitor"],
+        "host": null,
+        "public": true
+      },
+      "inboundLinks": [],
+      "status": "proposed",
+      "redirectTo": null,
+      "proposed": null,
+      "decide": null,
+      "source": null,
+      "assumptions": [],
+      "reason": "J8: trust; the waitlist needs legal pages"
+    },
+    {
+      "id": "public.waitlistConfirm",
+      "area": "public",
+      "route": "/waitlist/confirm",
+      "params": [],
+      "query": ["token"],
+      "labels": {
+        "en": "Confirm Your Place"
+      },
+      "type": "public",
+      "purpose": "Double opt-in: the confirm link from the waitlist email turns an Unconfirmed entry into Waiting",
+      "roles": ["visitor"],
+      "tabs": [],
+      "sections": [],
+      "views": [],
+      "states": ["confirmed", "already confirmed", "expired or invalid link"],
+      "reachedFrom": [
+        {
+          "kind": "email",
+          "from": "waitlist confirm email",
+          "detail": "Confirm My Place",
+          "source": "spec/screens/public-account-operator.md Emails"
+        }
+      ],
+      "breadcrumb": [],
+      "back": null,
+      "access": {
+        "roles": ["visitor"],
+        "host": null,
+        "public": true
+      },
+      "inboundLinks": [],
+      "status": "proposed",
+      "redirectTo": null,
+      "proposed": null,
+      "decide": null,
+      "source": null,
+      "assumptions": [],
+      "reason": "J8; S146: consent is proven before any other waitlist email is sent"
+    },
+    {
+      "id": "public.waitlistLeave",
+      "area": "public",
+      "route": "/waitlist/leave",
+      "params": [],
+      "query": ["token"],
+      "labels": {
+        "en": "Leave the Waitlist"
+      },
+      "type": "public",
+      "purpose": "Leave the waitlist in one click; the email is deleted",
+      "roles": ["visitor"],
+      "tabs": [],
+      "sections": [],
+      "views": [],
+      "states": ["confirm", "left", "already left or invalid link", "error"],
+      "reachedFrom": [
+        {
+          "kind": "email",
+          "from": "every waitlist email",
+          "detail": "Leave the Waitlist (also the List-Unsubscribe header)",
+          "source": "spec/screens/public-account-operator.md Emails"
+        },
+        {
+          "kind": "link",
+          "from": "/ joined state",
+          "detail": "Leave the Waitlist",
+          "source": "spec/screens/public-account-operator.md Landing placeholder"
+        }
+      ],
+      "breadcrumb": [],
+      "back": null,
+      "access": {
+        "roles": ["visitor"],
+        "host": null,
+        "public": true
+      },
+      "inboundLinks": [],
+      "status": "proposed",
+      "redirectTo": null,
+      "proposed": null,
+      "decide": null,
+      "source": null,
+      "assumptions": [],
+      "reason": "J8; S146; GDPR Art. 7(3), 17: leaving is as easy as joining"
+    },
+    {
+      "id": "public.terms",
+      "area": "public",
+      "route": "/terms",
+      "params": [],
+      "query": [],
+      "labels": {
+        "en": "Terms"
+      },
+      "type": "public",
+      "purpose": "Legal page: terms",
+      "roles": ["visitor"],
+      "tabs": [],
+      "sections": [],
+      "views": [],
+      "states": ["default"],
+      "reachedFrom": [
+        {
+          "kind": "link",
+          "from": "footer of every public page",
+          "detail": "Terms",
+          "source": "spec/ia.md Screen Inventory, Move Table"
+        }
+      ],
+      "breadcrumb": [],
+      "back": null,
+      "access": {
+        "roles": ["visitor"],
+        "host": null,
+        "public": true
+      },
+      "inboundLinks": [],
+      "status": "proposed",
+      "redirectTo": null,
+      "proposed": null,
+      "decide": null,
+      "source": null,
+      "assumptions": [],
+      "reason": "J8: trust; the waitlist needs legal pages"
+    },
+    {
+      "id": "public.imprint",
+      "area": "public",
+      "route": "/imprint",
+      "params": [],
+      "query": [],
+      "labels": {
+        "en": "Imprint"
+      },
+      "type": "public",
+      "purpose": "Legal page: imprint",
+      "roles": ["visitor"],
+      "tabs": [],
+      "sections": [],
+      "views": [],
+      "states": ["default"],
+      "reachedFrom": [
+        {
+          "kind": "link",
+          "from": "footer of every public page",
+          "detail": "Imprint",
+          "source": "spec/ia.md Screen Inventory, Move Table"
+        }
+      ],
+      "breadcrumb": [],
+      "back": null,
+      "access": {
+        "roles": ["visitor"],
+        "host": null,
+        "public": true
+      },
+      "inboundLinks": [],
+      "status": "proposed",
+      "redirectTo": null,
+      "proposed": null,
+      "decide": null,
+      "source": null,
+      "assumptions": [],
+      "reason": "J8: trust; the waitlist needs legal pages"
+    },
+    {
+      "id": "public.blog",
+      "area": "public",
+      "route": "/blog",
+      "params": [],
+      "query": [],
+      "labels": {
+        "en": "Blog"
+      },
+      "type": "public",
+      "purpose": "Reserved for release 2",
+      "roles": ["visitor"],
+      "tabs": [],
+      "sections": [],
+      "views": [],
+      "states": ["not-found"],
+      "reachedFrom": [],
+      "breadcrumb": [],
+      "back": null,
+      "access": {
+        "roles": ["visitor"],
+        "host": null,
+        "public": true
+      },
+      "inboundLinks": [],
+      "status": "proposed",
+      "redirectTo": null,
+      "proposed": null,
+      "decide": "Release 2. 404 until then; no navigation points here in release 1.",
+      "source": null,
+      "assumptions": [],
+      "reason": "Design 9.3 first cut; reserved so no organisation can take the address"
+    },
+    {
+      "id": "public.blog-post",
+      "area": "public",
+      "route": "/blog/[slug]",
+      "params": [
+        {
+          "name": "slug",
+          "kind": "slug"
+        }
+      ],
+      "query": [],
+      "labels": {
+        "en": "{title}"
+      },
+      "type": "public",
+      "purpose": "Reserved for release 2",
+      "roles": ["visitor"],
+      "tabs": [],
+      "sections": [],
+      "views": [],
+      "states": ["not-found"],
+      "reachedFrom": [],
+      "breadcrumb": [],
+      "back": null,
+      "access": {
+        "roles": ["visitor"],
+        "host": null,
+        "public": true
+      },
+      "inboundLinks": [],
+      "status": "proposed",
+      "redirectTo": null,
+      "proposed": null,
+      "decide": "Release 2. 404 until then.",
+      "source": null,
+      "assumptions": [],
+      "reason": "As /blog"
+    },
+    {
+      "id": "auth.sign-in",
+      "area": "auth",
+      "route": "/sign-in",
+      "params": [],
+      "query": [
+        {
+          "name": "next",
+          "kind": "prefill",
+          "values": null
+        },
+        {
+          "name": "error",
+          "kind": "view",
+          "values": ["expired", "used", "invalid"]
+        }
+      ],
+      "labels": {
+        "en": "Sign In to HeyDiff"
+      },
+      "type": "auth",
+      "purpose": "Send a sign-in link by email",
+      "roles": ["visitor"],
+      "tabs": [],
+      "sections": [],
+      "views": [],
+      "states": [
+        "default",
+        "loading",
+        "error-invalid-email",
+        "error-expired-link",
+        "error-used-link",
+        "error-invalid-link",
+        "error-rate-limit",
+        "unknown-email"
+      ],
+      "reachedFrom": [
+        {
+          "kind": "link",
+          "from": "/",
+          "detail": "Sign In (header)",
+          "source": "spec/ia.md Screen Inventory, Move Table"
+        },
+        {
+          "kind": "redirect",
+          "from": "any app link when signed out",
+          "detail": "with ?next=",
+          "source": "spec/ia.md Screen Inventory, Move Table"
+        },
+        {
+          "kind": "external",
+          "from": null,
+          "detail": "extension and Mac app Sign In via consent",
+          "source": "spec/ia.md Screen Inventory, Move Table"
+        },
+        {
+          "kind": "redirect",
+          "from": "/sign-in/verify",
+          "detail": "failure with ?error=",
+          "source": "spec/ia.md Screen Inventory, Move Table"
+        },
+        {
+          "kind": "after-action",
+          "from": "/sign-out",
+          "detail": "Sign Out",
+          "source": "spec/ia.md Screen Inventory, Move Table"
+        },
+        {
+          "kind": "link",
+          "from": "/sign-in/check",
+          "detail": "Use Another Email",
+          "source": "spec/ia.md Screen Inventory, Move Table"
+        }
+      ],
+      "breadcrumb": [],
+      "back": null,
+      "access": {
+        "roles": ["visitor"],
+        "host": null,
+        "public": true
+      },
+      "inboundLinks": [],
+      "status": "as-built",
+      "redirectTo": null,
+      "proposed": null,
+      "decide": null,
+      "source": "src/app/[locale]/(public)/sign-in/page.tsx:1",
+      "assumptions": ["`next` and `error` query kinds are the nearest fit"],
+      "reason": "A7, A20: one account, email link in release 1"
+    },
+    {
+      "id": "auth.sign-in-check",
+      "area": "auth",
+      "route": "/sign-in/check",
+      "params": [],
+      "query": [],
+      "labels": {
+        "en": "Check Your Email"
+      },
+      "type": "auth",
+      "purpose": "Say where the link went",
+      "roles": ["visitor"],
+      "tabs": [],
+      "sections": [],
+      "views": [],
+      "states": ["default", "send-again-disabled-under-30s"],
+      "reachedFrom": [
+        {
+          "kind": "after-action",
+          "from": "/sign-in",
+          "detail": "Send Sign-In Link",
+          "source": "spec/ia.md Screen Inventory, Move Table"
+        },
+        {
+          "kind": "after-action",
+          "from": "/invite/[token]",
+          "detail": "Continue with Email",
+          "source": "spec/ia.md Screen Inventory, Move Table"
+        }
+      ],
+      "breadcrumb": [],
+      "back": "/sign-in",
+      "access": {
+        "roles": ["visitor"],
+        "host": null,
+        "public": true
+      },
+      "inboundLinks": [],
+      "status": "proposed",
+      "redirectTo": null,
+      "proposed": null,
+      "decide": null,
+      "source": null,
+      "assumptions": [],
+      "reason": "A20: release 1 prints the link to the terminal; reload keeps the state"
+    },
+    {
+      "id": "auth.sign-in-verify",
+      "area": "auth",
+      "route": "/sign-in/verify",
+      "params": [],
+      "query": [
+        {
+          "name": "token",
+          "kind": "prefill",
+          "values": null
+        }
+      ],
+      "labels": {
+        "en": "Verifying the link"
+      },
+      "type": "auth",
+      "purpose": "Spend the one-time token and send the person on",
+      "roles": ["visitor"],
+      "tabs": [],
+      "sections": [],
+      "views": [],
+      "states": ["loading", "error-expired", "error-used", "error-invalid"],
+      "reachedFrom": [
+        {
+          "kind": "email",
+          "from": null,
+          "detail": "sign-in link",
+          "source": "spec/ia.md Screen Inventory, Move Table"
+        },
+        {
+          "kind": "external",
+          "from": null,
+          "detail": "terminal print in release 1",
+          "source": "spec/ia.md Screen Inventory, Move Table"
+        }
+      ],
+      "breadcrumb": [],
+      "back": null,
+      "access": {
+        "roles": ["visitor"],
+        "host": null,
+        "public": true
+      },
+      "inboundLinks": ["sign-in link"],
+      "status": "as-built",
+      "redirectTo": null,
+      "proposed": null,
+      "decide": null,
+      "source": "src/app/[locale]/(public)/sign-in/verify/page.tsx:1",
+      "assumptions": ["Exempt from SM-2: a mail or terminal link is its only way in by design"],
+      "reason": "A7, A20: no UI beyond a spinner"
+    },
+    {
+      "id": "auth.invite",
+      "area": "auth",
+      "route": "/invite/[token]",
+      "params": [
+        {
+          "name": "token",
+          "kind": "token"
+        }
+      ],
+      "query": [],
+      "labels": {
+        "en": "Join {organisation} / Set Up Your Team"
+      },
+      "type": "auth",
+      "purpose": "Join an organisation in one action; or, from a waitlist invitation, set up your own team",
+      "roles": ["visitor", "owner", "admin", "member", "guest"],
+      "tabs": [],
+      "sections": [],
+      "views": [],
+      "states": [
+        "default-signed-out",
+        "default-signed-in-same-email",
+        "waitlist-signed-out",
+        "waitlist-signed-in",
+        "waitlist-already-has-organisation",
+        "wrong-account",
+        "already-a-member",
+        "expired",
+        "revoked",
+        "invalid (404)",
+        "no-free-seat",
+        "loading",
+        "error"
+      ],
+      "reachedFrom": [
+        {
+          "kind": "email",
+          "from": null,
+          "detail": "invitation email",
+          "source": "spec/ia.md Screen Inventory, Move Table"
+        },
+        {
+          "kind": "email",
+          "from": null,
+          "detail": "waitlist invitation email",
+          "source": "spec/ia.md Screen Inventory, Move Table"
+        }
+      ],
+      "breadcrumb": [],
+      "back": null,
+      "access": {
+        "roles": ["visitor"],
+        "host": null,
+        "public": true
+      },
+      "inboundLinks": ["invitation", "waitlist invitation"],
+      "status": "proposed",
+      "redirectTo": null,
+      "proposed": null,
+      "decide": null,
+      "source": null,
+      "assumptions": [],
+      "reason": "J10: join with the right role",
+      "fixed": "F1, F12: waitlist variant with its own states; Expired and Revoked carry \"Go to HeyDiff\""
+    },
+    {
+      "id": "auth.authorize",
+      "area": "auth",
+      "route": "/authorize",
+      "params": [],
+      "query": [
+        {
+          "name": "client_id",
+          "kind": "prefill",
+          "values": null
+        },
+        {
+          "name": "redirect_uri",
+          "kind": "prefill",
+          "values": null
+        },
+        {
+          "name": "code_challenge",
+          "kind": "prefill",
+          "values": null
+        },
+        {
+          "name": "scope",
+          "kind": "prefill",
+          "values": null
+        },
+        {
+          "name": "state",
+          "kind": "prefill",
+          "values": null
+        }
+      ],
+      "labels": {
+        "en": "Allow {client} to use your HeyDiff account?"
+      },
+      "type": "auth",
+      "purpose": "Let a person allow the extension, the Mac app or an MCP client, read-only by default",
+      "roles": ["visitor", "owner", "admin", "member", "guest"],
+      "tabs": [],
+      "sections": [],
+      "views": [],
+      "states": ["default", "loading", "allowed", "denied", "expired-request"],
+      "reachedFrom": [
+        {
+          "kind": "external",
+          "from": null,
+          "detail": "extension Sign In",
+          "source": "spec/ia.md Screen Inventory, Move Table"
+        },
+        {
+          "kind": "external",
+          "from": null,
+          "detail": "Mac app Settings > Online > Sign In (loopback redirect, A35)",
+          "source": "spec/ia.md Screen Inventory, Move Table"
+        },
+        {
+          "kind": "external",
+          "from": null,
+          "detail": "MCP client",
+          "source": "spec/ia.md Screen Inventory, Move Table"
+        }
+      ],
+      "breadcrumb": [],
+      "back": null,
+      "access": {
+        "roles": ["visitor"],
+        "host": null,
+        "public": true
+      },
+      "inboundLinks": [],
+      "status": "as-built",
+      "redirectTo": null,
+      "proposed": null,
+      "decide": null,
+      "source": null,
+      "assumptions": [
+        "OAuth with PKCE parameter names are the standard ones; ia.md says only 'OAuth parameters'",
+        "Sends to /sign-in?next= first when signed out"
+      ],
+      "reason": "J11, J9, A28: scopes chosen at consent, Read only by default"
+    },
+    {
+      "id": "auth.welcome",
+      "area": "auth",
+      "route": "/welcome",
+      "params": [],
+      "query": [],
+      "labels": {
+        "en": "A home for your team's decisions."
+      },
+      "type": "create",
+      "purpose": "Name the organisation and the first workspace, then land in it",
+      "roles": ["owner"],
+      "tabs": [],
+      "sections": [],
+      "views": [],
+      "states": ["default", "error-empty-field", "error-slug-taken", "loading", "error-server", "has-an-organisation (redirects to Inbox)"],
+      "reachedFrom": [
+        {
+          "kind": "after-action",
+          "from": "/sign-in/verify",
+          "detail": "first sign-in of a waitlist invitee, no organisation",
+          "source": "spec/ia.md Screen Inventory, Move Table"
+        }
+      ],
+      "breadcrumb": [],
+      "back": null,
+      "access": {
+        "roles": ["owner"],
+        "host": null,
+        "public": false
+      },
+      "inboundLinks": [],
+      "status": "proposed",
+      "redirectTo": null,
+      "proposed": null,
+      "decide": null,
+      "source": null,
+      "assumptions": ["Role shown is the one the person becomes, owner"],
+      "reason": "J10, A30: first run"
+    },
+    {
+      "id": "auth.sign-out",
+      "area": "auth",
+      "route": "/sign-out",
+      "params": [],
+      "query": [],
+      "labels": {
+        "en": "Sign Out"
+      },
+      "type": "auth",
+      "purpose": "End the session (form action, no page)",
+      "roles": ["owner", "admin", "member", "guest"],
+      "tabs": [],
+      "sections": [],
+      "views": [],
+      "states": [],
+      "reachedFrom": [
+        {
+          "kind": "navigation",
+          "from": "avatar menu",
+          "detail": "Sign Out",
+          "source": "spec/ia.md Screen Inventory, Move Table"
+        },
+        {
+          "kind": "command-menu",
+          "from": null,
+          "detail": "Actions",
+          "source": "spec/ia.md Screen Inventory, Move Table"
+        }
+      ],
+      "breadcrumb": [],
+      "back": null,
+      "access": {
+        "roles": ["owner", "admin", "member", "guest"],
+        "host": null,
+        "public": false
+      },
+      "inboundLinks": [],
+      "status": "proposed",
+      "redirectTo": null,
+      "proposed": null,
+      "decide": "What a GET visit does is not specified. Recommended: redirect to /sign-in without ending the session (a link must not sign people out).",
+      "source": null,
+      "assumptions": ["Form action; no page of its own"],
+      "reason": "A7: one Sign In / Sign Out pair everywhere"
+    },
+    {
+      "id": "app.inbox",
+      "area": "app",
+      "route": "/[org]/inbox",
+      "params": [],
+      "query": [
+        {
+          "name": "kind",
+          "kind": "filter",
+          "values": ["vote", "revision", "mention", "reply", "session"]
+        }
+      ],
+      "labels": {
+        "en": "Inbox"
+      },
+      "type": "list",
+      "purpose": "What needs me across the organisation: votes, revisions, mentions, replies, shared sessions",
+      "roles": ["owner", "admin", "member", "guest"],
+      "tabs": [],
+      "sections": [],
+      "views": ["kind chips All, Votes, Revisions, Mentions, Replies, Shared Sessions"],
+      "states": ["default", "loading", "empty", "empty-kind", "error", "live", "dismissed", "phone"],
+      "reachedFrom": [
+        {
+          "kind": "nav",
+          "from": "sidebar",
+          "detail": "Inbox (count, G I)",
+          "source": "spec/ia.md Move Table"
+        },
+        {
+          "kind": "email",
+          "from": null,
+          "detail": "notification and digest mails",
+          "source": "spec/ia.md Move Table"
+        },
+        {
+          "kind": "redirect",
+          "from": "/[org]",
+          "detail": "308",
+          "source": "spec/ia.md Move Table"
+        },
+        {
+          "kind": "link",
+          "from": "/sign-in/verify",
+          "detail": "after sign-in",
+          "source": "spec/ia.md Move Table"
+        },
+        {
+          "kind": "link",
+          "from": "extension side panel",
+          "detail": "Inbox tab",
+          "source": "spec/ia.md Move Table"
+        },
+        {
+          "kind": "command-menu",
+          "from": null,
+          "detail": "Go To",
+          "source": "spec/ia.md Move Table"
+        }
+      ],
+      "breadcrumb": [],
+      "back": null,
+      "access": {
+        "roles": ["owner", "admin", "member", "guest"],
+        "host": null,
+        "public": false
+      },
+      "inboundLinks": [],
+      "status": "proposed",
+      "redirectTo": null,
+      "proposed": null,
+      "decide": null,
+      "source": null,
+      "assumptions": [],
+      "reason": "J2, J4, J6: what needs me; no header primary (an empty Inbox is the goal)"
+    },
+    {
+      "id": "app.my-work",
+      "area": "app",
+      "route": "/[org]/my-work",
+      "params": [],
+      "query": [
+        {
+          "name": "tab",
+          "kind": "tab",
+          "values": ["mine", "agent"]
+        },
+        {
+          "name": "status",
+          "kind": "filter",
+          "values": null
+        }
+      ],
+      "labels": {
+        "en": "My Work"
+      },
+      "type": "list",
+      "purpose": "Follow your own comments and what your agent claimed, across workspaces",
+      "roles": ["owner", "admin", "member", "guest"],
+      "tabs": [
+        {
+          "label": {
+            "en": "My Comments"
+          },
+          "value": "mine",
+          "headerPrimary": null
+        },
+        {
+          "label": {
+            "en": "Claimed by My Agent"
+          },
+          "value": "agent",
+          "headerPrimary": null
+        }
+      ],
+      "sections": [],
+      "views": [],
+      "states": ["default", "loading", "empty-mine", "empty-agent", "error", "guest-agent-tab-hidden"],
+      "reachedFrom": [
+        {
+          "kind": "nav",
+          "from": "sidebar",
+          "detail": "My Work (G M)",
+          "source": "spec/ia.md Move Table"
+        },
+        {
+          "kind": "command-menu",
+          "from": null,
+          "detail": "Go To",
+          "source": "spec/ia.md Move Table"
+        }
+      ],
+      "breadcrumb": [],
+      "back": null,
+      "access": {
+        "roles": ["owner", "admin", "member", "guest"],
+        "host": null,
+        "public": false
+      },
+      "inboundLinks": [],
+      "status": "as-built",
+      "redirectTo": null,
+      "proposed": null,
+      "decide": null,
+      "source": "src/app/[locale]/(app)/[org]/my-work/page.tsx:1",
+      "assumptions": [],
+      "reason": "J3, J4"
+    },
+    {
+      "id": "app.comments",
+      "area": "app",
+      "route": "/[org]/[ws]/comments",
+      "params": [],
+      "query": [
+        {
+          "name": "status",
+          "kind": "filter",
+          "values": ["open", "deciding", "in-progress", "revised", "resolved", "any"]
+        },
+        {
+          "name": "env",
+          "kind": "filter",
+          "values": null
+        },
+        {
+          "name": "branch",
+          "kind": "filter",
+          "values": null
+        },
+        {
+          "name": "commit",
+          "kind": "filter",
+          "values": null
+        },
+        {
+          "name": "people",
+          "kind": "filter",
+          "values": ["everyone", "mine", "others"]
+        },
+        {
+          "name": "author",
+          "kind": "filter",
+          "values": null
+        },
+        {
+          "name": "session",
+          "kind": "filter",
+          "values": null
+        },
+        {
+          "name": "module",
+          "kind": "filter",
+          "values": null
+        },
+        {
+          "name": "path",
+          "kind": "filter",
+          "values": null
+        },
+        {
+          "name": "q",
+          "kind": "search",
+          "values": null
+        },
+        {
+          "name": "group",
+          "kind": "view",
+          "values": ["page", "newest"]
+        }
+      ],
+      "labels": {
+        "en": "Comments"
+      },
+      "type": "list",
+      "purpose": "Every comment of the workspace, grouped by page, with screenshots, filters and status",
+      "roles": ["owner", "admin", "member", "guest"],
+      "tabs": [],
+      "sections": [],
+      "views": ["Group by Page (default)", "Newest"],
+      "states": ["default", "grouped", "newest", "resolved-trail", "empty", "empty-filters", "live", "loading", "error", "phone"],
+      "reachedFrom": [
+        {
+          "kind": "nav",
+          "from": "sidebar",
+          "detail": "Comments (G C)",
+          "source": "spec/ia.md Move Table"
+        },
+        {
+          "kind": "redirect",
+          "from": "/[org]/[ws]",
+          "detail": "308",
+          "source": "spec/ia.md Move Table"
+        },
+        {
+          "kind": "link",
+          "from": "/[org]/[ws]/comments/[n]",
+          "detail": "breadcrumb Comments, Back",
+          "source": "spec/ia.md Move Table"
+        },
+        {
+          "kind": "external",
+          "from": null,
+          "detail": "extension side panel: Open in HeyDiff (?path=)",
+          "source": "spec/ia.md Move Table"
+        },
+        {
+          "kind": "link",
+          "from": "/welcome",
+          "detail": "Create Organisation lands here, empty",
+          "source": "spec/ia.md Move Table"
+        },
+        {
+          "kind": "command-menu",
+          "from": null,
+          "detail": "Go To",
+          "source": "spec/ia.md Move Table"
+        }
+      ],
+      "breadcrumb": [],
+      "back": null,
+      "access": {
+        "roles": ["owner", "admin", "member", "guest"],
+        "host": null,
+        "public": false
+      },
+      "inboundLinks": [],
+      "status": "proposed",
+      "redirectTo": null,
+      "proposed": null,
+      "decide": null,
+      "source": null,
+      "assumptions": [
+        "Defaults omitted from the URL: status Not Resolved (open, deciding, in-progress, revised; ?status= lists the chosen statuses, so status=open is Open alone, C6), commit, env and people any, group=page"
+      ],
+      "reason": "J1, J2, J4, A44: go through the comments with screenshots; status, commit, environment and people are filters, not lists"
+    },
+    {
+      "id": "app.comment",
+      "area": "app",
+      "route": "/[org]/[ws]/comments/[n]",
+      "params": ["n"],
+      "query": [
+        {
+          "name": "revision",
+          "kind": "view",
+          "values": null
+        },
+        {
+          "name": "compare",
+          "kind": "view",
+          "values": ["side", "slider"]
+        },
+        {
+          "name": "from",
+          "kind": "return",
+          "values": null
+        }
+      ],
+      "labels": {
+        "en": "{path} comment"
+      },
+      "type": "record",
+      "purpose": "One comment: screenshot with selection and drawing, context and code location, thread, Before / After, decision, resolve",
+      "roles": ["owner", "admin", "member", "guest"],
+      "tabs": [],
+      "sections": [],
+      "views": [],
+      "states": [
+        "open",
+        "deciding",
+        "decided",
+        "in-progress",
+        "revised",
+        "resolved",
+        "with-moves",
+        "guest",
+        "no-screenshot",
+        "outdated",
+        "loading",
+        "error",
+        "phone"
+      ],
+      "reachedFrom": [
+        {
+          "kind": "link",
+          "from": "/[org]/[ws]/comments",
+          "detail": "row",
+          "source": "spec/ia.md Move Table"
+        },
+        {
+          "kind": "link",
+          "from": "/[org]/inbox",
+          "detail": "row",
+          "source": "spec/ia.md Move Table"
+        },
+        {
+          "kind": "link",
+          "from": "/[org]/my-work",
+          "detail": "row",
+          "source": "spec/ia.md Move Table"
+        },
+        {
+          "kind": "link",
+          "from": "/[org]/[ws]/revisions",
+          "detail": "row (?revision=)",
+          "source": "spec/ia.md Move Table"
+        },
+        {
+          "kind": "link",
+          "from": "/[org]/[ws]/sessions/[id]",
+          "detail": "row",
+          "source": "spec/ia.md Move Table"
+        },
+        {
+          "kind": "link",
+          "from": "/[org]/[ws]/decisions/[n]",
+          "detail": "From a comment on {path}",
+          "source": "spec/ia.md Move Table"
+        },
+        {
+          "kind": "external",
+          "from": null,
+          "detail": "extension pin popover: Open in HeyDiff (new tab)",
+          "source": "spec/ia.md Move Table"
+        },
+        {
+          "kind": "email",
+          "from": null,
+          "detail": "mention, reply, revision mails",
+          "source": "spec/ia.md Move Table"
+        },
+        {
+          "kind": "external",
+          "from": null,
+          "detail": "MCP responses",
+          "source": "spec/ia.md Move Table"
+        },
+        {
+          "kind": "link",
+          "from": "/[org]/[ws]/comments/[n]",
+          "detail": "J and K within from",
+          "source": "spec/ia.md Move Table"
+        },
+        {
+          "kind": "command-menu",
+          "from": null,
+          "detail": "comment by number, like #118",
+          "source": "spec/ia.md Move Table"
+        }
+      ],
+      "breadcrumb": ["Comments", "{path}"],
+      "back": "from, else /[org]/[ws]/comments",
+      "access": {
+        "roles": ["owner", "admin", "member", "guest"],
+        "host": null,
+        "public": false
+      },
+      "inboundLinks": [],
+      "status": "proposed",
+      "redirectTo": null,
+      "proposed": null,
+      "decide": null,
+      "source": null,
+      "assumptions": [
+        "Header primary: Resolve (Filled) for members while not Deciding; Reopen (Tonal) when Resolved",
+        "Fragment #reply-<id> for one reply"
+      ],
+      "reason": "J1, J2, J4, J5, J9: the product's centre; one canonical address per comment"
+    },
+    {
+      "id": "app.decisions",
+      "area": "app",
+      "route": "/[org]/[ws]/decisions",
+      "params": [],
+      "query": [
+        {
+          "name": "status",
+          "kind": "filter",
+          "values": ["deciding", "decided", "cancelled", "all"]
+        }
+      ],
+      "labels": {
+        "en": "Decisions"
+      },
+      "type": "list",
+      "purpose": "Open and past decisions of the workspace",
+      "roles": ["owner", "admin", "member", "guest"],
+      "tabs": [],
+      "sections": [],
+      "views": ["status chips Deciding (default), Decided, Cancelled, All"],
+      "states": ["default", "empty", "loading", "error"],
+      "reachedFrom": [
+        {
+          "kind": "nav",
+          "from": "sidebar",
+          "detail": "Decisions (count of voting, G D)",
+          "source": "spec/ia.md Move Table"
+        },
+        {
+          "kind": "command-menu",
+          "from": null,
+          "detail": "Go To",
+          "source": "spec/ia.md Move Table"
+        }
+      ],
+      "breadcrumb": [],
+      "back": null,
+      "access": {
+        "roles": ["owner", "admin", "member", "guest"],
+        "host": null,
+        "public": false
+      },
+      "inboundLinks": [],
+      "status": "proposed",
+      "redirectTo": null,
+      "proposed": null,
+      "decide": null,
+      "source": null,
+      "assumptions": [],
+      "reason": "J2, A12, A44"
+    },
+    {
+      "id": "app.decision",
+      "area": "app",
+      "route": "/[org]/[ws]/decisions/[n]",
+      "params": ["n"],
+      "query": [],
+      "labels": {
+        "en": "{question}"
+      },
+      "type": "record",
+      "purpose": "Compare the options side by side, vote, comment per option, decide",
+      "roles": ["owner", "admin", "member", "guest"],
+      "tabs": [],
+      "sections": [],
+      "views": [],
+      "states": ["deciding", "not-a-voter", "guest-voter", "decided", "cancelled", "loading", "error", "phone"],
+      "reachedFrom": [
+        {
+          "kind": "link",
+          "from": "/[org]/[ws]/decisions",
+          "detail": "row",
+          "source": "spec/ia.md Move Table"
+        },
+        {
+          "kind": "link",
+          "from": "/[org]/[ws]/comments/[n]",
+          "detail": "Start Decision; Decided card View Decision",
+          "source": "spec/ia.md Move Table"
+        },
+        {
+          "kind": "link",
+          "from": "/[org]/inbox",
+          "detail": "vote request",
+          "source": "spec/ia.md Move Table"
+        },
+        {
+          "kind": "email",
+          "from": null,
+          "detail": "vote request mail",
+          "source": "spec/ia.md Move Table"
+        }
+      ],
+      "breadcrumb": ["Decisions"],
+      "back": "/[org]/[ws]/decisions",
+      "access": {
+        "roles": ["owner", "admin", "member", "guest"],
+        "host": null,
+        "public": false
+      },
+      "inboundLinks": [],
+      "status": "proposed",
+      "redirectTo": null,
+      "proposed": null,
+      "decide": null,
+      "source": null,
+      "assumptions": ["Header primary: Decide (members, while voting)"],
+      "reason": "J2, A12, A44: a member presses Decide; guests vote"
+    },
+    {
+      "id": "app.revisions",
+      "area": "app",
+      "route": "/[org]/[ws]/revisions",
+      "params": [],
+      "query": [
+        {
+          "name": "status",
+          "kind": "filter",
+          "values": ["waiting", "all"]
+        }
+      ],
+      "labels": {
+        "en": "Revisions"
+      },
+      "type": "list",
+      "purpose": "What agents (or members by hand) reported, newest first; the review queue",
+      "roles": ["owner", "admin", "member", "guest"],
+      "tabs": [],
+      "sections": [],
+      "views": ["Waiting for Review (default), All"],
+      "states": ["default", "empty", "loading", "error"],
+      "reachedFrom": [
+        {
+          "kind": "nav",
+          "from": "sidebar",
+          "detail": "Revisions (G R)",
+          "source": "spec/ia.md Move Table"
+        },
+        {
+          "kind": "command-menu",
+          "from": null,
+          "detail": "Go To",
+          "source": "spec/ia.md Move Table"
+        }
+      ],
+      "breadcrumb": [],
+      "back": null,
+      "access": {
+        "roles": ["owner", "admin", "member", "guest"],
+        "host": null,
+        "public": false
+      },
+      "inboundLinks": [],
+      "status": "proposed",
+      "redirectTo": null,
+      "proposed": null,
+      "decide": null,
+      "source": null,
+      "assumptions": [],
+      "reason": "J4, A3, A44; drawn in every web-app image of the journey"
+    },
+    {
+      "id": "app.sessions",
+      "area": "app",
+      "route": "/[org]/[ws]/sessions",
+      "params": [],
+      "query": [
+        {
+          "name": "q",
+          "kind": "search",
+          "values": null
+        }
+      ],
+      "labels": {
+        "en": "Sessions"
+      },
+      "type": "list",
+      "purpose": "Review passes of the workspace",
+      "roles": ["owner", "admin", "member", "guest"],
+      "tabs": [],
+      "sections": [],
+      "views": [],
+      "states": ["default", "loading", "error"],
+      "reachedFrom": [
+        {
+          "kind": "nav",
+          "from": "sidebar",
+          "detail": "Sessions (only with 1+ session)",
+          "source": "spec/ia.md Move Table"
+        },
+        {
+          "kind": "command-menu",
+          "from": null,
+          "detail": "Go To",
+          "source": "spec/ia.md Move Table"
+        }
+      ],
+      "breadcrumb": [],
+      "back": null,
+      "access": {
+        "roles": ["owner", "admin", "member", "guest"],
+        "host": null,
+        "public": false
+      },
+      "inboundLinks": [],
+      "status": "proposed",
+      "redirectTo": null,
+      "proposed": null,
+      "decide": null,
+      "source": null,
+      "assumptions": [],
+      "reason": "J12, A52"
+    },
+    {
+      "id": "app.session",
+      "area": "app",
+      "route": "/[org]/[ws]/sessions/[id]",
+      "params": ["id"],
+      "query": [],
+      "labels": {
+        "en": "{session}"
+      },
+      "type": "record",
+      "purpose": "One review pass: its comments across pages; share by link, email or agent",
+      "roles": ["owner", "admin", "member", "guest"],
+      "tabs": [],
+      "sections": [],
+      "views": [],
+      "states": ["default", "active", "ended", "from-mac", "empty", "loading", "error"],
+      "reachedFrom": [
+        {
+          "kind": "link",
+          "from": "/[org]/[ws]/sessions",
+          "detail": "row",
+          "source": "spec/ia.md Move Table"
+        },
+        {
+          "kind": "external",
+          "from": null,
+          "detail": "shared link, Share Session email",
+          "source": "spec/ia.md Move Table"
+        },
+        {
+          "kind": "external",
+          "from": null,
+          "detail": "extension session menu: Share…",
+          "source": "spec/ia.md Move Table"
+        },
+        {
+          "kind": "external",
+          "from": null,
+          "detail": "Mac app: View Online",
+          "source": "spec/ia.md Move Table"
+        },
+        {
+          "kind": "link",
+          "from": "/[org]/inbox",
+          "detail": "shared session item",
+          "source": "spec/ia.md Move Table"
+        }
+      ],
+      "breadcrumb": ["Sessions"],
+      "back": "/[org]/[ws]/sessions",
+      "access": {
+        "roles": ["owner", "admin", "member", "guest"],
+        "host": null,
+        "public": false
+      },
+      "inboundLinks": [],
+      "status": "proposed",
+      "redirectTo": null,
+      "proposed": null,
+      "decide": null,
+      "source": null,
+      "assumptions": ["Header primary: Share", "id is a readable slug plus a short hash, e.g. checkout-review-7f3a"],
+      "reason": "J12, A52, A26"
+    },
+    {
+      "id": "app.ws-settings-general",
+      "area": "app",
+      "route": "/[org]/[ws]/settings/general",
+      "params": [
+        {
+          "name": "org",
+          "kind": "slug"
+        },
+        {
+          "name": "ws",
+          "kind": "slug"
+        }
+      ],
+      "query": [],
+      "labels": {
+        "en": "{workspace} Settings: General"
+      },
+      "type": "settings",
+      "purpose": "Name and address (slug) of the workspace; delete it",
+      "roles": ["owner", "admin", "member"],
+      "tabs": [
+        {
+          "id": "general",
+          "label": {
+            "en": "General"
+          },
+          "route": "/[org]/[ws]/settings/general",
+          "count": false,
+          "primary": "none"
+        },
+        {
+          "id": "repos",
+          "label": {
+            "en": "Repos"
+          },
+          "route": "/[org]/[ws]/settings/repos",
+          "count": false,
+          "primary": {
+            "en": "Add Repo"
+          }
+        },
+        {
+          "id": "environments",
+          "label": {
+            "en": "Environments"
+          },
+          "route": "/[org]/[ws]/settings/environments",
+          "count": false,
+          "primary": {
+            "en": "Add Environment"
+          }
+        },
+        {
+          "id": "route-rules",
+          "label": {
+            "en": "Route Rules"
+          },
+          "route": "/[org]/[ws]/settings/route-rules",
+          "count": false,
+          "primary": {
+            "en": "Add Route Rule"
+          }
+        },
+        {
+          "id": "modules",
+          "label": {
+            "en": "Modules"
+          },
+          "route": "/[org]/[ws]/settings/modules",
+          "count": false,
+          "primary": {
+            "en": "Add Module"
+          }
+        }
+      ],
+      "sections": [],
+      "views": [],
+      "states": [
+        "default",
+        "empty",
+        "adding",
+        "field-saved",
+        "field-invalid",
+        "row-deleted",
+        "member-read-only",
+        "guest (404)",
+        "loading",
+        "error",
+        "phone (desktop-only message)"
+      ],
+      "reachedFrom": [
+        {
+          "kind": "navigation",
+          "from": "sidebar workspace switcher More",
+          "detail": "Workspace Settings",
+          "source": "spec/ia.md Screen Inventory, Move Table"
+        },
+        {
+          "kind": "navigation",
+          "from": "Comments header More",
+          "detail": "Workspace Settings",
+          "source": "spec/ia.md Screen Inventory, Move Table"
+        },
+        {
+          "kind": "link",
+          "from": "sibling settings tab",
+          "detail": "General",
+          "source": "spec/ia.md Screen Inventory, Move Table"
+        },
+        {
+          "kind": "command-menu",
+          "from": null,
+          "detail": "Settings",
+          "source": "spec/ia.md Screen Inventory, Move Table"
+        },
+        {
+          "kind": "redirect",
+          "from": "/[org]/[ws]/settings",
+          "detail": "to general",
+          "source": "spec/ia.md Screen Inventory, Move Table"
+        },
+        {
+          "kind": "link",
+          "from": "/[org]/settings/workspaces",
+          "detail": "workspace name",
+          "source": "spec/screens.md Organisation settings"
+        }
+      ],
+      "breadcrumb": [],
+      "back": null,
+      "access": {
+        "roles": ["owner", "admin", "member"],
+        "host": null,
+        "public": false
+      },
+      "inboundLinks": [],
+      "status": "proposed",
+      "redirectTo": null,
+      "proposed": null,
+      "decide": null,
+      "source": null,
+      "assumptions": ["Members read-only except Modules (add); admins and owner edit"],
+      "reason": "J10",
+      "fixed": "F2: reached from the workspace name in /[org]/settings/workspaces"
+    },
+    {
+      "id": "app.ws-settings-repos",
+      "area": "app",
+      "route": "/[org]/[ws]/settings/repos",
+      "params": [
+        {
+          "name": "org",
+          "kind": "slug"
+        },
+        {
+          "name": "ws",
+          "kind": "slug"
+        }
+      ],
+      "query": [],
+      "labels": {
+        "en": "{workspace} Settings: Repos"
+      },
+      "type": "settings",
+      "purpose": "Link GitHub repositories by hand",
+      "roles": ["owner", "admin", "member"],
+      "tabs": [
+        {
+          "id": "general",
+          "label": {
+            "en": "General"
+          },
+          "route": "/[org]/[ws]/settings/general",
+          "count": false,
+          "primary": "none"
+        },
+        {
+          "id": "repos",
+          "label": {
+            "en": "Repos"
+          },
+          "route": "/[org]/[ws]/settings/repos",
+          "count": false,
+          "primary": {
+            "en": "Add Repo"
+          }
+        },
+        {
+          "id": "environments",
+          "label": {
+            "en": "Environments"
+          },
+          "route": "/[org]/[ws]/settings/environments",
+          "count": false,
+          "primary": {
+            "en": "Add Environment"
+          }
+        },
+        {
+          "id": "route-rules",
+          "label": {
+            "en": "Route Rules"
+          },
+          "route": "/[org]/[ws]/settings/route-rules",
+          "count": false,
+          "primary": {
+            "en": "Add Route Rule"
+          }
+        },
+        {
+          "id": "modules",
+          "label": {
+            "en": "Modules"
+          },
+          "route": "/[org]/[ws]/settings/modules",
+          "count": false,
+          "primary": {
+            "en": "Add Module"
+          }
+        }
+      ],
+      "sections": [],
+      "views": [],
+      "states": [
+        "default",
+        "empty",
+        "adding",
+        "field-saved",
+        "field-invalid",
+        "row-deleted",
+        "member-read-only",
+        "guest (404)",
+        "loading",
+        "error",
+        "phone (desktop-only message)"
+      ],
+      "reachedFrom": [
+        {
+          "kind": "navigation",
+          "from": "sidebar workspace switcher More",
+          "detail": "Workspace Settings",
+          "source": "spec/ia.md Screen Inventory, Move Table"
+        },
+        {
+          "kind": "navigation",
+          "from": "Comments header More",
+          "detail": "Workspace Settings",
+          "source": "spec/ia.md Screen Inventory, Move Table"
+        },
+        {
+          "kind": "link",
+          "from": "sibling settings tab",
+          "detail": "Repos",
+          "source": "spec/ia.md Screen Inventory, Move Table"
+        },
+        {
+          "kind": "command-menu",
+          "from": null,
+          "detail": "Settings",
+          "source": "spec/ia.md Screen Inventory, Move Table"
+        },
+        {
+          "kind": "link",
+          "from": "/[org]/settings/workspaces",
+          "detail": "workspace name",
+          "source": "spec/screens.md Organisation settings"
+        }
+      ],
+      "breadcrumb": [],
+      "back": null,
+      "access": {
+        "roles": ["owner", "admin", "member"],
+        "host": null,
+        "public": false
+      },
+      "inboundLinks": [],
+      "status": "proposed",
+      "redirectTo": null,
+      "proposed": null,
+      "decide": null,
+      "source": null,
+      "assumptions": ["Members read-only except Modules (add); admins and owner edit"],
+      "reason": "J10, J5: the repo behind a capture"
+    },
+    {
+      "id": "app.ws-settings-environments",
+      "area": "app",
+      "route": "/[org]/[ws]/settings/environments",
+      "params": [
+        {
+          "name": "org",
+          "kind": "slug"
+        },
+        {
+          "name": "ws",
+          "kind": "slug"
+        }
+      ],
+      "query": [],
+      "labels": {
+        "en": "{workspace} Settings: Environments"
+      },
+      "type": "settings",
+      "purpose": "Say where the product runs: kind, name and address patterns",
+      "roles": ["owner", "admin", "member"],
+      "tabs": [
+        {
+          "id": "general",
+          "label": {
+            "en": "General"
+          },
+          "route": "/[org]/[ws]/settings/general",
+          "count": false,
+          "primary": "none"
+        },
+        {
+          "id": "repos",
+          "label": {
+            "en": "Repos"
+          },
+          "route": "/[org]/[ws]/settings/repos",
+          "count": false,
+          "primary": {
+            "en": "Add Repo"
+          }
+        },
+        {
+          "id": "environments",
+          "label": {
+            "en": "Environments"
+          },
+          "route": "/[org]/[ws]/settings/environments",
+          "count": false,
+          "primary": {
+            "en": "Add Environment"
+          }
+        },
+        {
+          "id": "route-rules",
+          "label": {
+            "en": "Route Rules"
+          },
+          "route": "/[org]/[ws]/settings/route-rules",
+          "count": false,
+          "primary": {
+            "en": "Add Route Rule"
+          }
+        },
+        {
+          "id": "modules",
+          "label": {
+            "en": "Modules"
+          },
+          "route": "/[org]/[ws]/settings/modules",
+          "count": false,
+          "primary": {
+            "en": "Add Module"
+          }
+        }
+      ],
+      "sections": [],
+      "views": [],
+      "states": [
+        "default",
+        "empty",
+        "adding",
+        "field-saved",
+        "field-invalid",
+        "row-deleted",
+        "member-read-only",
+        "guest (404)",
+        "loading",
+        "error",
+        "phone (desktop-only message)"
+      ],
+      "reachedFrom": [
+        {
+          "kind": "navigation",
+          "from": "sidebar workspace switcher More",
+          "detail": "Workspace Settings",
+          "source": "spec/ia.md Screen Inventory, Move Table"
+        },
+        {
+          "kind": "navigation",
+          "from": "Comments header More",
+          "detail": "Workspace Settings",
+          "source": "spec/ia.md Screen Inventory, Move Table"
+        },
+        {
+          "kind": "link",
+          "from": "sibling settings tab",
+          "detail": "Environments",
+          "source": "spec/ia.md Screen Inventory, Move Table"
+        },
+        {
+          "kind": "command-menu",
+          "from": null,
+          "detail": "Settings",
+          "source": "spec/ia.md Screen Inventory, Move Table"
+        },
+        {
+          "kind": "link",
+          "from": "/[org]/settings/workspaces",
+          "detail": "workspace name",
+          "source": "spec/screens.md Organisation settings"
+        }
+      ],
+      "breadcrumb": [],
+      "back": null,
+      "access": {
+        "roles": ["owner", "admin", "member"],
+        "host": null,
+        "public": false
+      },
+      "inboundLinks": [],
+      "status": "proposed",
+      "redirectTo": null,
+      "proposed": null,
+      "decide": null,
+      "source": null,
+      "assumptions": ["Members read-only except Modules (add); admins and owner edit"],
+      "reason": "A16, J5"
+    },
+    {
+      "id": "app.ws-settings-route-rules",
+      "area": "app",
+      "route": "/[org]/[ws]/settings/route-rules",
+      "params": [
+        {
+          "name": "org",
+          "kind": "slug"
+        },
+        {
+          "name": "ws",
+          "kind": "slug"
+        }
+      ],
+      "query": [],
+      "labels": {
+        "en": "{workspace} Settings: Route Rules"
+      },
+      "type": "settings",
+      "purpose": "Map address paths to repos for microfrontends",
+      "roles": ["owner", "admin", "member"],
+      "tabs": [
+        {
+          "id": "general",
+          "label": {
+            "en": "General"
+          },
+          "route": "/[org]/[ws]/settings/general",
+          "count": false,
+          "primary": "none"
+        },
+        {
+          "id": "repos",
+          "label": {
+            "en": "Repos"
+          },
+          "route": "/[org]/[ws]/settings/repos",
+          "count": false,
+          "primary": {
+            "en": "Add Repo"
+          }
+        },
+        {
+          "id": "environments",
+          "label": {
+            "en": "Environments"
+          },
+          "route": "/[org]/[ws]/settings/environments",
+          "count": false,
+          "primary": {
+            "en": "Add Environment"
+          }
+        },
+        {
+          "id": "route-rules",
+          "label": {
+            "en": "Route Rules"
+          },
+          "route": "/[org]/[ws]/settings/route-rules",
+          "count": false,
+          "primary": {
+            "en": "Add Route Rule"
+          }
+        },
+        {
+          "id": "modules",
+          "label": {
+            "en": "Modules"
+          },
+          "route": "/[org]/[ws]/settings/modules",
+          "count": false,
+          "primary": {
+            "en": "Add Module"
+          }
+        }
+      ],
+      "sections": [],
+      "views": [],
+      "states": [
+        "default",
+        "empty",
+        "adding",
+        "field-saved",
+        "field-invalid",
+        "row-deleted",
+        "member-read-only",
+        "guest (404)",
+        "loading",
+        "error",
+        "phone (desktop-only message)"
+      ],
+      "reachedFrom": [
+        {
+          "kind": "navigation",
+          "from": "sidebar workspace switcher More",
+          "detail": "Workspace Settings",
+          "source": "spec/ia.md Screen Inventory, Move Table"
+        },
+        {
+          "kind": "navigation",
+          "from": "Comments header More",
+          "detail": "Workspace Settings",
+          "source": "spec/ia.md Screen Inventory, Move Table"
+        },
+        {
+          "kind": "link",
+          "from": "sibling settings tab",
+          "detail": "Route Rules",
+          "source": "spec/ia.md Screen Inventory, Move Table"
+        },
+        {
+          "kind": "command-menu",
+          "from": null,
+          "detail": "Settings",
+          "source": "spec/ia.md Screen Inventory, Move Table"
+        },
+        {
+          "kind": "link",
+          "from": "/[org]/settings/workspaces",
+          "detail": "workspace name",
+          "source": "spec/screens.md Organisation settings"
+        }
+      ],
+      "breadcrumb": [],
+      "back": null,
+      "access": {
+        "roles": ["owner", "admin", "member"],
+        "host": null,
+        "public": false
+      },
+      "inboundLinks": [],
+      "status": "proposed",
+      "redirectTo": null,
+      "proposed": null,
+      "decide": null,
+      "source": null,
+      "assumptions": ["Members read-only except Modules (add); admins and owner edit"],
+      "reason": "J5"
+    },
+    {
+      "id": "app.ws-settings-modules",
+      "area": "app",
+      "route": "/[org]/[ws]/settings/modules",
+      "params": [
+        {
+          "name": "org",
+          "kind": "slug"
+        },
+        {
+          "name": "ws",
+          "kind": "slug"
+        }
+      ],
+      "query": [],
+      "labels": {
+        "en": "{workspace} Settings: Modules"
+      },
+      "type": "settings",
+      "purpose": "Name the parts of the product",
+      "roles": ["owner", "admin", "member"],
+      "tabs": [
+        {
+          "id": "general",
+          "label": {
+            "en": "General"
+          },
+          "route": "/[org]/[ws]/settings/general",
+          "count": false,
+          "primary": "none"
+        },
+        {
+          "id": "repos",
+          "label": {
+            "en": "Repos"
+          },
+          "route": "/[org]/[ws]/settings/repos",
+          "count": false,
+          "primary": {
+            "en": "Add Repo"
+          }
+        },
+        {
+          "id": "environments",
+          "label": {
+            "en": "Environments"
+          },
+          "route": "/[org]/[ws]/settings/environments",
+          "count": false,
+          "primary": {
+            "en": "Add Environment"
+          }
+        },
+        {
+          "id": "route-rules",
+          "label": {
+            "en": "Route Rules"
+          },
+          "route": "/[org]/[ws]/settings/route-rules",
+          "count": false,
+          "primary": {
+            "en": "Add Route Rule"
+          }
+        },
+        {
+          "id": "modules",
+          "label": {
+            "en": "Modules"
+          },
+          "route": "/[org]/[ws]/settings/modules",
+          "count": false,
+          "primary": {
+            "en": "Add Module"
+          }
+        }
+      ],
+      "sections": [],
+      "views": [],
+      "states": [
+        "default",
+        "empty",
+        "adding",
+        "field-saved",
+        "field-invalid",
+        "row-deleted",
+        "member-read-only",
+        "guest (404)",
+        "loading",
+        "error",
+        "phone (desktop-only message)"
+      ],
+      "reachedFrom": [
+        {
+          "kind": "navigation",
+          "from": "sidebar workspace switcher More",
+          "detail": "Workspace Settings",
+          "source": "spec/ia.md Screen Inventory, Move Table"
+        },
+        {
+          "kind": "navigation",
+          "from": "Comments header More",
+          "detail": "Workspace Settings",
+          "source": "spec/ia.md Screen Inventory, Move Table"
+        },
+        {
+          "kind": "link",
+          "from": "sibling settings tab",
+          "detail": "Modules",
+          "source": "spec/ia.md Screen Inventory, Move Table"
+        },
+        {
+          "kind": "command-menu",
+          "from": null,
+          "detail": "Settings",
+          "source": "spec/ia.md Screen Inventory, Move Table"
+        },
+        {
+          "kind": "link",
+          "from": "/[org]/settings/workspaces",
+          "detail": "workspace name",
+          "source": "spec/screens.md Organisation settings"
+        },
+        {
+          "kind": "link",
+          "from": "/[org]/[ws]/comments",
+          "detail": "Module filter popover: Manage Modules",
+          "source": "spec/ia.md (default S24)"
+        }
+      ],
+      "breadcrumb": [],
+      "back": null,
+      "access": {
+        "roles": ["owner", "admin", "member"],
+        "host": null,
+        "public": false
+      },
+      "inboundLinks": [],
+      "status": "proposed",
+      "redirectTo": null,
+      "proposed": null,
+      "decide": null,
+      "source": null,
+      "assumptions": ["Members read-only except Modules (add); admins and owner edit"],
+      "reason": "A13",
+      "fixed": "F3: the one place that adds, renames and deletes modules"
+    },
+    {
+      "id": "app.org-settings-general",
+      "area": "app",
+      "route": "/[org]/settings/general",
+      "params": [
+        {
+          "name": "org",
+          "kind": "slug"
+        }
+      ],
+      "query": [],
+      "labels": {
+        "en": "{organisation} Settings: General"
+      },
+      "type": "settings",
+      "purpose": "Name and address of the organisation; leave it",
+      "roles": ["owner", "admin", "member"],
+      "tabs": [
+        {
+          "id": "general",
+          "label": {
+            "en": "General"
+          },
+          "route": "/[org]/settings/general",
+          "count": false,
+          "primary": "none"
+        },
+        {
+          "id": "members",
+          "label": {
+            "en": "Members"
+          },
+          "route": "/[org]/settings/members",
+          "count": false,
+          "primary": {
+            "en": "Invite People"
+          }
+        },
+        {
+          "id": "workspaces",
+          "label": {
+            "en": "Workspaces"
+          },
+          "route": "/[org]/settings/workspaces",
+          "count": false,
+          "primary": {
+            "en": "New Workspace"
+          }
+        }
+      ],
+      "sections": [],
+      "views": [],
+      "states": [
+        "default",
+        "field-saved",
+        "field-invalid",
+        "member-read-only",
+        "guest (404)",
+        "loading",
+        "error",
+        "phone (desktop-only message)"
+      ],
+      "reachedFrom": [
+        {
+          "kind": "navigation",
+          "from": "sidebar",
+          "detail": "Settings (G S)",
+          "source": "spec/ia.md Screen Inventory, Move Table"
+        },
+        {
+          "kind": "link",
+          "from": "sibling tab",
+          "detail": "General",
+          "source": "spec/ia.md Screen Inventory, Move Table"
+        },
+        {
+          "kind": "command-menu",
+          "from": null,
+          "detail": "Settings",
+          "source": "spec/ia.md Screen Inventory, Move Table"
+        },
+        {
+          "kind": "redirect",
+          "from": "/[org]/settings",
+          "detail": "to general",
+          "source": "spec/ia.md Screen Inventory, Move Table"
+        }
+      ],
+      "breadcrumb": [],
+      "back": null,
+      "access": {
+        "roles": ["owner", "admin", "member"],
+        "host": null,
+        "public": false
+      },
+      "inboundLinks": [],
+      "status": "proposed",
+      "redirectTo": null,
+      "proposed": null,
+      "decide": null,
+      "source": null,
+      "assumptions": [],
+      "reason": "J10"
+    },
+    {
+      "id": "app.org-settings-members",
+      "area": "app",
+      "route": "/[org]/settings/members",
+      "params": [
+        {
+          "name": "org",
+          "kind": "slug"
+        }
+      ],
+      "query": [
+        {
+          "name": "tab",
+          "kind": "tab",
+          "values": ["members", "invitations"]
+        },
+        {
+          "name": "role",
+          "kind": "filter",
+          "values": null
+        },
+        {
+          "name": "q",
+          "kind": "search",
+          "values": null
+        }
+      ],
+      "labels": {
+        "en": "{organisation} Settings: Members"
+      },
+      "type": "settings",
+      "purpose": "Invite people, set roles, see seats and open invitations",
+      "roles": ["owner", "admin", "member"],
+      "tabs": [
+        {
+          "id": "general",
+          "label": {
+            "en": "General"
+          },
+          "route": "/[org]/settings/general",
+          "count": false,
+          "primary": "none"
+        },
+        {
+          "id": "members",
+          "label": {
+            "en": "Members"
+          },
+          "route": "/[org]/settings/members",
+          "count": false,
+          "primary": {
+            "en": "Invite People"
+          }
+        },
+        {
+          "id": "workspaces",
+          "label": {
+            "en": "Workspaces"
+          },
+          "route": "/[org]/settings/workspaces",
+          "count": false,
+          "primary": {
+            "en": "New Workspace"
+          }
+        }
+      ],
+      "sections": [
+        {
+          "en": "Seat line"
+        },
+        {
+          "en": "Tabs Members and Invitations"
+        },
+        {
+          "en": "Search and role filter"
+        },
+        {
+          "en": "Table"
+        }
+      ],
+      "views": [],
+      "states": [
+        "default",
+        "invite-dialog",
+        "no-free-seat",
+        "guest-limit-reached",
+        "error-bad-email",
+        "change-role",
+        "remove-member",
+        "last-owner",
+        "invitations-empty",
+        "member-read-only",
+        "loading",
+        "error"
+      ],
+      "reachedFrom": [
+        {
+          "kind": "link",
+          "from": "sibling tab",
+          "detail": "Members",
+          "source": "spec/ia.md Screen Inventory, Move Table"
+        },
+        {
+          "kind": "navigation",
+          "from": "sidebar",
+          "detail": "Settings",
+          "source": "spec/ia.md Screen Inventory, Move Table"
+        },
+        {
+          "kind": "command-menu",
+          "from": null,
+          "detail": "Settings, Invite People",
+          "source": "spec/ia.md Screen Inventory, Move Table"
+        },
+        {
+          "kind": "link",
+          "from": "workspace empty state",
+          "detail": "Invite People",
+          "source": "spec/ia.md Screen Inventory, Move Table"
+        }
+      ],
+      "breadcrumb": [],
+      "back": null,
+      "access": {
+        "roles": ["owner", "admin", "member"],
+        "host": null,
+        "public": false
+      },
+      "inboundLinks": [],
+      "status": "proposed",
+      "redirectTo": null,
+      "proposed": null,
+      "decide": null,
+      "source": null,
+      "assumptions": ["Tabs inside a tab: Members and Invitations are a second tab level below the settings tabs"],
+      "reason": "J10, design 5: roles and seats"
+    },
+    {
+      "id": "app.org-settings-workspaces",
+      "area": "app",
+      "route": "/[org]/settings/workspaces",
+      "params": [
+        {
+          "name": "org",
+          "kind": "slug"
+        }
+      ],
+      "query": [],
+      "labels": {
+        "en": "{organisation} Settings: Workspaces"
+      },
+      "type": "settings",
+      "purpose": "List workspaces and add one",
+      "roles": ["owner", "admin", "member"],
+      "tabs": [
+        {
+          "id": "general",
+          "label": {
+            "en": "General"
+          },
+          "route": "/[org]/settings/general",
+          "count": false,
+          "primary": "none"
+        },
+        {
+          "id": "members",
+          "label": {
+            "en": "Members"
+          },
+          "route": "/[org]/settings/members",
+          "count": false,
+          "primary": {
+            "en": "Invite People"
+          }
+        },
+        {
+          "id": "workspaces",
+          "label": {
+            "en": "Workspaces"
+          },
+          "route": "/[org]/settings/workspaces",
+          "count": false,
+          "primary": {
+            "en": "New Workspace"
+          }
+        }
+      ],
+      "sections": [],
+      "views": [],
+      "states": ["default", "new-workspace-dialog", "loading", "error", "member-read-only", "guest (404)"],
+      "reachedFrom": [
+        {
+          "kind": "link",
+          "from": "sibling tab",
+          "detail": "Workspaces",
+          "source": "spec/ia.md Screen Inventory, Move Table"
+        },
+        {
+          "kind": "command-menu",
+          "from": null,
+          "detail": "Settings",
+          "source": "spec/ia.md Screen Inventory, Move Table"
+        }
+      ],
+      "breadcrumb": [],
+      "back": null,
+      "access": {
+        "roles": ["owner", "admin", "member"],
+        "host": null,
+        "public": false
+      },
+      "inboundLinks": [],
+      "status": "proposed",
+      "redirectTo": null,
+      "proposed": null,
+      "decide": null,
+      "source": null,
+      "assumptions": [],
+      "reason": "J10",
+      "fixed": "F2: each workspace name links to its settings"
+    },
+    {
+      "id": "app.org-settings-billing",
+      "area": "app",
+      "route": "/[org]/settings/billing",
+      "params": [
+        {
+          "name": "org",
+          "kind": "slug"
+        }
+      ],
+      "query": [],
+      "labels": {
+        "en": "Billing"
+      },
+      "type": "settings",
+      "purpose": "Reserved for release 2",
+      "roles": ["owner"],
+      "tabs": [],
+      "sections": [],
+      "views": [],
+      "states": ["not-found"],
+      "reachedFrom": [],
+      "breadcrumb": [],
+      "back": null,
+      "access": {
+        "roles": ["owner"],
+        "host": null,
+        "public": false
+      },
+      "inboundLinks": [],
+      "status": "proposed",
+      "redirectTo": null,
+      "proposed": null,
+      "decide": "Release 2. Not in the release-1 navigation.",
+      "source": null,
+      "assumptions": [],
+      "reason": "Design 5: billing is release 2"
+    },
+    {
+      "id": "app.org-settings-integrations",
+      "area": "app",
+      "route": "/[org]/settings/integrations",
+      "params": [
+        {
+          "name": "org",
+          "kind": "slug"
+        }
+      ],
+      "query": [],
+      "labels": {
+        "en": "Integrations"
+      },
+      "type": "settings",
+      "purpose": "Reserved for release 2 (GitHub, Slack)",
+      "roles": ["owner", "admin"],
+      "tabs": [],
+      "sections": [],
+      "views": [],
+      "states": ["not-found"],
+      "reachedFrom": [],
+      "breadcrumb": [],
+      "back": null,
+      "access": {
+        "roles": ["owner", "admin"],
+        "host": null,
+        "public": false
+      },
+      "inboundLinks": [],
+      "status": "proposed",
+      "redirectTo": null,
+      "proposed": null,
+      "decide": "Release 2. Not in the release-1 navigation.",
+      "source": null,
+      "assumptions": [],
+      "reason": "Release 2"
+    },
+    {
+      "id": "account.profile",
+      "area": "account",
+      "route": "/account/profile",
+      "params": [],
+      "query": [],
+      "labels": {
+        "en": "Profile"
+      },
+      "type": "account",
+      "purpose": "Name, avatar and email (read-only in release 1)",
+      "roles": ["owner", "admin", "member", "guest"],
+      "tabs": [
+        {
+          "id": "profile",
+          "label": {
+            "en": "Profile"
+          },
+          "route": "/account/profile",
+          "count": false,
+          "primary": "none"
+        },
+        {
+          "id": "sign-in-methods",
+          "label": {
+            "en": "Sign-In Methods"
+          },
+          "route": "/account/sign-in-methods",
+          "count": false,
+          "primary": "none"
+        },
+        {
+          "id": "devices",
+          "label": {
+            "en": "Connected Apps"
+          },
+          "route": "/account/connected-apps",
+          "count": false,
+          "primary": "none"
+        },
+        {
+          "id": "notifications",
+          "label": {
+            "en": "Notifications"
+          },
+          "route": "/account/notifications",
+          "count": false,
+          "primary": "none"
+        }
+      ],
+      "sections": [],
+      "views": [],
+      "states": ["default", "loading", "error"],
+      "reachedFrom": [
+        {
+          "kind": "navigation",
+          "from": "avatar menu",
+          "detail": "Profile",
+          "source": "spec/ia.md Screen Inventory, Move Table"
+        },
+        {
+          "kind": "link",
+          "from": "sibling tab",
+          "detail": "Profile",
+          "source": "spec/ia.md Screen Inventory, Move Table"
+        },
+        {
+          "kind": "command-menu",
+          "from": null,
+          "detail": "Settings",
+          "source": "spec/ia.md Screen Inventory, Move Table"
+        },
+        {
+          "kind": "redirect",
+          "from": "/account",
+          "detail": "to profile",
+          "source": "spec/ia.md Screen Inventory, Move Table"
+        }
+      ],
+      "breadcrumb": [],
+      "back": null,
+      "access": {
+        "roles": ["owner", "admin", "member", "guest"],
+        "host": null,
+        "public": false
+      },
+      "inboundLinks": [],
+      "status": "proposed",
+      "redirectTo": null,
+      "proposed": null,
+      "decide": null,
+      "source": null,
+      "assumptions": [],
+      "reason": "J6"
+    },
+    {
+      "id": "account.sign-in-methods",
+      "area": "account",
+      "route": "/account/sign-in-methods",
+      "params": [],
+      "query": [],
+      "labels": {
+        "en": "Sign-In Methods"
+      },
+      "type": "account",
+      "purpose": "See how you sign in; release 2 adds GitHub and Google rows",
+      "roles": ["owner", "admin", "member", "guest"],
+      "tabs": [
+        {
+          "id": "profile",
+          "label": {
+            "en": "Profile"
+          },
+          "route": "/account/profile",
+          "count": false,
+          "primary": "none"
+        },
+        {
+          "id": "sign-in-methods",
+          "label": {
+            "en": "Sign-In Methods"
+          },
+          "route": "/account/sign-in-methods",
+          "count": false,
+          "primary": "none"
+        },
+        {
+          "id": "devices",
+          "label": {
+            "en": "Connected Apps"
+          },
+          "route": "/account/connected-apps",
+          "count": false,
+          "primary": "none"
+        },
+        {
+          "id": "notifications",
+          "label": {
+            "en": "Notifications"
+          },
+          "route": "/account/notifications",
+          "count": false,
+          "primary": "none"
+        }
+      ],
+      "sections": [],
+      "views": [],
+      "states": ["default (one row: Email link)", "loading", "error"],
+      "reachedFrom": [
+        {
+          "kind": "navigation",
+          "from": "avatar menu",
+          "detail": "Sign-In Methods",
+          "source": "spec/ia.md Screen Inventory, Move Table"
+        },
+        {
+          "kind": "link",
+          "from": "sibling tab",
+          "detail": "Sign-In Methods",
+          "source": "spec/ia.md Screen Inventory, Move Table"
+        },
+        {
+          "kind": "command-menu",
+          "from": null,
+          "detail": "Settings",
+          "source": "spec/ia.md Screen Inventory, Move Table"
+        }
+      ],
+      "breadcrumb": [],
+      "back": null,
+      "access": {
+        "roles": ["owner", "admin", "member", "guest"],
+        "host": null,
+        "public": false
+      },
+      "inboundLinks": [],
+      "status": "as-built",
+      "redirectTo": null,
+      "proposed": null,
+      "decide": null,
+      "source": "src/app/[locale]/(app)/account/sign-in-methods/page.tsx:1",
+      "assumptions": [],
+      "reason": "A7"
+    },
+    {
+      "id": "account.connected-apps",
+      "area": "account",
+      "route": "/account/connected-apps",
+      "params": [],
+      "query": [],
+      "labels": {
+        "en": "Connected Apps"
+      },
+      "type": "account",
+      "purpose": "See every device with its scopes and last use; revoke",
+      "roles": ["owner", "admin", "member", "guest"],
+      "tabs": [
+        {
+          "id": "profile",
+          "label": {
+            "en": "Profile"
+          },
+          "route": "/account/profile",
+          "count": false,
+          "primary": "none"
+        },
+        {
+          "id": "sign-in-methods",
+          "label": {
+            "en": "Sign-In Methods"
+          },
+          "route": "/account/sign-in-methods",
+          "count": false,
+          "primary": "none"
+        },
+        {
+          "id": "devices",
+          "label": {
+            "en": "Connected Apps"
+          },
+          "route": "/account/connected-apps",
+          "count": false,
+          "primary": "none"
+        },
+        {
+          "id": "notifications",
+          "label": {
+            "en": "Notifications"
+          },
+          "route": "/account/notifications",
+          "count": false,
+          "primary": "none"
+        }
+      ],
+      "sections": [],
+      "views": [],
+      "states": ["default", "empty", "stale (30 days unused)", "revoke-confirm", "loading", "error"],
+      "reachedFrom": [
+        {
+          "kind": "navigation",
+          "from": "avatar menu",
+          "detail": "Connected Apps",
+          "source": "spec/ia.md Screen Inventory, Move Table"
+        },
+        {
+          "kind": "link",
+          "from": "sibling tab",
+          "detail": "Connected Apps",
+          "source": "spec/ia.md Screen Inventory, Move Table"
+        },
+        {
+          "kind": "command-menu",
+          "from": null,
+          "detail": "Settings",
+          "source": "spec/ia.md Screen Inventory, Move Table"
+        },
+        {
+          "kind": "link",
+          "from": "My Work Claimed by My Agent empty state",
+          "detail": "Connect an Agent",
+          "source": "spec/ia.md Screen Inventory, Move Table"
+        }
+      ],
+      "breadcrumb": [],
+      "back": null,
+      "access": {
+        "roles": ["owner", "admin", "member", "guest"],
+        "host": null,
+        "public": false
+      },
+      "inboundLinks": [],
+      "status": "as-built",
+      "redirectTo": null,
+      "proposed": null,
+      "decide": null,
+      "source": null,
+      "assumptions": [],
+      "reason": "J11, A28: the Chrome extension, the Mac app and MCP clients signed in for you. Renamed from Devices, because Device now names the screen size (A50)",
+      "fixed": "F9: label Connected Apps"
+    },
+    {
+      "id": "account.notifications",
+      "area": "account",
+      "route": "/account/notifications",
+      "params": [],
+      "query": [],
+      "labels": {
+        "en": "Notifications"
+      },
+      "type": "account",
+      "purpose": "Email at once and daily digest",
+      "roles": ["owner", "admin", "member", "guest"],
+      "tabs": [
+        {
+          "id": "profile",
+          "label": {
+            "en": "Profile"
+          },
+          "route": "/account/profile",
+          "count": false,
+          "primary": "none"
+        },
+        {
+          "id": "sign-in-methods",
+          "label": {
+            "en": "Sign-In Methods"
+          },
+          "route": "/account/sign-in-methods",
+          "count": false,
+          "primary": "none"
+        },
+        {
+          "id": "devices",
+          "label": {
+            "en": "Connected Apps"
+          },
+          "route": "/account/connected-apps",
+          "count": false,
+          "primary": "none"
+        },
+        {
+          "id": "notifications",
+          "label": {
+            "en": "Notifications"
+          },
+          "route": "/account/notifications",
+          "count": false,
+          "primary": "none"
+        }
+      ],
+      "sections": [],
+      "views": [],
+      "states": ["default", "loading", "error"],
+      "reachedFrom": [
+        {
+          "kind": "navigation",
+          "from": "avatar menu",
+          "detail": "Notifications",
+          "source": "spec/ia.md Screen Inventory, Move Table"
+        },
+        {
+          "kind": "link",
+          "from": "sibling tab",
+          "detail": "Notifications",
+          "source": "spec/ia.md Screen Inventory, Move Table"
+        },
+        {
+          "kind": "command-menu",
+          "from": null,
+          "detail": "Settings",
+          "source": "spec/ia.md Screen Inventory, Move Table"
+        }
+      ],
+      "breadcrumb": [],
+      "back": null,
+      "access": {
+        "roles": ["owner", "admin", "member", "guest"],
+        "host": null,
+        "public": false
+      },
+      "inboundLinks": [],
+      "status": "proposed",
+      "redirectTo": null,
+      "proposed": null,
+      "decide": null,
+      "source": null,
+      "assumptions": [],
+      "reason": "design 9.4"
+    },
+    {
+      "id": "operator.waitlist",
+      "area": "operator",
+      "route": "/operator/waitlist",
+      "params": [],
+      "query": [
+        {
+          "name": "status",
+          "kind": "filter",
+          "values": ["waiting", "invited", "joined", "all"]
+        },
+        {
+          "name": "role",
+          "kind": "filter",
+          "values": null
+        },
+        {
+          "name": "q",
+          "kind": "search",
+          "values": null
+        },
+        {
+          "name": "sort",
+          "kind": "sort",
+          "values": ["joined-oldest", "joined-newest"]
+        }
+      ],
+      "labels": {
+        "en": "Waitlist"
+      },
+      "type": "list",
+      "purpose": "Invite people from the waitlist in batches",
+      "roles": ["operator"],
+      "tabs": [],
+      "sections": [],
+      "views": [],
+      "states": ["default", "selection", "empty", "invite-confirm", "loading", "error", "not-an-operator (404)"],
+      "reachedFrom": [
+        {
+          "kind": "navigation",
+          "from": "operator sidebar",
+          "detail": "Waitlist",
+          "source": "spec/ia.md Screen Inventory, Move Table"
+        },
+        {
+          "kind": "redirect",
+          "from": "/operator",
+          "detail": "to waitlist",
+          "source": "spec/ia.md Screen Inventory, Move Table"
+        },
+        {
+          "kind": "link",
+          "from": "/operator/invitations",
+          "detail": "none",
+          "source": "spec/ia.md Screen Inventory, Move Table"
+        }
+      ],
+      "breadcrumb": [],
+      "back": null,
+      "access": {
+        "roles": ["operator"],
+        "host": null,
+        "public": false
+      },
+      "inboundLinks": [],
+      "status": "proposed",
+      "redirectTo": null,
+      "proposed": null,
+      "decide": null,
+      "source": null,
+      "assumptions": ["Primary on the Invited and All tabs inferred from 'only with a selection'; Joined rows cannot be selected"],
+      "reason": "J8, A17: invitations go out in batches",
+      "fixed": "Status is a chip filter (URL status), not tabs (conformance)"
+    },
+    {
+      "id": "operator.invitations",
+      "area": "operator",
+      "route": "/operator/invitations",
+      "params": [],
+      "query": [
+        {
+          "name": "status",
+          "kind": "tab",
+          "values": ["sent", "joined", "expired", "revoked", "all"]
+        },
+        {
+          "name": "q",
+          "kind": "search",
+          "values": null
+        }
+      ],
+      "labels": {
+        "en": "Invitations"
+      },
+      "type": "list",
+      "purpose": "Track, resend and revoke invitations",
+      "roles": ["operator"],
+      "tabs": [
+        {
+          "id": "sent",
+          "label": {
+            "en": "Sent"
+          },
+          "route": "/operator/invitations",
+          "count": false,
+          "primary": "none"
+        },
+        {
+          "id": "joined",
+          "label": {
+            "en": "Joined"
+          },
+          "route": "/operator/invitations?status=joined",
+          "count": false,
+          "primary": "none"
+        },
+        {
+          "id": "expired",
+          "label": {
+            "en": "Expired"
+          },
+          "route": "/operator/invitations?status=expired",
+          "count": false,
+          "primary": "none"
+        },
+        {
+          "id": "revoked",
+          "label": {
+            "en": "Revoked"
+          },
+          "route": "/operator/invitations?status=revoked",
+          "count": false,
+          "primary": "none"
+        },
+        {
+          "id": "all",
+          "label": {
+            "en": "All"
+          },
+          "route": "/operator/invitations?status=all",
+          "count": false,
+          "primary": "none"
+        }
+      ],
+      "sections": [],
+      "views": [],
+      "states": ["default", "empty", "revoke-confirm", "loading", "error", "not-an-operator (404)"],
+      "reachedFrom": [
+        {
+          "kind": "navigation",
+          "from": "operator sidebar",
+          "detail": "Invitations",
+          "source": "spec/ia.md Screen Inventory, Move Table"
+        }
+      ],
+      "breadcrumb": [],
+      "back": null,
+      "access": {
+        "roles": ["operator"],
+        "host": null,
+        "public": false
+      },
+      "inboundLinks": [],
+      "status": "proposed",
+      "redirectTo": null,
+      "proposed": null,
+      "decide": "One way in, accepted for a staff area (F13: left for owner, owner-decisions.md #28)",
+      "source": null,
+      "assumptions": [],
+      "reason": "J8"
+    },
+    {
+      "id": "operator.organisations",
+      "area": "operator",
+      "route": "/operator/organisations",
+      "params": [],
+      "query": [
+        {
+          "name": "q",
+          "kind": "search",
+          "values": null
+        },
+        {
+          "name": "sort",
+          "kind": "sort",
+          "values": null
+        }
+      ],
+      "labels": {
+        "en": "Organisations"
+      },
+      "type": "list",
+      "purpose": "See organisations, read-only",
+      "roles": ["operator"],
+      "tabs": [],
+      "sections": [],
+      "views": [],
+      "states": ["default", "empty", "loading", "error", "not-an-operator (404)"],
+      "reachedFrom": [
+        {
+          "kind": "navigation",
+          "from": "operator sidebar",
+          "detail": "Organisations",
+          "source": "spec/ia.md Screen Inventory, Move Table"
+        },
+        {
+          "kind": "link",
+          "from": "/operator/users/[id]",
+          "detail": "organisation link",
+          "source": "spec/ia.md Screen Inventory, Move Table"
+        }
+      ],
+      "breadcrumb": [],
+      "back": null,
+      "access": {
+        "roles": ["operator"],
+        "host": null,
+        "public": false
+      },
+      "inboundLinks": [],
+      "status": "as-built",
+      "redirectTo": null,
+      "proposed": null,
+      "decide": null,
+      "source": "src/app/[locale]/(operator)/operator/organisations/page.tsx:1",
+      "assumptions": [],
+      "reason": "J10, J8"
+    },
+    {
+      "id": "operator.organisation",
+      "area": "operator",
+      "route": "/operator/organisations/[id]",
+      "params": [
+        {
+          "name": "id",
+          "kind": "id"
+        }
+      ],
+      "query": [],
+      "labels": {
+        "en": "{organisation}"
+      },
+      "type": "record",
+      "purpose": "See one organisation and grant seats by hand",
+      "roles": ["operator"],
+      "tabs": [],
+      "sections": [],
+      "views": [],
+      "states": ["default", "change-seats", "seats-below-used", "loading", "error", "not-found"],
+      "reachedFrom": [
+        {
+          "kind": "row",
+          "from": "/operator/organisations",
+          "detail": "row",
+          "source": "spec/ia.md Screen Inventory, Move Table"
+        },
+        {
+          "kind": "link",
+          "from": "/operator/users/[id]",
+          "detail": "organisation link",
+          "source": "spec/ia.md Screen Inventory, Move Table"
+        }
+      ],
+      "breadcrumb": [
+        {
+          "label": {
+            "en": "Organisations"
+          },
+          "route": "/operator/organisations"
+        }
+      ],
+      "back": "/operator/organisations",
+      "access": {
+        "roles": ["operator"],
+        "host": null,
+        "public": false
+      },
+      "inboundLinks": [],
+      "status": "proposed",
+      "redirectTo": null,
+      "proposed": null,
+      "decide": null,
+      "source": null,
+      "assumptions": [],
+      "reason": "J10: seats granted by hand (design 2)"
+    },
+    {
+      "id": "operator.users",
+      "area": "operator",
+      "route": "/operator/users",
+      "params": [],
+      "query": [
+        {
+          "name": "q",
+          "kind": "search",
+          "values": null
+        }
+      ],
+      "labels": {
+        "en": "Users"
+      },
+      "type": "list",
+      "purpose": "Look a person up",
+      "roles": ["operator"],
+      "tabs": [],
+      "sections": [],
+      "views": [],
+      "states": ["default", "empty", "loading", "error", "not-an-operator (404)"],
+      "reachedFrom": [
+        {
+          "kind": "navigation",
+          "from": "operator sidebar",
+          "detail": "Users",
+          "source": "spec/ia.md Screen Inventory, Move Table"
+        }
+      ],
+      "breadcrumb": [],
+      "back": null,
+      "access": {
+        "roles": ["operator"],
+        "host": null,
+        "public": false
+      },
+      "inboundLinks": [],
+      "status": "proposed",
+      "redirectTo": null,
+      "proposed": null,
+      "decide": "One way in, accepted for a staff area (F13: left for owner, owner-decisions.md #28)",
+      "source": null,
+      "assumptions": [],
+      "reason": "J8"
+    },
+    {
+      "id": "operator.user",
+      "area": "operator",
+      "route": "/operator/users/[id]",
+      "params": [
+        {
+          "name": "id",
+          "kind": "id"
+        }
+      ],
+      "query": [],
+      "labels": {
+        "en": "{name}"
+      },
+      "type": "record",
+      "purpose": "See one user: organisations, roles, devices count, last sign-in (read-only)",
+      "roles": ["operator"],
+      "tabs": [],
+      "sections": [],
+      "views": [],
+      "states": ["default", "loading", "error", "not-found"],
+      "reachedFrom": [
+        {
+          "kind": "row",
+          "from": "/operator/users",
+          "detail": "row",
+          "source": "spec/ia.md Screen Inventory, Move Table"
+        },
+        {
+          "kind": "link",
+          "from": "/operator/organisations/[id]",
+          "detail": "member row",
+          "source": "spec/ia.md Screen Inventory, Move Table"
+        }
+      ],
+      "breadcrumb": [
+        {
+          "label": {
+            "en": "Users"
+          },
+          "route": "/operator/users"
+        }
+      ],
+      "back": "/operator/users",
+      "access": {
+        "roles": ["operator"],
+        "host": null,
+        "public": false
+      },
+      "inboundLinks": [],
+      "status": "proposed",
+      "redirectTo": null,
+      "proposed": null,
+      "decide": null,
+      "source": null,
+      "assumptions": [],
+      "reason": "J8"
+    },
+    {
+      "id": "operator.flags",
+      "area": "operator",
+      "route": "/operator/flags",
+      "params": [],
+      "query": [],
+      "labels": {
+        "en": "Feature Flags"
+      },
+      "type": "list",
+      "purpose": "Turn a feature on for everyone or per organisation",
+      "roles": ["operator"],
+      "tabs": [],
+      "sections": [],
+      "views": [],
+      "states": ["default", "loading", "error", "not-an-operator (404)"],
+      "reachedFrom": [
+        {
+          "kind": "navigation",
+          "from": "operator sidebar",
+          "detail": "Feature Flags",
+          "source": "spec/ia.md Screen Inventory, Move Table"
+        }
+      ],
+      "breadcrumb": [],
+      "back": null,
+      "access": {
+        "roles": ["operator"],
+        "host": null,
+        "public": false
+      },
+      "inboundLinks": [],
+      "status": "proposed",
+      "redirectTo": null,
+      "proposed": null,
+      "decide": "One way in, accepted for a staff area (F13: left for owner, owner-decisions.md #28)",
+      "source": null,
+      "assumptions": ["Title 'Feature Flags' is the object name; the sidebar item reads 'Flags'"],
+      "reason": "A17",
+      "fixed": "F15: sidebar label Feature Flags"
+    },
+    {
+      "id": "operator.usage",
+      "area": "operator",
+      "route": "/operator/usage",
+      "params": [],
+      "query": [
+        {
+          "name": "range",
+          "kind": "tab",
+          "values": ["7d", "30d"]
+        }
+      ],
+      "labels": {
+        "en": "Usage"
+      },
+      "type": "list",
+      "purpose": "See whether the beta is used",
+      "roles": ["operator"],
+      "tabs": [
+        {
+          "id": "7d",
+          "label": {
+            "en": "Last 7 Days"
+          },
+          "route": "/operator/usage",
+          "count": false,
+          "primary": "none"
+        },
+        {
+          "id": "30d",
+          "label": {
+            "en": "Last 30 Days"
+          },
+          "route": "/operator/usage?range=30d",
+          "count": false,
+          "primary": "none"
+        }
+      ],
+      "sections": [],
+      "views": [],
+      "states": ["default", "loading", "error", "not-an-operator (404)"],
+      "reachedFrom": [
+        {
+          "kind": "navigation",
+          "from": "operator sidebar",
+          "detail": "Usage",
+          "source": "spec/ia.md Screen Inventory, Move Table"
+        }
+      ],
+      "breadcrumb": [],
+      "back": null,
+      "access": {
+        "roles": ["operator"],
+        "host": null,
+        "public": false
+      },
+      "inboundLinks": [],
+      "status": "proposed",
+      "redirectTo": null,
+      "proposed": null,
+      "decide": "One way in, accepted for a staff area (F13: left for owner, owner-decisions.md #28)",
+      "source": null,
+      "assumptions": [],
+      "reason": "J8"
+    },
+    {
+      "id": "error.not-found",
+      "area": "app",
+      "route": "*",
+      "params": [],
+      "query": [],
+      "labels": {
+        "en": "Not found"
+      },
+      "type": "error",
+      "purpose": "Say the page does not exist or is not yours; one page for both",
+      "roles": ["owner", "admin", "member", "guest", "visitor"],
+      "tabs": [],
+      "sections": [],
+      "views": [],
+      "states": ["default"],
+      "reachedFrom": [
+        {
+          "kind": "redirect",
+          "from": "any unknown route or no access",
+          "detail": "404",
+          "source": "spec/ia.md Screen Inventory, Move Table"
+        }
+      ],
+      "breadcrumb": [],
+      "back": "/[org]/inbox when signed in, / when signed out",
+      "access": {
+        "roles": ["visitor"],
+        "host": null,
+        "public": true
+      },
+      "inboundLinks": [],
+      "status": "proposed",
+      "redirectTo": null,
+      "proposed": null,
+      "decide": null,
+      "source": null,
+      "assumptions": ["Words: 'This page doesn't exist, or you don't have access.' with Go to Inbox or Go to HeyDiff"],
+      "reason": "Safety: a link never reveals what exists; checklist 'helpful not-found'",
+      "fixed": "F11: rendered in the app or operator shell when the person may see that area, else the plain page"
+    }
+  ],
+  "redirects": [
+    {
+      "from": "/[org]",
+      "to": "/[org]/inbox",
+      "status": "proposed",
+      "carries": ["org"],
+      "source": null,
+      "note": "308"
+    },
+    {
+      "from": "/[org]/settings",
+      "to": "/[org]/settings/general",
+      "status": "proposed",
+      "carries": ["org"],
+      "source": null,
+      "note": "308"
+    },
+    {
+      "from": "/[org]/[ws]/settings",
+      "to": "/[org]/[ws]/settings/general",
+      "status": "proposed",
+      "carries": ["org", "ws"],
+      "source": null,
+      "note": "308"
+    },
+    {
+      "from": "/account",
+      "to": "/account/profile",
+      "status": "proposed",
+      "carries": [],
+      "source": null,
+      "note": "308"
+    },
+    {
+      "from": "/operator",
+      "to": "/operator/waitlist",
+      "status": "proposed",
+      "carries": [],
+      "source": null,
+      "note": "308"
+    },
+    {
+      "from": "/[old-org]/[...rest]",
+      "to": "/[org]/[...rest]",
+      "status": "proposed",
+      "carries": ["rest", "query"],
+      "source": null,
+      "note": "308; a renamed organisation slug keeps redirecting; the old slug stays reserved to its first holder for good (F5)"
+    },
+    {
+      "from": "/[org]/[old-ws]/[...rest]",
+      "to": "/[org]/[ws]/[...rest]",
+      "status": "proposed",
+      "carries": ["rest", "query"],
+      "source": null,
+      "note": "308; a renamed workspace slug keeps redirecting; the old slug stays reserved to its first holder for good (F5)"
+    },
+    {
+      "from": "/[org]/[ws]",
+      "to": "/[org]/[ws]/comments",
+      "status": "proposed",
+      "carries": ["org", "ws"],
+      "source": "spec/sitemap.md (earlier proposed sitemap, 2026-10-27)",
+      "note": "308"
+    },
+    {
+      "from": "/[org]/[ws]/open",
+      "to": "/[org]/[ws]/comments",
+      "status": "proposed",
+      "carries": ["org", "ws", "query"],
+      "source": "spec/sitemap.md (earlier proposed sitemap, 2026-10-27)",
+      "note": "308; earlier proposed list (Open and In Progress); lands on the default, Not Resolved"
+    },
+    {
+      "from": "/[org]/[ws]/needs-decision",
+      "to": "/[org]/[ws]/decisions",
+      "status": "proposed",
+      "carries": ["org", "ws"],
+      "source": "spec/sitemap.md (earlier proposed sitemap, 2026-10-27)",
+      "note": "308; earlier proposed list"
+    },
+    {
+      "from": "/[org]/[ws]/in-review",
+      "to": "/[org]/[ws]/revisions",
+      "status": "proposed",
+      "carries": ["org", "ws"],
+      "source": "spec/sitemap.md (earlier proposed sitemap, 2026-10-27)",
+      "note": "308; earlier proposed list"
+    },
+    {
+      "from": "/[org]/[ws]/done",
+      "to": "/[org]/[ws]/comments?status=resolved",
+      "status": "proposed",
+      "carries": ["org", "ws"],
+      "source": "spec/sitemap.md (earlier proposed sitemap, 2026-10-27)",
+      "note": "308; earlier proposed list"
+    },
+    {
+      "from": "/[org]/[ws]/feedback",
+      "to": "/[org]/[ws]/comments",
+      "status": "proposed",
+      "carries": ["org", "ws"],
+      "source": "spec/sitemap.md (earlier proposed sitemap, 2026-10-27)",
+      "note": "308"
+    },
+    {
+      "from": "/[org]/[ws]/feedback/[n]",
+      "to": "/[org]/[ws]/comments/[n]",
+      "status": "proposed",
+      "carries": ["org", "ws", "n"],
+      "source": "spec/sitemap.md (earlier proposed sitemap, 2026-10-27)",
+      "note": "308; drops version, compare and tab"
+    },
+    {
+      "from": "/[org]/[ws]/modules",
+      "to": "/[org]/[ws]/comments",
+      "status": "proposed",
+      "carries": ["org", "ws"],
+      "source": "spec/sitemap.md (earlier proposed sitemap, 2026-10-27)",
+      "note": "308"
+    },
+    {
+      "from": "/[org]/[ws]/modules/[module]",
+      "to": "/[org]/[ws]/comments?module=[module]",
+      "status": "proposed",
+      "carries": ["org", "ws", "module"],
+      "source": "spec/sitemap.md (earlier proposed sitemap, 2026-10-27)",
+      "note": "308"
+    },
+    {
+      "from": "/account/devices",
+      "to": "/account/connected-apps",
+      "status": "proposed",
+      "carries": [],
+      "source": "spec/sitemap.md (earlier proposed sitemap, 2026-10-27)",
+      "note": "308"
+    },
+    {
+      "from": "/waitlist",
+      "to": "/",
+      "status": "proposed",
+      "carries": [],
+      "source": "spec/sitemap.md (earlier proposed sitemap, 2026-10-27)",
+      "note": "308"
+    },
+    {
+      "from": "/waitlist/joined",
+      "to": "/",
+      "status": "proposed",
+      "carries": [],
+      "source": "spec/sitemap.md (earlier proposed sitemap, 2026-10-27)",
+      "note": "308; the joined state is shown in place on /"
+    }
+  ],
+  "links": [
+    {
+      "kind": "email",
+      "name": "waitlist confirm",
+      "to": "/waitlist/confirm?token=",
+      "source": null,
+      "status": "proposed",
+      "note": "7 days; unconfirmed entries are deleted then (S146)"
+    },
+    {
+      "kind": "email",
+      "name": "Leave the Waitlist (every waitlist email; also List-Unsubscribe)",
+      "to": "/waitlist/leave?token=",
+      "source": null,
+      "status": "proposed",
+      "note": "S146"
+    },
+    {
+      "kind": "email",
+      "name": "legal links (every email footer)",
+      "to": "/privacy, /imprint",
+      "source": null,
+      "status": "proposed",
+      "note": "S147"
+    },
+    {
+      "kind": "email",
+      "name": "sign-in link",
+      "to": "/sign-in/verify?token=",
+      "source": null,
+      "status": "proposed",
+      "note": "Valid once, 15 minutes"
+    },
+    {
+      "kind": "email",
+      "name": "invitation (organisation)",
+      "to": "/invite/[token]",
+      "source": null,
+      "status": "proposed",
+      "note": "7 days"
+    },
+    {
+      "kind": "email",
+      "name": "waitlist invitation (Set Up Your Team)",
+      "to": "/invite/[token]",
+      "source": null,
+      "status": "proposed",
+      "note": "7 days"
+    },
+    {
+      "kind": "email",
+      "name": "mention",
+      "to": "/[org]/[ws]/comments/[n]#reply-[id]",
+      "source": null,
+      "status": "proposed",
+      "note": null
+    },
+    {
+      "kind": "email",
+      "name": "reply on your comment",
+      "to": "/[org]/[ws]/comments/[n]#reply-[id]",
+      "source": null,
+      "status": "proposed",
+      "note": null
+    },
+    {
+      "kind": "email",
+      "name": "vote request",
+      "to": "/[org]/[ws]/decisions/[n]",
+      "source": null,
+      "status": "proposed",
+      "note": null
+    },
+    {
+      "kind": "email",
+      "name": "revision posted",
+      "to": "/[org]/[ws]/comments/[n]?revision=[k]",
+      "source": null,
+      "status": "proposed",
+      "note": null
+    },
+    {
+      "kind": "email",
+      "name": "session shared",
+      "to": "/[org]/[ws]/sessions/[id]",
+      "source": null,
+      "status": "proposed",
+      "note": null
+    },
+    {
+      "kind": "email",
+      "name": "daily digest",
+      "to": "/[org]/inbox",
+      "source": null,
+      "status": "proposed",
+      "note": null
+    },
+    {
+      "kind": "external",
+      "name": "Copy Link on a comment",
+      "to": "/[org]/[ws]/comments/[n]",
+      "source": null,
+      "status": "proposed",
+      "note": "Approved extension 2; members and guests of the workspace can open it"
+    },
+    {
+      "kind": "external",
+      "name": "Share Session: Copy Link",
+      "to": "/[org]/[ws]/sessions/[id]",
+      "source": null,
+      "status": "proposed",
+      "note": "Anyone in the workspace with the link can view"
+    },
+    {
+      "kind": "external",
+      "name": "Share Session: agent prompt",
+      "to": "MCP get_session [id]",
+      "source": null,
+      "status": "proposed",
+      "note": "\"Use HeyDiff: get_session [id]\""
+    },
+    {
+      "kind": "external",
+      "name": "extension pin popover: Open in HeyDiff",
+      "to": "/[org]/[ws]/comments/[n]",
+      "source": null,
+      "status": "proposed",
+      "note": "New tab"
+    },
+    {
+      "kind": "external",
+      "name": "extension side panel: Open in HeyDiff",
+      "to": "/[org]/[ws]/comments?path=[path]",
+      "source": null,
+      "status": "proposed",
+      "note": "New tab"
+    },
+    {
+      "kind": "external",
+      "name": "extension Sign In",
+      "to": "/authorize",
+      "source": null,
+      "status": "proposed",
+      "note": "OAuth with PKCE"
+    },
+    {
+      "kind": "external",
+      "name": "Mac app Sign In",
+      "to": "/authorize",
+      "source": null,
+      "status": "proposed",
+      "note": "OAuth with PKCE, loopback redirect (A35)"
+    },
+    {
+      "kind": "external",
+      "name": "Mac app: View Online",
+      "to": "/[org]/[ws]/sessions/[id]",
+      "source": null,
+      "status": "proposed",
+      "note": null
+    },
+    {
+      "kind": "external",
+      "name": "MCP responses",
+      "to": "/[org]/[ws]/comments/[n]",
+      "source": null,
+      "status": "proposed",
+      "note": "Links in agent output"
+    }
+  ],
+  "surfaces": [
+    {
+      "id": "extension.toolbar",
+      "area": "extension",
+      "label": {
+        "en": "Toolbar"
+      },
+      "type": "embed",
+      "purpose": "Context, visibility, device, session and Comment on the page under review",
+      "reachedFrom": ["Chrome toolbar icon (Show Toolbar)", "⌘⇧K"],
+      "goesTo": [
+        "extension.pick-mode",
+        "extension.visibility-menu",
+        "extension.device-picker",
+        "extension.session-menu",
+        "extension.side-panel"
+      ],
+      "states": [
+        "default",
+        "session-active",
+        "others-hidden",
+        "unknown-environment",
+        "no-commit",
+        "bridge-mac-app-not-running",
+        "loading",
+        "error"
+      ]
+    },
+    {
+      "id": "extension.pick-mode",
+      "area": "extension",
+      "label": {
+        "en": "Pick mode"
+      },
+      "type": "embed",
+      "purpose": "Select one or several elements and see their DOM and code location",
+      "reachedFrom": ["toolbar Comment", "key C"],
+      "goesTo": ["extension.composer", "extension.toolbar"],
+      "states": ["default", "hover", "info-card", "several-selected", "no-source-location", "component-only", "inside-frame"]
+    },
+    {
+      "id": "extension.composer",
+      "area": "extension",
+      "label": {
+        "en": "Composer"
+      },
+      "type": "embed",
+      "purpose": "Write, mention, draw, move and send one comment",
+      "reachedFrom": ["pick mode click", "a draft pin", "side panel draft row"],
+      "goesTo": ["extension.drawing", "extension.arranging", "extension.toolbar (pin)"],
+      "states": [
+        "default",
+        "code-chip-open",
+        "with-moves",
+        "docked",
+        "disabled",
+        "sending",
+        "send-failed",
+        "restored",
+        "element-not-found",
+        "parked",
+        "discarded"
+      ]
+    },
+    {
+      "id": "extension.drawing",
+      "area": "extension",
+      "label": {
+        "en": "Drawing"
+      },
+      "type": "embed",
+      "purpose": "Draw on the live page with the Mac editor tools",
+      "reachedFrom": ["composer Draw"],
+      "goesTo": ["extension.composer", "extension.arranging"],
+      "states": ["default", "tool-chosen"]
+    },
+    {
+      "id": "extension.arranging",
+      "area": "extension",
+      "label": {
+        "en": "Arranging"
+      },
+      "type": "embed",
+      "purpose": "Move an element inside its parent; align, spacing, width",
+      "reachedFrom": ["composer Move", "Draw · Move switch"],
+      "goesTo": ["extension.composer", "extension.drawing"],
+      "states": ["default", "dragging", "moved", "reset"]
+    },
+    {
+      "id": "extension.pin-popover",
+      "area": "extension",
+      "label": {
+        "en": "Pin popover"
+      },
+      "type": "embed",
+      "purpose": "Read and reply to a comment where it sits; resolve",
+      "reachedFrom": ["a pin", "side panel row"],
+      "goesTo": ["/[org]/[ws]/comments/[n]"],
+      "states": ["default", "revised", "guest", "agent-working", "more-pins", "hidden-by-choices", "loading", "error"]
+    },
+    {
+      "id": "extension.visibility-menu",
+      "area": "extension",
+      "label": {
+        "en": "Visibility menu"
+      },
+      "type": "embed",
+      "purpose": "Everyone, Only Mine, Hide Others; Not Resolved, Resolved; Show Earlier Commits",
+      "reachedFrom": ["toolbar eye"],
+      "goesTo": ["extension.toolbar"],
+      "states": ["default"]
+    },
+    {
+      "id": "extension.device-picker",
+      "area": "extension",
+      "label": {
+        "en": "Device picker"
+      },
+      "type": "embed",
+      "purpose": "Responsive, MacBook Air 13\", MacBook Pro 14\" and 16\", iPad Air, iPhone 16, iPhone 16 Pro Max, Custom",
+      "reachedFrom": ["toolbar device button"],
+      "goesTo": ["extension.toolbar"],
+      "states": ["default", "size-larger-than-screen", "emulating", "emulation-stopped", "new-tab-responsive"]
+    },
+    {
+      "id": "extension.session-menu",
+      "area": "extension",
+      "label": {
+        "en": "Session bar and menu"
+      },
+      "type": "embed",
+      "purpose": "See and manage the active session; Share…",
+      "reachedFrom": ["toolbar session chip", "toolbar More: Start Session"],
+      "goesTo": ["extension.share-session"],
+      "states": ["active", "renaming", "end-with-drafts", "no-comments"]
+    },
+    {
+      "id": "extension.shortcuts",
+      "area": "extension",
+      "label": {
+        "en": "Keyboard Shortcuts sheet"
+      },
+      "type": "embed",
+      "purpose": "Every key the extension takes, by group, from the one key table",
+      "reachedFrom": ["toolbar More: Keyboard Shortcuts"],
+      "goesTo": ["extension.toolbar", "chrome://extensions/shortcuts"],
+      "states": ["default"]
+    },
+    {
+      "id": "extension.share-session",
+      "area": "extension",
+      "label": {
+        "en": "Share Session dialog"
+      },
+      "type": "embed",
+      "purpose": "Share by link, email to people in the workspace, or with an agent",
+      "reachedFrom": ["session menu Share…"],
+      "goesTo": ["/[org]/[ws]/sessions/[id]"],
+      "states": ["default", "outsider-email", "sharing", "error"]
+    },
+    {
+      "id": "extension.side-panel",
+      "area": "extension",
+      "label": {
+        "en": "Side panel (This Page, Inbox)"
+      },
+      "type": "embed",
+      "purpose": "This page's comments with code location and device; the Inbox",
+      "reachedFrom": ["toolbar count", "Chrome side panel menu"],
+      "goesTo": ["extension.pin-popover", "/[org]/[ws]/comments", "/[org]/inbox"],
+      "states": ["this-page", "drafts", "empty", "outdated", "not-visible-here", "inbox", "signed-out", "loading", "error"]
+    },
+    {
+      "id": "extension.popup",
+      "area": "extension",
+      "label": {
+        "en": "Popup"
+      },
+      "type": "embed",
+      "purpose": "Sign in, choose the workspace, show the toolbar, open the side panel",
+      "reachedFrom": ["Chrome toolbar icon"],
+      "goesTo": ["extension.toolbar", "extension.side-panel", "/authorize"],
+      "states": ["signed-out", "default", "drafts", "toolbar-off-by-default", "guest", "bridge-lines", "token-revoked", "offline", "error"]
+    },
+    {
+      "id": "mac.settings-online",
+      "area": "mac",
+      "label": {
+        "en": "Settings > Online"
+      },
+      "type": "window",
+      "purpose": "Sign in to HeyDiff; localhost bridge on or off",
+      "reachedFrom": ["Mac menu > Settings"],
+      "goesTo": ["/authorize"],
+      "states": ["signed-out", "waiting-for-browser", "signed-in", "bridge-on", "error"]
+    },
+    {
+      "id": "mac.share-sheet",
+      "area": "mac",
+      "label": {
+        "en": "Share to Workspace sheet and sync status"
+      },
+      "type": "sheet",
+      "purpose": "Share a Mac session; it becomes a Session in the workspace",
+      "reachedFrom": ["session window", "menu bar menu"],
+      "goesTo": ["/[org]/[ws]/sessions/[id]"],
+      "states": ["not-signed-in", "sheet", "synced", "syncing", "offline", "sync-stopped", "edited-elsewhere", "not-shared"]
+    }
+  ],
+  "reservedWorkspaceSlugs": ["inbox", "my-work", "settings", "billing", "integrations", "new"],
+  "retiredSlugs": "An old organisation or workspace slug stays reserved to its first holder for good and redirects with path and query (F5)"
+}

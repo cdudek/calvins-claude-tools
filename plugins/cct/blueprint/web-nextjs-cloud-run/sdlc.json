@@ -1,0 +1,138 @@
+{
+  "_comment": "Read by the sdlc-run skill, the hooks in .claude/hooks/ and the guardrail test. Commands run from the repo root; {file} is the edited file. docs/sdlc.md explains every key. Tracker: Beads (bd). Milestone 1 of online-release-1 adds eslint, Next.js and Playwright; until then lint and typecheck cover the guardrail test only, and smoke:background is a no-op.",
+  "linear": {
+    "team": "",
+    "project": ""
+  },
+  "defaultBranch": "main",
+  "changesDir": "changes",
+  "designsDir": "docs/designs",
+  "docs": "docs/sdlc.md",
+  "verify": "npm run format && npm run lint && npm run typecheck && npm test",
+  "verifyDirty": ["*.ts", "*.tsx", "*.js", "*.mjs", "*.vue", "*.json"],
+  "lintOnEdit": {
+    "*.ts *.tsx *.js *.mjs *.css *.json": "npx biome format --write --vcs-enabled=false {file}"
+  },
+  "blocked": [
+    {
+      "match": "(^|[[:space:];&|(])(pnpm|yarn)([[:space:]]+[^[:space:];&|]+)*[[:space:]]+(add|remove)([[:space:]]|$)|(^|[[:space:];&|(])npm([[:space:]]+[^[:space:];&|]+)*[[:space:]]+(i|install|uninstall)[[:space:]]+[^-[:space:]]",
+      "message": "dependency changes are Ask-tier: a human adds the package in a branch and commits package.json + the lockfile; the PR gets the ask label. Say which package and why, then stop.",
+      "samples": [
+        "pnpm add x",
+        "yarn add y",
+        "npm install left-pad",
+        "cd a && pnpm remove x",
+        "pnpm --filter web add x",
+        "npm --prefix ./app install left-pad"
+      ]
+    }
+  ],
+  "toolsCommand": "npm run sdlc:tools",
+  "tests": "vitest",
+  "codeowners": [],
+  "claude": false,
+  "claudeAllow": ["Bash(npm *)", "Bash(git:*)", "Bash(gh pr:*)"],
+  "showChannel": "",
+  "keep": [],
+  "tiers": false,
+  "kitTemplates": "8165782d8151",
+  "tracker": {
+    "kind": "beads",
+    "initiative": "",
+    "project": ""
+  },
+  "product": "HeyDiff",
+  "planGate": "owner",
+  "feedback": ["docs/ux/owner-words.md"],
+  "milestones": {
+    "branchPrefix": "milestone/",
+    "rebaseOnDefault": true
+  },
+  "projects": {
+    "branchPrefix": "project/",
+    "rebaseOnDefault": true
+  },
+  "hotfix": true,
+  "delivery": "one-go",
+  "goal": {
+    "runTurns": 500,
+    "featureTurns": 40,
+    "milestoneTurns": 30
+  },
+  "languages": ["en"],
+  "responsiveTier": "full",
+  "ux": "on",
+  "checks": {
+    "feature": ["npm run format:check", "npm run lint", "npm run typecheck", "npm test"],
+    "milestone": ["npm run format:check", "npm run lint", "npm run typecheck", "npm test", "npm run smoke:background"]
+  },
+  "verifyStop": "npm run format && npm run lint && npm run typecheck",
+  "ciPaths": {
+    "docs": ["changes/*", "docs/*", "plans/*", ".claude/*", "design-explorations/*", "*.md", "*.txt"],
+    "all": [".github/workflows/*", "sdlc.json", "package-lock.json", "pnpm-lock.yaml", "yarn.lock"],
+    "code": [
+      "src/*",
+      "app/*",
+      "public/*",
+      "e2e/*",
+      "test/*",
+      "*.ts",
+      "*.tsx",
+      "*.js",
+      "*.jsx",
+      "*.mjs",
+      "*.cjs",
+      "*.vue",
+      "*.css",
+      "*.scss",
+      "*.sql",
+      "drizzle/*"
+    ],
+    "config": [
+      "package.json",
+      "tsconfig*.json",
+      "next.config.*",
+      "vite.config.*",
+      "vitest.config.*",
+      "playwright.config.*",
+      "eslint.config.*",
+      ".eslintrc*",
+      ".nvmrc",
+      "Dockerfile*",
+      "*.tf",
+      "k8s/*",
+      "helm/*",
+      "deploy/*"
+    ],
+    "specs": ["e2e/*.spec.*"],
+    "lint": {
+      "include": ["src/*", "app/*", "e2e/*", "test/*", "*.test.*", "*.config.*", "*.css", "*.scss"],
+      "exclude": ["public/*", "*.png", "*.jpg", "*.jpeg", "*.gif", "*.svg", "*.webp", "*.ico", "*/generated/*", "*.generated.*"]
+    },
+    "unit": {
+      "include": ["src/*", "app/*", "test/*", "*.test.*", "*.sql", "drizzle/*"],
+      "exclude": ["e2e/*", "*.css", "public/*", "*.scss"]
+    },
+    "build": {
+      "include": ["src/*", "app/*", "public/*", "Dockerfile", "next.config.*"],
+      "exclude": ["e2e/*", "test/*", "*.test.*", "*.css", "*.scss"]
+    },
+    "e2e": {
+      "include": ["src/*", "app/*", "public/*", "e2e/*", "next.config.*", "playwright.config.*", "*.sql", "drizzle/*"],
+      "exclude": ["test/*", "*.test.*"]
+    },
+    "deploy": {
+      "include": ["src/*", "app/*", "public/*", "Dockerfile", "deploy/*", "next.config.*", "*.sql", "drizzle/*"],
+      "exclude": ["e2e/*", "test/*", "*.test.*"]
+    }
+  },
+  "ciCommands": {
+    "install": "pnpm install --frozen-lockfile",
+    "lint": "pnpm format:check && pnpm lint && pnpm typecheck",
+    "unit": "pnpm test",
+    "build": "pnpm build",
+    "e2e": "pnpm exec playwright install --with-deps chromium && pnpm exec playwright test --shard={shard}/{total}",
+    "e2eTouched": "pnpm exec playwright install --with-deps chromium && pnpm exec playwright test {files}"
+  },
+  "sdlcVersion": "3.4.1"
+}

@@ -1,0 +1,45 @@
+# Format- und Lint-Regeln für die Python-Scripts dieses Skills (Ruff).
+#
+# Die Kit-CI (.github/workflows/validate-plugins.yml, Job "lint") prüft jeden
+# Skill-Ordner, der eine ruff.toml trägt, mit `ruff format --check` und
+# `ruff check`. Lokal im Skill-Ordner: `ruff format .` und `ruff check .`
+# Die CI pinnt Ruff 0.16.6; lokal dieselbe Version nehmen, sonst kann der
+# Formatter abweichen.
+#
+# Dieselben Regeln in jedem Skill des Kits. Wer hier abweichen muss, ändert
+# diese Datei und schreibt in einem Kommentar dazu, warum.
+
+target-version = "py310"
+line-length = 100
+src = ["scripts"]
+
+# Ruff formatiert auch Python-Codebloecke IN Markdown. Das ist hier nicht
+# gewollt: die Beispiele in SKILL.md und references/ sind Doku, und der
+# Formatter zieht mehrzeilige Dict-Beispiele auf eine 100-Zeichen-Zeile
+# zusammen, was sie als Lehrbeispiel schlechter macht. Ausserdem wuerde
+# `ruff format --check` in der CI jede Doku mit einfachen Anfuehrungszeichen
+# im Codeblock rot machen, und das ist keine Regel, die jemand gewaehlt hat.
+extend-exclude = ["*.md"]
+
+[lint]
+select = [
+  "E",   # pycodestyle Fehler
+  "W",   # pycodestyle Warnungen
+  "F",   # pyflakes: ungenutzte Importe und Variablen, undefinierte Namen
+  "I",   # isort: Import-Reihenfolge
+  "B",   # bugbear: typische Fehlerquellen
+  "UP",  # pyupgrade: Syntax auf dem Stand von target-version
+]
+ignore = [
+  # Zeilenlänge regelt der Formatter. Was er nicht umbrechen kann, sind lange
+  # Meldungstexte; die bleiben lieber am Stück lesbar.
+  "E501",
+  # Die Scripts richten erst sys.path ein und importieren danach ihre eigenen
+  # Module. Das ist Absicht, und die Importe nach oben zu ziehen wuerde sie
+  # kaputt machen.
+  "E402",
+  # `zip(strict=True)` ist die bessere Zusage, aendert aber das Laufzeitverhalten
+  # (Fehler bei unterschiedlicher Laenge). Wer die Stelle anfasst, entscheidet
+  # das dort, nicht ein Sammel-Fix ueber fremden Code.
+  "B905",
+]

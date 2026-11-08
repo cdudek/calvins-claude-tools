@@ -1,0 +1,139 @@
+name: Release
+
+# A merge to main only reports the next version; publishing is manual (owner, 2026-10-27):
+# Actions > Release > Run workflow on main. The commit messages since the last release decide the version.
+on:
+  push:
+    branches: [main]
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+# Two quick merges must not race to publish the same version.
+concurrency: release
+
+jobs:
+  version:
+    # semantic-release reads the Conventional Commit messages since the last release tag:
+    #   fix: / perf:                  -> patch  (0.4.0 -> 0.4.1)
+    #   feat:                         -> minor  (0.4.1 -> 0.5.0)
+    #   feat!: or "BREAKING CHANGE:"  -> major  (-> 1.0.0)
+    #   docs: chore: ci: test: ...    -> no release
+    # This cheap Ubuntu job only asks for the next version (dry run) and shows it in the run summary;
+    # the macOS job runs only on a manual run from main, and only when there is a version to publish.
+    runs-on: ubuntu-latest
+    outputs:
+      version: ${{ steps.v.outputs.version }}
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          fetch-depth: 0
+      - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
+        with:
+          node-version: 22
+          cache: npm
+      - run: npm ci
+      - id: v
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          out="$(npx semantic-release --dry-run)"
+          echo "$out"
+          version="$(printf '%s\n' "$out" | sed -n 's/.*The next release version is \([0-9][0-9.]*\).*/\1/p' | tail -1)"
+          echo "version=$version" >> "$GITHUB_OUTPUT"
+          if [ -n "$version" ]; then
+            echo "Next release: **v$version**. Publish it with Actions > Release > Run workflow on main." >> "$GITHUB_STEP_SUMMARY"
+          else
+            echo "No release pending: no fix, perf or feat commits since the last release." >> "$GITHUB_STEP_SUMMARY"
+          fi
+
+  release:
+    needs: version
+    if: github.event_name == 'workflow_dispatch' && github.ref == 'refs/heads/main' && needs.version.outputs.version != ''
+    runs-on: macos-latest
+    permissions:
+      contents: write
+      id-token: write # the key-free GCP login (Workload Identity Federation) for the update bucket
+    env:
+      VERSION: ${{ needs.version.outputs.version }}
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          fetch-depth: 0 # semantic-release needs the tags and commits
+      - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
+        with:
+          node-version: 22
+          cache: npm
+      - run: npm ci
+      # The version lives in the release tag, not in git: main takes only PRs, so no bot commit bumps package.json.
+      - run: npm version "$VERSION" --no-git-tag-version --allow-same-version -w snapmark-app
+      - run: npm run lint
+      - run: npm run typecheck
+      - run: npm test
+      - run: npm run smoke
+      # electron-builder's own temporary keychain fails to unlock on the macOS 26 runner
+      # ("SecKeychainUnlock: The user name or passphrase you entered is not correct"),
+      # so the certificate goes into a keychain made here and electron-builder finds it by name.
+      - name: Import Developer ID certificate
+        id: cert
+        env:
+          P12: ${{ secrets.MAC_CERT_P12_BASE64 }}
+          P12_PASSWORD: ${{ secrets.MAC_CERT_PASSWORD }}
+        run: |
+          if [ -z "$P12" ]; then echo "signed=false" >> "$GITHUB_OUTPUT"; exit 0; fi
+          kc="$RUNNER_TEMP/signing.keychain-db"
+          kcp="$(openssl rand -hex 24)"
+          echo "$P12" | base64 --decode > "$RUNNER_TEMP/cert.p12"
+          security create-keychain -p "$kcp" "$kc"
+          security set-keychain-settings -lut 21600 "$kc"
+          security unlock-keychain -p "$kcp" "$kc"
+          security import "$RUNNER_TEMP/cert.p12" -P "$P12_PASSWORD" -A -t cert -f pkcs12 -k "$kc"
+          security set-key-partition-list -S apple-tool:,apple:,codesign: -s -k "$kcp" "$kc" >/dev/null
+          security list-keychains -d user -s "$kc" "$HOME/Library/Keychains/login.keychain-db"
+          rm "$RUNNER_TEMP/cert.p12"
+          id="$(security find-identity -v -p codesigning "$kc" | grep -o '"Developer ID Application: [^"]*"' | head -1 | tr -d '"')"
+          if [ -z "$id" ]; then echo "No Developer ID Application identity in the certificate" >&2; exit 1; fi
+          # electron-builder wants the name without the "Developer ID Application: " prefix.
+          echo "name=${id#Developer ID Application: }" >> "$GITHUB_OUTPUT"
+          echo "signed=true" >> "$GITHUB_OUTPUT"
+      - name: Build DMG and ZIP
+        working-directory: snapmark-app
+        env:
+          # With the certificate imported, the app is signed with the Developer ID and notarized,
+          # which auto-update on macOS requires. Without it the build is ad-hoc signed.
+          SIGNED: ${{ steps.cert.outputs.signed }}
+          CERT_NAME: ${{ steps.cert.outputs.name }}
+          APPLE_ID: ${{ secrets.APPLE_ID }}
+          APPLE_APP_SPECIFIC_PASSWORD: ${{ secrets.APPLE_APP_SPECIFIC_PASSWORD }}
+          APPLE_TEAM_ID: ${{ secrets.APPLE_TEAM_ID }}
+        run: |
+          if [ "$SIGNED" = true ]; then
+            CSC_NAME="$CERT_NAME" sh scripts/electron-builder.sh --mac --publish never
+          else
+            # Missing secrets arrive as empty strings, which electron-builder reads as "set".
+            unset APPLE_ID APPLE_APP_SPECIFIC_PASSWORD APPLE_TEAM_ID
+            sh scripts/electron-builder.sh --mac --publish never -c.mac.identity=-
+          fi
+      # Installed copies read their updates from this bucket (package.json build.publish), so the repo can be private.
+      - uses: google-github-actions/auth@7c6bc770dae815cd3e89ee6cdf493a5fab2cc093 # v3
+        with:
+          workload_identity_provider: projects/PROJECT_NUMBER/locations/global/workloadIdentityPools/WIF_POOL/providers/WIF_PROVIDER_NAME
+          service_account: release-uploader@GCP_PROJECT_ID.iam.gserviceaccount.com
+      - uses: google-github-actions/setup-gcloud@aa5489c8933f4cc7a4f7d45035b3b1440c9c10db # v3.0.1
+      # latest-mac.yml goes last and uncached: until it lands, clients still see the previous version, complete.
+      - name: Upload to the update bucket
+        working-directory: snapmark-app
+        run: |
+          gcloud storage cp release/*.zip release/*.dmg release/*.blockmap gs://UPDATES_BUCKET/mac/
+          gcloud storage cp --cache-control=no-cache release/latest-mac.yml gs://UPDATES_BUCKET/mac/latest-mac.yml
+          old="$(gcloud storage ls gs://UPDATES_BUCKET/mac/ | sh scripts/prune-releases.sh)"
+          if [ -n "$old" ]; then printf '%s\n' "$old" | xargs gcloud storage rm; fi
+      # Publish the version the dry run chose, at the commit that was built. Not `semantic-release` itself:
+      # it refuses to publish once main has moved on, which a merge during this ~8 minute build does,
+      # and it then exits 0, so a release silently went missing.
+      - name: Publish GitHub release
+        working-directory: snapmark-app
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: gh release create "v$VERSION" --target "$GITHUB_SHA" --generate-notes release/*.dmg release/*.zip release/*.blockmap release/latest-mac.yml

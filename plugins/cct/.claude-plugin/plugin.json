@@ -1,0 +1,20 @@
+{
+  "name": "cct",
+  "version": "0.9.0",
+  "description": "Calvin's Claude Tools: the AI-native SDLC (intent, UX plan, facts, tech plan, one /goal build per milestone, review-fix loop, E2E, release) with the UX suite it runs, the product skills (PRD, discovery, roadmap, stories, cohorts), the engineering and data skills run by hand, a project kickoff for brand, design system and context, and the Docker + GitHub Actions blueprint.",
+  "author": {
+    "name": "Calvin Dudek"
+  },
+  "repository": "https://github.com/cdudek/calvins-claude-tools",
+  "keywords": [
+    "sdlc",
+    "ux",
+    "product",
+    "prd",
+    "code-review",
+    "e2e",
+    "design-system",
+    "data",
+    "ci-cd"
+  ]
+}

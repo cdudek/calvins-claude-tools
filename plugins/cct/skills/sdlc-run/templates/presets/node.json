@@ -1,0 +1,95 @@
+{
+  "_comment": "Read by the sdlc-run skill, the hooks in .claude/hooks/ and the guardrail test. Commands run from the repo root; {file} is the edited file. docs/sdlc.md explains every key.",
+  "linear": {
+    "team": "CPTO-Office",
+    "project": ""
+  },
+  "defaultBranch": "master",
+  "changesDir": "changes",
+  "designsDir": "docs/designs",
+  "docs": "docs/sdlc.md",
+  "verify": "pnpm format && pnpm lint && pnpm typecheck && pnpm test",
+  "verifyStop": "pnpm format && pnpm lint && pnpm typecheck",
+  "verifyDirty": ["*.ts", "*.tsx", "*.js", "*.mjs", "*.vue", "*.json"],
+  "lintOnEdit": {
+    "*.ts *.tsx *.js *.mjs *.vue *.css *.json *.md": "pnpm exec prettier --write {file}"
+  },
+  "blocked": [
+    {
+      "match": "(^|[[:space:];&|(])(pnpm|yarn)([[:space:]]+[^[:space:];&|]+)*[[:space:]]+(add|remove)([[:space:]]|$)|(^|[[:space:];&|(])npm([[:space:]]+[^[:space:];&|]+)*[[:space:]]+(i|install|uninstall)[[:space:]]+[^-[:space:]]",
+      "message": "dependency changes are Ask-tier: a human adds the package in a branch and commits package.json + the lockfile; the PR gets the ask label. Say which package and why, then stop.",
+      "samples": [
+        "pnpm add x",
+        "yarn add y",
+        "npm install left-pad",
+        "cd a && pnpm remove x",
+        "pnpm --filter web add x",
+        "npm --prefix ./app install left-pad"
+      ]
+    },
+    {
+      "match": "(^|[[:space:];&|(])kubectl([[:space:]]+[^[:space:];&|]+)*[[:space:]]+(apply|delete|patch|scale)([[:space:]]|$)",
+      "message": "the cluster changes through Argo CD from a merged PR, never from a shell. Edit k8s/ in a branch. Read-only kubectl (get, describe, logs) is fine.",
+      "samples": [
+        "kubectl apply -f x.yaml",
+        "kubectl delete pod x",
+        "kubectl scale deploy x --replicas=0",
+        "kubectl -n prod delete job migrate",
+        "kubectl --context=c patch application app --type merge"
+      ]
+    },
+    {
+      "match": "(^|[[:space:];&|(])(drizzle-kit|prisma)([[:space:]]+[^[:space:];&|]+)*[[:space:]]+(push|db[[:space:]]+push)",
+      "message": "schema changes are migrations in a PR (ask tier), never pushed to a database from a shell.",
+      "samples": [
+        "pnpm drizzle-kit push",
+        "prisma db push",
+        "drizzle-kit --config=x push"
+      ]
+    }
+  ],
+  "toolsCommand": "pnpm sdlc:tools",
+  "tests": "vitest",
+  "codeowners": [],
+  "claudeAllow": ["Bash(pnpm *)", "Bash(git:*)", "Bash(gh pr:*)"],
+  "showChannel": "",
+  "keep": [],
+  "milestones": {
+    "branchPrefix": "milestone/",
+    "rebaseOnDefault": true
+  },
+  "projects": {
+    "branchPrefix": "project/",
+    "rebaseOnDefault": true
+  },
+  "hotfix": true,
+  "delivery": "one-go",
+  "builders": "claude",
+  "builderModel": "sonnet",
+  "builderEffort": "high",
+  "goal": {
+    "runTurns": 150,
+    "featureTurns": 40,
+    "milestoneTurns": 30
+  },
+  "languages": ["en"],
+  "responsiveTier": "full",
+  "ux": "on",
+  "checks": {
+    "feature": [
+      "pnpm format:check",
+      "pnpm lint",
+      "pnpm typecheck",
+      "pnpm test",
+      "pnpm test:e2e --grep @{id}"
+    ],
+    "milestone": [
+      "pnpm format:check",
+      "pnpm lint",
+      "pnpm typecheck",
+      "pnpm test",
+      "pnpm test:e2e --max-failures=10"
+    ]
+  },
+  "product": ""
+}

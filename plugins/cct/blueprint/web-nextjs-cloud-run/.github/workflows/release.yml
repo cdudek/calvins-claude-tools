@@ -1,0 +1,35 @@
+name: Release
+
+# A tag and a GitHub Release for every merge to main with a feat, fix or perf commit. The
+# Releases page is the changelog; nothing is committed back. Tags are decorative: deploys
+# stay on :<git-sha> images.
+
+on:
+  push:
+    branches: [main]
+
+concurrency:
+  group: release
+  cancel-in-progress: false
+
+permissions:
+  contents: write
+  issues: write
+  pull-requests: write
+
+jobs:
+  release:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          fetch-depth: 0
+          persist-credentials: false
+      - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
+        with:
+          node-version-file: .nvmrc
+      # Exact version: this step holds a contents: write token. shortcut: npx has no lockfile; add semantic-release to devDependencies and run it from the lockfile.
+      - name: semantic-release
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: npx --yes semantic-release@25.0.9

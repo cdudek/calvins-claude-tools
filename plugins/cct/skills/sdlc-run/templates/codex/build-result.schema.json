@@ -1,0 +1,37 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "title": "sdlc-run Codex builder result",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["status", "title", "files", "tests", "blockers", "summary"],
+  "properties": {
+    "status": {
+      "type": "string",
+      "enum": ["done", "blocked", "failed"],
+      "description": "done: the work is complete in the working tree (the wrapper commits it). blocked: a question only the engineer can answer, or a file outside the plan's folders was needed. failed: tests still red or the work could not be finished."
+    },
+    "title": {
+      "type": "string",
+      "description": "The commit subject for the work, conventional commit style, at most 72 characters."
+    },
+    "files": {
+      "type": "array",
+      "items": { "type": "string" },
+      "description": "Every path changed, relative to the worktree root."
+    },
+    "tests": {
+      "type": "array",
+      "items": { "type": "string" },
+      "description": "Each test file or command run and its result, one entry each."
+    },
+    "blockers": {
+      "type": "array",
+      "items": { "type": "string" },
+      "description": "What stopped the work; empty when status is done."
+    },
+    "summary": {
+      "type": "string",
+      "description": "What was built, in a few sentences."
+    }
+  }
+}

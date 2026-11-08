@@ -1,0 +1,13 @@
+# The secret scan's rules. CI passes this file with --config; a gitleaks config or ignore
+# file anywhere else in the repo fails the scan. Every default rule stays on.
+title = "heydiff-chrome"
+
+[extend]
+useDefault = true
+
+[[allowlists]]
+description = "The extension's manifest key: an RSA public key (SPKI), public by design; it pins the extension id"
+regexTarget = "match"
+regexes = ['''EXTENSION_KEY =\s+'MIIBIjANBgkqhkiG9w0BAQEFAAOCAQ8AMIIBCgKCAQEA[A-Za-z0-9+/=]+''']
+paths = ['''^wxt\.config\.ts$''']
+condition = "AND"

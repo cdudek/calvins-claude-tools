@@ -1,0 +1,75 @@
+{
+  "_comment": "Default sdlc.json ciPaths per stack. adopt copies the stack's block; the repo edits it afterwards. Shell globs: * also crosses /. A changed file that is neither code nor config (and not in all) runs nothing. See references/ci-blueprint.md.",
+  "typescript": {
+    "docs": ["changes/*", "docs/*", "plans/*", ".claude/*", "design-explorations/*", "*.md", "*.txt"],
+    "all": [".github/workflows/*", "sdlc.json", "package-lock.json", "pnpm-lock.yaml", "yarn.lock"],
+    "code": ["src/*", "app/*", "public/*", "e2e/*", "test/*", "*.ts", "*.tsx", "*.js", "*.jsx", "*.mjs", "*.cjs", "*.vue", "*.css", "*.scss", "*.sql", "drizzle/*"],
+    "config": ["package.json", "tsconfig*.json", "next.config.*", "vite.config.*", "vitest.config.*", "playwright.config.*", "eslint.config.*", ".eslintrc*", ".nvmrc", "Dockerfile*", "*.tf", "k8s/*", "helm/*", "deploy/*"],
+    "specs": ["e2e/*.spec.*"],
+    "lint": { "include": ["src/*", "app/*", "e2e/*", "test/*", "*.test.*", "*.config.*", "*.css", "*.scss"], "exclude": ["public/*", "*.png", "*.jpg", "*.jpeg", "*.gif", "*.svg", "*.webp", "*.ico", "*/generated/*", "*.generated.*"] },
+    "unit": { "include": ["src/*", "app/*", "test/*", "*.test.*", "*.sql", "drizzle/*"], "exclude": ["e2e/*", "*.css", "public/*", "*.scss"] },
+    "build": { "include": ["src/*", "app/*", "public/*", "Dockerfile", "next.config.*"], "exclude": ["e2e/*", "test/*", "*.test.*", "*.css", "*.scss"] },
+    "e2e": { "include": ["src/*", "app/*", "public/*", "e2e/*", "next.config.*", "playwright.config.*", "*.sql", "drizzle/*"], "exclude": ["test/*", "*.test.*"] },
+    "deploy": { "include": ["src/*", "app/*", "public/*", "Dockerfile", "deploy/*", "next.config.*", "*.sql", "drizzle/*"], "exclude": ["e2e/*", "test/*", "*.test.*"] }
+  },
+  "python": {
+    "docs": ["changes/*", "docs/*", "plans/*", ".claude/*", "design-explorations/*", "*.md", "*.txt"],
+    "all": [".github/workflows/*", "sdlc.json", "uv.lock", "poetry.lock"],
+    "code": ["src/*", "app/*", "tests/*", "e2e/*", "*.py", "*.sql", "alembic/*", "migrations/*"],
+    "config": ["pyproject.toml", "*.toml", "*.ini", "*.cfg", ".python-version", "Dockerfile*", "*.tf", "k8s/*", "helm/*", "deploy/*"],
+    "specs": ["e2e/*test_*.py", "e2e/*_test.py"],
+    "lint": { "include": ["src/*", "app/*", "tests/*", "e2e/*", "*.py"], "exclude": ["*/migrations/*", "*/generated/*", "*_pb2.py"] },
+    "unit": { "include": ["src/*", "app/*", "tests/*", "*.py", "alembic/*", "migrations/*", "*.sql"], "exclude": ["e2e/*", "*/static/*"] },
+    "build": { "include": ["src/*", "app/*", "pyproject.toml", "Dockerfile"], "exclude": ["tests/*", "e2e/*"] },
+    "e2e": { "include": ["src/*", "app/*", "e2e/*", "pyproject.toml", "Dockerfile", "alembic/*", "migrations/*", "*.sql"], "exclude": ["tests/*"] },
+    "deploy": { "include": ["src/*", "app/*", "pyproject.toml", "Dockerfile", "deploy/*", "alembic/*", "migrations/*", "*.sql"], "exclude": ["tests/*", "e2e/*"] }
+  },
+  "rust": {
+    "docs": ["changes/*", "docs/*", "plans/*", ".claude/*", "design-explorations/*", "*.md", "*.txt"],
+    "all": [".github/workflows/*", "sdlc.json", "Cargo.lock"],
+    "code": ["src/*", "crates/*", "tests/*", "benches/*", "e2e/*", "*.rs", "*.sql"],
+    "config": ["Cargo.toml", "*.toml", "build.rs", "rust-toolchain*", "Dockerfile*", "*.tf", "k8s/*", "helm/*", "deploy/*"],
+    "specs": ["e2e/*.rs", "tests/e2e/*"],
+    "lint": { "include": ["src/*", "crates/*", "tests/*", "benches/*", "Cargo.toml", "build.rs"], "exclude": ["*/generated/*"] },
+    "unit": { "include": ["src/*", "crates/*", "tests/*", "benches/*", "Cargo.toml", "build.rs", "*.sql"], "exclude": ["e2e/*"] },
+    "build": { "include": ["src/*", "crates/*", "Cargo.toml", "build.rs", "Dockerfile"], "exclude": ["tests/*", "benches/*", "e2e/*"] },
+    "e2e": { "include": ["src/*", "crates/*", "e2e/*", "Cargo.toml", "build.rs", "Dockerfile", "*.sql"], "exclude": ["tests/*", "benches/*"] },
+    "deploy": { "include": ["src/*", "crates/*", "Cargo.toml", "build.rs", "Dockerfile", "deploy/*", "*.sql"], "exclude": ["tests/*", "benches/*", "e2e/*"] }
+  },
+  "rails": {
+    "docs": ["changes/*", "docs/*", "plans/*", ".claude/*", "design-explorations/*", "*.md", "*.txt"],
+    "all": [".github/workflows/*", "sdlc.json", "Gemfile.lock", "yarn.lock", "package-lock.json", "pnpm-lock.yaml"],
+    "code": ["*.rb", "*.erb", "*.haml", "*.slim", "*.rake", "*.js", "*.ts", "*.css", "*.scss", "app/*", "lib/*", "spec/*"],
+    "config": ["config/*", "db/*", "Gemfile*", ".ruby-version", "Dockerfile*", "*.tf", "k8s/*", "helm/*", "deploy/*"],
+    "specs": ["spec/system/*_spec.rb"],
+    "lint": { "include": ["app/*", "lib/*", "spec/*", "config/*", "db/*", "Gemfile"], "exclude": ["db/schema.rb", "db/structure.sql", "public/*", "*.png", "*.jpg", "*.jpeg", "*.gif", "*.svg", "*.webp", "*.ico"] },
+    "unit": { "include": ["app/*", "lib/*", "spec/*", "config/*", "db/*", "Gemfile"], "exclude": ["app/assets/*", "app/javascript/*", "app/views/*", "spec/system/*"] },
+    "build": { "include": ["app/*", "lib/*", "config/*", "db/*", "Gemfile", "Dockerfile", "public/*"], "exclude": [] },
+    "e2e": { "include": ["app/*", "lib/*", "config/*", "db/*", "spec/system/*", "Gemfile", "Dockerfile", "public/*"], "exclude": ["spec/models/*", "spec/requests/*", "spec/services/*", "spec/helpers/*", "spec/controllers/*", "spec/jobs/*", "spec/mailers/*", "spec/lib/*"] },
+    "deploy": { "include": ["app/*", "lib/*", "config/*", "db/*", "Gemfile", "Dockerfile", "public/*"], "exclude": [] }
+  },
+  "kotlin": {
+    "docs": ["changes/*", "docs/*", "plans/*", ".claude/*", "design-explorations/*", "*.md", "*.txt"],
+    "all": [".github/workflows/*", "sdlc.json", "gradle.lockfile", "gradle/libs.versions.toml"],
+    "code": ["src/*", "*.kt", "*.java", "*.sql"],
+    "config": ["*.kts", "*.gradle", "gradle/*", "gradle.properties", "Dockerfile*", "*.tf", "k8s/*", "helm/*", "deploy/*"],
+    "specs": ["src/e2eTest/*"],
+    "lint": { "include": ["src/*", "build.gradle*", "settings.gradle*"], "exclude": ["*/generated/*", "src/main/resources/*"] },
+    "unit": { "include": ["src/main/*", "src/test/*", "build.gradle*", "settings.gradle*"], "exclude": ["src/e2eTest/*", "src/main/resources/static/*"] },
+    "build": { "include": ["src/main/*", "build.gradle*", "settings.gradle*", "Dockerfile"], "exclude": [] },
+    "e2e": { "include": ["src/main/*", "src/e2eTest/*", "build.gradle*", "settings.gradle*", "Dockerfile"], "exclude": ["src/test/*"] },
+    "deploy": { "include": ["src/main/*", "build.gradle*", "settings.gradle*", "Dockerfile", "deploy/*"], "exclude": [] }
+  },
+  "scala": {
+    "docs": ["changes/*", "docs/*", "plans/*", ".claude/*", "design-explorations/*", "*.md", "*.txt"],
+    "all": [".github/workflows/*", "sdlc.json", "project/build.properties"],
+    "code": ["src/*", "*.scala", "*.sql"],
+    "config": ["*.sbt", "project/*", "Dockerfile*", "*.tf", "k8s/*", "helm/*", "deploy/*"],
+    "specs": ["src/it/*"],
+    "lint": { "include": ["src/*", "build.sbt", "project/*.sbt"], "exclude": ["*/generated/*", "src/main/resources/*"] },
+    "unit": { "include": ["src/main/*", "src/test/*", "build.sbt", "project/*.sbt"], "exclude": ["src/it/*", "src/main/resources/static/*"] },
+    "build": { "include": ["src/main/*", "build.sbt", "project/*.sbt", "Dockerfile"], "exclude": [] },
+    "e2e": { "include": ["src/main/*", "src/it/*", "build.sbt", "project/*.sbt", "Dockerfile"], "exclude": ["src/test/*"] },
+    "deploy": { "include": ["src/main/*", "build.sbt", "project/*.sbt", "Dockerfile", "deploy/*"], "exclude": [] }
+  }
+}

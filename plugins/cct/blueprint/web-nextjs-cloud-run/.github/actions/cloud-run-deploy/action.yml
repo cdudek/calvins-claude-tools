@@ -1,0 +1,146 @@
+name: Cloud Run deploy
+description: >
+  Deploys an image as a new revision with no traffic under a tag, waits until that revision
+  serves the expected sha on /readyz, then (when promote is true) moves 100% of traffic to it
+  and waits until the service URL serves the sha. A failed promotion routes traffic back to the
+  revision that served before. This replaces ArgoCD: the deploy is done only when the service
+  serves the pushed sha (golden-path Definition of Done).
+  Expects gcloud to be authenticated as the deployer service account (google-github-actions/auth).
+
+inputs:
+  service:
+    description: Cloud Run service name
+    required: true
+  image:
+    description: Full image reference, by immutable tag
+    required: true
+  tag:
+    description: Revision tag, e.g. sha-<12> or pr-<n> (lowercase letters, digits, dashes)
+    required: true
+  expect-sha:
+    description: The git sha /readyz must report
+    required: true
+  promote:
+    description: Move 100% of traffic to the new revision
+    default: 'false'
+  private:
+    description: The service needs an identity token (staging); production is public
+    default: 'true'
+  workload-identity-provider:
+    description: WIF provider, used to mint the identity token for a private service
+    required: true
+  service-account:
+    description: The deployer service account
+    required: true
+  project:
+    default: GCP_PROJECT_ID
+  region:
+    default: europe-west1
+  timeout-seconds:
+    description: How long to wait for each /readyz check
+    default: '600'
+
+outputs:
+  url:
+    description: The new revision's tagged URL
+    value: ${{ steps.deploy.outputs.tag_url }}
+  revision:
+    value: ${{ steps.deploy.outputs.revision }}
+
+runs:
+  using: composite
+  steps:
+    - id: deploy
+      name: Deploy revision with no traffic
+      shell: bash
+      env:
+        SERVICE: ${{ inputs.service }}
+        IMAGE: ${{ inputs.image }}
+        TAG: ${{ inputs.tag }}
+        PROJECT: ${{ inputs.project }}
+        REGION: ${{ inputs.region }}
+      run: |
+        set -euo pipefail
+        describe() { gcloud run services describe "$SERVICE" --project "$PROJECT" --region "$REGION" --format=json; }
+        before="$(describe | jq -r '[.status.traffic[] | select(.percent == 100)][0].revisionName // ""')"
+        # The image, the tag, no traffic and AUTH_TRUST_PROXY_HOPS change; every other setting stays Terraform's.
+        # One hop: Cloud Run's front end appends the client address to X-Forwarded-For. Production refuses to sign people in without it.
+        gcloud run deploy "$SERVICE" --project "$PROJECT" --region "$REGION" \
+          --image "$IMAGE" --no-traffic --tag "$TAG" --update-env-vars AUTH_TRUST_PROXY_HOPS=1 --quiet
+        state="$(describe)"
+        revision="$(jq -r --arg t "$TAG" '.status.traffic[] | select(.tag == $t) | .revisionName' <<<"$state")"
+        tag_url="$(jq -r --arg t "$TAG" '.status.traffic[] | select(.tag == $t) | .url' <<<"$state")"
+        test -n "$revision" -a -n "$tag_url" || { echo "::error::tag $TAG not found on $SERVICE"; exit 1; }
+        {
+          echo "previous=$before"
+          echo "revision=$revision"
+          echo "tag_url=$tag_url"
+          echo "service_url=$(jq -r '.status.url' <<<"$state")"
+        } >>"$GITHUB_OUTPUT"
+        echo "Deployed $revision at $tag_url (serving before: ${before:-none})"
+
+    - id: idtoken
+      if: inputs.private == 'true'
+      name: Mint an identity token for the private service
+      uses: google-github-actions/auth@7c6bc770dae815cd3e89ee6cdf493a5fab2cc093 # v3
+      with:
+        workload_identity_provider: ${{ inputs.workload-identity-provider }}
+        service_account: ${{ inputs.service-account }}
+        token_format: id_token
+        id_token_audience: ${{ steps.deploy.outputs.service_url }}
+        id_token_include_email: true
+
+    - name: Wait until the new revision serves the sha
+      shell: bash
+      env:
+        URL: ${{ steps.deploy.outputs.tag_url }}/readyz
+        EXPECT_SHA: ${{ inputs.expect-sha }}
+        TOKEN: ${{ steps.idtoken.outputs.id_token }}
+        TIMEOUT_SECONDS: ${{ inputs.timeout-seconds }}
+      run: bash "$GITHUB_ACTION_PATH/wait-for-sha.sh" 1
+
+    - id: promote
+      if: inputs.promote == 'true'
+      name: Move 100% of traffic to the new revision
+      shell: bash
+      env:
+        SERVICE: ${{ inputs.service }}
+        PROJECT: ${{ inputs.project }}
+        REGION: ${{ inputs.region }}
+        REVISION: ${{ steps.deploy.outputs.revision }}
+        TAG: ${{ inputs.tag }}
+      run: |
+        set -euo pipefail
+        gcloud run services update-traffic "$SERVICE" --project "$PROJECT" --region "$REGION" \
+          --to-revisions "${REVISION}=100" --quiet
+        # Keep the three newest sha- tags (quick rollback targets); drop the older ones.
+        old="$(gcloud run services describe "$SERVICE" --project "$PROJECT" --region "$REGION" --format=json \
+          | jq -r --arg t "$TAG" '[.status.traffic[] | select(.tag != null and (.tag | startswith("sha-")) and .tag != $t)]
+              | sort_by(.revisionName) | reverse | .[2:] | map(.tag) | join(",")')"
+        if [ -n "$old" ]; then
+          gcloud run services update-traffic "$SERVICE" --project "$PROJECT" --region "$REGION" --remove-tags "$old" --quiet
+        fi
+
+    - name: Wait until the service serves the sha
+      if: inputs.promote == 'true'
+      shell: bash
+      env:
+        URL: ${{ steps.deploy.outputs.service_url }}/readyz
+        EXPECT_SHA: ${{ inputs.expect-sha }}
+        TOKEN: ${{ steps.idtoken.outputs.id_token }}
+        TIMEOUT_SECONDS: ${{ inputs.timeout-seconds }}
+      run: bash "$GITHUB_ACTION_PATH/wait-for-sha.sh" 3
+
+    - name: Roll back to the revision that served before
+      if: failure() && steps.promote.outcome == 'success' && steps.deploy.outputs.previous != ''
+      shell: bash
+      env:
+        SERVICE: ${{ inputs.service }}
+        PROJECT: ${{ inputs.project }}
+        REGION: ${{ inputs.region }}
+        PREVIOUS: ${{ steps.deploy.outputs.previous }}
+      run: |
+        set -euo pipefail
+        gcloud run services update-traffic "$SERVICE" --project "$PROJECT" --region "$REGION" \
+          --to-revisions "${PREVIOUS}=100" --quiet
+        echo "::error::Promotion failed; traffic is back on ${PREVIOUS}."

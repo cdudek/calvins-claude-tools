@@ -1,0 +1,471 @@
+# CI for any stack: one workflow, one required status (`check`), every step gated on the files a PR changes.
+#
+# Copy to .github/workflows/ci.yml, then:
+#   1. Set STACK below (node | python | rust | ruby-rails | kotlin | scala) and the version lines for it.
+#   2. In the repo's sdlc.json set `ciCommands` (install, lint, unit, build, e2e, e2eTouched; defaults per stack in
+#      templates/ci-commands.json) and `ciPaths` (templates/ci-paths.json). Nothing else in this file is repo specific.
+#   3. Replace the default branch name in `on.push.branches` if it is not `main`. It cannot read an env var.
+#   4. Delete the `services:` block of `unit` and `e2e` if the repo has no database, and the stack setup steps
+#      of the stacks you do not use (cosmetic: they are skipped anyway).
+#   5. Fill in the DEPLOY hook or leave it: with no ciCommands.deploy it prints a notice and succeeds.
+#   6. Make `check` the only required status (ruleset A6 in references/ci-blueprint.md).
+#
+# How it decides what runs (A1, A5), from sdlc.json `ciPaths`, shell globs where * also crosses /:
+#   - a file in `docs` or neither in `code` nor `config` (Markdown, images, .claude/, plans, notes) runs NOTHING;
+#   - a file in `all` (CI workflows, sdlc.json, lockfiles) runs every step;
+#   - any other code or config file runs the steps whose include matches it and whose exclude does not
+#     (test/ -> lint and unit; e2e/ -> lint and the touched specs; *.css -> lint and e2e; migrations -> unit, e2e, deploy);
+#   - safety net: a push to the default branch runs every step, and a PR into the default branch or `project/*`
+#     (or from `milestone/*`) that changes any code or config runs every step and the whole E2E suite in SHARDS shards.
+#     Every other PR runs the E2E specs it touches (`ciPaths.specs`).
+# Unavoidable cost of a PR that changes nothing runnable: the `changes` job (about 10 seconds) and `check`,
+# because a required status that never reports leaves the PR unmergeable. Do not use workflow-level `paths-ignore`.
+#
+# Security: no github.event.* expression is expanded inside a `run:` script; values reach scripts through `env:`.
+
+name: CI
+
+on:
+  pull_request:
+  push:
+    branches: [main] # the default branch
+
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
+
+permissions:
+  contents: read
+  pull-requests: read # `gh pr diff` in the changes job
+
+env:
+  # ---- placeholders: set these -------------------------------------------------------------------------
+  STACK: node # node | python | rust | ruby-rails | kotlin | scala
+  SHARDS: '4' # E2E shards of a full run; each leg gets its own database
+  NODE_VERSION: '22'
+  NODE_PACKAGE_MANAGER: pnpm # npm | pnpm | yarn (also change the install and test commands in sdlc.json)
+  PYTHON_VERSION: '3.13'
+  RUST_TOOLCHAIN: stable
+  RUBY_VERSION: default # default reads .ruby-version
+  JAVA_VERSION: '21'
+  # -------------------------------------------------------------------------------------------------------
+
+jobs:
+  changes:
+    name: Changed paths
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    outputs:
+      lint: ${{ steps.f.outputs.lint }}
+      unit: ${{ steps.f.outputs.unit }}
+      build: ${{ steps.f.outputs.build }}
+      deploy: ${{ steps.f.outputs.deploy }}
+      full: ${{ steps.f.outputs.full }}
+      matrix: ${{ steps.f.outputs.matrix }}
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+          sparse-checkout: sdlc.json # only the path lists are needed
+          sparse-checkout-cone-mode: false
+      - id: f
+        env:
+          GH_TOKEN: ${{ github.token }}
+          GH_REPO: ${{ github.repository }}
+          PR: ${{ github.event.pull_request.number }}
+          BASE: ${{ github.base_ref }}
+          HEAD: ${{ github.head_ref }}
+          DEFAULT: ${{ github.event.repository.default_branch }}
+        run: |
+          # >>> changes-script (scripts/test_ci_changes.sh runs exactly these lines)
+          set -eu
+          set -f # keep the globs literal
+          # The lists live in sdlc.json "ciPaths" (shell globs; * also crosses /). jq is on every runner.
+          list() { jq -r "(.ciPaths$1 // []) | join(\" \")" sdlc.json; }
+          # shellcheck disable=SC2254 # the unquoted pattern is the point: it is a glob from sdlc.json
+          hit() { for g in $2; do case "$1" in $g) return 0 ;; esac; done; return 1; }
+          STEPS="lint unit build e2e deploy"
+          IGNORE=$(list .docs); ALL=$(list .all); CODE="$(list .code) $(list .config)"; SPECS=$(list .specs)
+          for s in $STEPS; do
+            eval "inc_$s=\"\$(list .$s.include)\" exc_$s=\"\$(list .$s.exclude)\""
+            eval "$s=false"
+          done
+          everything() { for s in $STEPS; do eval "$s=true"; done; }
+          full=false # the whole E2E suite, and every step once code or config changed
+          if [ -z "$PR" ]; then
+            full=true # push to the default branch
+          else
+            case "$BASE:$HEAD" in
+              "$DEFAULT":*|project/*:*|*:milestone/*) full=true ;;
+            esac
+          fi
+          specs=""
+          touched=false # did the PR change any code or config at all?
+          if [ -z "$PR" ]; then
+            everything
+            touched=true
+          else
+            files=$(gh pr diff "$PR" --name-only) # a failure (a diff too large to list) stops the job: fails closed
+            while IFS= read -r f; do
+              [ -n "$f" ] || continue
+              hit "$f" "$IGNORE" && continue
+              if hit "$f" "$ALL"; then everything; touched=true; continue; fi
+              hit "$f" "$CODE" || continue # neither code nor config: runs nothing
+              touched=true
+              known=false
+              for s in $STEPS; do
+                eval "inc=\"\$inc_$s\" exc=\"\$exc_$s\""
+                # on a step when it matches the include and not the exclude
+                if hit "$f" "$inc"; then known=true; hit "$f" "$exc" || eval "$s=true"; fi
+              done
+              # code or config that no step's include knows is a path you forgot to list: run everything
+              $known || everything
+              if hit "$f" "$SPECS"; then
+                case "$f" in
+                  *[!A-Za-z0-9._/-]*) echo "::warning::spec path skipped (unusual characters): $f" ;;
+                  *) specs="$specs $f" ;;
+                esac
+              fi
+            done <<< "$files"
+            # safety net: where the full suite runs, any code or config change runs every step
+            if [ "$touched" = true ] && [ "$full" = true ]; then everything; fi
+          fi
+          if [ "$e2e" != true ]; then
+            matrix='[]'
+          elif [ "$full" = true ]; then
+            matrix=$(jq -nc --argjson n "$SHARDS" '[range(1; $n + 1) | {name: "\(.)/\($n)", shard: ., total: $n, files: ""}]')
+          elif [ -n "$specs" ]; then
+            matrix=$(jq -nc --arg s "${specs# }" '[{name: "touched specs", shard: 1, total: 1, files: $s}]')
+          else
+            matrix='[]' # e2e code changed but no spec did: lint and unit cover it; the full run is on the way to main
+          fi
+          {
+            for s in lint unit build deploy; do eval "echo $s=\$$s"; done
+            echo "full=$full"
+            echo "matrix=$matrix"
+          } >> "$GITHUB_OUTPUT"
+          {
+            echo "### Changed paths"
+            echo
+            echo "lint=$lint unit=$unit build=$build deploy=$deploy full=$full e2e=$([ "$matrix" = '[]' ] && echo none || echo run)"
+            [ "$touched" = true ] || echo "No code or config changed: nothing runs except this job and \`check\`."
+          } >> "${GITHUB_STEP_SUMMARY:-/dev/null}"
+          # <<< changes-script
+
+  lint:
+    name: Lint and types
+    needs: changes
+    if: needs.changes.outputs.lint == 'true'
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      # --- stack setup: the same block in every job; delete the stacks you do not use -------------
+      - if: env.STACK == 'node' && env.NODE_PACKAGE_MANAGER == 'pnpm'
+        run: corepack enable # setup-node's pnpm cache needs pnpm on the PATH first
+      - if: env.STACK == 'node'
+        uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
+        with:
+          node-version: ${{ env.NODE_VERSION }}
+          cache: ${{ env.NODE_PACKAGE_MANAGER }}
+      - if: env.STACK == 'python'
+        uses: astral-sh/setup-uv@68559e99cc807c1eb7e9238fd43a15bba460eec2 # v10.3.3
+        with:
+          python-version: ${{ env.PYTHON_VERSION }}
+          enable-cache: true
+      - if: env.STACK == 'rust'
+        uses: dtolnay/rust-toolchain@b725eda525362e7cf34af9a7243cac1e3f01a7ec # stable branch, 2026-10-31
+        with:
+          toolchain: ${{ env.RUST_TOOLCHAIN }}
+          components: clippy, rustfmt
+      - if: env.STACK == 'rust'
+        uses: Swatinem/rust-cache@d1527c8f67ef9af357290475d4af4b0fab8f12e0 # v2.9.3
+      - if: env.STACK == 'ruby-rails'
+        uses: ruby/setup-ruby@de492cf36cbab201753d720ce4f4e336cd688c94 # v1.336.0
+        with:
+          ruby-version: ${{ env.RUBY_VERSION }}
+          bundler-cache: true
+      - if: env.STACK == 'kotlin' || env.STACK == 'scala'
+        uses: actions/setup-java@b843ebf9b913146b38da2eaa7aeddf76074ae1ad # v6.1.0
+        with:
+          distribution: temurin
+          java-version: ${{ env.JAVA_VERSION }}
+          cache: ${{ env.STACK == 'kotlin' && 'gradle' || 'sbt' }}
+      - if: env.STACK == 'kotlin'
+        uses: gradle/actions/setup-gradle@8da46b539cd8fe6ab27ca75128919a18d757604c # v6.4.1
+      - if: env.STACK == 'scala'
+        uses: sbt/setup-sbt@b113b960ba361e87e08ce02a390d51871b7ee459 # v1.5.13
+      - name: Install dependencies (ciCommands.install)
+        run: |
+          cmd=$(jq -r '.ciCommands.install // empty' sdlc.json)
+          if [ -z "$cmd" ]; then echo "no ciCommands.install: nothing to install"; exit 0; fi
+          echo "+ $cmd"; bash -eo pipefail -c "$cmd"
+      - name: Lint (ciCommands.lint)
+        run: |
+          cmd=$(jq -r '.ciCommands.lint // empty' sdlc.json)
+          if [ -z "$cmd" ]; then echo "::error::sdlc.json has no ciCommands.lint; set it (to true if this repo has no such step)"; exit 1; fi
+          echo "+ $cmd"; bash -eo pipefail -c "$cmd"
+
+  unit:
+    name: Unit tests
+    needs: changes
+    if: needs.changes.outputs.unit == 'true'
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    env:
+      DATABASE_URL: postgres://postgres:postgres@127.0.0.1:5432/postgres
+    services: # delete this block when the repo has no database
+      postgres:
+        image: postgres:17
+        env:
+          POSTGRES_PASSWORD: postgres
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd "pg_isready -U postgres"
+          --health-interval 5s
+          --health-timeout 5s
+          --health-retries 10
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      # --- stack setup: the same block in every job; delete the stacks you do not use -------------
+      - if: env.STACK == 'node' && env.NODE_PACKAGE_MANAGER == 'pnpm'
+        run: corepack enable # setup-node's pnpm cache needs pnpm on the PATH first
+      - if: env.STACK == 'node'
+        uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
+        with:
+          node-version: ${{ env.NODE_VERSION }}
+          cache: ${{ env.NODE_PACKAGE_MANAGER }}
+      - if: env.STACK == 'python'
+        uses: astral-sh/setup-uv@68559e99cc807c1eb7e9238fd43a15bba460eec2 # v10.3.3
+        with:
+          python-version: ${{ env.PYTHON_VERSION }}
+          enable-cache: true
+      - if: env.STACK == 'rust'
+        uses: dtolnay/rust-toolchain@b725eda525362e7cf34af9a7243cac1e3f01a7ec # stable branch, 2026-10-31
+        with:
+          toolchain: ${{ env.RUST_TOOLCHAIN }}
+          components: clippy, rustfmt
+      - if: env.STACK == 'rust'
+        uses: Swatinem/rust-cache@d1527c8f67ef9af357290475d4af4b0fab8f12e0 # v2.9.3
+      - if: env.STACK == 'ruby-rails'
+        uses: ruby/setup-ruby@de492cf36cbab201753d720ce4f4e336cd688c94 # v1.336.0
+        with:
+          ruby-version: ${{ env.RUBY_VERSION }}
+          bundler-cache: true
+      - if: env.STACK == 'kotlin' || env.STACK == 'scala'
+        uses: actions/setup-java@b843ebf9b913146b38da2eaa7aeddf76074ae1ad # v6.1.0
+        with:
+          distribution: temurin
+          java-version: ${{ env.JAVA_VERSION }}
+          cache: ${{ env.STACK == 'kotlin' && 'gradle' || 'sbt' }}
+      - if: env.STACK == 'kotlin'
+        uses: gradle/actions/setup-gradle@8da46b539cd8fe6ab27ca75128919a18d757604c # v6.4.1
+      - if: env.STACK == 'scala'
+        uses: sbt/setup-sbt@b113b960ba361e87e08ce02a390d51871b7ee459 # v1.5.13
+      - name: Install dependencies (ciCommands.install)
+        run: |
+          cmd=$(jq -r '.ciCommands.install // empty' sdlc.json)
+          if [ -z "$cmd" ]; then echo "no ciCommands.install: nothing to install"; exit 0; fi
+          echo "+ $cmd"; bash -eo pipefail -c "$cmd"
+      - name: Unit (ciCommands.unit)
+        run: |
+          cmd=$(jq -r '.ciCommands.unit // empty' sdlc.json)
+          if [ -z "$cmd" ]; then echo "::error::sdlc.json has no ciCommands.unit; set it (to true if this repo has no such step)"; exit 1; fi
+          echo "+ $cmd"; bash -eo pipefail -c "$cmd"
+
+  build:
+    name: Production build
+    needs: changes
+    if: needs.changes.outputs.build == 'true'
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      # --- stack setup: the same block in every job; delete the stacks you do not use -------------
+      - if: env.STACK == 'node' && env.NODE_PACKAGE_MANAGER == 'pnpm'
+        run: corepack enable # setup-node's pnpm cache needs pnpm on the PATH first
+      - if: env.STACK == 'node'
+        uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
+        with:
+          node-version: ${{ env.NODE_VERSION }}
+          cache: ${{ env.NODE_PACKAGE_MANAGER }}
+      - if: env.STACK == 'python'
+        uses: astral-sh/setup-uv@68559e99cc807c1eb7e9238fd43a15bba460eec2 # v10.3.3
+        with:
+          python-version: ${{ env.PYTHON_VERSION }}
+          enable-cache: true
+      - if: env.STACK == 'rust'
+        uses: dtolnay/rust-toolchain@b725eda525362e7cf34af9a7243cac1e3f01a7ec # stable branch, 2026-10-31
+        with:
+          toolchain: ${{ env.RUST_TOOLCHAIN }}
+          components: clippy, rustfmt
+      - if: env.STACK == 'rust'
+        uses: Swatinem/rust-cache@d1527c8f67ef9af357290475d4af4b0fab8f12e0 # v2.9.3
+      - if: env.STACK == 'ruby-rails'
+        uses: ruby/setup-ruby@de492cf36cbab201753d720ce4f4e336cd688c94 # v1.336.0
+        with:
+          ruby-version: ${{ env.RUBY_VERSION }}
+          bundler-cache: true
+      - if: env.STACK == 'kotlin' || env.STACK == 'scala'
+        uses: actions/setup-java@b843ebf9b913146b38da2eaa7aeddf76074ae1ad # v6.1.0
+        with:
+          distribution: temurin
+          java-version: ${{ env.JAVA_VERSION }}
+          cache: ${{ env.STACK == 'kotlin' && 'gradle' || 'sbt' }}
+      - if: env.STACK == 'kotlin'
+        uses: gradle/actions/setup-gradle@8da46b539cd8fe6ab27ca75128919a18d757604c # v6.4.1
+      - if: env.STACK == 'scala'
+        uses: sbt/setup-sbt@b113b960ba361e87e08ce02a390d51871b7ee459 # v1.5.13
+      - name: Install dependencies (ciCommands.install)
+        run: |
+          cmd=$(jq -r '.ciCommands.install // empty' sdlc.json)
+          if [ -z "$cmd" ]; then echo "no ciCommands.install: nothing to install"; exit 0; fi
+          echo "+ $cmd"; bash -eo pipefail -c "$cmd"
+      - name: Build (ciCommands.build)
+        run: |
+          cmd=$(jq -r '.ciCommands.build // empty' sdlc.json)
+          if [ -z "$cmd" ]; then echo "::error::sdlc.json has no ciCommands.build; set it (to true if this repo has no such step)"; exit 1; fi
+          echo "+ $cmd"; bash -eo pipefail -c "$cmd"
+
+  # One matrix leg per entry of the `changes` matrix: the shards of the full suite, or one leg with the touched specs,
+  # or no leg at all. Each leg has its own database and builds the production artifact itself (A2, A3): E2E never
+  # runs against a dev server.
+  e2e:
+    name: E2E ${{ matrix.name }}
+    needs: changes
+    if: needs.changes.outputs.matrix != '[]'
+    runs-on: ubuntu-latest
+    timeout-minutes: 45
+    strategy:
+      fail-fast: false
+      matrix:
+        include: ${{ fromJSON(needs.changes.outputs.matrix) }}
+    env:
+      DATABASE_URL: postgres://postgres:postgres@127.0.0.1:5432/postgres
+      FULL: ${{ needs.changes.outputs.full }} # true: the stack's retry settings fail the run on a flaky pass (A4)
+      SHARD: ${{ matrix.shard }}
+      TOTAL: ${{ matrix.total }}
+      FILES: ${{ matrix.files }}
+    services: # delete this block when the repo has no database
+      postgres:
+        image: postgres:17
+        env:
+          POSTGRES_PASSWORD: postgres
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd "pg_isready -U postgres"
+          --health-interval 5s
+          --health-timeout 5s
+          --health-retries 10
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      # --- stack setup: the same block in every job; delete the stacks you do not use -------------
+      - if: env.STACK == 'node' && env.NODE_PACKAGE_MANAGER == 'pnpm'
+        run: corepack enable # setup-node's pnpm cache needs pnpm on the PATH first
+      - if: env.STACK == 'node'
+        uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
+        with:
+          node-version: ${{ env.NODE_VERSION }}
+          cache: ${{ env.NODE_PACKAGE_MANAGER }}
+      - if: env.STACK == 'python'
+        uses: astral-sh/setup-uv@68559e99cc807c1eb7e9238fd43a15bba460eec2 # v10.3.3
+        with:
+          python-version: ${{ env.PYTHON_VERSION }}
+          enable-cache: true
+      - if: env.STACK == 'rust'
+        uses: dtolnay/rust-toolchain@b725eda525362e7cf34af9a7243cac1e3f01a7ec # stable branch, 2026-10-31
+        with:
+          toolchain: ${{ env.RUST_TOOLCHAIN }}
+          components: clippy, rustfmt
+      - if: env.STACK == 'rust'
+        uses: Swatinem/rust-cache@d1527c8f67ef9af357290475d4af4b0fab8f12e0 # v2.9.3
+      - if: env.STACK == 'ruby-rails'
+        uses: ruby/setup-ruby@de492cf36cbab201753d720ce4f4e336cd688c94 # v1.336.0
+        with:
+          ruby-version: ${{ env.RUBY_VERSION }}
+          bundler-cache: true
+      - if: env.STACK == 'kotlin' || env.STACK == 'scala'
+        uses: actions/setup-java@b843ebf9b913146b38da2eaa7aeddf76074ae1ad # v6.1.0
+        with:
+          distribution: temurin
+          java-version: ${{ env.JAVA_VERSION }}
+          cache: ${{ env.STACK == 'kotlin' && 'gradle' || 'sbt' }}
+      - if: env.STACK == 'kotlin'
+        uses: gradle/actions/setup-gradle@8da46b539cd8fe6ab27ca75128919a18d757604c # v6.4.1
+      - if: env.STACK == 'scala'
+        uses: sbt/setup-sbt@b113b960ba361e87e08ce02a390d51871b7ee459 # v1.5.13
+      - name: Install dependencies (ciCommands.install)
+        run: |
+          cmd=$(jq -r '.ciCommands.install // empty' sdlc.json)
+          if [ -z "$cmd" ]; then echo "no ciCommands.install: nothing to install"; exit 0; fi
+          echo "+ $cmd"; bash -eo pipefail -c "$cmd"
+      - name: Build the production artifact (ciCommands.build)
+        run: |
+          cmd=$(jq -r '.ciCommands.build // empty' sdlc.json)
+          if [ -z "$cmd" ]; then echo "::error::sdlc.json has no ciCommands.build"; exit 1; fi
+          echo "+ $cmd"; bash -eo pipefail -c "$cmd"
+      - name: E2E (ciCommands.e2e for a shard, ciCommands.e2eTouched for touched specs)
+        run: |
+          if [ -n "$FILES" ]; then
+            kept=""
+            for f in $FILES; do [ -f "$f" ] && kept="$kept $f"; done # a deleted spec has nothing to run
+            if [ -z "$kept" ]; then echo "every touched spec was deleted: nothing to run"; exit 0; fi
+            cmd=$(jq -r '.ciCommands.e2eTouched // empty' sdlc.json)
+            cmd=${cmd//\{files\}/${kept# }}
+          else
+            cmd=$(jq -r '.ciCommands.e2e // empty' sdlc.json)
+            cmd=${cmd//\{shard\}/$SHARD}
+            cmd=${cmd//\{total\}/$TOTAL}
+          fi
+          if [ -z "$cmd" ]; then echo "::error::sdlc.json has no ciCommands.e2e / ciCommands.e2eTouched"; exit 1; fi
+          echo "+ $cmd"; bash -eo pipefail -c "$cmd"
+
+  # ============================ DEPLOY: YOUR HOOK ===========================================================
+  # A preview or staging deploy costs minutes and money, so it runs only when `changes` says deployable code changed.
+  # Put your deploy here: either set sdlc.json ciCommands.deploy, or replace the step below with your own steps
+  # (cloud auth with Workload Identity Federation, `permissions: id-token: write` on this job, a deploy action).
+  # A pull request from a fork has no secrets: guard the job with
+  #   github.event.pull_request.head.repo.full_name == github.repository
+  # It needs only `changes`, so it starts in parallel with the checks; add lint, unit, build to `needs` to deploy
+  # only after they pass (then give the job `if: always() && ...` or a skipped need skips the deploy too).
+  # ==========================================================================================================
+  deploy:
+    name: Deploy
+    needs: changes
+    if: needs.changes.outputs.deploy == 'true'
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - name: Deploy (ciCommands.deploy)
+        run: |
+          cmd=$(jq -r '.ciCommands.deploy // empty' sdlc.json)
+          if [ -z "$cmd" ]; then echo "::notice::no ciCommands.deploy and no deploy steps in ci.yml: nothing deployed"; exit 0; fi
+          echo "+ $cmd"; bash -eo pipefail -c "$cmd"
+
+  # The one required status. It always runs and always reports, so a PR that needed no job is still mergeable.
+  check:
+    name: check
+    if: always()
+    needs: [changes, lint, unit, build, e2e, deploy]
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - env:
+          RESULTS: ${{ join(needs.*.result, ' ') }}
+        run: |
+          # skipped is fine: a flag said the step was not needed. failure or cancelled is not.
+          case " $RESULTS " in *" failure "*|*" cancelled "*) echo "::error::a job failed: $RESULTS"; exit 1 ;; esac
+          echo "all jobs passed or were skipped on purpose: $RESULTS"

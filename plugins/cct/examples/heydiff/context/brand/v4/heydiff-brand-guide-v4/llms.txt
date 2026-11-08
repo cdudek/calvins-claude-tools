@@ -1,0 +1,80 @@
+# HeyDiff brand guide v4
+
+> Brand identity and product design system for HeyDiff, team feedback for software built with AI. Version 4, 30 Oct 2026, owner Calvin Dudek. Logo: mark A (two speech bubbles with one square corner each, coral left, blue right, violet overlap) beside the lower-case wordmark heydiff, lockup 5:4. Product accent Decision Violet #6E4EF0, Plus Jakarta Sans and JetBrains Mono, controls 32/40/48, pill buttons, Graphite dark mode.
+
+Each page has a Markdown file with its text and a PNG of the screen; read both. The canvas is the source; heydiff-kit holds the tokens in code; logo files are in heydiff-context/brand/v4.
+
+## Start here
+
+- [Implementation brief](implementation-brief.md): what to build in heydiff-kit, heydiff-web, heydiff-chrome and heydiff-mac, in order
+- [Decisions](decisions.md): every rule in one line, with the page to read
+- [Full guide as Markdown](brand-guide.md): all pages in page order
+- [Tokens](tokens/tokens.json): colour, status, brand, type, control and radius tokens, light and dark
+- [Manifest](manifest.json): index of pages and files
+- [PDF](heydiff-brand-guide-v4.pdf): the whole guide, bookmarked
+- [Overview](overview.png): all pages as thumbnails
+
+## Brand
+
+- [00 Contents](md/00-contents.md): screen png/00-contents.png
+- [01 Cover](md/01-cover.md): screen png/01-cover.png
+- [02 Positioning](md/02-positioning.md): screen png/02-positioning.png
+- [03 Logo](md/03-logo.md): screen png/03-logo.png
+- [04 Lockup and spacing](md/04-lockup-and-spacing.md): screen png/04-lockup-and-spacing.png
+- [05 Logo use](md/05-logo-use.md): screen png/05-logo-use.png
+- [06 Name](md/06-name.md): screen png/06-name.png
+- [07 Artwork and gradients](md/07-artwork-and-gradients.md): screen png/07-artwork-and-gradients.png
+- [08 Colour palette](md/08-colour-palette.md): screen png/08-colour-palette.png
+- [09 Product colour](md/09-product-colour.md): screen png/09-product-colour.png
+- [10 Typography](md/10-typography.md): screen png/10-typography.png
+- [11 Voice](md/11-voice.md): screen png/11-voice.png
+- [12 Visual language](md/12-visual-language.md): screen png/12-visual-language.png
+- [13 In use](md/13-in-use.md): screen png/13-in-use.png
+- [14 Templates](md/14-templates.md): screen png/14-templates.png
+
+## Product
+
+- [15 Layout](md/15-layout.md): screen png/15-layout.png
+- [16 Tokens](md/16-tokens.md): screen png/16-tokens.png
+- [17 Components / Light](md/17-components-light.md): screen png/17-components-light.png
+- [17 Components / Dark](md/17-components-dark.md): screen png/17-components-dark.png
+- [18 Component rules](md/18-component-rules.md): screen png/18-component-rules.png
+- [19 Navigation](md/19-navigation.md): screen png/19-navigation.png
+- [20 Overlays and menus](md/20-overlays-and-menus.md): screen png/20-overlays-and-menus.png
+- [21 Forms](md/21-forms.md): screen png/21-forms.png
+- [22 System feedback](md/22-system-feedback.md): screen png/22-system-feedback.png
+- [23 Tables](md/23-tables.md): screen png/23-tables.png
+- [24 Files, search and structure](md/24-files-search-and-structure.md): screen png/24-files-search-and-structure.png
+- [25 Pins and threads](md/25-pins-and-threads.md): screen png/25-pins-and-threads.png
+- [26 Decisions and agents](md/26-decisions-and-agents.md): screen png/26-decisions-and-agents.png
+- [27 Code and selections](md/27-code-and-selections.md): screen png/27-code-and-selections.png
+- [28 Giving feedback](md/28-giving-feedback.md): screen png/28-giving-feedback.png
+- [29 Chrome extension](md/29-chrome-extension.md): screen png/29-chrome-extension.png
+- [30 Mac app](md/30-mac-app.md): screen png/30-mac-app.png
+- [31 Journey / Light](md/31-journey-light.md): screen png/31-journey-light.png
+- [31 Journey / Dark](md/31-journey-dark.md): screen png/31-journey-dark.png
+- [32 Journey on a phone](md/32-journey-on-a-phone.md): screen png/32-journey-on-a-phone.png
+
+## Examples
+
+- [33 Example screen / Light](md/33-example-screen-light.md): screen png/33-example-screen-light.png
+- [33 Example screen / Dark](md/33-example-screen-dark.md): screen png/33-example-screen-dark.png
+- [34 Landing page / Light](md/34-landing-page-light.md): screen png/34-landing-page-light.png
+- [34 Landing page / Dark](md/34-landing-page-dark.md): screen png/34-landing-page-dark.png
+- [34 Landing footer / Phone](md/34-landing-footer-phone.md): screen png/34-landing-footer-phone.png
+
+## Assets and ownership
+
+- [35 Assets and ownership](md/35-assets-and-ownership.md): screen png/35-assets-and-ownership.png
+
+## Appendix: tests and research, not rules
+
+- [A1 Appendix / Ratio test](md/a1-appendix-ratio-test.md): screen png/a1-appendix-ratio-test.png
+- [A2 Appendix / Mark exploration](md/a2-appendix-mark-exploration.md): screen png/a2-appendix-mark-exploration.png
+- [A3 Appendix / Golden ratio research](md/a3-appendix-golden-ratio-research.md): screen png/a3-appendix-golden-ratio-research.png
+- [A4 Appendix / Wordmark grey test](md/a4-appendix-wordmark-grey-test.md): screen png/a4-appendix-wordmark-grey-test.png
+
+## Optional
+
+- [Source boards](source/boards/): canvas boards and canvas.json
+- [Build scripts](source/scripts/): boards, logo files and this export

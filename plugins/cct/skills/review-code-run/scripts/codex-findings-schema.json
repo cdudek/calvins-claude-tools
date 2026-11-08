@@ -1,0 +1,110 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "title": "review-code-run pre-identity findings (Codex source)",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "findings"
+  ],
+  "properties": {
+    "findings": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": [
+          "file",
+          "line",
+          "severity",
+          "confidence",
+          "dimension",
+          "self_proving",
+          "evidence",
+          "body",
+          "validation_effort",
+          "suppressed_reason",
+          "failure_scenario",
+          "reversibility",
+          "idiomatic_fix"
+        ],
+        "properties": {
+          "file": {
+            "type": "string",
+            "description": "Path relative to the review root."
+          },
+          "line": {
+            "type": "string",
+            "description": "1-based line number where the verbatim evidence sits, as a string."
+          },
+          "severity": {
+            "type": "string",
+            "enum": [
+              "critical",
+              "warning",
+              "suggestion",
+              "nit"
+            ]
+          },
+          "confidence": {
+            "type": "integer",
+            "minimum": 0,
+            "maximum": 100
+          },
+          "dimension": {
+            "type": "string",
+            "description": "Canonical dimension name from the supplied catalogue."
+          },
+          "self_proving": {
+            "type": "boolean",
+            "description": "True when the quoted evidence alone demonstrates the defect."
+          },
+          "evidence": {
+            "type": "string",
+            "description": "Verbatim source line or snippet at `line`."
+          },
+          "body": {
+            "type": "string",
+            "description": "One line: the issue, why it matters, and the fix."
+          },
+          "validation_effort": {
+            "type": "integer",
+            "minimum": 0,
+            "maximum": 6,
+            "description": "0 = self-proving (1 read); 3 = one neighbour read; 6 = cross-file tracing (4 reads)."
+          },
+          "suppressed_reason": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "enum": [
+              "style",
+              "out-of-scope",
+              null
+            ],
+            "description": "Set only on a demoted judgment call; null otherwise."
+          },
+          "failure_scenario": {
+            "type": "string",
+            "description": "Concrete inputs or state, then the wrong output, crash or leak. Not 'this could be null'."
+          },
+          "reversibility": {
+            "type": "string",
+            "enum": [
+              "cheap",
+              "entrenches"
+            ],
+            "description": "Does shipping it make the fix more expensive later (data migration, public contract, a non-native pattern others copy)? Judge the cost of undoing, not the urgency."
+          },
+          "idiomatic_fix": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "description": "The framework- or repo-native form, when it differs from the smallest fix in `body`; name what the small patch leaves behind. Null when the two coincide."
+          }
+        }
+      }
+    }
+  }
+}

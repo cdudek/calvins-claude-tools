@@ -1,0 +1,173 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://github.com/cdudek/calvins-claude-tools/plugins/cct/references/findings.schema.json",
+  "title": "ux findings",
+  "description": "What every ux pass returns, and what the merge script writes. finding-format.md is the human rendering of the same fields; skills/ux-assessment-run/scripts/findings.py validates, merges, renders and compares files in this shape. Never type the report by hand.",
+  "type": "object",
+  "required": ["skill", "version", "scope", "method", "findings", "passed", "did_not_run", "exceptions_used", "notes"],
+  "additionalProperties": false,
+  "properties": {
+    "skill": {
+      "description": "The pass that wrote this file, by its name in dispatch.md (laws, conformance, accessibility, ...), or the playbook for a merged file (cct:ux-assessment-run).",
+      "type": "string",
+      "minLength": 1
+    },
+    "version": {
+      "description": "Version of this contract the file was written against.",
+      "const": "1"
+    },
+    "scope": {
+      "description": "What was looked at. A pass fills what it actually covered, not what it was asked to cover.",
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "pr": { "description": "PR number or URL.", "type": "string" },
+        "builds": { "type": "array", "items": { "type": "string" } },
+        "files": { "type": "array", "items": { "type": "string" } },
+        "routes": { "type": "array", "items": { "type": "string" } },
+        "states": { "type": "array", "items": { "type": "string" } },
+        "widths": { "description": "Window widths in CSS pixels.", "type": "array", "items": { "type": "integer" } }
+      }
+    },
+    "method": {
+      "description": "One line: how the evidence was gathered (running build, screenshots, code only) and whether the pass ran degraded.",
+      "type": "string",
+      "pattern": "^[^\\n]+$"
+    },
+    "degraded": {
+      "description": "Present only when the pass ran without its agent or skill: why, in one line. The report prints a banner for it.",
+      "type": "string",
+      "pattern": "^[^\\n]+$"
+    },
+    "passes": {
+      "description": "Written by the merge, one entry per pass file merged. A pass never writes it.",
+      "type": "array",
+      "items": {
+        "type": "object",
+        "required": ["skill", "method"],
+        "additionalProperties": false,
+        "properties": {
+          "skill": { "type": "string", "minLength": 1 },
+          "method": { "type": "string", "pattern": "^[^\\n]+$" },
+          "degraded": { "type": "string", "pattern": "^[^\\n]+$" }
+        }
+      }
+    },
+    "findings": { "type": "array", "items": { "$ref": "#/$defs/finding" } },
+    "passed": {
+      "description": "Criterion or check ids that were checked and passed. Reports need these to tell 'clean' from 'not checked'.",
+      "type": "array",
+      "items": { "$ref": "#/$defs/id" }
+    },
+    "not_applicable": {
+      "description": "Criterion or check ids that do not apply here, each with the applicability rule that excludes it.",
+      "type": "array",
+      "items": { "$ref": "#/$defs/skipped" }
+    },
+    "did_not_run": {
+      "description": "Checks or whole passes that should have run and did not, each with the reason.",
+      "type": "array",
+      "items": { "$ref": "#/$defs/skipped" }
+    },
+    "exceptions_used": {
+      "description": "Every recorded exception the pass relied on (conflicts.md section 2).",
+      "type": "array",
+      "items": { "type": "string", "pattern": "^EX-[0-9]+$" }
+    },
+    "notes": {
+      "description": "Anything a person must decide, and anything the pass could not check. Not findings.",
+      "type": "array",
+      "items": { "type": "string", "minLength": 1 }
+    }
+  },
+  "$defs": {
+    "id": {
+      "description": "A stable rule or check id: L7.2, B5, WCAG-2.5.8, C3, IG-8, FTR-3, H4, DOC-glossary.",
+      "type": "string",
+      "pattern": "^[A-Za-z0-9][A-Za-z0-9._:-]*$"
+    },
+    "skipped": {
+      "type": "object",
+      "required": ["id", "reason"],
+      "additionalProperties": false,
+      "properties": {
+        "id": { "$ref": "#/$defs/id" },
+        "reason": { "type": "string", "minLength": 1 }
+      }
+    },
+    "finding": {
+      "type": "object",
+      "required": ["id", "lens", "impact", "rung", "location", "summary", "current", "recommendation", "tradeoff", "decision_needed", "verified", "evidence", "owner_words"],
+      "additionalProperties": false,
+      "properties": {
+        "id": { "$ref": "#/$defs/id" },
+        "lens": {
+          "description": "The standard the id belongs to: laws, wcag, heuristics, lenses, writing, conformance, responsive, e2e-coverage, sitemap, documents, spec.",
+          "type": "string",
+          "minLength": 1
+        },
+        "impact": {
+          "description": "The five levels of finding-format.md, the kit's only scale.",
+          "enum": ["Critical", "High", "Medium", "Low", "Design choice"]
+        },
+        "rung": {
+          "description": "The rung of conflicts.md that the finding breaks; the impact follows it.",
+          "enum": ["R1", "R2", "R3", "R4", "R5", "R6", "R7"]
+        },
+        "conflict": {
+          "description": "Only when a conflict was settled: the rung that won over the one that lost, and the exception. Example: R4 (IG-8) over R5 (L7.4), EX-3.",
+          "type": "string",
+          "minLength": 1
+        },
+        "location": {
+          "description": "Somewhere a person can open: file:line, or route + state + width (/leads empty 390), or a selector on a named route. Two findings are the same only when id and location match exactly.",
+          "type": "string",
+          "minLength": 1
+        },
+        "summary": { "description": "The problem in plain language, the finding's title. No codes.", "type": "string", "minLength": 1, "maxLength": 240 },
+        "current": { "description": "Current experience: a concrete example, the exact words on screen.", "type": "string", "minLength": 1 },
+        "recommendation": { "description": "The change, and how it helps the user's workflow.", "type": "string", "minLength": 1 },
+        "tradeoff": { "description": "The main downside; an alternative only when meaningfully different.", "type": "string", "minLength": 1 },
+        "decision_needed": { "description": "One plain question, or 'Routine fix: no individual decision needed'.", "type": "string", "minLength": 1 },
+        "verified": {
+          "description": "seen on screen, read in the code, measured, assumption (not checked), owner's preference.",
+          "enum": ["seen", "code", "measured", "assumption", "preference"]
+        },
+        "evidence": {
+          "description": "Screenshot paths, file:line references, measured values with their unit.",
+          "type": "array",
+          "items": { "type": "string", "minLength": 1 }
+        },
+        "component": { "description": "The shared part the defect lives in, so one defect repeated across pages reads as one cause.", "type": "string", "minLength": 1 },
+        "owner_words": { "description": "The earlier request quoted with its date, or 'no earlier request found'.", "type": "string", "minLength": 1 },
+        "supporting_notes": {
+          "description": "Further supporting-note lines of finding-format.md, each with its label: 'Earlier IDs: F012', 'Other products: Linear opens a side panel', 'Guideline: IG-8'.",
+          "type": "array",
+          "items": { "type": "string", "minLength": 1 }
+        },
+        "sources": {
+          "description": "Which passes reported it. A pass may leave it out; the merge always writes it.",
+          "type": "array",
+          "items": { "type": "string", "minLength": 1 }
+        }
+      },
+      "allOf": [
+        {
+          "description": "Evidence is real: seen, code and measured name what proves them.",
+          "if": { "properties": { "verified": { "enum": ["seen", "code", "measured"] } } },
+          "then": { "properties": { "evidence": { "minItems": 1 } } }
+        },
+        {
+          "description": "R1, the legal floor, is Critical.",
+          "if": { "properties": { "rung": { "const": "R1" } } },
+          "then": { "properties": { "impact": { "const": "Critical" } } }
+        },
+        {
+          "description": "R7, taste, is never above Design choice.",
+          "if": { "properties": { "rung": { "const": "R7" } } },
+          "then": { "properties": { "impact": { "const": "Design choice" } } }
+        }
+      ]
+    }
+  }
+}

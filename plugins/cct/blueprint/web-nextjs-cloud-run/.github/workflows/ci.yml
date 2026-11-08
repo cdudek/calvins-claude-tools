@@ -1,0 +1,308 @@
+name: CI
+
+# Every PR and every push to main. `check` is the one required status: it passes only when
+# every job before it passed or was skipped on purpose (see `changes`).
+# `changes` reads the paths a PR touches (scripts/ci-scope.sh) and sets one flag per step: documentation runs nothing but the
+# secret scan, test/ runs lint and unit, e2e/ runs lint and the touched specs, anything else is code and runs it all.
+# Code in a PR into main or project/* (or from milestone/*) and every push to main run the whole E2E suite in 4 shards,
+# any other PR runs only the E2E specs it changes.
+# Security: no github.event.* expression is expanded inside a `run:` script.
+
+on:
+  pull_request:
+  push:
+    branches: [main]
+
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: true
+
+permissions:
+  contents: read
+  packages: read
+
+jobs:
+  secrets-scan:
+    name: Secret scan
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+          # gitleaks scans the git history, so a shallow clone would scan almost nothing
+          fetch-depth: 0
+      # Its own job, before any repository code runs. The binary lives outside the checkout,
+      # pinned by version and sha256 (the gitleaks action needs a paid licence for organisations),
+      # and a PR cannot quietly switch rules off with its own config or ignore file.
+      - name: gitleaks
+        run: |
+          test ! -e .gitleaks.toml -a ! -e gitleaks.toml -a ! -e .gitleaksignore \
+            || { echo '::error::gitleaks config or ignore file in the repo; rules change only in this workflow'; exit 1; }
+          curl -sSfL -o "$RUNNER_TEMP/gitleaks.tgz" https://github.com/gitleaks/gitleaks/releases/download/v8.30.1/gitleaks_8.30.1_linux_x64.tar.gz
+          echo "551f6fc83ea457d62a0d98237cbad105af8d557003051f41f3e7ca7b3f2470eb  $RUNNER_TEMP/gitleaks.tgz" | sha256sum -c -
+          tar -xzf "$RUNNER_TEMP/gitleaks.tgz" -C "$RUNNER_TEMP" gitleaks
+          "$RUNNER_TEMP/gitleaks" git . --redact --no-banner --verbose --exit-code 1 --config .github/gitleaks.toml
+
+  changes:
+    name: Changed paths
+    runs-on: ubuntu-latest
+    outputs:
+      lint: ${{ steps.scope.outputs.lint }}
+      unit: ${{ steps.scope.outputs.unit }}
+      image: ${{ steps.scope.outputs.image }}
+      matrix: ${{ steps.scope.outputs.matrix }}
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+          # a pull request is checked out as its merge into the base: HEAD^1 is the base, HEAD^2 the PR head
+          fetch-depth: 2
+      - id: scope
+        env:
+          EVENT: ${{ github.event_name }}
+          BASE_REF: ${{ github.base_ref }}
+          HEAD_REF: ${{ github.head_ref }}
+        run: |
+          if [ "$EVENT" = pull_request ]; then git diff --no-renames --name-only HEAD^1 HEAD; fi | bash scripts/ci-scope.sh | tee -a "$GITHUB_OUTPUT"
+
+  static:
+    name: Format, lint, typecheck
+    needs: changes
+    if: needs.changes.outputs.lint == 'true'
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
+        with:
+          node-version-file: .nvmrc
+          cache: npm
+      - run: npm ci --ignore-scripts
+        env:
+          NODE_AUTH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+      - run: npm run format:check
+      - run: npm run lint
+      - run: npm run typecheck
+
+  unit:
+    name: Unit tests
+    needs: changes
+    if: needs.changes.outputs.unit == 'true'
+    runs-on: ubuntu-latest
+    env:
+      TEST_DATABASE_URL: postgres://postgres:postgres@127.0.0.1:5432/postgres
+    services:
+      postgres:
+        image: postgres:18
+        env:
+          POSTGRES_PASSWORD: postgres
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd "pg_isready -U postgres"
+          --health-interval 5s
+          --health-timeout 5s
+          --health-retries 10
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
+        with:
+          node-version-file: .nvmrc
+          cache: npm
+      - run: npm ci --ignore-scripts
+        env:
+          NODE_AUTH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+      - run: npm test
+
+  # One job per entry of the `changes` matrix: 4 shards, or the changed specs, or none. Each has its own Postgres and its own
+  # production build (built per shard, in parallel: one build shared through an artifact would add the upload and download
+  # to the wall clock without making it shorter).
+  e2e:
+    name: E2E ${{ matrix.name }}
+    needs: changes
+    if: needs.changes.outputs.matrix != '[]'
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        include: ${{ fromJSON(needs.changes.outputs.matrix) }}
+    env:
+      TEST_DATABASE_URL: postgres://postgres:postgres@127.0.0.1:5432/postgres
+      NEXT_TELEMETRY_DISABLED: '1'
+    services:
+      postgres:
+        image: postgres:18
+        env:
+          POSTGRES_PASSWORD: postgres
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd "pg_isready -U postgres"
+          --health-interval 5s
+          --health-timeout 5s
+          --health-retries 10
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
+        with:
+          node-version-file: .nvmrc
+          cache: npm
+      - run: npm ci --ignore-scripts
+        env:
+          NODE_AUTH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+      - run: npx playwright install --with-deps chromium
+      # The only env the build needs: E2E_BUILD lets this production build use the dev providers (console mail, memory storage),
+      # see src/server/deployed.ts. Everything else reaches the server at start (playwright.config.ts).
+      - run: npm run build
+        env:
+          E2E_BUILD: '1'
+      - name: Playwright
+        env:
+          ARGS: ${{ matrix.args }}
+        # ARGS is `--shard=i/4` or spec paths that ci-scope.sh matched against a strict pattern; it is split on purpose
+        run: |
+          # shellcheck disable=SC2086
+          npm run smoke:background -- $ARGS
+      - name: Flaky specs to the job summary
+        if: always()
+        env:
+          SHARD: ${{ matrix.name }}
+        run: |
+          [ -f test-results/report.json ] || exit 0
+          flaky=$(jq -r '.. | objects | select(has("specs")) | .specs[] | select(any(.tests[]; .status == "flaky")) | "\(.file): \(.title)"' test-results/report.json | sort -u)
+          [ -n "$flaky" ] || exit 0
+          { echo "### Flaky on E2E $SHARD (failed, then passed on the retry; fix, see e2e/flaky-specs.txt)"; echo; printf -- '- %s\n' "$flaky"; } >>"$GITHUB_STEP_SUMMARY"
+          printf '%s\n' "$flaky" | while read -r line; do echo "::warning title=Flaky E2E spec::$line"; done
+
+  dependencies:
+    name: Dependency scan
+    needs: changes
+    if: needs.changes.outputs.image == 'true'
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - name: Known vulnerabilities in the lockfile (HIGH and CRITICAL with a fix)
+        uses: aquasecurity/trivy-action@ed142fd0673e97e23eac54620cfb913e5ce36c25 # v0.36.0
+        with:
+          scan-type: fs
+          scan-ref: .
+          scanners: vuln,secret
+          severity: HIGH,CRITICAL
+          ignore-unfixed: true
+          exit-code: '1'
+
+  docker:
+    name: Dockerfile lint, build and image scan
+    needs: changes
+    if: needs.changes.outputs.image == 'true'
+    runs-on: ubuntu-latest
+    services:
+      postgres:
+        image: postgres:18
+        env:
+          POSTGRES_PASSWORD: postgres
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd "pg_isready -U postgres"
+          --health-interval 5s
+          --health-timeout 5s
+          --health-retries 10
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - uses: hadolint/hadolint-action@06be81baf89a55ffd0e24b8f04a4185738dd3387 # v3.5.0
+        with:
+          dockerfile: Dockerfile
+          failure-threshold: warning
+      - name: Misconfigurations in the Dockerfile
+        uses: aquasecurity/trivy-action@ed142fd0673e97e23eac54620cfb913e5ce36c25 # v0.36.0
+        with:
+          scan-type: config
+          scan-ref: .
+          severity: HIGH,CRITICAL
+          exit-code: '1'
+      # The images need the Next.js app (milestone 1); until it exists, lint and config only.
+      - id: app
+        run: |
+          if ls next.config.* >/dev/null 2>&1 && [ -f scripts/migrate.ts ]; then echo "ready=true"; else echo "ready=false"; fi >>"$GITHUB_OUTPUT"
+      - if: steps.app.outputs.ready == 'true'
+        uses: docker/setup-buildx-action@f87e5991a6d7451dcb8d9637bfbc97413f497069 # v4.4.1
+      - if: steps.app.outputs.ready == 'true'
+        name: Build web
+        uses: docker/build-push-action@c3c9e263c25d99ce0380d002d59b67737d91b0dc # v7.4.0
+        with:
+          context: .
+          target: runtime
+          secrets: |
+            npm_token=${{ secrets.GITHUB_TOKEN }}
+          build-args: GIT_SHA=${{ github.sha }}
+          tags: heydiff-web:ci
+          load: true
+          cache-from: type=gha,scope=web
+          cache-to: type=gha,scope=web,mode=max
+      - if: steps.app.outputs.ready == 'true'
+        name: Build migrate
+        uses: docker/build-push-action@c3c9e263c25d99ce0380d002d59b67737d91b0dc # v7.4.0
+        with:
+          context: .
+          target: migrate
+          secrets: |
+            npm_token=${{ secrets.GITHUB_TOKEN }}
+          tags: heydiff-migrate:ci
+          load: true
+          cache-from: type=gha,scope=web
+      - if: steps.app.outputs.ready == 'true'
+        name: Scan web
+        uses: aquasecurity/trivy-action@ed142fd0673e97e23eac54620cfb913e5ce36c25 # v0.36.0
+        with:
+          image-ref: heydiff-web:ci
+          severity: HIGH,CRITICAL
+          ignore-unfixed: true
+          exit-code: '1'
+      - if: steps.app.outputs.ready == 'true'
+        name: Scan migrate
+        uses: aquasecurity/trivy-action@ed142fd0673e97e23eac54620cfb913e5ce36c25 # v0.36.0
+        with:
+          image-ref: heydiff-migrate:ci
+          severity: HIGH,CRITICAL
+          ignore-unfixed: true
+          exit-code: '1'
+      - if: steps.app.outputs.ready == 'true'
+        name: The image runs as non-root, has no shell, and serves /readyz with the sha
+        env:
+          SHA: ${{ github.sha }}
+          SMOKE_DATABASE_URL: postgres://postgres:postgres@host.docker.internal:5432/postgres
+        run: bash scripts/docker-smoke.sh heydiff-web:ci "$SHA"
+
+  check:
+    name: check
+    if: always()
+    needs: [changes, secrets-scan, static, unit, e2e, dependencies, docker]
+    runs-on: ubuntu-latest
+    steps:
+      # A job must succeed when its flag is on and must be skipped when it is off; `changes` and the secret scan always run.
+      - env:
+          CHANGES: ${{ needs.changes.result }}
+          SECRETS: ${{ needs.secrets-scan.result }}
+          STATIC: ${{ needs.changes.outputs.lint }}:${{ needs.static.result }}
+          UNIT: ${{ needs.changes.outputs.unit }}:${{ needs.unit.result }}
+          IMAGE: ${{ needs.changes.outputs.image }}:${{ needs.dependencies.result }}:${{ needs.docker.result }}
+          E2E: ${{ needs.changes.outputs.matrix != '[]' }}:${{ needs.e2e.result }}
+        run: |
+          [ "$CHANGES" = success ] && [ "$SECRETS" = success ] || { echo "::error::changes or the secret scan ended $CHANGES / $SECRETS"; exit 1; }
+          ok() { # flag:result... ; flag true needs every result success, false needs every result skipped
+            local want=skipped flag=${1%%:*} r; [ "$flag" = true ] && want=success
+            for r in $(echo "${1#*:}" | tr : ' '); do [ "$r" = "$want" ] || { echo "::error::expected $want, got $r (flag $flag)"; return 1; }; done
+          }
+          ok "$STATIC" && ok "$UNIT" && ok "$IMAGE" && ok "$E2E"

@@ -1,0 +1,13 @@
+# Finding identity — what is stable within an iteration and what is not
+
+Read in step 4 before comparing this iteration's fix set with the previous one, and whenever
+anything names a finding in a report or a commit message. Sibling paths written `../<skill>/…` below are relative to the **skill folder** (`plugins/cct/skills/review-fix-run/`), one level up from this file.
+
+**Finding identity — what is stable and what is not.** Inside one iteration the authoritative identifier is the `id` field of `$STATE_DIR/findings.json`; it is carried through unchanged to `verdicts.json`, `verdict-<id>.json`, `fix-set.json` and `discuss.json`, and every stage report prints it as `F<id>` next to the finding's `file:line`, never as a positional index (`../role-review-vocabulary/SKILL.md` → Finding Format). That is what makes `review-code-runner`'s report and `review-fixset-triager`'s report for the same `$STATE_DIR` name the same finding with the same token — no `file:line` reconciliation needed. Two things are **not** stable and must never be matched on: `line` (shifts as earlier fixes land) and the `id` **across** iterations (each iteration commits ⇒ a new `rev-<revid>` dir whose findings are numbered 1..N from scratch, so `F2` in iteration 4 is unrelated to `F2` in iteration 3). Cross-iteration comparison therefore keys on `file` + `body` — here and in step 3's `discuss.json` dedup.
+
+## The repeated-findings comparison, in full
+
+The rev-dir retention rule, the `fix-set.json` field list and the reason behind the
+`state-restart.sh` invariant, as step 4 states them:
+
+Compare the current iteration's `$STATE_DIR/fix-set.json` with the **previous iteration's**, which lives in the sibling `rev-*` dir retained under `$STATE_BASE` (each iteration commits → a new `rev-<revid>` dir; prune-on-start keeps exactly prior + current, so the immediately-prior iteration's `fix-set.json` is always there; absent on iteration 1 → no match). A finding is "repeated" if it targets the **same file** AND has a **substantially similar `body`** (line numbers shift between iterations — do NOT match on them; `fix-set.json` carries only `{id,file,line,severity,dimension,body}`, so the `body` text is the stable key — there is no code-snippet field). If the same findings appear 2 iterations in a row → **EXIT LOOP** and report: "Review and fix disagree on these findings — manual intervention needed." No snapshot copy is needed — the prior rev-dir persists on its own; **invariant:** the loop body must not re-run `state-restart.sh` between step 3 and this step, or the prior rev-dir could be pruned before the comparison (only `review-code-runner`, in step 1 of the *next* iteration, runs it).

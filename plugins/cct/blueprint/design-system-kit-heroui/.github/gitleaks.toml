@@ -1,0 +1,17 @@
+# The secret scan's rules. CI passes this file with --config; a gitleaks config or ignore
+# file anywhere else in the repo fails the scan. Every default rule stays on.
+title = "heydiff-kit"
+
+[extend]
+useDefault = true
+
+[[allowlists]]
+description = "The redaction tests: fake tokens in the shapes the redactor must catch"
+paths = ['''^packages/redaction/test/''']
+
+[[allowlists]]
+description = "The tokens lock: sha256 hashes of the generated token files, not secrets"
+paths = ['''^packages/tokens/design/tokens\.lock\.json$''']
+regexTarget = "line"
+regexes = ['''^\s*"[^"]+":\s*"[0-9a-f]{64}",?$''']
+condition = "AND"

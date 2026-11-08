@@ -1,0 +1,33 @@
+#!/usr/bin/env bash
+# Usage: cf METHOD /path [json-body|@file.json]   — a Cloudflare v4 API call; "{account}" in the path becomes CLOUDFLARE_ACCOUNT_ID
+#        cf wrangler <args>                       — wrangler with the token and account in its environment
+# Purpose: call Cloudflare with CLOUDFLARE_API_TOKEN without the token ever reaching stdout, stderr or the process list.
+# Output: the raw JSON response (pipe to jq), or wrangler's own output.
+set -euo pipefail
+
+# The token comes from the environment; if unset, from the user's interactive zsh profile (its banner goes to /dev/null, only the value comes back on fd 3).
+zshvar() { command -v zsh >/dev/null 2>&1 && zsh -ic "print -rn -- \"\$$1\" >&3" 3>&1 >/dev/null 2>&1 || true; }
+
+export CLOUDFLARE_API_TOKEN="${CLOUDFLARE_API_TOKEN:-$(zshvar CLOUDFLARE_API_TOKEN)}"
+export CLOUDFLARE_ACCOUNT_ID="${CLOUDFLARE_ACCOUNT_ID:-$(zshvar CLOUDFLARE_ACCOUNT_ID)}"
+
+if [[ -z "$CLOUDFLARE_API_TOKEN" || -z "$CLOUDFLARE_ACCOUNT_ID" ]]; then
+  echo "cloudflare-manage: export CLOUDFLARE_API_TOKEN and CLOUDFLARE_ACCOUNT_ID in your shell profile" >&2
+  exit 1
+fi
+
+if [[ "${1:-}" == wrangler ]]; then
+  shift
+  exec npx --yes wrangler "$@"
+fi
+
+if [[ $# -lt 2 ]]; then
+  echo "usage: cf METHOD /path [json-body|@file] | cf wrangler <args>" >&2
+  exit 2
+fi
+
+method=$1 path=${2//\{account\}/$CLOUDFLARE_ACCOUNT_ID} body=${3:-}
+args=(-sS -X "$method" "https://api.cloudflare.com/client/v4$path" -H "Content-Type: application/json")
+[[ -n "$body" ]] && args+=(--data "$body")
+# The header comes from a here-string, so the token is never on the command line or in an error message.
+exec curl "${args[@]}" -H @- <<<"Authorization: Bearer $CLOUDFLARE_API_TOKEN"
