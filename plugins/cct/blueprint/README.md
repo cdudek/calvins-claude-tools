@@ -14,6 +14,22 @@ Working CI/CD and project setup copied from the HeyDiff repos on 2026-10-31. Cop
 
 Every folder also has the repo's `sdlc.json`, which `cct:sdlc-run` reads.
 
+## Node runtime rule
+
+Use only the owner-approved supported LTS majors, Node 24 or 26 (decision 2026-11-08).
+For new pins choose the current or active LTS line; never choose an end-of-life or
+maintenance-only line. `.nvmrc` is the version source; CI uses `node-version-file`,
+`engines.node` constrains the same major, and Docker build and runtime stages agree.
+The local gate checks the installed major first and fails with the required version,
+the installed version and `nvm use` before running checks. Electron bundles its own
+Node; this rule also governs the separate Node used for tooling and CI.
+
+Pin every container base by digest with a patch-version tag or version comment.
+Keep Docker updates grouped and monthly in Dependabot. Build and Trivy-scan a changed
+image before pushing; HIGH/CRITICAL findings need a dated owner acceptance with an
+expiry. When Docker is unavailable, scan the pinned bases and disclose the missing
+built-image scan in the PR. Follow the linked local-first contract for every push.
+
 ## The web pipeline
 
 Start with `web-nextjs-cloud-run/docs/deploy.md`; it explains the images, the contract the app must meet and how to turn the pipeline on.

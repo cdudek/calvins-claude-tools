@@ -33,7 +33,7 @@ What makes them hardened:
 
 - **Multi-stage.** The build toolchain never ships. The runtime is Google distroless `nodejs24-debian13`: no shell, no package manager.
 - **Non-root.** uid 65532, numeric, so a platform can verify it.
-- **Pinned.** Every base is pinned by digest; Dependabot bumps them weekly. Node 24 is the active LTS. When distroless retires a Debian release, Dependabot does not follow; check the Node version inside the new digest.
+- **Pinned.** Every base is pinned by digest; Dependabot bumps Docker digests in grouped monthly PRs. The approved Node majors are 24 or 26; keep the runtime and build stages on the same major as `.nvmrc`. When distroless retires a Debian release, Dependabot does not follow; check the Node version inside the new digest.
 - **Frozen installs.** `npm ci --ignore-scripts`: a drifted lockfile fails, and no dependency install script runs.
 - **No secrets.** `.dockerignore` keeps `.env*`, keys, `.git`, `.worktrees` and agent folders out of the context. Secrets come from Secret Manager at runtime.
 - **Read-only friendly.** The app writes nothing to its filesystem; `scripts/docker-smoke.sh` runs it with a read-only root, no capabilities and `no-new-privileges`.
