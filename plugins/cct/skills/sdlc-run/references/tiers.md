@@ -36,12 +36,12 @@ run. `ask` never auto-merges. Bot PRs are `ship`.
 
 ## CODEOWNERS
 
-`require_code_owner_review` is the only GitHub rule that is path-scoped, so it is the
-native enforcement for `ask`. It only helps with two people: the author cannot approve
-their own PR, so a single owner turns every `ask` PR into a logged admin bypass. Hence:
-`adopt` generates `CODEOWNERS` from `sdlc.json` `codeowners` × the `ask` globs, only when
-at least one login is named, and the guardrail test keeps the two in step. One list of
-logins to maintain; the file is output.
+CODEOWNERS is a team-repo choice, never installer-managed. Adopt never creates, edits or
+deletes it, including older generated files, when tiers or configured owners change.
+Teams that choose path-scoped owner review maintain their own CODEOWNERS and GitHub
+ruleset. An author cannot approve their own PR; solo-owner repos need no self-approval
+listing. The legacy `sdlc.json` `codeowners` key is accepted for compatibility and has no
+generation or deletion effect.
 
 ## Ruleset settings — learned on the first ship PR
 

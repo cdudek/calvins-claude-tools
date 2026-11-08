@@ -25,7 +25,6 @@ ARCHIVE = CHANGES / "archive"
 HOOKS = REPO_ROOT / ".claude" / "hooks"
 SETTINGS = REPO_ROOT / ".claude" / "settings.json"
 TIERS_FILE = REPO_ROOT / ".github" / "tiers.json"
-CODEOWNERS = REPO_ROOT / ".github" / "CODEOWNERS"
 
 # sdlc.json `tiers` (default true). Off: one owner, no Ship/Show/Ask, and none of its files.
 TIERS_ON = CFG.get("tiers", True)
@@ -33,7 +32,6 @@ TIER_FILES = (
     ".github/workflows/ship-show-ask.yml",
     "scripts/ship_show_ask.py",
     ".github/tiers.json",
-    ".github/CODEOWNERS",
 )
 tiers_only = pytest.mark.skipif(not TIERS_ON, reason="sdlc.json tiers=false")
 
@@ -853,27 +851,6 @@ def test_classify_picks_the_riskiest_tier() -> None:
     for glob in tiers["show"]:
         assert classify([_sample(glob)]) == "show", glob
         assert classify([_sample(glob), _sample(tiers["ask"][0])]) == "ask", glob
-
-
-@tiers_only
-def test_codeowners_is_exactly_the_ask_tier() -> None:
-    """Generated from sdlc.json codeowners x tiers.json ask; absent when no owner is named."""
-    owners = CFG.get("codeowners", [])
-    if not owners:
-        assert not CODEOWNERS.exists(), "no codeowners in sdlc.json, so no CODEOWNERS file"
-        return
-    rules = [
-        line.split("#", 1)[0].split()
-        for line in CODEOWNERS.read_text(encoding="utf-8").splitlines()
-        if line.split("#", 1)[0].strip()
-    ]
-
-    def normalise(pattern: str) -> str:
-        p = pattern.lstrip("/")
-        return p + "**" if p.endswith("/") else p
-
-    assert {normalise(r[0]) for r in rules} == set(load_tiers()["ask"])
-    assert all(r[1:] == owners for r in rules), "every ask path names every owner"
 
 
 def test_docs_and_workflows_exist_and_are_linked() -> None:
