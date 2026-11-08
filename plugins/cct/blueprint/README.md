@@ -14,11 +14,27 @@ Working CI/CD and project setup copied from the HeyDiff repos on 2026-10-31. Cop
 
 Every folder also has the repo's `sdlc.json`, which `cct:sdlc-run` reads.
 
+## Node runtime rule
+
+Use only the owner-approved supported LTS majors, Node 24 or 26 (decision 2026-11-08).
+For new pins choose the current or active LTS line; never choose an end-of-life or
+maintenance-only line. `.nvmrc` is the version source; CI uses `node-version-file`,
+`engines.node` constrains the same major, and Docker build and runtime stages agree.
+The local gate checks the installed major first and fails with the required version,
+the installed version and `nvm use` before running checks. Electron bundles its own
+Node; this rule also governs the separate Node used for tooling and CI.
+
+Pin every container base by digest with a patch-version tag or version comment.
+Keep Docker updates grouped and monthly in Dependabot. Build and Trivy-scan a changed
+image before pushing; HIGH/CRITICAL findings need a dated owner acceptance with an
+expiry. When Docker is unavailable, scan the pinned bases and disclose the missing
+built-image scan in the PR. Follow the linked local-first contract for every push.
+
 ## The web pipeline
 
 Start with `web-nextjs-cloud-run/docs/deploy.md`; it explains the images, the contract the app must meet and how to turn the pipeline on.
 
-- **`Dockerfile`:** four stages. `deps` installs from the lockfile with `--ignore-scripts` (the npm token arrives as a BuildKit secret, so it is in no layer), `build` makes the Next.js standalone output, `migrate-build` bundles the Drizzle migration runner with esbuild, and two final targets on distroless Node (non-root, no shell): `runtime` and `migrate`. Bases are pinned by digest. `GIT_SHA` is baked in so `/readyz` can report it.
+- **`Dockerfile`:** a shared hardened runtime base plus build stages. `deps` installs from the lockfile with `--ignore-scripts` (the npm token arrives as a BuildKit secret, so it is in no layer), `build` makes the Next.js standalone output, `migrate-build` bundles the Drizzle migration runner with esbuild, and two final targets on Chainguard Node (non-root, no shell): `runtime` and `migrate`. Bases are pinned by digest. `GIT_SHA` is baked in so `/readyz` can report it.
 - **`.dockerignore`:** keeps `.git`, `.env*`, keys and docs out of the build context.
 - **`.github/workflows/ci.yml`:** on every PR and push: a secrets scan; format check, lint, typecheck, unit tests and the Playwright smoke run; a Trivy scan of dependencies; hadolint, a Docker build and a Trivy scan of the image. `scripts/docker-smoke.sh` runs the built image locally the same way.
 - **`build.yml`:** reusable; builds both images with Buildx, scans them with Trivy, pushes them to Artifact Registry with SBOM and provenance, tagged by SHA and content (`scripts/image-tags.sh`).

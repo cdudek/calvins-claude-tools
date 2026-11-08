@@ -39,7 +39,7 @@
     "appId": "com.cdudek.snapmark",
     "afterPack": "scripts/after-pack.cjs",
     "productName": "Snapmark",
-    "copyright": "© 2026 Calvin Dudek",
+    "copyright": "\u00a9 2026 Calvin Dudek",
     "files": [
       "dist/src/**",
       "assets/*.png",
@@ -82,5 +82,8 @@
       "provider": "generic",
       "url": "https://storage.googleapis.com/UPDATES_BUCKET/mac"
     }
+  },
+  "engines": {
+    "node": "24.x"
   }
 }

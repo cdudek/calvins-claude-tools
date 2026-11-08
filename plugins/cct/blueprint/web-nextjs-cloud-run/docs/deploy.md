@@ -31,9 +31,9 @@ One `Dockerfile`, two images, both in `europe-west1-docker.pkg.dev/GCP_PROJECT_I
 
 What makes them hardened:
 
-- **Multi-stage.** The build toolchain never ships. The runtime is Google distroless `nodejs24-debian13`: no shell, no package manager.
+- **Multi-stage.** The build toolchain never ships. The runtime is Chainguard Node 26 with BusyBox and npm removed: no shell, no package manager.
 - **Non-root.** uid 65532, numeric, so a platform can verify it.
-- **Pinned.** Every base is pinned by digest; Dependabot bumps them weekly. Node 24 is the active LTS. When distroless retires a Debian release, Dependabot does not follow; check the Node version inside the new digest.
+- **Pinned.** Every base is pinned by digest; Dependabot bumps Docker digests in grouped monthly PRs. The approved Node majors are 24 or 26; keep the runtime and build stages on the same major as `.nvmrc`. The public `latest` tag can change majors; check its Node version against `.nvmrc` before accepting a digest update.
 - **Frozen installs.** `npm ci --ignore-scripts`: a drifted lockfile fails, and no dependency install script runs.
 - **No secrets.** `.dockerignore` keeps `.env*`, keys, `.git`, `.worktrees` and agent folders out of the context. Secrets come from Secret Manager at runtime.
 - **Read-only friendly.** The app writes nothing to its filesystem; `scripts/docker-smoke.sh` runs it with a read-only root, no capabilities and `no-new-privileges`.
@@ -65,7 +65,7 @@ The images build only when the app meets this contract:
 
 ## Database development and migrations
 
-Use Node 24 and `make dev-db` to connect to your own Cloud SQL database. The app
+Use Node 26 and `make dev-db` to connect to your own Cloud SQL database. The app
 listens on `127.0.0.1:3000`; a phone uses staging. Database commands load
 `.env.local`, then `.env`, and preserve environment variables supplied by the
 shell or Cloud Run. There is no second local Postgres setup.
