@@ -1,6 +1,8 @@
 import contextlib
 import io
 import json
+import os
+import subprocess
 import tempfile
 import unittest
 from pathlib import Path
@@ -68,6 +70,48 @@ class ProjectSetupTest(unittest.TestCase):
         code, out = run(self.root, "--check")
         self.assertEqual(code, 1)
         self.assertIn("unknown floor 'Nope'", out)
+
+    def test_new_repo_gets_readable_template_checker_and_working_fixtures(self):
+        self.assertEqual(run(self.root, "--yes")[0], 0)
+        template = (self.root / ".github/PULL_REQUEST_TEMPLATE.md").read_text()
+        self.assertIn("Decision4 writing rules:", template)
+        self.assertIn("### How hard is it to undo this PR after merging?", template)
+        result = subprocess.run(["bash", "tests/decision4/run.sh"], cwd=self.root,
+                                capture_output=True, text=True)
+        self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
+        files = self.root / "changed.txt"
+        files.write_text(".github/scripts/decision4.py\n")
+        body = """### How hard is it to undo this PR after merging?
+**🟠 Migrate** — Restore the gate and coordinate affected repository checks.
+- **Recovery steps:** Revert the gate and rerun validation in affected repos.
+- **Responsible for recovery:** Repository maintainer
+- **Classification change:** None
+"""
+        env = dict(os.environ, BODY=body, FILES=str(files), MAP=str(self.root / "boundary-map.yaml"))
+        result = subprocess.run(["python3", ".github/scripts/decision4.py"], cwd=self.root,
+                                env=env, capture_output=True, text=True)
+        self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
+        self.assertIn("computed floor: Migrate", result.stdout)
+        env["BODY"] = body.replace("**🟠 Migrate**", "**🟢 Undo**")
+        result = subprocess.run(["python3", ".github/scripts/decision4.py"], cwd=self.root,
+                                env=env, capture_output=True, text=True)
+        self.assertNotEqual(result.returncode, 0)
+
+    def test_existing_template_and_runner_keep_repo_content(self):
+        (self.root / ".github").mkdir()
+        template = self.root / ".github/pull_request_template.md"
+        template.write_text("## Custom checklist\n- [ ] Human review\n")
+        runner = self.root / "tests/decision4/run.sh"
+        runner.parent.mkdir(parents=True)
+        runner.write_text("# repo-owned invocation\n")
+        run(self.root, "--yes")
+        self.assertIn("## Custom checklist\n- [ ] Human review", template.read_text())
+        self.assertIn("Decision4 writing rules:", template.read_text())
+        self.assertNotIn("PULL_REQUEST_TEMPLATE.md", [p.name for p in (self.root / ".github").iterdir()])
+        self.assertEqual(runner.read_text(), "# repo-owned invocation\n")
+        before = template.read_text()
+        run(self.root, "--yes")
+        self.assertEqual(template.read_text(), before)
 
     def test_pointer_mode_when_an_import_carries_the_contract(self):
         (self.root / "AGENTS.md").write_text(ps.CONTRACT)

@@ -1230,8 +1230,8 @@ def main() -> int:
         _write(dest, render(src.read_text(encoding="utf-8"), values))
 
     # --- GitHub issue and PR templates
-    # Written once, then the repo owns them: a team that adds a field to its bug form should
-    # not have it reverted by the next `adopt`. The shapes mirror the Linear templates in
+    # Issue forms are written once, then repo-owned. The PR template retains repo content
+    # while its Decision4 block refreshes below. The shapes mirror the Linear templates in
     # cct:linear-manage, so an issue reads the same whichever tracker it started in.
     for src in sorted((TPL / "github" / "ISSUE_TEMPLATE").iterdir()):
         write(
@@ -1239,10 +1239,17 @@ def main() -> int:
             src.read_text(encoding="utf-8"),
             keep=True,
         )
-    write(
-        ROOT / ".github" / "PULL_REQUEST_TEMPLATE.md",
-        (TPL / "github" / "PULL_REQUEST_TEMPLATE.md").read_text(encoding="utf-8"),
-        keep=True,
+    # Share the offline Decision4 bundle with project-repository-run. Existing
+    # boundary policy and the repository's way of running the gate stay its own.
+    from decision4_assets import asset_changes
+
+    for path, text in asset_changes(ROOT):
+        _write(path, text)
+    manual.append(
+        "Decision4: review the starter boundary-map.yaml only if newly created; existing maps "
+        "and check runners are preserved. Install PyYAML for .github/scripts/decision4.py, "
+        "run bash tests/decision4/run.sh, and wire actual PR-body/changed-path validation "
+        "into the repo-owned local gate; fixtures use a synthetic test map."
     )
 
     # --- REVIEW.md (kept once written), docs, CLAUDE.md
