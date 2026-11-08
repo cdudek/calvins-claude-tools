@@ -10,10 +10,10 @@ description: >-
   feature, bug fix, refactor, docs change, chore, hotfix, milestone or project, asks "how do we
   do X here", or says "run sdlc", "adopt sdlc", "sdlc status". Subcommands: "adopt" installs the
   chain, "status" lists open changes and gates.
-allowed-tools: "Read Grep Glob Edit Write Agent Skill AskUserQuestion Bash(bash */sdlc-run/scripts/*) Bash(python3 */sdlc-run/scripts/*) Bash(python3 */sdlc-run/templates/scripts/sdlc_version.py*) Bash(python3 scripts/sdlc_version.py*) Bash(python3 scripts/verify_gate.py *) Bash(python3 scripts/sdlc_status.py *) Bash(scripts/ci-local *) Bash(git *) Bash(gh *) Bash(bd *) Bash(plannotator *) Bash(make *) Bash(pnpm *) Bash(uv *) Bash(npx *) EnterWorktree mcp__claude_ai_Linear__* mcp__linear__*"
+allowed-tools: "Read Grep Glob Edit Write Agent Skill AskUserQuestion Bash(bash */sdlc-run/scripts/*) Bash(python3 */sdlc-run/scripts/*) Bash(python3 */sdlc-run/templates/scripts/sdlc_version.py*) Bash(python3 scripts/sdlc_version.py*) Bash(python3 scripts/verify_gate.py *) Bash(python3 scripts/sdlc_status.py *) Bash(scripts/ci-local *) Bash(wt *) Bash(git *) Bash(gh *) Bash(bd *) Bash(plannotator *) Bash(make *) Bash(pnpm *) Bash(uv *) Bash(npx *) EnterWorktree mcp__claude_ai_Linear__* mcp__linear__*"
 user_invocable: true
 metadata:
-  version: 3.9.1
+  version: 3.9.2
   author: calvindudek
 effort: high
 ---
@@ -54,6 +54,8 @@ Read `sdlc.json` first: `tracker`, `checks`, `milestones`, `projects`, `hotfix`,
 `ux`, `protected`, `planGate` and the v2 keys. No file means the repo is not adopted: run
 `adopt`. **Project values come from the repo** (sdlc.json, PRODUCT.md, DESIGN.md); where it
 defines nothing, the kit default applies and every report names the defaults it used.
+
+Read the [shared worktree policy](../../references/worktree-usage.md) for every lifecycle operation; Stage 1.0 owns its one-time installation preflight.
 
 ## Routing
 
@@ -166,8 +168,8 @@ Only a project that asks for a branch (`project.branch: true`) adds one level ab
   milestone PRs merge with a merge commit, so it needs no rebase.
 - One go (default): the build works in the supervisor's worktree on `milestone/<slug>-<n>`
   itself, a commit per feature. Parallel builders, when used, start from the milestone head and
-  merge back locally, one at a time.
-- Feature PRs: feature worktrees branch from the milestone: `git worktree add` from
+  merge back locally, one at a time, through the shared policy’s `wt merge` flow (Git fallback).
+- Feature PRs: feature worktrees use the shared Worktrunk-first create flow from
   `origin/milestone/<slug>`, then `EnterWorktree path=` (`references/stages.md` 1.2). Their
   branch names contain the change slug.
 - Builders are `cct:sdlc-feature-builder` agents, at most 4 at once, each dispatched with

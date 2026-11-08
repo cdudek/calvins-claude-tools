@@ -31,8 +31,11 @@ every stage:
 
 ## Stage 1 — Intent
 
+Worktree lifecycle commands follow the [shared worktree policy](../../../references/worktree-usage.md).
+
 ### 1.0 Preconditions
 
+- **Worktrunk preflight:** check `command -v wt`; if missing, use the shared policy’s single `AskUserQuestion` installation prompt, then continue with Git on decline or installation failure. Reuse a setup answer from this session.
 - **Steps:** Run `status.sh`; `templates=stale` → run `adopt` first. No `tracker` in `sdlc.json`:
   run `scripts/tracker.py detect`, ask, set it up (`references/trackers.md`). Check plannotator, the tracker
   MCP and `gh`; say once what is missing and continue where the chain allows.
@@ -90,8 +93,9 @@ every stage:
      the named milestone's `milestone.md`. When the change names a design, add one line for it
      under that design's `## Milestones` (the guardrail test and `status` both read it).
   5. The worktree, from the main checkout (`ExitWorktree keep` first when in one):
-     `git fetch origin && git worktree add --no-track -b <branch> .worktrees/<slug> <base>`,
-     then `EnterWorktree path=<repo>/.worktrees/<slug>`. One go: `<branch>` is
+     use the shared create flow: fetch, then `wt switch -c <branch> -b <base> --no-cd --format json`
+     with the exact `.worktrees/<slug>` path override (plain Git fallback in the policy),
+     then read `.path` and `EnterWorktree path=<returned-path>`. One go: `<branch>` is
      `milestone/<slug>-<n>` itself and `<base>` is `<parent>` (or, for a milestone the plan
      marks `needs: M<k>`, the local predecessor branch). Feature PRs: `<base>` is
      `origin/milestone/<slug>`. Hotfix: `origin/<defaultBranch>`. `<branch>` contains the slug.
@@ -364,7 +368,8 @@ disappear.
   go the milestone exists only locally, so the builder's first act is `git reset --hard <sha>`;
   without it a second builder never sees the features already committed. It never checks out
   the milestone branch. The supervisor's worktree holds the milestone branch and is the one
-  integrator: it merges builder branches one at a time and never while a close runs. Independent features
+  integrator: it merges builder branches one at a time with the shared policy’s `wt merge`
+  command (Git fallback), and never while a close runs. Independent features
   build at the same time. Features that edit the same files run one after another, the second
   cut after the first has merged.
 - **The supervisor plans, dispatches, judges and merges.** The session that runs this skill edits
@@ -565,8 +570,8 @@ Only when `decisions.json` has a `project`, and only once its last milestone has
 1. Before the PR into the default branch merges, its last commit does
    `git mv changes/<id> changes/archive/<year>/<year-month>/<id>`, sets `archived_at` and reads
    `changes(<id>): archived`: no separate PR after the merge. After it merges: comment the merge
-   SHA in the tracker, `ExitWorktree keep`, then `git worktree remove .worktrees/<slug>` (a worktree entered by path
-is never removed by `ExitWorktree`). Move the tracker forward only, never backwards.
+   SHA in the tracker, `ExitWorktree keep`, then remove the owned path using the shared policy’s `wt remove`
+   command (Git fallback; a worktree entered by path is never removed by `ExitWorktree`). Move the tracker forward only, never backwards.
 2. After release: read the success measure from PostHog (`cct:posthog-manage` or the insight
    named in `intent.md`) and write it in the tracker at once and under `## Outcome` in the
    archived `milestone.md`, committed with the next change's PR, never a PR of its own.

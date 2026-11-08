@@ -20,20 +20,9 @@ The second command gives you the PR's branch name.
 
 ## Step 2: Enter Worktree
 
-`EnterWorktree`'s `name` parameter rejects `@`, and Dependabot branches (`dependabot/<ecosystem>/<pkg>-<version>`) always contain `/` — which the hook mis-derives (it truncates the branch name to the last path segment and nests directories instead of creating a flat sibling). Neither `name=` form works here. Instead:
+Follow the [shared worktree policy](../../../../references/worktree-usage.md) and the same [PR entry flow](../../../review-feedback-run/references/pr-worktree.md) used by feedback and code review. List first (`wt list --format json`, Git fallback), reuse the PR branch's worktree if present, and fetch an absent local head with `git fetch origin <branch_name>:<branch_name>`.
 
-1. Fetch the branch at the exact PR commit: `git fetch origin <branch_name>:<branch_name>`
-2. Create the worktree manually: `git worktree add <workspace-dir>/dependabot-<pkgname>-<pr_number> <branch_name>`
-3. `EnterWorktree path="<that-path>"` — accept the one-time confirmation prompt; it's expected and the only correct option for this branch shape.
-
-Fetching first is **critical**: it pulls the branch straight from `origin` at the exact PR commit, so `git worktree add` checks it out directly — no base-branch guessing, no risk of building from the wrong commit.
-
-Example:
-```sh
-git fetch origin dependabot/bundler/fastly-16.0.0:dependabot/bundler/fastly-16.0.0
-git worktree add ../dependabot-fastly-5043 dependabot/bundler/fastly-16.0.0
-```
-`EnterWorktree(path="/abs/path/to/dependabot-fastly-5043")`
+Create an absent worktree at `<repo>/.worktrees/dependabot-<pkgname>-<pr_number>`: `wt switch <branch_name> --no-cd --format json` with the policy’s exact path override, or `git worktree add <path> <branch_name>` when Worktrunk is missing. Read the returned path, then `EnterWorktree path=<path>`. This handles branches containing `/` without name parsing. Verify HEAD against the PR head SHA, and never replace dirty or divergent work automatically.
 
 After entering, verify you're on the correct commit:
 ```

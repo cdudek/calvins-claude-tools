@@ -1,7 +1,7 @@
 ---
 name: review-feedback-run
 description: "Coordinates handling of code feedback from a GitHub PR (worktree, CI failures, merge base, push, per-thread resolve), from findings in the conversation, from free text or from a fix set: it delegates diagnosis and disposition to cct:review-feedback-analyze, then drives test-first remediation (a failing test, then the minimal fix, through the agents cct:test-behavior-writer and cct:review-fix-implementer), verifies, and finalizes the PR. Use when someone says 'address the review feedback', 'fix the review comments', 'resume this PR', 'the PR is failing CI', 'resolve the review threads', 'rebase and fix this PR'. Skip for: opening a new PR, owned by cct:git-pr-run; diagnosis without any change, owned by cct:review-feedback-analyze."
-allowed-tools: "Bash(gh *) Bash(git *) Bash(bash */review-feedback-run/scripts/*) Bash(bash */github-manage/scripts/*) Read Write Edit Grep Glob Agent EnterWorktree ExitWorktree mcp__claude_ai_Linear__save_issue mcp__linear__save_issue mcp__claude_ai_Linear__list_teams mcp__linear__list_teams mcp__claude_ai_Linear__list_issue_labels mcp__linear__list_issue_labels"
+allowed-tools: "Bash(gh *) Bash(wt *) Bash(git *) Bash(bash */review-feedback-run/scripts/*) Bash(bash */github-manage/scripts/*) Read Write Edit Grep Glob Agent EnterWorktree ExitWorktree mcp__claude_ai_Linear__save_issue mcp__linear__save_issue mcp__claude_ai_Linear__list_teams mcp__linear__list_teams mcp__claude_ai_Linear__list_issue_labels mcp__linear__list_issue_labels"
 user_invocable: true
 metadata:
   version: 1.1.0

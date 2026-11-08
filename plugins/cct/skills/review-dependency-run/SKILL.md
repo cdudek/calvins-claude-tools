@@ -1,7 +1,7 @@
 ---
 name: review-dependency-run
 description: "Runs the review of a dependency update (Dependabot or manual bump) as one workflow: researches changelogs and breaking changes, cross-checks how the repo uses the package, fixes failures the bump causes, scores the risk and posts findings. Auto-detects the ecosystem (Ruby, Node, Python). Use when someone says 'review this dependabot PR', 'review the dependency bump', 'is this version bump safe', 'check the dependency update', 'assess this package upgrade'. Skip for: security review of code changes, owned by cct:review-security-run; general code review, owned by cct:review-code-run."
-allowed-tools: "Bash(gh *), Bash(git *), Bash(make *), Read, Grep, Glob, Agent, WebSearch, WebFetch"
+allowed-tools: "Bash(gh *), Bash(wt *) Bash(git *), Bash(make *), Read, Grep, Glob, Agent, WebSearch, WebFetch"
 user_invocable: true
 metadata:
   version: 1.0.0

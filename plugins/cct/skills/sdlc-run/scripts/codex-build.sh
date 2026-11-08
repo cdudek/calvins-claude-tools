@@ -1,4 +1,6 @@
 #!/usr/bin/env bash
+# Worktree lifecycle belongs to the supervisor: see ../../../references/worktree-usage.md.
+# This wrapper consumes the returned path; it never creates or switches a worktree.
 # Usage: codex-build.sh --worktree <path> --change <id> --brief <file> --model <M> --reasoning <R> [--out <dir>]
 # Purpose: Runs ONE feature row or fix part of an sdlc-run change as a headless Codex builder
 #          (`sdlc.json` `builders: "codex"`), in the worktree the supervisor cut for it, with

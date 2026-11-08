@@ -17,8 +17,7 @@ How Calvin works with coding agents. Each rule came from a real mistake; the rea
 
 ## Branches, worktrees and PRs
 
-- A worktree lives at `<repo>/.worktrees/<name>`, always. `.worktrees/` is git-ignored globally and in `.git/info/exclude`. If one appears anywhere else, stop and fix the hook first.
-- Branch from a freshly fetched base: `git fetch origin && git checkout -b <name> origin/main`. Local `main` is usually behind.
+- Create, list, switch, integrate builders and remove worktrees through the [shared Worktrunk-first policy](../references/worktree-usage.md), with Git fallback.
 - Before handing over a PR, read `gh pr view <n> --json mergeStateStatus,autoMergeRequest`. `BEHIND` → `gh pr update-branch <n>` (a merge; never `--rebase` a milestone or project branch) and wait for CI; `BLOCKED` → name the missing check or review; `CLEAN` → hand it over. Green CI is not the same as mergeable.
 - Arm auto-merge on anything that can merge itself: `gh pr merge <n> --merge --auto` for a milestone or project PR (a merge commit keeps its Conventional Commit history and spares a stacked milestone a rebase), `--squash --auto` for anything else. On a milestone PR arm it once the gate passed and no Critical or High finding is open; ask only when one would be deferred.
 - Stack branches only for a real code dependency, and say "Stacked on #A, merge after it" in the body.

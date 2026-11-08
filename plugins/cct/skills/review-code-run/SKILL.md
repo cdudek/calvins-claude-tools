@@ -1,7 +1,7 @@
 ---
 name: review-code-run
 description: "Coordinates a code review as independent evidence plus finding validation: PR modes (pr, pr-deep, pr-max), local changes (changes, changes-max) or specific files (files, files-max), with a second independent model (OpenAI Codex CLI) when it is installed. It delegates the review passes to the agents cct:review-code-runner, cct:review-code-reviewer and cct:review-dimensions-selector, acceptance-criteria grading to cct:review-criteria-auditor and every finding to cct:review-finding-validator, then merges and posts the report. Covers code correctness only. Use when someone says 'review this PR', 'run a code review on my changes', 'deep review of these files', 'check this PR for bugs', 'co-review with codex'. Skip for: security-focused differential review, owned by cct:review-security-run; UX critique of a PR's UI, owned by cct:ux-assessment-run; dependency bumps, owned by cct:review-dependency-run."
-allowed-tools: "Bash(gh *) Bash(git *) Bash(bash */review-code-run/scripts/*) Read Grep Glob Agent EnterWorktree"
+allowed-tools: "Bash(gh *) Bash(wt *) Bash(git *) Bash(bash */review-code-run/scripts/*) Read Grep Glob Agent EnterWorktree"
 user_invocable: true
 metadata:
   version: 2.1.0

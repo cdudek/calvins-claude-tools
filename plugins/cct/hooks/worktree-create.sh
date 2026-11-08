@@ -24,7 +24,7 @@ INPUT=$(cat)
 RAW_NAME=$(echo "$INPUT" | jq -r '.name // empty')
 CWD=$(echo "$INPUT" | jq -r '.cwd // "."')
 
-GIT_ROOT=$(cd "$CWD" && git rev-parse --git-common-dir 2>/dev/null | xargs -I{} sh -c 'cd "{}" && cd .. && pwd')
+GIT_ROOT=$(cd "$CWD" && git rev-parse --git-common-dir 2>/dev/null | xargs -I{} sh -c 'cd "{}" && cd .. && pwd -P')
 [ -n "$GIT_ROOT" ] || { echo "Not a git repository: $CWD" >&2; exit 1; }
 
 # NEVER NEST. A second clone of the repo was sitting at
@@ -47,6 +47,7 @@ IFS='@' read -r RAW_PATH TARGET_BRANCH BASE_BRANCH <<< "$RAW_NAME"
 NAME="${RAW_PATH##*/}"
 [ -z "$NAME" ] && NAME="${TARGET_BRANCH##*/}"
 [ -z "$NAME" ] && NAME="wt-$(date +%s)"
+case "$NAME" in .|..) echo "Invalid worktree name: $NAME" >&2; exit 1 ;; esac
 WORKTREE_PATH="$GIT_ROOT/.worktrees/$NAME"
 
 [ -z "$TARGET_BRANCH" ] && TARGET_BRANCH="$NAME"
@@ -63,7 +64,7 @@ grep -qxF '.worktrees/' "$EXCLUDE" 2>/dev/null || echo '.worktrees/' >> "$EXCLUD
 # see or update the main checkout, so "whatever is checked out there" starts stale.
 if [ -z "$BASE_BRANCH" ]; then
     if git -C "$GIT_ROOT" remote get-url origin > /dev/null 2>&1; then
-        git -C "$GIT_ROOT" fetch -q origin > /dev/null 2>&1
+        git -C "$GIT_ROOT" fetch -q origin || { echo "Failed to fetch origin; refusing a stale base" >&2; exit 1; }
         DEFAULT=$(git -C "$GIT_ROOT" symbolic-ref -q --short refs/remotes/origin/HEAD 2>/dev/null | sed 's#^origin/##')
         if [ -z "$DEFAULT" ]; then
             for cand in master main; do
@@ -80,21 +81,37 @@ if [ -z "$BASE_BRANCH" ]; then
     [ -n "$BASE_BRANCH" ] || BASE_BRANCH=HEAD
 fi
 
+# See ../references/worktree-usage.md. Never invoke the shell integration or prompt.
+if command -v wt >/dev/null 2>&1; then
+    PATH_CONFIG="worktree-path = $(printf '%s' "$WORKTREE_PATH" | jq -Rs .)"
+    if git -C "$GIT_ROOT" show-ref --verify --quiet "refs/heads/$TARGET_BRANCH"; then
+        RESULT=$(command wt -C "$GIT_ROOT" switch "$TARGET_BRANCH" --no-cd --format json --no-hooks --config-set "$PATH_CONFIG")
+    else
+        RESULT=$(command wt -C "$GIT_ROOT" switch -c "$TARGET_BRANCH" -b "$BASE_BRANCH" --no-cd --format json --no-hooks --config-set "$PATH_CONFIG")
+    fi
+    STATUS=$?
+    # Creation can succeed before a later error: never fall back and create twice.
+    [ "$STATUS" -eq 0 ] || { echo "Worktrunk failed: $RESULT" >&2; exit "$STATUS"; }
+    CREATED_PATH=$(printf '%s' "$RESULT" | jq -er '.path') || exit 1
+    [ "$CREATED_PATH" = "$WORKTREE_PATH" ] || { echo "Branch is checked out elsewhere: $CREATED_PATH" >&2; exit 1; }
+    if [ "$(printf '%s' "$RESULT" | jq -r '.created_branch')" = true ]; then
+        git -C "$GIT_ROOT" branch --unset-upstream "$TARGET_BRANCH" >/dev/null 2>&1 || true
+    fi
+    cd "$CREATED_PATH" && pwd
+    exit $?
+fi
+
 RESOLVED_PATH=$(cd "$WORKTREE_PATH" 2>/dev/null && pwd)
-if [ -n "$RESOLVED_PATH" ] && git -C "$GIT_ROOT" worktree list 2>/dev/null | grep -q "$RESOLVED_PATH"; then
+if [ -n "$RESOLVED_PATH" ] && git -C "$GIT_ROOT" worktree list --porcelain | grep -qxF "worktree $RESOLVED_PATH"; then
     echo "$RESOLVED_PATH"
     exit 0
 fi
 
 mkdir -p "$(dirname "$WORKTREE_PATH")" > /dev/null 2>&1
-
-if git -C "$GIT_ROOT" rev-parse --verify "refs/heads/$TARGET_BRANCH" > /dev/null 2>&1; then
-    git -C "$GIT_ROOT" worktree add "$WORKTREE_PATH" "$TARGET_BRANCH" > /dev/null 2>&1
+if git -C "$GIT_ROOT" show-ref --verify --quiet "refs/heads/$TARGET_BRANCH"; then
+    git -C "$GIT_ROOT" worktree add "$WORKTREE_PATH" "$TARGET_BRANCH" >&2
 else
-    # --no-track: a branch cut from origin/master must not push back to master.
-    git -C "$GIT_ROOT" worktree add --no-track -b "$TARGET_BRANCH" "$WORKTREE_PATH" "$BASE_BRANCH" > /dev/null 2>&1
+    git -C "$GIT_ROOT" worktree add --no-track -b "$TARGET_BRANCH" "$WORKTREE_PATH" "$BASE_BRANCH" >&2
 fi
-
 [ $? -ne 0 ] && echo "Failed to create worktree (branch=$TARGET_BRANCH, base=$BASE_BRANCH)" >&2 && exit 1
-
 cd "$WORKTREE_PATH" && pwd
