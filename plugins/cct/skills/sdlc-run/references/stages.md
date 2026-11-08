@@ -596,3 +596,13 @@ Only when `decisions.json` has a `project`, and only once its last milestone has
    failed runs of this scope), review rounds, elapsed seconds and open findings. Quote the
    milestone's block in `milestone.md` under `## Outcome` so a slow or retry-heavy change is
    visible later.
+
+## PR bodies and milestone close reports
+
+Read [scannable bodies and the full example](pr-body.md) before writing any feature,
+milestone or project PR. Use What → Why → Proof → Before merge (only if open), then the
+repo's exact Decision4 section when `boundary-map.yaml` exists. The milestone report,
+validation link, `Closes <KEY>` and exact-head gate results are bold-labelled bullets in
+the appropriate sections; preserve each required gate line verbatim inside its bullet.
+At Migrate/Answer, put the choice under `## Decision record` using Chose, Over, Because
+and Commits us to as bold labels. Never use “Repair, choice story:” as a heading.

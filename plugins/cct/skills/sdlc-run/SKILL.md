@@ -13,7 +13,7 @@ description: >-
 allowed-tools: "Read Grep Glob Edit Write Agent Skill AskUserQuestion Bash(bash */sdlc-run/scripts/*) Bash(python3 */sdlc-run/scripts/*) Bash(python3 */sdlc-run/templates/scripts/sdlc_version.py*) Bash(python3 scripts/sdlc_version.py*) Bash(python3 scripts/verify_gate.py *) Bash(python3 scripts/sdlc_status.py *) Bash(scripts/ci-local *) Bash(wt *) Bash(git *) Bash(gh *) Bash(bd *) Bash(plannotator *) Bash(make *) Bash(pnpm *) Bash(uv *) Bash(npx *) EnterWorktree mcp__claude_ai_Linear__* mcp__linear__*"
 user_invocable: true
 metadata:
-  version: 3.9.4
+  version: 3.9.5
   author: calvindudek
 effort: high
 ---
@@ -56,6 +56,18 @@ Read `sdlc.json` first: `tracker`, `checks`, `milestones`, `projects`, `hotfix`,
 defines nothing, the kit default applies and every report names the defaults it used.
 
 Read the [shared worktree policy](../../references/worktree-usage.md) for every lifecycle operation; Stage 1.0 owns its one-time installation preflight.
+
+## Scannable PR text (required)
+
+- **Order:** `## What` → `## Why` → `## Proof` → `## Before merge` (only while something is open) → the repo's Decision4 section (only with `boundary-map.yaml`) → `## Decision record` (only at Migrate/Answer).
+- **Bullets:** Every section is a list; start each bullet with a bold label (`- **Source plan:** 0 adds, 8 updates, 38 destroys.`). Keep one idea per bullet, at most two lines, and no paragraph longer than two sentences. Keep checklist syntax and bold-label the item.
+- **Proof:** Name the check and result (`- **Unit tests:** 1,320 passed.`). Put links on the label or result, never a bare URL in prose. Preserve claims and human checklist attestations when restructuring an existing body.
+- **Decision4:** When the repo has a boundary map, read it and copy the exact readable section from its PR template. Select its highest applicable class in bold with one colour circle and a sentence explaining recovery; use bold-labelled Recovery steps (numbered for multiple steps), optional Work preserved, Responsible for recovery (a named person at Answer), and Classification change. Keep the Recovery levels legend collapsed. Never author old plain `Decision-Class:` lines.
+- **Decision record:** At Migrate/Answer use `## Decision record` with bold-labelled bullets: Chose, Over, Because, Commits us to. Never use “Repair, choice story:” headings; Repair needs no decision record.
+- **Milestone and review text:** The same layout covers milestone-close PRs, issue bodies and PR comments. Put addressed feedback under What, its rationale under Why and its check results under Proof. A short thread reply can be one bold-labelled bullet; include only applicable sections.
+- **Validation:** Validate the proposed body before pushing and the actual body after creation or edits through the repo's Decision4 gate when installed. Use `--body-file`; scannable formatting applies even without Decision4.
+
+Read the full [body example](references/pr-body.md) before writing a PR, milestone-close body, issue or review reply.
 
 ## Routing
 
