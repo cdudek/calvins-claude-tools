@@ -1442,3 +1442,16 @@ def test_dimension_comes_from_the_block_header():
         "review-code-reviewer no longer distinguishes the axis from a category, so the "
         "confusion this rule cleans up keeps being produced"
     )
+
+
+def test_long_criteria_list_keeps_source_without_sigpipe(tmp_path):
+    """Source extraction must consume a list larger than a pipe buffer."""
+    criteria = [f"- Criterion {i}: " + "preserve the complete acceptance evidence " * 6 for i in range(5000)]
+    ac, _ = _gate(
+        "[REF] ENG-901 (closes)\nAcceptance criteria:\n" + "\n".join(criteria) + "\n",
+        tmp_path,
+    )
+    assert ac["mode"] == "ac"
+    assert ac["source"] == "ENG-901"
+    assert len(ac["criteria"]) == len(criteria)
+    assert ac["criteria"][-1]["text"].startswith("Criterion 4999:")

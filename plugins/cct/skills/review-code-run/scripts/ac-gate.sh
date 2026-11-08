@@ -132,7 +132,10 @@ fi
 
 # The ref of the block that fed the first criterion. Informational only — the audit reads
 # `criteria`, never `source` — but a wrong ticket in the report is still a wrong report.
-SRC="$(printf '%s' "$ROWS" | head -1 | cut -f1)"
+# Read the first row and field in the shell: an early-closing head can SIGPIPE
+# printf under pipefail once the criteria exceed the pipe buffer.
+SRC="${ROWS%%$'\n'*}"
+SRC="${SRC%%$'\t'*}"
 
 printf '%s\n' "$CRIT" | jq -R -s --arg src "$SRC" '
   {mode: "ac",
