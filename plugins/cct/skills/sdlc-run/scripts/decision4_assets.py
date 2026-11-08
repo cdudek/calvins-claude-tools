@@ -26,16 +26,22 @@ def merge_pr_template(text):
     match = re.search(r"^#{2,3} How hard is it to undo this PR after merging\?\s*$", text, re.M)
     if not match:
         return text.rstrip() + "\n\n" + pr_section()
-    start = text.rfind("<!--\nDecision4 writing rules:", 0, match.start())
-    if start < 0:
-        start = match.start()
+    start = match.start()
+    prefix = text[:start]
+    comment = prefix.rfind("<!--\nDecision4 writing rules:")
+    if comment >= 0:
+        end_comment = prefix.find("-->", comment)
+        if end_comment >= 0:
+            # The writing comment may precede repository-owned sections. Replace
+            # only the comment, never the What/checklist/rules text after it.
+            prefix = prefix[:comment] + prefix[end_comment + 3 :].lstrip("\n")
     details = text.find("</details>", match.end())
     if details >= 0:
         end = details + len("</details>")
     else:
         following = re.search(r"^#{1,3} ", text[match.end() :], re.M)
         end = match.end() + following.start() if following else len(text)
-    prefix, suffix = text[:start].rstrip(), text[end:].lstrip("\n")
+    prefix, suffix = prefix.rstrip(), text[end:].lstrip("\n")
     replacement = pr_section()
     # An existing human decision record stays authoritative. Do not duplicate it.
     if re.search(r"^## Decision record\s*$", suffix, re.M):

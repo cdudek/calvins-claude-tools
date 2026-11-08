@@ -45,6 +45,16 @@ class Decision4Assets(unittest.TestCase):
         self.assertEqual(refreshed.count("## Decision record"), 1)
         self.assertEqual(assets.merge_pr_template(refreshed), refreshed)
 
+    def test_comment_before_repo_sections_preserves_them(self):
+        prefix = "## What\n\n- **Change:** Keep existing wording.\n\n## Rules touched\n\n- **Rules:** INTERACTION.md ids.\n\n## Verification\n\n- [ ] Human review\n\n"
+        comment = "<!--\nDecision4 writing rules:\nOld instructions.\n-->\n"
+        old = comment + prefix + assets.HEADING + "\n**Repair** — old recovery\n"
+        refreshed = assets.merge_pr_template(old)
+        self.assertTrue(refreshed.startswith(prefix))
+        self.assertEqual(refreshed.count("## Rules touched"), 1)
+        self.assertIn("- [ ] Human review", refreshed)
+        self.assertEqual(assets.merge_pr_template(refreshed), refreshed)
+
     def test_pr_writers_and_reviewers_consult_the_same_rules(self):
         for relative in (
             "git-pr-run/SKILL.md",
