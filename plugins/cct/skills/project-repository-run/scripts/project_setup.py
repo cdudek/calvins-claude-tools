@@ -24,40 +24,6 @@ VERSION_RE = re.compile(r"Decision4 handoff contract \(v(\d+)\)")
 HEADING = "## Decision4 handoff contract (v1)"
 SOURCE = ("Source: Decision4 v1.0.1 (https://github.com/Habitat-Thinking/decision4/blob/v1.0.1/DECISION4.md), "
           "Habitat Thinking, CC BY 4.0.")
-# Handoff rules adapted from AGENTS-snippet.md at tag v1.0.1
-CONTRACT = f"""{HEADING}
-
-For every decision you make, ask: "If this turns out to be wrong,
-what does it take to put right?" Take the class from the boundary map.
-Classes run from lowest to highest: Undo, Repair, Migrate, Answer.
-
-- Undo (a revert): hand back the result.
-- Repair (real work, contained to this team): hand back the result and a
-  choice story: Chose / Over / Because / Commits us to.
-- Migrate (coordinated change involving other people): hand back at least
-  two real options, or one stated as forced with the constraint that forces it.
-- Answer (an explanation to someone outside the team with standing to ask,
-  because the wrong outcome has reached them and nothing unmakes it): hand back
-  evidence labelled observed, inferred, asked or unknown, and your challenges.
-  Do not recommend.
-
-Rules:
-- Propose a class at or above the map's floor, never below it.
-- Unmapped or unsure: take the higher class and log a map gap.
-- A change takes the class of its highest decision.
-- Escalate freely and say who it pulls in. Never lower a class silently.
-- Unattended runs close only Undo. Above Undo, hand back and stop.
-
-{SOURCE}
-
-The boundary map is `boundary-map.yaml` at the repo root; read it before classifying.
-For PRs, fill the repository's readable Decision4 section and follow its writing-rules
-HTML comment. Choose the highest applicable class from the whole diff and the map.
-Validate the proposed body with `.github/scripts/decision4.py` before pushing; keep the
-repository's own local gate and check invocation. PyYAML is required by the checker.
-Run `bash tests/decision4/run.sh` for the synthetic regression fixtures; validate actual
-changed paths separately with the repository's `boundary-map.yaml`.
-"""
 # Load the same offline assets used by sdlc-run adopt.
 _spec = importlib.util.spec_from_file_location(
     "decision4_assets", Path(__file__).resolve().parents[2] / "sdlc-run/scripts/decision4_assets.py"
@@ -65,6 +31,7 @@ _spec = importlib.util.spec_from_file_location(
 _assets = importlib.util.module_from_spec(_spec)
 _spec.loader.exec_module(_assets)
 STARTER_MAP = _assets.STARTER_MAP
+CONTRACT = _assets.CONTRACT
 ANTI_SLOP_CMD = "npx skills add dmmulroy/anti-slop --skill install-anti-slop"
 
 
@@ -107,20 +74,11 @@ def settings_changes(root, plugins, ref, sources, problems):
 
 
 def decision4_changes(root, problems):
-    target = next((root / n for n in ("CLAUDE.md", "AGENTS.md") if (root / n).exists()), root / "CLAUDE.md")
-    text = read(target)
-    versions = {int(v) for v in VERSION_RE.findall(text)}
-    if versions:
-        if 1 not in versions:
-            problems.append(f"{target.name} carries Decision4 contract v{min(versions)}, expected v1")
-        return []
-    carriers = [q for q in imported(root, target, text) if HEADING in read(q)]
-    sep = "\n" if text and not text.endswith("\n") else ""
-    if carriers:
-        line = f"\nDecision4 handoff contract (v1): the section in `{carriers[0].name}` applies here. {SOURCE}\n"
-        return [("update", target, text + sep + line, f"pointer to the contract in {carriers[0].name}", False)]
-    body = (text + sep + "\n" if text else "") + CONTRACT
-    return [("update" if text else "create", target, body, "add the Decision4 handoff contract v1", True)]
+    for name in ("AGENTS.md", "CLAUDE.md"):
+        versions = {int(v) for v in VERSION_RE.findall(read(root / name))}
+        if versions and 1 not in versions:
+            problems.append(f"{name} carries Decision4 contract v{min(versions)}, expected v1")
+    return []  # asset_changes installs the single AGENTS source and CLAUDE import.
 
 
 def map_problems(t: str) -> list[str]:
@@ -140,7 +98,7 @@ def map_problems(t: str) -> list[str]:
 def map_changes(root, problems):
     path = root / "boundary-map.yaml"
     if not path.exists():
-        return [("create", path, STARTER_MAP, "starter boundary map (covers its own trust ground at Migrate)", True)]
+        return [("create", path, STARTER_MAP, "starter boundary map (trust ground needs contained team repair)", True)]
     problems += [f"boundary-map.yaml: {p}" for p in map_problems(read(path))]
     return []
 
@@ -178,7 +136,7 @@ def main(argv=None) -> int:
     if a.decision4:
         changes += decision4_changes(root, problems) + map_changes(root, problems)
         changes += [("update" if path.exists() else "create", path, text,
-                     "install readable Decision4 template, checker and fixtures", True)
+                     "install Decision4 contract, template and pinned shared reference", True)
                     for path, text in _assets.asset_changes(root) if path != root / "boundary-map.yaml"]
 
     if a.check:

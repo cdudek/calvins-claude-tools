@@ -1,8 +1,6 @@
 import contextlib
 import io
 import json
-import os
-import subprocess
 import tempfile
 import unittest
 from pathlib import Path
@@ -56,11 +54,11 @@ class ProjectSetupTest(unittest.TestCase):
     def test_check_reports_missing_then_passes_after_apply(self):
         code, out = run(self.root, "--check")
         self.assertEqual(code, 1)
-        for piece in ("settings.json", "CLAUDE.md", "boundary-map.yaml"):
+        for piece in ("settings.json", "AGENTS.md", "boundary-map.yaml"):
             self.assertIn(piece, out)
         run(self.root, "--yes")
         self.assertEqual(run(self.root, "--check")[0], 0)
-        self.assertIn("Habitat Thinking, CC BY 4.0.", (self.root / "CLAUDE.md").read_text())
+        self.assertIn("Habitat Thinking, CC BY 4.0.", (self.root / "AGENTS.md").read_text())
         self.assertEqual(ps.map_problems((self.root / "boundary-map.yaml").read_text()), [])
 
     def test_existing_map_is_not_overwritten_and_bad_shape_is_reported(self):
@@ -71,31 +69,19 @@ class ProjectSetupTest(unittest.TestCase):
         self.assertEqual(code, 1)
         self.assertIn("unknown floor 'Nope'", out)
 
-    def test_new_repo_gets_readable_template_checker_and_working_fixtures(self):
+    def test_new_repo_gets_only_the_pinned_shared_reference(self):
         self.assertEqual(run(self.root, "--yes")[0], 0)
         template = (self.root / ".github/PULL_REQUEST_TEMPLATE.md").read_text()
         self.assertIn("Decision4 writing rules:", template)
-        self.assertIn("### How hard is it to undo this PR after merging?", template)
-        result = subprocess.run(["bash", "tests/decision4/run.sh"], cwd=self.root,
-                                capture_output=True, text=True)
-        self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
-        files = self.root / "changed.txt"
-        files.write_text(".github/scripts/decision4.py\n")
-        body = """### How hard is it to undo this PR after merging?
-**🟠 Migrate** — Restore the gate and coordinate affected repository checks.
-- **Recovery steps:** Revert the gate and rerun validation in affected repos.
-- **Responsible for recovery:** Repository maintainer
-- **Classification change:** None
-"""
-        env = dict(os.environ, BODY=body, FILES=str(files), MAP=str(self.root / "boundary-map.yaml"))
-        result = subprocess.run(["python3", ".github/scripts/decision4.py"], cwd=self.root,
-                                env=env, capture_output=True, text=True)
-        self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
-        self.assertIn("computed floor: Migrate", result.stdout)
-        env["BODY"] = body.replace("**🟠 Migrate**", "**🟢 Undo**")
-        result = subprocess.run(["python3", ".github/scripts/decision4.py"], cwd=self.root,
-                                env=env, capture_output=True, text=True)
-        self.assertNotEqual(result.returncode, 0)
+        self.assertIn("## How hard is it to undo this PR after merging?", template)
+        self.assertIn("**Recovery steps**\n\n1.", template)
+        self.assertIn("## Decision record", template)
+        workflow = (self.root / ".github/workflows/decision4.yml").read_text()
+        self.assertIn("cdudek/blueprints/.github/workflows/decision4-check.yml@", workflow)
+        self.assertNotIn("steps:", workflow)
+        self.assertFalse((self.root / ".github/scripts/decision4.py").exists())
+        self.assertFalse((self.root / "tests/decision4").exists())
+        self.assertEqual(run(self.root, "--check")[0], 0)
 
     def test_existing_template_and_runner_keep_repo_content(self):
         (self.root / ".github").mkdir()
@@ -118,7 +104,8 @@ class ProjectSetupTest(unittest.TestCase):
         (self.root / "CLAUDE.md").write_text("# Repo\n@AGENTS.md\n")
         run(self.root, "--yes")
         text = (self.root / "CLAUDE.md").read_text()
-        self.assertEqual(text.count("Decision4 handoff contract (v1)"), 1)
+        self.assertIn("@AGENTS.md", text)
+        self.assertNotIn("Decision4 handoff contract (v1)", text)
         self.assertNotIn("Unattended runs", text)
         # carried by the import: the check passes even without the pointer
         (self.root / "CLAUDE.md").write_text("# Repo\n@AGENTS.md\n")

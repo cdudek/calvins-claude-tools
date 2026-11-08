@@ -1,51 +1,19 @@
-# Write and read the Decision4 PR section
+# Decision4 PR writing and validation
 
-Read the repository's PR template, including its Decision4 writing-rules HTML comment,
-and `boundary-map.yaml` before composing a body. Compute the highest changed-path floor
-against the PR's actual base, across the entire diff. Use the highest applicable class;
-record any lowering with from -> to, who authorized it and why. An intent or milestone's
-approved class does not replace the PR's boundary-map floor.
+The rule is [Habitat Thinking Decision4 v1.0.1](https://github.com/Habitat-Thinking/decision4/blob/4429f821780655f253a954b2659bf38e7b9d5517/DECISION4.md).
+The verbatim handoff block lives in AGENTS.md; CLAUDE.md imports it. Read the boundary map and the PR template HTML comment before writing a body.
 
-Use exactly `### How hard is it to undo this PR after merging?` and one coloured circle
-beside the chosen class: 🟢 Undo, 🟡 Repair, 🟠 Migrate or 🔴 Answer. Follow the class with a
-specific sentence explaining what recovery needs beyond a revert. Do not write
-"contained fix-up", repeat the sentence in steps, or invent steps to fit a class.
+- **Undo:** A revert puts it right. Return the result; omit Decision record.
+- **Repair:** Real work, contained to this team. Return the result and Chose / Over / Because / Commits us to under `## Decision record`.
+- **Migrate:** Coordinated change involving other people. Use `**Options**` and at least two real numbered options, or one `Forced` option with its `Constraint`; the accountable owner chooses.
+- **Answer:** The wrong outcome reached someone outside the team with standing to ask, and nothing unmakes it. Use `**Evidence**` with each item labelled observed / inferred / asked / unknown, then `**Challenges**`. No recommendation; name a person or @handle responsible for recovery.
 
-List **Recovery steps:** in order, numbered when there is more than one. Undo may use
-only its sentence and omit steps. Include **Work preserved:** only when this change
-actually keeps something recoverable; claim backups only with evidence in the PR.
-**Responsible for recovery:** is a role; Answer requires a named person.
-**Classification change:** is `None` unless the class changes; then say from -> to,
-by whom and why. Choose one class per PR; split work requiring very different classes.
+Use the highest decision and at least the map floor; unmapped or unsure means the higher class and a logged map gap. Escalate freely; never lower silently. A lowering records from -> to, who and why. Unattended runs close only Undo unless the owner explicitly authorized a higher ceiling.
 
-Read legacy fields as aliases: `Decision-Class` selects the class, `Put-right` means
-Recovery steps, `Answerer` means Responsible for recovery (`Accountable person` is also
-accepted), and `Class-Change` means Classification change. New bodies use the readable
-section. Remove unfilled legacy placeholders when adopting that section; if a filled
-legacy class is retained it must agree. HTML comments never supply a class or field.
+Copy the exact H2 `## How hard is it to undo this PR after merging?` section, one bold class with its one colour circle, and a concrete recovery sentence. Repair and above need a standalone `**Recovery steps**` and a top-level numbered list, then Responsible for recovery and Classification change. Keep the legend collapsed. Work preserved is optional and needs evidence.
 
-Validate the proposed body before the first push, using the repository's checker and
-own gate. The bundled checker needs Python and PyYAML; its inputs are `BODY` (body text),
-`FILES` (path to newline-separated changed paths), and `MAP` (repo boundary-map path).
-Use a body file and `gh pr create --body-file` / `gh pr edit --body-file`; revalidate the
-actual body after creation or edits. Keep the repo's check invocation and required
-statuses. `bash tests/decision4/run.sh` checks synthetic regression cases against a
-fixture-only map; it never substitutes for validating this PR against repo policy.
+The shared check accepts H2/H3, legacy Decision-Class / Put-right / Answerer / Class-Change, and indented recovery lists. New bodies use the template format. Placeholder fields are empty. Effective class remains max(declared, floor), even with a recorded lowering.
 
-Reviewers compare the declaration, recovery sentence, steps and responsibility with the
-whole diff and map. A passing checker proves syntax and minimum fields, not the truth
-of recovery or backup claims, ordered steps, authorization to lower a class, or a named
-Answer owner. Report any mismatch. When feedback changes recovery requirements, update
-this section and revalidate it before publishing success.
+Validate a proposed body before pushing and the actual body after creation or editing. Use `gh pr create --body-file` or `gh pr edit --body-file`. Actions callers pin the shared workflow; local gates dispatch `scripts/ci-local --decision4` through the checksum-verified fetch helper. No consuming repository carries checker code or fixtures. Shared-host fixtures test the check, while the actual PR uses the repository's map and entire diff (including rename sources).
 
-## Pull requests, issues and PR comments: scannable, never a text blob
-
-- **Order:** `## What` → `## Why` → `## Proof` → `## Before merge` (only while something is open) → the repo's Decision4 section (only with `boundary-map.yaml`) → `## Decision record` (only at Migrate/Answer).
-- **Bullets:** Every section is a list; start each bullet with a bold label (`- **Source plan:** 0 adds, 8 updates, 38 destroys.`). Keep one idea per bullet, at most two lines, and no paragraph longer than two sentences. Keep checklist syntax and bold-label the item.
-- **Proof:** Name the check and result (`- **Unit tests:** 1,320 passed.`). Put links on the label or result, never a bare URL in prose. Preserve claims and human checklist attestations when restructuring an existing body.
-- **Decision4:** When the repo has a boundary map, read it and copy the exact readable section from its PR template. Select its highest applicable class in bold with one colour circle and a sentence explaining recovery; use bold-labelled Recovery steps (numbered for multiple steps), optional Work preserved, Responsible for recovery (a named person at Answer), and Classification change. Keep the Recovery levels legend collapsed. Never author old plain `Decision-Class:` lines.
-- **Decision record:** At Migrate/Answer use `## Decision record` with bold-labelled bullets: Chose, Over, Because, Commits us to. Never use “Repair, choice story:” headings; Repair needs no decision record.
-- **Milestone and review text:** The same layout covers milestone-close PRs, issue bodies and PR comments. Put addressed feedback under What, its rationale under Why and its check results under Proof. A short thread reply can be one bold-labelled bullet; include only applicable sections.
-- **Validation:** Validate the proposed body before pushing and the actual body after creation or edits through the repo's Decision4 gate when installed. Use `--body-file`; scannable formatting applies even without Decision4.
-
-Read the full [scannable body example](pr-body.md), including the Decision record, before composing or editing a body.
+The check proves minimum fields and floors; reviewers assess viable options, truthful recovery claims and the owner's recorded authorization. See [scannable PR layout](pr-body.md) and [local-first verification](local-first.md).

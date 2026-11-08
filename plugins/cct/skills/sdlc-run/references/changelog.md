@@ -5,9 +5,16 @@ version warning, the **Mechanical** lines are what `adopt` does for you (it adds
 with the stack's defaults and never overwrites a value), the **Manual** lines are printed for
 the engineer. A version with no migration lines needs nothing but a re-run of `adopt`.
 
+## 3.9.6 — upstream-faithful Decision4 by reference
+
+- One contract in AGENTS.md, one PR section, a boundary-map scaffold and a pinned shared caller or checksum-verified local fetch; checker code and fixtures stay in the shared host.
+- Repair returns its choice story; Migrate returns options; Answer returns labelled evidence and challenges, with no recommendation.
+- Mechanical: no existing boundary map is overwritten.
+- Manual: remove obsolete vendored Decision4 checker/fixtures after wiring the shared reference; local gates dispatch --decision4 through the fetch helper.
+
 ## 3.9.5 — scannable PR bodies, comments and decision records
 
-- PR writers, milestone close and review feedback use bold-labelled What, Why and Proof lists and a full example; Before merge is conditional and Decision record appears only at Migrate/Answer.
+- PR writers, milestone close and review feedback use bold-labelled What, Why and Proof lists and a full example; Before merge is conditional and Decision record appears at Repair/Migrate/Answer.
 - Blueprint and adopting templates keep their readable recovery section and human checklists; refreshing recovery text preserves the existing decision record without duplicating it.
 - Mechanical: none.
 - Manual: refresh copied CLAUDE, SDLC docs and PR templates with `adopt --upgrade`; apply the same scannable shape to issues and review replies.

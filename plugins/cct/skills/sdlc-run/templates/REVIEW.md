@@ -28,7 +28,7 @@ when the diff alone cannot settle a finding — never walk the repo, the budget 
 ## Decision4 recovery
 
 Read the PR template's writing-rules HTML comment and the repo's `boundary-map.yaml`.
-Check the readable section headed `### How hard is it to undo this PR after merging?`:
+Check the readable section headed `## How hard is it to undo this PR after merging?`:
 one selected class at the highest whole-diff floor, a specific recovery sentence,
 ordered Recovery steps (optional for Undo), Work preserved only with evidence,
 Responsible for recovery (a named person for Answer), and Classification change
