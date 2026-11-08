@@ -7,8 +7,8 @@ updates:
   - package-ecosystem: github-actions
     directories: [/, /.github/actions/*]
     schedule: { interval: weekly }
-  # Bumps the digest-pinned node and distroless bases in the Dockerfile. When distroless
-  # retires a Debian release, Dependabot will not move to the next one: check the Node version.
+  # Bumps the digest-pinned node and Chainguard bases in the Dockerfile. The public latest tag
+  # can change Node majors: check it against .nvmrc before accepting a digest.
   - package-ecosystem: docker
     directory: /
     schedule: { interval: monthly }
@@ -20,7 +20,7 @@ updates:
       security:
         applies-to: security-updates
         patterns: ["*"]
-    # The build stage must match the distroless runtime's Node major (24, an approved LTS line);
+    # The build stage must match the Chainguard runtime's Node major (26, an approved LTS line);
     # a major move is a deliberate change of both FROM lines together.
     ignore:
       - dependency-name: node

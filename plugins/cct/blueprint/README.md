@@ -34,7 +34,7 @@ built-image scan in the PR. Follow the linked local-first contract for every pus
 
 Start with `web-nextjs-cloud-run/docs/deploy.md`; it explains the images, the contract the app must meet and how to turn the pipeline on.
 
-- **`Dockerfile`:** four stages. `deps` installs from the lockfile with `--ignore-scripts` (the npm token arrives as a BuildKit secret, so it is in no layer), `build` makes the Next.js standalone output, `migrate-build` bundles the Drizzle migration runner with esbuild, and two final targets on distroless Node (non-root, no shell): `runtime` and `migrate`. Bases are pinned by digest. `GIT_SHA` is baked in so `/readyz` can report it.
+- **`Dockerfile`:** a shared hardened runtime base plus build stages. `deps` installs from the lockfile with `--ignore-scripts` (the npm token arrives as a BuildKit secret, so it is in no layer), `build` makes the Next.js standalone output, `migrate-build` bundles the Drizzle migration runner with esbuild, and two final targets on Chainguard Node (non-root, no shell): `runtime` and `migrate`. Bases are pinned by digest. `GIT_SHA` is baked in so `/readyz` can report it.
 - **`.dockerignore`:** keeps `.git`, `.env*`, keys and docs out of the build context.
 - **`.github/workflows/ci.yml`:** on every PR and push: a secrets scan; format check, lint, typecheck, unit tests and the Playwright smoke run; a Trivy scan of dependencies; hadolint, a Docker build and a Trivy scan of the image. `scripts/docker-smoke.sh` runs the built image locally the same way.
 - **`build.yml`:** reusable; builds both images with Buildx, scans them with Trivy, pushes them to Artifact Registry with SBOM and provenance, tagged by SHA and content (`scripts/image-tags.sh`).

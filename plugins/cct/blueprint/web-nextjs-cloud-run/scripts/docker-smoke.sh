@@ -12,6 +12,12 @@ sha="$2"
 docker="${DOCKER:-docker}"
 port="${PORT:-18080}"
 
+# The public Chainguard latest tag can move majors even when the digest update looks routine.
+expected_node_major="$(cut -d . -f 1 .nvmrc)"
+node_major="$("$docker" run --rm "$image" -p 'process.versions.node.split(".")[0]')"
+[ "$node_major" = "$expected_node_major" ] || { echo "FAIL: image Node major is '${node_major}', expected '${expected_node_major}'"; exit 1; }
+echo "ok: Node ${node_major} matches .nvmrc"
+
 user="$("$docker" image inspect -f '{{.Config.User}}' "$image")"
 [ "$user" = nonroot ] || [ "$user" = 65532 ] || [ "$user" = 65532:65532 ] || { echo "FAIL: image user is '${user}', expected nonroot"; exit 1; }
 echo "ok: runs as ${user}"
@@ -21,6 +27,12 @@ if "$docker" run --rm --entrypoint /bin/sh "$image" -c true >/dev/null 2>&1; the
   exit 1
 fi
 echo "ok: no shell"
+
+if "$docker" run --rm "$image" -e "const fs = require('node:fs'); process.exit(['/bin/busybox', '/usr/bin/npm', '/usr/bin/npx', '/sbin/apk', '/usr/bin/apt-get'].some(path => fs.existsSync(path)) ? 0 : 1)"; then
+  echo "FAIL: the image has BusyBox or a package manager"
+  exit 1
+fi
+echo "ok: no BusyBox or package manager"
 
 name="smoke-$$"
 "$docker" run -d --name "$name" --read-only --tmpfs /tmp --cap-drop ALL \

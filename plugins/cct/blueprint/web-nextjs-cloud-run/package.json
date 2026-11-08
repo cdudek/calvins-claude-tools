@@ -10,10 +10,10 @@
     "format:check": "biome format .",
     "lint": "biome lint . && depcruise src --config .dependency-cruiser.cjs",
     "typecheck": "tsc --noEmit",
-    "build:migrate": "esbuild scripts/migrate.ts --bundle --platform=node --target=node24 --format=cjs --tsconfig=tsconfig.json --out-extension:.js=.cjs --outdir=dist",
+    "build:migrate": "esbuild scripts/migrate.ts --bundle --platform=node --target=node26 --format=cjs --tsconfig=tsconfig.json --out-extension:.js=.cjs --outdir=dist",
     "db:migrate": "npm run build:migrate && node dist/migrate.cjs",
-    "db:seed": "esbuild scripts/seed.ts --bundle --platform=node --target=node24 --format=cjs --tsconfig=tsconfig.json --out-extension:.js=.cjs --outdir=dist && node dist/seed.cjs",
-    "db:measure": "esbuild scripts/measure.ts --bundle --platform=node --target=node24 --format=cjs --tsconfig=tsconfig.json --out-extension:.js=.cjs --outdir=dist && node dist/measure.cjs",
+    "db:seed": "esbuild scripts/seed.ts --bundle --platform=node --target=node26 --format=cjs --tsconfig=tsconfig.json --out-extension:.js=.cjs --outdir=dist && node dist/seed.cjs",
+    "db:measure": "esbuild scripts/measure.ts --bundle --platform=node --target=node26 --format=cjs --tsconfig=tsconfig.json --out-extension:.js=.cjs --outdir=dist && node dist/measure.cjs",
     "test": "vitest run",
     "smoke:background": "playwright test",
     "sdlc:tools": "curl -fsSL https://plannotator.ai/install.sh | bash && claude plugin marketplace add backnotprop/plannotator && claude plugin install plannotator@plannotator && npx skills add backnotprop/plannotator/apps/skills/extra --global --skill plannotator-setup-goal --agent claude-code --yes"
@@ -54,6 +54,6 @@
     "zod": "4.6.7"
   },
   "engines": {
-    "node": "24.x"
+    "node": "26.x"
   }
 }
