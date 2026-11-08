@@ -5,10 +5,12 @@ The verbatim handoff block lives in AGENTS.md; CLAUDE.md imports it. Read the bo
 
 - **Undo:** A revert puts it right. Return the result; omit Decision record.
 - **Repair:** Real work, contained to this team. Return the result and Chose / Over / Because / Commits us to under `## Decision record`.
-- **Migrate:** Coordinated change involving other people. Use `**Options**` and at least two real numbered options, or one `Forced` option with its `Constraint`; the accountable owner chooses.
-- **Answer:** The wrong outcome reached someone outside the team with standing to ask, and nothing unmakes it. Use `**Evidence**` with each item labelled observed / inferred / asked / unknown, then `**Challenges**`. No recommendation; name a person or @handle responsible for recovery.
+- **Migrate:** Record Class with put-right, Who answers, Commits us to and Chosen by: <person>. Under `**Options**` draft at least two real numbered options, each with its commitments, or one Forced option with its Constraint; the accountable owner chooses on the record.
+- **Answer:** The wrong outcome reached someone outside the team with standing to ask, and nothing unmakes it. Use `**Evidence**` with each item labelled observed / inferred / asked / unknown, then `**Challenges**`. No recommendation or ranking; general knowledge is not case evidence. Include all §9 fields: Title, Status, Context, Decision, Class with put-right, Who answers, Rejected alternative (viable), Provenance, Class history, Commits us to, Last validated, Revisit when (a condition). Only a person with standing writes Decision and Commits us to; agents leave `<person writes>` and validation fails until filled. Name a person or @handle responsible for recovery.
 
 Use the highest decision and at least the map floor; unmapped or unsure means the higher class and a logged map gap. Escalate freely; never lower silently. A lowering records from -> to, who and why. Unattended runs close only Undo unless the owner explicitly authorized a higher ceiling.
+
+Keep only the applicable class block under `## Decision record`; delete the unused template blocks. Write the record before approval and keep it current.
 
 Copy the exact H2 `## How hard is it to undo this PR after merging?` section, one bold class with its one colour circle, and a concrete recovery sentence. Repair and above need a standalone `**Recovery steps**` and a top-level numbered list, then Responsible for recovery and Classification change. Keep the legend collapsed. Work preserved is optional and needs evidence.
 
