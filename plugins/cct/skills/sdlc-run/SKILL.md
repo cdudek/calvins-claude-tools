@@ -281,6 +281,7 @@ local debugging loop. Existing remote CI remains confirmation during migration. 
 - `references/adopt.md` — what `adopt` writes, what stays manual, migrations.
 - `references/ci-blueprint.md` — local gate setup, required `local-ci` + `decision4` statuses, cloud workflows and migration from existing remote CI.
 - `references/local-first.md` — the shared local verification and targeted debugging contract.
+- `references/harness-audit.md` — monthly local whole-harness evidence, pinned consumer sync, owner-assigned gaps and legacy refusal fixtures.
 - `references/decision4-pr.md` — readable PR recovery section, writing rules, legacy aliases and validation.
 - `references/changelog.md` — what each sdlc-run version changed and what a repo must do (`adopt --upgrade` reads it).
 - `references/tiers.md` — Ship / Show / Ask by path.
