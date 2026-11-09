@@ -46,9 +46,10 @@
 - **Forbidden edit:** A dirty source tree cannot publish using a previously green receipt; approved chain criteria cannot be edited silently.
 - **Missing evidence:** An unverified head must run the actual owned runner, whose failing checker blocks publication; a missing chain lock blocks source edits.
 - **Stale lock:** An old head's green receipt cannot authorize a new source commit; a lock over a draft plan does not permit a chain source edit.
+- **Criteria hashes:** The installed legacy verifier also refuses changed approved criteria, a missing approval lock and a stale criteria fingerprint; unchanged locked criteria must pass.
 - **Allowed:** A clean head verified by the real runner is accepted without a redundant suite; an approved active chain permits its source edit.
 - **Isolation:** Fixtures copy the installed guards into disposable repositories, clear parent Git/gate context, and never run product deployments or production commands.
-- **Targeted development:** `python3 scripts/legacy-guards-test.py --case prepush`, `--case chain`, and `--case config` select the directly affected fixture group.
+- **Targeted development:** `python3 scripts/legacy-guards-test.py --case prepush`, `--case chain`, `--case verify`, and `--case config` select the directly affected fixture group.
 
 ## Source development
 
