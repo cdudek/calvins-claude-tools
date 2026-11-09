@@ -11,6 +11,7 @@
 - **Executed:** The owned `scripts/ci-local --check` runs once, and each checker leaves a fresh log for the frozen head and comparison base.
 - **Passed:** That invocation reports success; stale logs, skipped checks and empty suites cannot supply a pass.
 - **Applied:** Ruleset checks must exercise real refusal and allowed fixtures against the production configuration; exit zero alone is insufficient.
+- **Platform enforcement:** Read active GitHub rulesets and classic branch protection; `local-ci` and `decision4` must be required on the default branch and each explicit protected interior branch. Missing access or statuses become applied-state gaps.
 - **Older guards:** Each inventoried hook/check gets its own five-state result. A registration or file on disk cannot substitute for fixture execution.
 - **Unproved claims:** Missing evidence becomes an owner-assigned gap in the report and issue; it never becomes a successful state.
 - **Operator checks:** Do not guess commands that access live systems. Inventory their invocation, and report the missing local evidence until an approved adapter exists.
@@ -20,6 +21,7 @@
 - **Sync:** Run `python3 ${CLAUDE_SKILL_DIR}/scripts/sync-harness-audit.py <consumer-worktree> --pin <merged-source-sha>` and inspect its dry-run diff.
 - **Apply:** Add `--write` to copy only the auditor, legacy fixtures and `.harness-audit.lock`; local owners and gate commands stay in the consumer.
 - **Manifest:** Commit `.harness-audit.json` with `version: 1`, an explicit GitHub `owner`, `default_branch`, `checks`, `legacy`, and optional ignored cache paths in `reset`.
+- **Repository binding:** Set `repository` to the checkout’s owner/name, `protected_branches` to the actual interior refs to audit, and optional `required_statuses` for additional checks; the two canonical statuses cannot be removed. Platform inspection is read-only; it never applies settings.
 - **Check rows:** Each row names its actual `ci-local` check ID, owner, version-probe argument arrays in `tools`, configuration paths in `configs`, and claimed `rules`.
 - **Kinds:** Use `ruleset` for policy enforcement, `suite` for tests, or `execution` for artifact/build checks; explain the non-policy claim in `reason`.
 - **Ruleset proof:** `applied.command` runs the real fixture suite; `applied.required_output` names both refusal and permitted evidence that it must emit.

@@ -17,6 +17,7 @@ import time
 import uuid
 from pathlib import Path
 from typing import Any
+from urllib.parse import quote
 
 ISSUE_TITLE = "Monthly whole-harness audit"
 CONFIG = ".harness-audit.json"
@@ -160,6 +161,24 @@ def configuration(root: Path) -> tuple[dict[str, Any], dict[str, str], list[Gap]
                 gaps.append(
                     Gap(row["id"], "configured", owner(row.get("owner", responsible)), str(error))
                 )
+    if "repository" in config and not re.fullmatch(
+        r"[A-Za-z0-9_.-]+/[A-Za-z0-9_.-]+", str(config["repository"])
+    ):
+        raise ValueError("Audit repository must be owner/name")
+    required = config.get("required_statuses", ["local-ci", "decision4"])
+    if (
+        not isinstance(required, list)
+        or any(not isinstance(value, str) or not value for value in required)
+        or not {"local-ci", "decision4"} <= set(required)
+    ):
+        raise ValueError("Required statuses must include local-ci and decision4")
+    branches = config.get("protected_branches", [])
+    if not isinstance(branches, list) or any(
+        not isinstance(branch, str)
+        or command(["git", "check-ref-format", "refs/heads/" + branch], root).returncode
+        for branch in branches
+    ):
+        raise ValueError("Protected branches must be valid explicit branch names")
     inventory = config.get("legacy", [])
     recorded = [entry["path"] for entry in inventory]
     if len(recorded) != len(set(recorded)):
@@ -319,6 +338,95 @@ def legacy_evidence(
     }
 
 
+def github_repository(root: Path, expected: str | None = None) -> str:
+    environment = {key: value for key, value in os.environ.items() if key != "GH_REPO"}
+    result = command(
+        ["gh", "repo", "view", "--json", "nameWithOwner", "--jq", ".nameWithOwner"],
+        root,
+        env=environment,
+    )
+    repository = result.stdout.strip()
+    if result.returncode or not re.fullmatch(r"[A-Za-z0-9_.-]+/[A-Za-z0-9_.-]+", repository):
+        raise ValueError("Cannot resolve GitHub repository from this checkout")
+    if expected is not None and repository.casefold() != expected.casefold():
+        raise ValueError("Checkout repository differs from the audit manifest")
+    return repository
+
+
+def branch_policy(root: Path, config: dict[str, Any]) -> tuple[dict[str, Any], list[Gap]]:
+    """Read active platform enforcement; declarations in local files are not proof."""
+    responsible = owner(config["owner"])
+    evidence: dict[str, Any] = {"branches": []}
+    gaps: list[Gap] = []
+    try:
+        repository = github_repository(root, config.get("repository"))
+        evidence["repository"] = repository
+    except (ValueError, OSError, subprocess.TimeoutExpired) as error:
+        return evidence, [Gap("github-protection", "applied", responsible, str(error))]
+    required = set(config.get("required_statuses", ["local-ci", "decision4"]))
+    branches = list(
+        dict.fromkeys([config["default_branch"], *config.get("protected_branches", [])])
+    )
+    for branch in branches:
+        contexts: set[str] = set()
+        sources: list[dict[str, Any]] = []
+        for suffix, kind in (
+            (f"rules/branches/{quote(branch, safe='')}", "rulesets"),
+            (f"branches/{quote(branch, safe='')}/protection/required_status_checks", "classic"),
+        ):
+            endpoint = f"repos/{repository}/{suffix}"
+            try:
+                result = command(["gh", "api", endpoint], root, timeout=60)
+                if result.returncode:
+                    sources.append({"kind": kind, "verified": False, "error": "API unavailable"})
+                    continue
+                payload = json.loads(result.stdout)
+                if kind == "rulesets":
+                    if not isinstance(payload, list):
+                        raise ValueError("Unexpected active rules response")
+                    for rule in payload:
+                        if rule.get("type") == "required_status_checks":
+                            contexts.update(
+                                item["context"]
+                                for item in rule.get("parameters", {}).get(
+                                    "required_status_checks", []
+                                )
+                            )
+                else:
+                    contexts.update(payload.get("contexts", []))
+                    contexts.update(item["context"] for item in payload.get("checks", []))
+                sources.append({"kind": kind, "verified": True, "response": payload})
+            except (
+                ValueError,
+                TypeError,
+                KeyError,
+                AttributeError,
+                OSError,
+                subprocess.TimeoutExpired,
+            ) as error:
+                sources.append({"kind": kind, "verified": False, "error": type(error).__name__})
+        missing = sorted(required - contexts)
+        evidence["branches"].append(
+            {
+                "branch": branch,
+                "required": sorted(required),
+                "observed": sorted(contexts),
+                "applied": not missing,
+                "sources": sources,
+            }
+        )
+        if missing:
+            gaps.append(
+                Gap(
+                    "github-protection:" + branch,
+                    "applied",
+                    responsible,
+                    "Required statuses not verified active: " + ", ".join(missing),
+                )
+            )
+    return evidence, gaps
+
+
 def audit(
     root: Path, config: dict[str, Any], checks: dict[str, str], gaps: list[Gap]
 ) -> dict[str, Any]:
@@ -473,7 +581,10 @@ def audit(
                 "HEAD or worktree moved during audit",
             )
         )
+    policy, policy_gaps = branch_policy(root, config)
+    gaps.extend(policy_gaps)
     report = {
+        "gate_rulesets": policy,
         "version": 1,
         "head": head,
         "tree": tree,
@@ -521,12 +632,7 @@ def issue_body(report: dict[str, Any]) -> str:
 
 
 def update_issue(root: Path, report: dict[str, Any], responsible: str) -> str:
-    repo_result = command(
-        ["gh", "repo", "view", "--json", "nameWithOwner", "--jq", ".nameWithOwner"], root
-    )
-    if repo_result.returncode:
-        raise ValueError("Cannot resolve GitHub repository for audit issue")
-    repo = repo_result.stdout.strip()
+    repo = github_repository(root, report.get("gate_rulesets", {}).get("repository"))
     result = command(
         [
             "gh",
@@ -592,6 +698,7 @@ def main() -> int:
         print(f"{'FAIL' if gaps else 'PASS'} harness configuration: {len(checks)} checkers")
         return int(bool(gaps))
     report = audit(root, config, checks, gaps)
+    print(f"Local audit report: {report['artifact']}/report.json")
     if args.issue:
         print(update_issue(root, report, config["owner"]))
     print(

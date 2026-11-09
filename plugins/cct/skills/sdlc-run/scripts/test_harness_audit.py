@@ -32,8 +32,80 @@ legacy = load("tested_legacy_guards", HERE / "legacy-guards-test.py")
 sync = load("tested_harness_sync", HERE / "sync-harness-audit.py")
 
 
+class PlatformPolicy(unittest.TestCase):
+    def run_policy(self, responses, **overrides):
+        config = {"owner": "example-owner", "default_branch": "main", **overrides}
+
+        def fake(args, root, **kwargs):
+            if args[1:3] == ["repo", "view"]:
+                self.assertNotIn("GH_REPO", kwargs["env"])
+                return subprocess.CompletedProcess(args, 0, "example-owner/repo\n", "")
+            value = responses.get(args[-1], None)
+            return subprocess.CompletedProcess(
+                args, 1 if value is None else 0, json.dumps(value), ""
+            )
+
+        with patch.object(audit, "command", side_effect=fake):
+            return audit.branch_policy(Path("."), config)
+
+    def test_active_rules_and_classic_protection_both_supply_proof(self):
+        for suffix, payload in (
+            (
+                "rules/branches/main",
+                [
+                    {
+                        "type": "required_status_checks",
+                        "parameters": {
+                            "required_status_checks": [
+                                {"context": "local-ci"},
+                                {"context": "decision4"},
+                            ]
+                        },
+                    }
+                ],
+            ),
+            (
+                "branches/main/protection/required_status_checks",
+                {"contexts": ["local-ci", "decision4"]},
+            ),
+        ):
+            with self.subTest(source=suffix):
+                evidence, gaps = self.run_policy({"repos/example-owner/repo/" + suffix: payload})
+                self.assertEqual(gaps, [])
+                self.assertTrue(evidence["branches"][0]["applied"])
+
+    def test_missing_unknown_and_interior_rules_are_owned_gaps(self):
+        evidence, gaps = self.run_policy(
+            {
+                "repos/example-owner/repo/branches/main/protection/required_status_checks": {
+                    "checks": [{"context": "local-ci"}, {"context": "decision4"}]
+                }
+            },
+            protected_branches=["milestone/audit"],
+        )
+        self.assertEqual(len(evidence["branches"]), 2)
+        self.assertEqual(len(gaps), 1)
+        self.assertEqual(gaps[0].check, "github-protection:milestone/audit")
+        self.assertEqual(gaps[0].owner, "example-owner")
+        self.assertIn("decision4", gaps[0].reason)
+        _, gaps = self.run_policy({"repos/example-owner/repo/rules/branches/main": []})
+        self.assertEqual(len(gaps), 1)
+
+    def test_repository_binding_and_invalid_responses_fail_closed(self):
+        _, gaps = self.run_policy({}, repository="example-owner/other")
+        self.assertIn("differs", gaps[0].reason)
+        evidence, gaps = self.run_policy(
+            {"repos/example-owner/repo/rules/branches/main": {"unexpected": True}}
+        )
+        self.assertFalse(evidence["branches"][0]["applied"])
+        self.assertEqual(len(gaps), 1)
+
+
 class HarnessAudit(unittest.TestCase):
     def setUp(self):
+        policy = patch.object(audit, "branch_policy", return_value=({"branches": []}, []))
+        policy.start()
+        self.addCleanup(policy.stop)
         self.temporary = tempfile.TemporaryDirectory(prefix="harness-audit-test-")
         self.addCleanup(self.temporary.cleanup)
         self.root = Path(self.temporary.name) / "repo"
