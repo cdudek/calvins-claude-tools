@@ -2,7 +2,7 @@
 
 - **Reminder:** Once each month, an agent runs `scripts/harness-audit --issue` on the owner's Mac in each adopting repository.
 - **Scheduling:** Keep this reminder in the consumer's engineering docs; no Actions schedule, cron or launchd job is needed.
-- **Canonical code:** `${CLAUDE_SKILL_DIR}/scripts/harness-audit.py` and `${CLAUDE_SKILL_DIR}/scripts/legacy-guards-test.py` own the executable behavior; consumers receive pinned copies.
+- **Canonical code:** [Blueprints owns the shared scripts and tests](https://github.com/cdudek/blueprints/blob/main/core/references/ci.md#monthly-local-harness-audit). Consumers sync pinned copies of `core/references/harness-audit.py` and `legacy-guards-test.py`; this plugin keeps operating guidance only.
 
 ## What the command proves
 
@@ -11,15 +11,17 @@
 - **Executed:** The owned `scripts/ci-local --check` runs once, and each checker leaves a fresh log for the frozen head and comparison base.
 - **Passed:** That invocation reports success; stale logs, skipped checks and empty suites cannot supply a pass.
 - **Applied:** Ruleset checks must exercise real refusal and allowed fixtures against the production configuration; exit zero alone is insufficient.
+- **Platform enforcement:** Read active GitHub rulesets and classic branch protection for the default and declared protected interior refs. Missing access or required statuses remain owned applied-state gaps.
 - **Older guards:** Each inventoried hook/check gets its own five-state result. A registration or file on disk cannot substitute for fixture execution.
 - **Unproved claims:** Missing evidence becomes an owner-assigned gap in the report and issue; it never becomes a successful state.
 - **Operator checks:** Do not guess commands that access live systems. Inventory their invocation, and report the missing local evidence until an approved adapter exists.
 
 ## Adopt in a consumer worktree
 
-- **Sync:** Run `python3 ${CLAUDE_SKILL_DIR}/scripts/sync-harness-audit.py <consumer-worktree> --pin <merged-source-sha>` and inspect its dry-run diff.
+- **Sync:** From a clean blueprint checkout, run `python3 core/references/sync-harness-audit.py <consumer-worktree> --pin <merged-source-sha>` and inspect its dry-run diff.
 - **Apply:** Add `--write` to copy only the auditor, legacy fixtures and `.harness-audit.lock`; local owners and gate commands stay in the consumer.
 - **Manifest:** Commit `.harness-audit.json` with `version: 1`, an explicit GitHub `owner`, `default_branch`, `checks`, `legacy`, and optional ignored cache paths in `reset`.
+- **Identity and refs:** Set `repository` to the checkout’s owner/name and `protected_branches` to its interior refs; optional `required_statuses` can add to the canonical `local-ci` and `decision4` requirements.
 - **Check rows:** Each row names its actual `ci-local` check ID, owner, version-probe argument arrays in `tools`, configuration paths in `configs`, and claimed `rules`.
 - **Kinds:** Use `ruleset` for policy enforcement, `suite` for tests, or `execution` for artifact/build checks; explain the non-policy claim in `reason`.
 - **Ruleset proof:** `applied.command` runs the real fixture suite; `applied.required_output` names both refusal and permitted evidence that it must emit.
@@ -53,6 +55,6 @@
 
 ## Source development
 
-- **Focused tests:** `python3 -m pytest -q -p no:cacheprovider ${CLAUDE_SKILL_DIR}/scripts/test_harness_audit.py` exercises freshness, missing tools, ruleset evidence, issue upserts and source sync.
-- **Required checks:** Run this skill's pinned Ruff format/lint checks and the repository's complete local unit/plugin suites before every push.
+- **Canonical tests:** In a clean blueprint checkout, run `python3 -m unittest discover -s core/tests -p test_harness_audit.py -v` for focused development.
+- **Required checks:** Follow that repository's instructions and complete its local gate before every push; the shared source and tests stay together there.
 - **Consumer rollout:** Merge the canonical change first, sync from its merged SHA, then run each consumer's full local gate on its exact proposed head.
