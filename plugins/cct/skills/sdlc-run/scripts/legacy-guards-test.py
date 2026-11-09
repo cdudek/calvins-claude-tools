@@ -214,6 +214,64 @@ def chain_cases(source: Path) -> list[str]:
     return passed
 
 
+def verify_cases(source: Path) -> list[str]:
+    if not (source / "scripts/verify_gate.py").is_file():
+        return []
+    passed = []
+    change_id = "2026-11-01-guard"
+    for case in ("forbidden-edit", "missing-evidence", "stale-lock", "allowed"):
+        with tempfile.TemporaryDirectory(prefix="criteria-guard-") as directory:
+            root = Path(directory)
+            for name in ("verify_gate.py", "marks.py", "sdlc_version.py"):
+                write(root, "scripts/" + name, source_text(source, "scripts/" + name))
+            write(
+                root,
+                "sdlc.json",
+                json.dumps({"changesDir": "changes", "checks": {"feature": ["true"]}}),
+            )
+            write(root, ".gitignore", "/changes/*/verify/\n__pycache__/\n*.py[cod]\n")
+            prefix = "changes/" + change_id + "/"
+            write(
+                root, prefix + "facts.md", "---\nstatus: approved\n---\n\n- [ ] **F1** It works.\n"
+            )
+            write(root, prefix + "done.json", '{"facts":["F1"]}\n')
+            git(root, "init", "-q", "-b", "main")
+            git(root, "add", ".")
+            git(root, "commit", "-qm", "fixture")
+            if case != "missing-evidence":
+                approved = run(
+                    root, [sys.executable, "scripts/verify_gate.py", "approve", change_id]
+                )
+                assert approved.returncode == 0, approved.stdout + approved.stderr
+                git(root, "add", ".")
+                git(root, "commit", "-qm", "approved criteria")
+            if case == "forbidden-edit":
+                write(
+                    root,
+                    prefix + "facts.md",
+                    "---\nstatus: approved\n---\n\n- [ ] **F2** Changed criteria.\n",
+                )
+                git(root, "commit", "-qam", "move criteria")
+            if case == "stale-lock":
+                lock_path = root / (prefix + "lock.json")
+                lock = json.loads(lock_path.read_text())
+                lock["criteria"]["checks"] = "0" * 64
+                lock_path.write_text(json.dumps(lock) + "\n")
+                git(root, "commit", "-qam", "stale criteria fingerprint")
+            result = run(root, [sys.executable, "scripts/verify_gate.py", "feature", change_id])
+            if case == "allowed":
+                assert result.returncode == 0 and "VERIFY PASS feature" in result.stdout, (
+                    result.stdout + result.stderr
+                )
+            else:
+                reason = "not-approved" if case == "missing-evidence" else "protected-path"
+                assert (
+                    result.returncode == 3 and f"VERIFY BLOCKED reason={reason}" in result.stdout
+                ), result.stdout + result.stderr
+            passed.append("verify/" + case)
+    return passed
+
+
 def load_auditor(path: Path) -> Any:
     loader = importlib.machinery.SourceFileLoader("fixture_harness_audit", str(path))
     spec = importlib.util.spec_from_loader(loader.name, loader)
@@ -291,7 +349,9 @@ def config_cases(source: Path) -> list[str]:
 
 def main() -> int:
     parser = argparse.ArgumentParser(description=__doc__)
-    parser.add_argument("--case", choices=("all", "prepush", "chain", "config"), default="all")
+    parser.add_argument(
+        "--case", choices=("all", "prepush", "chain", "verify", "config"), default="all"
+    )
     args = parser.parse_args()
     source = Path.cwd()
     passed = []
@@ -299,6 +359,8 @@ def main() -> int:
         passed.extend(prepush_cases(source))
     if args.case in {"all", "chain"}:
         passed.extend(chain_cases(source))
+    if args.case in {"all", "verify"}:
+        passed.extend(verify_cases(source))
     if args.case in {"all", "config"}:
         passed.extend(config_cases(source))
     for name in passed:

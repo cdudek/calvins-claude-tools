@@ -6,6 +6,7 @@ import importlib.machinery
 import importlib.util
 import json
 import os
+import shlex
 import shutil
 import subprocess
 import sys
@@ -176,6 +177,32 @@ class HarnessAudit(unittest.TestCase):
         row["applied"]["command"] = "printf 'refused\\nallowed\\n'"
         self.assertTrue(self.execute()["checks"][0]["states"]["applied"])
 
+    def test_skipped_or_empty_ruleset_probe_cannot_supply_applied_evidence(self):
+        row = self.config["checks"][0]
+        row["kind"] = "ruleset"
+        for suffix in (
+            "SKIPPED required scanner",
+            "OK (skipped=1)",
+            "1 skipped",
+            "No test files found",
+            "0 tests",
+            "Checked 0 files",
+        ):
+            with self.subTest(suffix=suffix):
+                output = "refused\nallowed\n" + suffix + "\n"
+                row["applied"] = {
+                    "command": "printf %s " + shlex.quote(output),
+                    "required_output": ["refused", "allowed"],
+                }
+                report = self.execute()
+                self.assertFalse(report["checks"][0]["states"]["applied"])
+                self.assertTrue(
+                    any(
+                        gap["check"] == "probe" and gap["state"] == "applied"
+                        for gap in report["gaps"]
+                    )
+                )
+
     def test_dirty_and_recursive_runs_are_refused(self):
         config, checks, gaps = audit.configuration(self.root)
         self.write("untracked.txt", "unverified\n")
@@ -223,6 +250,20 @@ class HarnessAudit(unittest.TestCase):
         self.assertEqual(
             legacy.config_cases(source),
             ["config/allowed", "config/missing-check", "config/stale-lock"],
+        )
+
+    def test_actual_verifier_refuses_missing_changed_and_stale_criteria(self):
+        source = self.root / "verifier-source"
+        for name in ("verify_gate.py", "marks.py", "sdlc_version.py"):
+            destination = source / "scripts" / name
+            destination.parent.mkdir(parents=True, exist_ok=True)
+            shutil.copy2(HERE.parent / "templates/scripts" / name, destination)
+        self.assertEqual(
+            legacy.verify_cases(source),
+            [
+                "verify/" + name
+                for name in ("forbidden-edit", "missing-evidence", "stale-lock", "allowed")
+            ],
         )
 
     def test_existing_issue_is_updated_once_and_each_gap_owner_is_assigned(self):

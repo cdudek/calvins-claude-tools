@@ -24,6 +24,7 @@ LOCK = ".harness-audit.lock"
 SOURCE_REPOSITORY = "cdudek/calvins-claude-tools"
 SOURCE_DIRECTORY = "plugins/cct/skills/sdlc-run/scripts"
 STATES = ("installed", "configured", "executed", "passed", "applied")
+NO_EXECUTION = r"(?:\bSKIPPED\b|\b0 tests\b|Checked 0 files|No test files found)"
 HANDLE = re.compile(r"[A-Za-z0-9][A-Za-z0-9-]{0,38}\Z")
 
 
@@ -238,6 +239,8 @@ def probe(root: Path, spec: dict[str, Any], log: Path) -> bool:
     result = command(["bash", "-euo", "pipefail", "-c", spec["command"]], root, timeout=180)
     output = result.stdout + result.stderr
     log.write_text(output)
+    if re.search(NO_EXECUTION + r"|\b[1-9]\d* (?:skipped|todo)\b|\bskipped=[1-9]\d*\b", output):
+        return False
     required = spec.get("required_output", [])
     return result.returncode == 0 and bool(required) and all(text in output for text in required)
 
@@ -398,9 +401,7 @@ def audit(
             log_text = source_log.read_text()
             shutil.copy2(source_log, output / (name + ".log"))
             log_hash = digest(source_log)
-            if re.search(
-                r"(?:\bSKIPPED\b|\b0 tests\b|Checked 0 files|No test files found)", log_text
-            ):
+            if re.search(NO_EXECUTION, log_text):
                 state["passed"] = False
         if row.get("kind") == "ruleset":
             if row.get("applied"):
