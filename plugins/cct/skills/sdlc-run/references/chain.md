@@ -259,11 +259,19 @@ Facts:
 ## plan.md sections
 
 Approach · Rules check (with Justified violations) · Where things go · Feature PRs · Design changes · Files that change · Order of work ·
-Risks · Out of scope · Done · Goal handover · Revisions. Beside it: `done.json` (the criteria as
+Risks · Out of scope · Done · How to run · Goal handover · Revisions. Beside it: `done.json` (the criteria as
 data), `lock.json` (their hash at approval, written by `verify_gate.py approve`), `milestone.md`
 (features and their states, the outcome) and `findings.md` (the milestone's one list: `- [ ]` blocking items, `## Converge`, `## Advisory`). `intent.md` frontmatter carries the Decision4 `class`; `approve` copies it into `lock.json`. Detail: `references/quality-passes.md`.
 
-`Done` states how `/goal` knows to stop. `Goal handover` is committed, not spoken.
+`Done` states how `/goal` knows to stop. `How to run` is the build's process. `Goal handover` is
+committed, not spoken: a kickoff prompt, and the `/goal` line, which holds only the end state
+(`python3 scripts/sdlc_status.py goal <ID>` printed `GOAL <ID> DONE` or `BLOCKED`) because a small
+model judges the condition from the transcript and cannot read files or GitHub.
+
+**Risk:** `goal_active()` in `chain-gate.sh`, `pr-gate.sh` and `verify-on-stop.sh` reads the last
+`goal_status` attachment of the transcript. Claude Code does not document that entry, so a release
+may rename it. The hooks' fixtures (`test_chain_gate.py`, `test_pr_gate.py`, `test_sdlc.py`) pin
+today's shape; a failing fixture after a Claude Code update means the entry moved.
 
 The milestone verify gate appends built-in `owner-marks` (`marks.py check`) after locked checks
 when `asks/` holds a Snapmark session or `marks.json` exists; feature gates do not run it.

@@ -223,12 +223,14 @@ def test_lint_flags_long_sentences_and_open_questions(tmp_path: Path) -> None:
     assert _last(r) == f"LINT FAIL {ID} problems=2"
 
 
-@pytest.mark.parametrize("name", ["feature", "milestone"])
-def test_goal_templates_fit_and_name_the_sentinel(name: str) -> None:
+@pytest.mark.parametrize("name", ["run", "feature", "milestone"])
+def test_goal_templates_are_end_states_not_processes(name: str) -> None:
+    """2026-11-11: a process in the condition cannot be satisfied after the merge, so it never clears."""
     text = (SKILL / "templates" / "goal" / f"{name}.txt").read_text()
-    assert len(text) < 1000, len(text)
-    assert f"VERIFY PASS {name} <ID> <sha>" in text and "VERIFY BLOCKED" in text
-    assert f"verify_gate.py {name} <ID>" in text and "<TURNS> turns" in text
+    assert len(text) < 600, len(text)
+    assert "sdlc_status.py goal" in text and "DONE" in text and "BLOCKED" in text
+    assert "<TURNS> turns" in text
+    assert not [w for w in ("milestone/", "builder", "push") if w in text]
 
 
 def test_skill_asks_through_dialogs_with_a_recommendation() -> None:
@@ -239,17 +241,14 @@ def test_skill_asks_through_dialogs_with_a_recommendation() -> None:
     assert "## Talking to the engineer" in text and "(Recommended)" in text
 
 
-def test_run_goal_is_met_once_its_prs_merge() -> None:
-    """2026-10-26: "open with auto-merge armed" alone stops being true when auto-merge works."""
-    text = (SKILL / "templates" / "goal" / "run.txt").read_text()
-    assert "PR is merged or open with auto-merge armed" in text
-    assert "never waiting for a merge" not in text
-
-
-def test_feature_goal_runs_the_ux_check() -> None:
-    """The owner's rule (2026-10-12): each feature's screens get a UX check before it merges."""
-    text = (SKILL / "templates" / "goal" / "feature.txt").read_text()
-    assert "cct:ux-assessment-run" in text and "before arming auto-merge" in text
+def test_the_plan_template_keeps_the_process_the_goal_dropped() -> None:
+    """The process left the condition, not the run: How to run carries it, the handover starts it."""
+    plan = (SKILL / "templates" / "change" / "plan.md").read_text()
+    run = " ".join(plan.split("## How to run")[1].split("## Goal handover")[0].split())
+    handover = plan.split("## Goal handover")[1].split("## Revisions")[0]
+    assert "cct:ux-assessment-run" in run and "before arming auto-merge" in run  # 2026-10-12 rule
+    assert "right before each close" in run and "re-locks" in run and "supervisor's worktree" in run
+    assert "`## How to run`" in handover and "/goal `python3 scripts/sdlc_status.py goal" in handover
 
 
 @pytest.mark.parametrize("scope", ["feature", "milestone"])

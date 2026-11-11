@@ -5,6 +5,15 @@ version warning, the **Mechanical** lines are what `adopt` does for you (it adds
 with the stack's defaults and never overwrites a value), the **Manual** lines are printed for
 the engineer. A version with no migration lines needs nothing but a re-run of `adopt`.
 
+## 3.10.0 — goal conditions are end states
+
+- `/goal` conditions are end states a small model can confirm from the transcript: `templates/goal/*.txt` are one sentence under 600 characters that name `python3 scripts/sdlc_status.py goal <ID>` and its `GOAL <ID> DONE` / `GOAL <ID> BLOCKED` line. The old paragraphs could not be satisfied after a merge, so the Stop hook blocked every turn.
+- New `sdlc_status.py goal <ID> [--milestone <n> | --feature <n>]`: one line, exit 0 DONE (every milestone PR merged or armed, the last `VERIFY PASS` sha equal to the PR head, no open record), exit 3 BLOCKED, exit 1 OPEN. `gh` missing or failing is `OPEN gh-unavailable`, never DONE.
+- The process moved into `plan.md` `## How to run` (sync with the parent right before each close; owner-added scope re-locks and gets one more close, logged under Revisions; the parent merge may run in the supervisor's worktree). `## Goal handover` holds a kickoff prompt and the `/goal` line.
+- `stages.md` gains a "Waiting" section: CI by a background watch or `Monitor`, post-merge by a self-paced `/loop`, the success measure by `/schedule`, never a `/loop` inside a running `/goal`. `chain.md` flags the undocumented `goal_status` transcript entry the hooks read.
+- Mechanical: adopt refreshes `scripts/sdlc_status.py`, where `goal` lives (an adopted repo already has the file; the goal templates are read from the installed skill).
+- Manual: a running `/goal` keeps its old condition; start the next change from the new templates, and copy the kickoff prompt and `/goal` line from the new `plan.md` handover.
+
 ## 3.9.7 — preserve repository-owned CODEOWNERS
 
 - CODEOWNERS is repository-owned: adopt never creates, edits or deletes it, including older generated files and tier changes. Generated guards no longer impose owner routing.

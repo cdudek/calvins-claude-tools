@@ -1,6 +1,7 @@
 """Where a change stands: every milestone, the features of this one, and the stage.
 
     python3 scripts/sdlc_status.py map [<id>]
+    python3 scripts/sdlc_status.py goal <id> [--milestone <n> | --feature <n>]
 
 Written by `sdlc-run adopt` from the kit; edit the kit, not this copy. stdlib only.
 
@@ -8,6 +9,17 @@ Everything is read from the files, nothing is written. The stage (1-7): an archi
 lock.json → 5 (6 once every feature is merged), plan.md → 4, facts.md → 3, an approved intent → 2,
 otherwise 1. Milestone position comes from the design doc's `## Milestones` list (decisions.json
 `design`), features from the milestone's `milestone.md` Features table.
+
+`goal` is the check a `/goal` condition names: the evaluator cannot read files or GitHub, so this
+prints one line and the evaluator matches it. Exit 0 `GOAL <id> DONE pr=<n> state=<merged|armed>
+gate=<sha>`, exit 3 `GOAL <id> BLOCKED reason=<code>` (the last gate said VERIFY BLOCKED), exit 1
+`GOAL <id> OPEN <what is missing>`. DONE needs every milestone PR (branch `milestone/<slug>-<n>`,
+n from plan.md `## Milestones`) merged or open with auto-merge armed, the last
+`VERIFY PASS milestone <id> <sha>` in verify/report.json equal to the head sha of the last PR
+(`gh`, never local HEAD: records written after a merge move HEAD), and no open record
+(validation.md, findings.md; `verify_gate.milestone_blockers`). `--feature <n>` reads the plan's
+`## Feature PRs` row n and a `feature` gate; `--milestone <n>` narrows to one milestone. A `gh`
+that is missing or fails is `OPEN gh-unavailable`, never DONE.
 """
 
 from __future__ import annotations
@@ -154,10 +166,105 @@ def milestone_map(s: dict) -> str:
     return "\n".join(lines)
 
 
-def main(argv: list[str]) -> int:
-    if len(argv) < 2 or argv[1] != "map":
+def gh_json(root: Path, *args: str) -> list | None:
+    """Parsed `gh <args>` output; None when gh is missing, fails or prints something else."""
+    try:
+        out = subprocess.run(["gh", *args], cwd=root, capture_output=True, text=True, timeout=60)
+        found = json.loads(out.stdout) if out.returncode == 0 else None
+    except (OSError, subprocess.TimeoutExpired, ValueError):
+        return None
+    return found if isinstance(found, list) else None
+
+
+def branches(change: Path, decisions: dict, scope: str, n: int | None) -> list[str]:
+    """Head branches whose PRs end the goal: milestone/<slug>-<n>, or the Feature PRs row's branch."""
+    plan = (change / "plan.md").read_text(encoding="utf-8") if (change / "plan.md").exists() else ""
+    if scope == "feature":
+        for line in section(plan, "Feature PRs"):
+            cells = [c.strip().strip("`") for c in line.strip().strip("|").split("|")]
+            if len(cells) >= 4 and cells[0] == str(n):
+                return [cells[3]]
+        return []
+    slug = decisions.get("milestone", {}).get("slug") or slug_of(change.name)
+    count = sum(1 for line in section(plan, "Milestones") if re.match(r"\|\s*M\d+\b", line))
+    return [f"milestone/{slug}-{i}" for i in ([n] if n else range(1, max(count, 1) + 1))]
+
+
+def goal(
+    root: Path, change: Path, scope: str = "milestone", n: int | None = None, gh=gh_json
+) -> tuple[int, str]:
+    """(exit code, the one line) for the change's goal; `gh(root, *args)` is injectable."""
+    name = f"GOAL {change.name}"
+    report = read_json(change / "verify" / "report.json")
+    result = str(report.get("result", "")) if report.get("scope") == scope else ""
+    blocked = re.fullmatch(r"VERIFY BLOCKED reason=([\w-]+)", result)
+    if blocked:
+        return 3, f"{name} BLOCKED reason={blocked.group(1)}"
+    passed = re.fullmatch(rf"VERIFY PASS {scope} {re.escape(change.name)} (\w+)", result)
+    missing = [] if passed else [f"{scope}-gate-pass"]
+    names = branches(change, read_json(change / "decisions.json"), scope, n)
+    if not names:
+        missing.append(f"no-branch-for-{scope}-{n}")
+    prs = []
+    for branch in names:
+        found = gh(
+            root,
+            *("pr", "list", "--head", branch, "--state", "all", "--limit", "1"),
+            *("--json", "number,headRefOid,state,autoMergeRequest,mergedAt"),
+        )
+        if found is None:
+            return 1, f"{name} OPEN gh-unavailable"
+        if not found:
+            missing.append(f"no-pr:{branch}")
+            continue
+        pr = found[0]
+        merged = pr.get("state") == "MERGED" or bool(pr.get("mergedAt"))
+        armed = pr.get("state") == "OPEN" and bool(pr.get("autoMergeRequest"))
+        if not (merged or armed):
+            missing.append(f"pr-{pr['number']}-not-merged-or-armed")
+        prs.append((pr, "merged" if merged else "armed"))
+    if prs and passed and prs[-1][0].get("headRefOid") != passed.group(1):
+        missing.append(f"gate-sha-not-pr-{prs[-1][0]['number']}-head")
+    if scope == "milestone":
+        from verify_gate import milestone_blockers  # the gate's own record rules, one definition
+
+        if blocker := milestone_blockers(change):
+            missing.append(blocker[0])
+    if missing:
+        return 1, f"{name} OPEN " + ",".join(missing)
+    pr, state = prs[-1]
+    return 0, f"{name} DONE pr={pr['number']} state={state} gate={passed.group(1)}"
+
+
+def goal_main(args: list[str]) -> int:
+    pos, flag, value = (
+        list(args),
+        next((a for a in args if a in ("--milestone", "--feature")), None),
+        "",
+    )
+    if flag:
+        at = pos.index(flag)
+        value = pos[at + 1] if at + 1 < len(pos) else ""
+        del pos[at : at + 2]
+    if len(pos) != 1 or (flag and not value.isdigit()) or pos[0].startswith("--"):
         print(__doc__)
         return 2
+    root = repo_root(Path.cwd())
+    change = find_change(root, config(root), pos[0]) if root else None
+    if not root or not change:
+        print(f"GOAL {pos[0]} OPEN no-change-folder")
+        return 1
+    code, line = goal(root, change, flag[2:] if flag else "milestone", int(value) if flag else None)
+    print(line)
+    return code
+
+
+def main(argv: list[str]) -> int:
+    if len(argv) < 2 or argv[1] not in ("map", "goal"):
+        print(__doc__)
+        return 2
+    if argv[1] == "goal":
+        return goal_main(argv[2:])
     root = repo_root(Path.cwd())
     if not root:
         print("no sdlc.json in this repo: run `sdlc-run adopt`")
