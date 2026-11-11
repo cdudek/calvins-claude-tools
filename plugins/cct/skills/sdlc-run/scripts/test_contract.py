@@ -98,9 +98,12 @@ def test_every_hook_template_is_registered_by_adopt() -> None:
     assert not [h for h in hooks if f'"{h}"' not in adopt]
 
 
-def test_goal_templates_name_the_gate_script_they_run() -> None:
+def test_goal_templates_name_the_status_command_and_the_plan_names_the_gate() -> None:
     for name in ("run", "feature", "milestone"):
-        assert "verify_gate.py" in (TEMPLATES / "goal" / f"{name}.txt").read_text(encoding="utf-8")
+        text = (TEMPLATES / "goal" / f"{name}.txt").read_text(encoding="utf-8")
+        assert "scripts/sdlc_status.py goal <ID>" in text
+    plan = (TEMPLATES / "change" / "plan.md").read_text(encoding="utf-8")
+    assert "verify_gate.py milestone {{CHANGE}}" in plan.split("## How to run")[1]
 
 
 # Layer 2: the agents the stages call exist and are read-only where the stages say so
@@ -196,9 +199,7 @@ def test_local_first_contract_covers_failure_loop_and_exact_sha_gate() -> None:
         "references/ci-blueprint.md",
         "templates/CLAUDE-section.md",
         "templates/docs-sdlc.md",
-        "templates/goal/run.txt",
-        "templates/goal/feature.txt",
-        "templates/goal/milestone.txt",
+        "templates/change/plan.md",
         "../../agents/sdlc-feature-builder.md",
         "../../agents/review-fix-implementer.md",
         "../../agents/test-e2e-healer.md",
