@@ -12,6 +12,9 @@ every stage:
 - **One go is the default** (`sdlc.json` `delivery: "one-go"`, the owner's call on
   2026-10-25). Everything the engineer asked for goes into one change; the engineer pastes
   **one** `/goal` (`templates/goal/run.txt`) that builds every milestone of the plan in order.
+  The goal is an end state only: `python3 scripts/sdlc_status.py goal <ID>` prints
+  `GOAL <ID> DONE` or `GOAL <ID> BLOCKED`. The process the run follows is the plan's
+  `## How to run`, started by the kickoff prompt in `## Goal handover`.
   Features are commits; **run touched tests and required pre-commit checks**. The full
   local gate runs once on the final head before every push (see [local-first](local-first.md)). One PR and one release
   per milestone. `delivery: "feature-prs"` keeps the older per-feature PRs (Stage 5, second
@@ -28,6 +31,20 @@ every stage:
   the kit default applies and the report names it.
 - **A step whose skill is not installed is skipped with a printed note** (`skipped: <skill> is
   not installed`), never silently, and the note goes into the report of that stage.
+
+## Waiting
+
+Pick the tool by what ends the wait. `/goal` ends when a model confirms its condition from the
+transcript, `/loop` when time passes, a Stop hook when a script decides.
+
+- **CI on the milestone PR:** one background `gh pr checks --watch <n>` or a `Monitor` on it, only to learn
+  the result. No polling turns, and never a fix loop: a red check is fixed locally first
+  ([local-first](local-first.md)).
+- **After the merge (deploy, live checks):** `/loop` self-paced, stopped when the deploy is
+  confirmed. Start it after the goal is met.
+- **The success measure, days later:** `/schedule` (a cloud routine, it runs while the machine
+  is off). Never a session loop.
+- **Never a `/loop` inside a running `/goal`.** Two things then decide when the session stops.
 
 ## Stage 1 — Intent
 
@@ -181,9 +198,10 @@ Skipped for size `none` and for `sdlc.json` `ux: off`, with one printed line.
   for every new file), **Milestones** and the feature rows under them (ordered, each with its
   facts and branch), Files that
   change, Order of work with a proof per step, Risks (including the validate findings), Done,
-  **Goal handover**: one go, a single filled `templates/goal/run.txt` (turns from
-  `goal.runTurns`); feature PRs, one filled `templates/goal/feature.txt` per feature
-  (`goal.featureTurns`).
+  **How to run** (the process of the build, from `templates/change/plan.md`), and **Goal
+  handover**: a kickoff prompt plus the `/goal` line. One go: the filled
+  `templates/goal/run.txt` (turns from `goal.runTurns`); feature PRs, one filled
+  `templates/goal/feature.txt` per feature (`goal.featureTurns`).
 - `done.json`: facts with their tags, pages, states, widths, turn caps — the criteria as data.
 - **Decisions get their own file.** A choice worth its reasons in a year is a new ADR,
   `<designsDir>/<date>-adr-<slug>.md`, with `supersedes` when it replaces one; set the old
@@ -228,7 +246,8 @@ package), `tracking-apply` (the success-measure events). Each result lands in th
 ### One go (default)
 
 One `/goal` from `templates/goal/run.txt` (turns: `goal.runTurns`) runs Stage 5 and Stage 6
-for every milestone of the plan, back to back. The plan's `## Milestones` groups the features;
+for every milestone of the plan, back to back. The goal holds only the end state; the run
+follows the plan's `## How to run`, which is the steps below as the plan states them. The plan's `## Milestones` groups the features;
 a change small enough for one milestone has one.
 
 1. Milestone `n` works on a local `milestone/<slug>-<n>`, cut from fresh `origin/<parent>`, so it
@@ -237,7 +256,8 @@ a change small enough for one milestone has one.
    merges. Milestone PRs merge with a merge commit, so a stacked milestone needs no rebase.
    **Its first row is the sync:** `git fetch origin && git merge origin/<default>`, in a project also
    `git merge origin/project/<slug>`, locally in the milestone's worktree. Repeat it whenever an
-   earlier milestone merges. It is a commit, never a PR; `verify_gate.py milestone` fails with
+   earlier milestone merges, and right before each close (the parent moves while you build).
+   The merge may run in the supervisor's worktree. It is a commit, never a PR; `verify_gate.py milestone` fails with
    `check=parent-sync` until it is done, so it cannot be skipped.
 2. Per feature, in order: build only up to the class `lock.json` holds; a decision above it is
    not built but written to `questions.md` with its options, and the item is skipped. Write the
@@ -258,6 +278,8 @@ a change small enough for one milestone has one.
    goes on building the next milestone wherever that does not build on this one. Only a
    `VERIFY PASS milestone` head is pushed, once, with one PR and auto-merge armed. CI is the last
    check, never the test loop.
+   Scope the owner adds mid-run re-locks (`verify_gate.py approve <id>`) and gets one more close,
+   logged under `## Revisions`.
 
 ### Feature PRs (`delivery: "feature-prs"`)
 
