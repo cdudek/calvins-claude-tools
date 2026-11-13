@@ -75,7 +75,7 @@ def test_sdlc_json_wins(tmp_path: Path) -> None:
 
 def test_the_old_linear_key_means_linear(tmp_path: Path) -> None:
     rows = _detect(
-        tmp_path, owner="x", gh=None, bd=False, cfg={"linear": {"team": "CPTO-Office"}}, mcp="yes"
+        tmp_path, owner="x", gh=None, bd=False, cfg={"linear": {"team": "ABC"}}, mcp="yes"
     )
     assert rows["configured"] == "linear" and rows["steps"] == "none"
 

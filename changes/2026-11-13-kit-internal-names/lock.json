@@ -1,0 +1,8 @@
+{
+  "approved_at": "2026-11-13T20:53:44+00:00",
+  "sha": "bf3232a1e8d2d4163bc377cb3d22ee190f54cb6c",
+  "criteria": {
+    "facts.md": "5c353780a855a3f34c92309c24ef29dccb9192f02381775bb1a0b4f19d19a8a8",
+    "checks": "3045d9f0e5752b1ca203b03d87589829820a7b933a0318e4216f5702b6b1d8b4"
+  }
+}

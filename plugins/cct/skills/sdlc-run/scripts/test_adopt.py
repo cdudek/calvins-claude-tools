@@ -396,7 +396,7 @@ def test_migrates_goals_and_claude_plans(tmp_path: Path) -> None:
     env = _env()
     goal = repo / "goals" / "2026-09-05-ai-native-sdlc"
     goal.mkdir(parents=True)
-    fm = "---\nlinear: CPTO-947\ntype: %s\ngoal: 2026-09-05-ai-native-sdlc\nauthor: t@t\nstatus: approved\ncreated: 2026-09-05\n---\n"
+    fm = "---\nlinear: ABC-947\ntype: %s\ngoal: 2026-09-05-ai-native-sdlc\nauthor: t@t\nstatus: approved\ncreated: 2026-09-05\n---\n"
     (goal / "intent.md").write_text(
         fm % "intent"
         + "# Intent\n\n## Problem\n\n## Proposed outcome\n\n## Affected users and systems\n\n## Constraints\n\n## Open questions\n"
@@ -418,12 +418,12 @@ def test_migrates_goals_and_claude_plans(tmp_path: Path) -> None:
     )
 
     out = _sections(_adopt(repo).stdout)
-    dest = repo / "changes" / "archive" / "2026" / "2026-09" / "2026-09-05-CPTO-947-ai-native-sdlc"
+    dest = repo / "changes" / "archive" / "2026" / "2026-09" / "2026-09-05-ABC-947-ai-native-sdlc"
     assert dest.is_dir() and not (repo / "goals").exists()
     assert not (dest / "goal.md").exists()
     plan = (dest / "plan.md").read_text()
     assert "## Done" in plan and "make verify exits 0" in plan
-    assert "change: 2026-09-05-CPTO-947-ai-native-sdlc" in plan and "archived_at:" in plan
+    assert "change: 2026-09-05-ABC-947-ai-native-sdlc" in plan and "archived_at:" in plan
     assert (repo / "docs" / "history" / "plans" / "2026-08-01T1200-handover-x.md").exists()
     assert not (repo / ".claude" / "plans").exists()
     # A migrated repo has an archived change, so no adopt-sdlc change is invented on top.

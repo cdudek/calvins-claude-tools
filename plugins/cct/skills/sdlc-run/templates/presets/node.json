@@ -1,7 +1,7 @@
 {
   "_comment": "Read by the sdlc-run skill, the hooks in .claude/hooks/ and the guardrail test. Commands run from the repo root; {file} is the edited file. docs/sdlc.md explains every key.",
   "linear": {
-    "team": "CPTO-Office",
+    "team": "",
     "project": ""
   },
   "defaultBranch": "master",
