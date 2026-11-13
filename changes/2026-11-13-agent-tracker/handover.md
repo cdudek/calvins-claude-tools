@@ -5,7 +5,7 @@ created: 2026-11-13
 author: Claude (session with Calvin Dudek)
 ---
 
-# Handover: agent tracker, Stage 1
+# Handover: agent tracker, Stages 1 and 2
 
 ## Where things stand
 
@@ -25,14 +25,30 @@ author: Claude (session with Calvin Dudek)
 - **Also in scope:** "you should know" and "decided without you" items; a compact view; a band header naming the repo, the work and what runs in the session (a `/goal`, subagents, background tasks).
 - **Works without sdlc-run:** sdlc-run change folders only add detail.
 
+## Stage 2, UX plan (done 2026-11-13)
+
+- **Scope:** the owner chose the full UX chain; `sdlc.json` `ux` is now `on`. `docs/ux/` holds setup, owner words, unresolved guidelines, exceptions (EX-1), glossary proposal and an empty as-built sitemap.
+- **Spec:** `spec/` has brief, ia, sitemap, interaction, screens, conformance (16 findings, resolved), and validation (`verdict: ready`, `status: draft`). Reviewer notes are in `spec/review/`.
+- **Owner answers, 2026-11-13:** a turn ending in a plain-text question counts as needs you, classified by haiku at turn end; WCAG 2.2 AA as a target (R2); singular page ids (EX-1); the pane's three names stay.
+- **No prototype:** none drawn. Stage 4 decides whether the plan marks the UI risky (`cct:design-mockups-create spec`).
+
 ## Next
 
-1. Stage 2 UX plan (size L), Stage 3 facts, Stage 4 plan, then the one gate.
-2. `/goal` builds milestone 1.
+1. **Stage 3 facts:** every fact cites asks, names its screen or state and its E2E tag; the "Fact" column of `spec/validation.md` fills from it.
+2. **Stage 4 plan:** carry the Medium and Low findings from `spec/validation.md` (the last Findings row points into `spec/review/`) into `plan.md` as Risk rows or deferrals. Add these Risks:
+   - **Tab title:** a session's title may not match its Claude Code tab.
+   - **Classic hooks:** they may be skipped on managed machines (ponytail's code says so), which affects `Stop`-based items.
+   - **Haiku question check:** it runs only in sessions with the mod.
+3. **The one gate:** `spec/`, `facts.md` and `plan.md` together; on approval set `spec/validation.md` `status: approved`.
+
+## Verified since Stage 1
+
+- **`claude agents --json` (2.1.323):** interactive sessions carry `status` (`idle`, `busy`, `waiting`, plus `waitingFor`); background sessions carry `state` (`working`, `blocked`, `done`). The mapping is in `spec/ia.md`.
+- **Mod API:** letter hotkeys fire only while the band or pane has the keyboard. Panes have no raw key handler. `Link` exists on the terminal, `Svg` on desktop only. A pane opened by the mod itself is placed only from 144 columns (110 for one opened before).
 
 ## Open, not verified
 
-- Which of the `claude agents --json` states `blocked` and `waiting` means a permission prompt.
+- What `waitingFor` holds for a permission prompt against a question.
 - When a `/goal` ends, as a mod sees it.
 - Whether a mod can call a connected MCP tool (needed for Linear state in milestone 3).
 - The local CI gate (`scripts/ci-local` and its pre-push hook) is not installed in this repo yet.
