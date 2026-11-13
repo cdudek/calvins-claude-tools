@@ -221,3 +221,13 @@ def test_verification_entry_points_link_the_local_first_contract(relative: str) 
     assert "No check, lint or test runs" not in text
     assert "no check, lint or test runs" not in text
     assert "make `check` the only required status" not in text
+
+
+def test_decision4_is_advisory_no_workflow_or_gate_shipped() -> None:
+    assert sorted(p.name for p in (TEMPLATES / "decision4").iterdir()) == [
+        "AGENTS-section.md",
+        "boundary-map.yaml",
+    ]
+    agents = (TEMPLATES / "decision4/AGENTS-section.md").read_text(encoding="utf-8")
+    assert "Nothing blocks a merge on it" in agents
+    assert "§" not in agents and "put-right" not in agents

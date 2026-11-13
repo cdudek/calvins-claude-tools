@@ -5,6 +5,14 @@ version warning, the **Mechanical** lines are what `adopt` does for you (it adds
 with the stack's defaults and never overwrites a value), the **Manual** lines are printed for
 the engineer. A version with no migration lines needs nothing but a re-run of `adopt`.
 
+## 3.13.0 — Decision4 back as advisory
+
+- Decision4 returns without any gate: no workflow, no `ci-local` step, no required `decision4` status, no hook that reads a PR body, and no `class` in `intent.md` or blocker in `verify_gate.py approve` (those stay removed from 3.12.0).
+- Back, in plainer words: `boundary-map.yaml` (the lowest undo level per path), the AGENTS.md section "Decision4: how hard is this change to undo?", and the PR-template section "How hard is it to undo this PR after merging?" with the Decision record (Repair, Migrate and Answer only). New `references/decision4-pr.md`; the PR-body guidance in the skills points to it.
+- `adopt` installs the map, the AGENTS.md section (and `@AGENTS.md` in CLAUDE.md when it exists) and the PR-template section, each only when missing. `project-repository-run` does the same through `--decision4`; `--check` never requires them.
+- Mechanical: re-running `adopt` adds the three pieces where missing and refreshes `scripts/verify_gate.py` and `docs/sdlc.md` above its marker; existing files and sections are not rewritten.
+- Manual: edit the starter `boundary-map.yaml`; a repo that kept the old Decision4 text from 3.9.x replaces it with the new section by hand.
+
 ## 3.12.0 — Decision4 removed
 
 - Decision4 is gone: the PR-body sections "How hard is it to undo this PR after merging?" and "Decision record", the `boundary-map.yaml` scaffold, the AGENTS.md handoff contract, the shared `decision4` check and the `decision4` commit status. `references/decision4-pr.md`, `templates/decision4/` and `scripts/decision4_assets.py` are deleted; PR text keeps What, Why, Proof and Before merge.

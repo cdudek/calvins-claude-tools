@@ -17,9 +17,11 @@ Creates a GitHub pull request from local changes through a complete workflow: br
 
 ## Scannable PR text (required)
 
-- **Order:** `## What` → `## Why` → `## Proof` → `## Before merge` (only while something is open).
+- **Order:** `## What` → `## Why` → `## Proof` → `## Before merge` (only while something is open) → `## How hard is it to undo this PR after merging?` → `## Decision record` (Repair, Migrate and Answer only).
 - **Bullets:** Every section is a list; start each bullet with a bold label (`- **Source plan:** 0 adds, 8 updates, 38 destroys.`). Keep one idea per bullet, at most two lines, and no paragraph longer than two sentences. Keep checklist syntax and bold-label the item.
 - **Proof:** Name the check and result (`- **Unit tests:** 1,320 passed.`). Put links on the label or result, never a bare URL in prose. Preserve claims and human checklist attestations when restructuring an existing body.
+- **Decision4 (advisory):** Copy the section from the repo's PR template. Pick one level (🟢 Undo, 🟡 Repair, 🟠 Migrate, 🔴 Answer) at or above the lowest level `boundary-map.yaml` gives the changed paths; unsure, take the higher. Give concrete recovery steps and who is responsible. Nothing checks it and it never blocks a merge.
+- **Decision record:** Only above Undo, as `AGENTS.md` says: Repair names what was chosen, over what, why and what it commits us to; Migrate lists at least two options; Answer lists facts marked observed, inferred, asked or unknown and recommends nothing.
 - **Milestone and review text:** The same layout covers milestone-close PRs, issue bodies and PR comments. Put addressed feedback under What, its rationale under Why and its check results under Proof. A short thread reply can be one bold-labelled bullet; include only applicable sections.
 - **Validation:** Validate the proposed body before pushing and the actual body after creation or edits against these rules. Use `--body-file`.
 
@@ -182,7 +184,7 @@ If the branch already has commits with a clear history, create an additional com
 
 ### Step 6: Push and Create the PR
 
-Prepare the body as described below before invoking the local gate.
+Prepare the body as described below before invoking the local gate. Decision4 is advisory; it never blocks.
 Run `scripts/ci-local` (or the full local suite if it is not installed) on the final head,
 including when the branch already has commits. The script owns the push and exact-SHA
 statuses; a raw `git push -u origin <branch>` is only for repositories still migrating,
@@ -199,7 +201,7 @@ after their full local suite and proposed-body validation pass.
 
 Nothing back means no template. One path back is the template — `cat` it. Several means the repo offers a choice: GitHub applies exactly one per PR, so pick the one that fits this change and `cat` that. Never `cat` two together — concatenating them makes a body the repo never intended, with two of every heading.
 
-**Validate the body before pushing.** Validate the proposed body locally before the push; after creation validate the actual body before the gate publishes success. Use a body file.
+**Validate the body before pushing.** Validate the proposed body locally before the push; after creation validate the actual body before the gate publishes success. Use a body file. If the template has the Decision4 section, fill it as in [Decision4 in a PR](../sdlc-run/references/decision4-pr.md); it is advisory and nothing checks it.
 
 **Always create PRs as drafts** (`gh pr create --draft`). A draft can't be merged and signals "not yet ready for review". The author must self-review the PR and then mark it ready (`gh pr ready` or the "Ready for review" button) themselves — that human gate is the whole point of opening as a draft. Never mark a PR ready on the user's behalf, and never skip `--draft` unless the user explicitly asks for a non-draft PR.
 

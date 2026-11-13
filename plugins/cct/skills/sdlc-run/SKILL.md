@@ -13,7 +13,7 @@ description: >-
 allowed-tools: "Read Grep Glob Edit Write Agent Skill AskUserQuestion Bash(bash */sdlc-run/scripts/*) Bash(python3 */sdlc-run/scripts/*) Bash(python3 */sdlc-run/templates/scripts/sdlc_version.py*) Bash(python3 scripts/sdlc_version.py*) Bash(python3 scripts/verify_gate.py *) Bash(python3 scripts/sdlc_status.py *) Bash(scripts/ci-local *) Bash(wt *) Bash(git *) Bash(gh *) Bash(bd *) Bash(plannotator *) Bash(make *) Bash(pnpm *) Bash(uv *) Bash(npx *) EnterWorktree mcp__claude_ai_Linear__* mcp__linear__*"
 user_invocable: true
 metadata:
-  version: 3.12.0
+  version: 3.13.0
   author: calvindudek
 effort: high
 ---
@@ -59,9 +59,11 @@ Read the [shared worktree policy](../../references/worktree-usage.md) for every 
 
 ## Scannable PR text (required)
 
-- **Order:** `## What` → `## Why` → `## Proof` → `## Before merge` (only while something is open).
+- **Order:** `## What` → `## Why` → `## Proof` → `## Before merge` (only while something is open) → `## How hard is it to undo this PR after merging?` → `## Decision record` (Repair, Migrate and Answer only).
 - **Bullets:** Every section is a list; start each bullet with a bold label (`- **Source plan:** 0 adds, 8 updates, 38 destroys.`). Keep one idea per bullet, at most two lines, and no paragraph longer than two sentences. Keep checklist syntax and bold-label the item.
 - **Proof:** Name the check and result (`- **Unit tests:** 1,320 passed.`). Put links on the label or result, never a bare URL in prose. Preserve claims and human checklist attestations when restructuring an existing body.
+- **Decision4 (advisory):** Copy the section from the repo's PR template. Pick one level (🟢 Undo, 🟡 Repair, 🟠 Migrate, 🔴 Answer) at or above the lowest level `boundary-map.yaml` gives the changed paths; unsure, take the higher. Give concrete recovery steps and who is responsible. Nothing checks it and it never blocks a merge.
+- **Decision record:** Only above Undo, as `AGENTS.md` says: Repair names what was chosen, over what, why and what it commits us to; Migrate lists at least two options; Answer lists facts marked observed, inferred, asked or unknown and recommends nothing.
 - **Milestone and review text:** The same layout covers milestone-close PRs, issue bodies and PR comments. Put addressed feedback under What, its rationale under Why and its check results under Proof. A short thread reply can be one bold-labelled bullet; include only applicable sections.
 - **Validation:** Validate the proposed body before pushing and the actual body after creation or edits against these rules. Use `--body-file`.
 
@@ -279,6 +281,7 @@ local debugging loop. Existing remote CI remains confirmation during migration. 
 - `references/ci-blueprint.md` — local gate setup, required `local-ci` status, cloud workflows and migration from existing remote CI.
 - `references/local-first.md` — the shared local verification and targeted debugging contract.
 - `references/harness-audit.md` — monthly local whole-harness evidence, pinned consumer sync, owner-assigned gaps and legacy refusal fixtures.
+- `references/decision4-pr.md` — Decision4 in a PR: advisory undo level and decision record, no gate.
 - `references/changelog.md` — what each sdlc-run version changed and what a repo must do (`adopt --upgrade` reads it).
 - `references/tiers.md` — Ship / Show / Ask by path.
 - `references/playbook.md` — playbook mapping and metrics.

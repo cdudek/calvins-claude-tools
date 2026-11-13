@@ -58,6 +58,26 @@ class ProjectSetupTest(unittest.TestCase):
         run(self.root, "--yes")
         self.assertEqual(run(self.root, "--check")[0], 0)
 
+    def test_decision4_files_are_added_once_and_never_required(self):
+        (self.root / "CLAUDE.md").write_text("# Repo\n")
+        code, out = run(self.root, "--check")
+        self.assertNotIn("boundary-map", out)
+        run(self.root, "--yes")
+        self.assertIn("floor: Undo", (self.root / "boundary-map.yaml").read_text())
+        agents = (self.root / "AGENTS.md").read_text()
+        self.assertIn("## Decision4: how hard is this change to undo?", agents)
+        self.assertIn("@AGENTS.md", (self.root / "CLAUDE.md").read_text())
+        template = (self.root / ".github/PULL_REQUEST_TEMPLATE.md").read_text()
+        self.assertIn("## How hard is it to undo this PR after merging?", template)
+        self.assertFalse((self.root / ".github/workflows").exists())
+        self.assertFalse((self.root / "scripts").exists())
+        run(self.root, "--yes")
+        self.assertEqual((self.root / "AGENTS.md").read_text(), agents)
+
+    def test_no_decision4_flag_skips_the_files(self):
+        run(self.root, "--yes", "--no-decision4")
+        self.assertFalse((self.root / "boundary-map.yaml").exists())
+
     def test_invalid_settings_json_stops_without_writing(self):
         (self.root / ".claude").mkdir()
         (self.root / ".claude/settings.json").write_text("{nope")

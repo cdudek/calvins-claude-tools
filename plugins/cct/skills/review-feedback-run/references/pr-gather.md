@@ -23,6 +23,8 @@ bash ${CLAUDE_SKILL_DIR}/../github-manage/scripts/pr-readiness.sh {number}
 bash ${CLAUDE_SKILL_DIR}/scripts/gather-pr-feedback.sh {number}
 ```
 
+If the PR has a Decision4 section, compare its level and recovery steps with the diff and `boundary-map.yaml` ([advisory](../../sdlc-run/references/decision4-pr.md)); raise a mismatch as feedback, never as a blocker.
+
 ## Parsing
 
 Parse outputs by `-#-#- SECTION -#-#-` markers (see CLAUDE.md scripts rule). Sections you'll consume:

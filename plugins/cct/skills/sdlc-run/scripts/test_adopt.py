@@ -1492,13 +1492,36 @@ def test_rules_must_be_a_list_of_paths(tmp_path: Path) -> None:
     assert res.returncode != 0 and "rules must be a list of repo paths" in res.stderr
 
 
-def test_adopt_writes_the_pr_template_once_and_keeps_a_repo_one(tmp_path: Path) -> None:
+def test_adopt_installs_advisory_decision4_and_never_a_gate(tmp_path: Path) -> None:
     repo = _repo(tmp_path, "python")
+    policy = "version: 1\nentries:\n  - select: {paths: ['src/**']}\n    floor: Answer\n"
+    (repo / "boundary-map.yaml").write_text(policy)
     template = repo / ".github/pull_request_template.md"
-    template.write_text("## Team checklist\n- [ ] Human review\n")
-    assert _adopt(repo).returncode == 0
-    assert template.read_text() == "## Team checklist\n- [ ] Human review\n"
+    template.write_text("## Team checks\n- [ ] Human review\n")
+    result = _adopt(repo)
+    assert result.returncode == 0, result.stderr
+    assert (repo / "boundary-map.yaml").read_text() == policy
+    body = template.read_text()
+    assert body.startswith("## Team checks\n- [ ] Human review\n")
+    assert "## How hard is it to undo this PR after merging?" in body
+    assert "## Decision record" in body and "advisory" in body
     assert "PULL_REQUEST_TEMPLATE.md" not in [p.name for p in (repo / ".github").iterdir()]
-    template.unlink()
+    agents = (repo / "AGENTS.md").read_text()
+    assert "## Decision4: how hard is this change to undo?" in agents
+    assert "Nothing blocks a merge on it" in agents
+    assert "§7" not in agents and "put-right" not in agents
+    assert "@AGENTS.md" in (repo / "CLAUDE.md").read_text()
+    assert not (repo / ".github/workflows/decision4.yml").exists()
+    assert not (repo / "scripts/decision4-shared.sh").exists()
+    assert "decision4" not in " ".join(_sections(result.stdout)["MANUAL"]).replace("Decision4", "")
+    before = (body, agents)
     assert _adopt(repo).returncode == 0
-    assert "## What" in (repo / ".github/PULL_REQUEST_TEMPLATE.md").read_text()
+    assert (template.read_text(), (repo / "AGENTS.md").read_text()) == before
+
+
+def test_adopt_creates_the_starter_map_and_pr_template(tmp_path: Path) -> None:
+    repo = _repo(tmp_path, "node")
+    assert _adopt(repo).returncode == 0
+    assert "floor: Undo" in (repo / "boundary-map.yaml").read_text()
+    assert "Decision record" in (repo / ".github/PULL_REQUEST_TEMPLATE.md").read_text()
+    assert not (repo / ".github/workflows/decision4.yml").exists()
