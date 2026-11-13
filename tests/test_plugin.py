@@ -27,7 +27,7 @@ class Plugin(unittest.TestCase):
             self.assertEqual(a[a.find("\n---\n"):], b[b.find("\n---\n"):], f"{mirror} no longer matches {canon}")
 
     def test_no_private_or_internal_names(self):
-        r = subprocess.run(["git", "grep", "-nIiE", r"\bomr\b|omr-|ramp106|KIT_READ_TOKEN", "--", ".", ":!tests/test_plugin.py", ":!*.pdf"],
+        r = subprocess.run(["git", "grep", "-nIiE", r"\bomr\b|omr-|ramp106|KIT_READ_TOKEN|\bcpto\b|data-orchestration", "--", ".", ":!tests/test_plugin.py", ":!*.pdf"],
                            cwd=ROOT, capture_output=True, text=True, errors="replace")
         self.assertEqual(r.stdout, "")
 

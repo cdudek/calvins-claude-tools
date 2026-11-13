@@ -14,7 +14,7 @@ Pick one level. `boundary-map.yaml` gives the lowest level for each path; never 
 How to write it:
 
 - Plain words, short sentences. Someone who never saw the work understands it in 30 seconds.
-- Write the fact, not a pointer. Never cite a PR, issue or Linear ticket by number alone (not "see data-orchestration #1931", not "per CPTO-1344"); say what it contains.
+- Write the fact, not a pointer. Never cite a PR, issue or Linear ticket by number alone (not "see other-repo #1931", not "per ABC-1344"); say what it contains.
 - Recovery steps are concrete: what to run or change, in order.
 - Unattended agents finish only Undo changes. Above Undo, hand back to a person.
 
