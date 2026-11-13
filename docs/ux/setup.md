@@ -22,7 +22,7 @@ The repo ships Claude Code plugins. Until the agent tracker, none had an interfa
 
 ## The rules it must follow
 
-- **Design system:** none. The mod uses Claude Code's own components (`Box`, `Text`, `Button`, `Svg`) and its theme colours (`success`, `warning`, `error`, `suggestion`, `inactive`, dim). No colours of its own.
+- **Design system:** none. The mod uses Claude Code's own components (`Box`, `Text`, `Button`, `Link`; `Svg` on desktop only) and its theme colours (`success`, `warning`, `error`, `suggestion`, `inactive`, dim). No colours of its own.
 - **Glossary:** none yet; `docs/ux/glossary-proposal.md` collects terms.
 - **Voice and writing rules:** the shared `writing.md`, plus the repo's style: plain words, short sentences, sentence case, no exclamation marks.
 - **Hard rules** that override UX preferences:
@@ -95,7 +95,7 @@ App-wide parts: the band (always present), the pane's breadcrumb, toasts for Cop
 
 - **Never write to:** any Claude Code session, transcript or agent; git, gh or bd state (read only).
 - **Read only:** `~/.claude/projects/*/*.jsonl`, `claude agents --json`, `git`, `gh`, `bd`.
-- **Writes only against:** `~/.claude/agent-tracker/` (one file per session, and the board file from milestone 2).
+- **Writes only against:** `~/.claude/agent-tracker/` (one file per session, `settings.json` for the band view and hidden flag, and the board file from milestone 2).
 
 ## Flows for this product
 

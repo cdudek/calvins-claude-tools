@@ -62,7 +62,9 @@ The tracker never acts on a session (no-go N1). Its verbs open, switch view, cop
 | Band | Open the pane | band button "Pane"; `/tracker` | primary | Close in the pane |
 | Band | Copy the state as Markdown | band button "Copy" (details view) | secondary | none |
 | Session | Open its page | row in the pane | primary | Back |
-| Repo | Open its page | repo heading in the pane | primary | Back |
+| Session (ended) | Copy its resume command | Session page button "Copy resume command" | secondary | none |
+| Band | Hide or show | `/tracker band off`, `/tracker band on` | secondary | the other command |
+| Repo | Open its page | repo heading in the pane; Repos line on Home | primary | Back |
 | PR | Open on GitHub | PR number as a link (the mod's `Link`) | secondary | none |
 | Pane | Close | Escape, "Close" | primary | `/tracker` or Pane reopens |
 
@@ -74,6 +76,7 @@ The tracker never acts on a session (no-go N1). Its verbs open, switch view, cop
 | Band compact | oldest waiting session: title and wait time | 2 | J1: which to answer first. |
 | Band compact | running count | 3 | J5, success measure. |
 | Band compact | open PR count and failing count | 4 | J11 |
+| Band compact | this session's work (milestone and progress, or title) and goal age | 5 | J7; last on the line, first to be cut. |
 | Band header | repo name | 1 | J7 |
 | Band header | milestone and feature progress, or session title | 2 | J3, J7, J9 |
 | Band header | goal and its age, subagent count, background task count | 3 | J7 |
@@ -179,11 +182,19 @@ The pane has no raw key handler (the mod API gives Buttons, Tab, Enter and one-c
 
 ## Decisions Taken Here
 
-- **Default band view:** compact. A new session, or one with nothing stored, starts compact; the choice is kept per machine, not per session (one band everywhere, A6).
+- **Default band view:** compact. A new session, or one with nothing stored, starts compact. The choice is kept machine-wide in `~/.claude/agent-tracker/settings.json` (inside the one folder the tracker writes), so every session's band follows on its next redraw (one band everywhere, A6). Conformance F013.
+- **Band order, count first:** the compact line starts with the needs-you count, then running, PRs, and this session's work last. The owner's own sketch in the design file reads `● 2 need you ◐3 … PRs 1✗` with the session after it. Conformance F016.
+- **This session waiting:** it counts, and the band names it "this session" instead of its title; the oldest other waiting session follows when there is one. Conformance F008.
+- **Pane entry:** the Pane button and `/tracker` always open Home, the triage queue (scene S2). `/tracker repo <name>` and `/tracker session <text>` open those pages. Conformance F006.
+- **Route to a waiting session (J1):** the tracker cannot switch sessions (observe only). The band and Home name the session by its title, which is the title of its Claude Code tab. An ended session's page offers "Copy resume command" (`cd <folder> && claude --resume <id>`); a live session's page does not, because resuming a live session starts a second process on it. Conformance F005.
+- **Every repo has a way in from Home:** Home ends with a "Repos" line listing every repo with a session in the last 7 days, each a button to its Repo page with its PR count. Conformance F009.
+- **Next to ponytail's band:** the tracker draws its own row above the rows of other mods (`next(e)` below), shares no hotkey with them (ponytail's buttons have none), and `/tracker band off` hides it, `/tracker band on` shows it again. Conformance F011.
+- **Feature states:** shown as "to do", "building", "complete", "merged", "blocked"; "done" stays the word for a session whose turn ended. Conformance F009 note.
+- **Breadcrumb root:** "Home", as in the sitemap; the pane's title row says "Tracker". The breadcrumb is text; the repo button in the Session header is the control. Conformance F004.
 - **Ended sessions:** not on Home (the queue stays live). The Repo page lists them under "Ended", newest first, the last 7 days.
 - **Repo identity:** the git top-level path; the label is its folder name. Two repos with the same folder name get the parent folder added to both labels (`work/web-app`, `oss/web-app`). Sitemap finding SM-6.
 - **Page ids singular** (`repo/<repo>`, `session/<id>`): kept to match the alias table and milestone 2's `#/repo/…` routes. Sitemap finding SM-10, recorded for conformance.
-- **One entry, three names** (`/tracker`, the Pane button, the Home page): the pane's title is "Tracker", the band button says "Pane" (ponytail's pattern, A6), the first page is Home. Sitemap finding SM-4, put to the owner in the validation pass.
+- **One entry, three names** (`/tracker`, the Pane button, the Home page): the pane's title is "Tracker", the band button says "Pane" (the design file's button set; ponytail's band has Board where this has Pane), the first page is Home. Sitemap finding SM-4, put to the owner in the validation pass.
 
 ## Open Questions
 

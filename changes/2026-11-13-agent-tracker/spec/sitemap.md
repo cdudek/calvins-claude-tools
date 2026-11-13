@@ -56,11 +56,11 @@ Tabs: none on any page. "Header primary" names the one action the page's header 
 
 | Route | Label (en) | Type | Tabs -> header primary | Reached from |
 |---|---|---|---|---|
-| `band/compact` | Compact | embed | - -> Details | every session, always (default view, **decide**: assumed); Compact button on `band/details` |
+| `band/compact` | Compact | embed | - -> Details | every session, always (default view, decided in ia.md); Compact button on `band/details` |
 | `band/details` | Details | embed | - -> Compact | Details button on `band/compact`; remembered view state on a new prompt (not a visible way in) |
 | `home` | Home | home | - -> none | Pane button on either band view; `/tracker`; Back from `repo/<repo>` or `session/<sessionId>` |
 | `repo/<repo>` | the repo's folder name | record | - -> none | Home repo heading; repo line in a session header; Back from a session opened here |
-| `session/<sessionId>` | the session title | record | - -> none (Copy resume command is secondary) | Home row; Repo session row; Back from `repo/<repo>` opened from here |
+| `session/<sessionId>` | the session title | record | - -> none (Copy resume command, ended sessions only, is secondary) | Home row; Repo session row; Back from `repo/<repo>` opened from here |
 
 **Query params:** none on any page. Home has no search, filter, sort or named view in milestone 1, so there is no list state to put in an address (RC-9 does not apply; revisit when a filter exists). The one shareable view is the text the band's Copy button produces.
 

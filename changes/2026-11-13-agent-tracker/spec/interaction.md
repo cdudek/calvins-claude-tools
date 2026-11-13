@@ -4,10 +4,12 @@ Every guideline in `docs/ux/interaction-guidelines.md` is `unresolved`. Each row
 
 What the mod API allows, and so what this spec uses (Claude Code 2.1.323 types, checked 2026-11-13):
 
-- **Band keys:** `ctrl+x tab` or a click gives the band the keyboard; Tab and the arrows walk its buttons, Enter presses one, a one-letter `hotkey` presses it directly. Escape hands the keyboard back to the prompt. Digit hotkeys are not used: a bare digit in an empty prompt would press them.
-- **Pane keys:** the same ring (`ctrl+x tab`, Tab, Enter, letter hotkeys, arrows scroll). No raw key handler, so every move is a Button. `ctrl+x x` closes a pane; the pane opens with `closeOnEscape`, so Escape at an empty prompt closes it too.
-- **Menu route:** the mod has no menus. The menu route for every action is the `/tracker` command with an argument (`/tracker details`, `/tracker compact`, `/tracker copy`, `/tracker repo <name>`, `/tracker session <title or id>`).
+- **Band keys:** `ctrl+x tab` or a click gives the band the keyboard; Tab and the arrows walk its buttons, Enter presses one, a one-letter `hotkey` presses it directly. A letter hotkey never fires from the prompt: only while the band or pane has the keyboard (engine types, the `hotkey` rule). Digit hotkeys are not used, because a bare digit in an empty prompt does press them.
+- **Pane keys:** the same ring (`ctrl+x tab`, Tab, Enter, letter hotkeys, arrows scroll). No raw key handler, so every move is a Button. `ctrl+x x` closes a pane.
+- **Escape, one step at a time:** the first Escape hands the keyboard from the band or pane back to the prompt. The pane opens with `closeOnEscape`, so a second Escape, at an empty idle prompt, closes the pane. Over typed text or a running turn, Escape is Claude Code's own.
+- **Menu route:** the mod has no menus. The menu route for every action is the `/tracker` command with an argument (`/tracker details`, `/tracker compact`, `/tracker copy`, `/tracker repo <name>`, `/tracker session <title or id>`, `/tracker band off`, `/tracker band on`).
 - **Refresh:** the collector reads `claude agents --json` every 5 seconds and the session files on change; the band and an open pane redraw when the data changes, never more often.
+- **Words:** every on-screen string lives in the Words tables of `screens.md`. Text quoted here is the same string; where they ever differ, `screens.md` wins.
 
 ## Wireflows
 
@@ -16,7 +18,8 @@ What the mod API allows, and so what this spec uses (Claude Code 2.1.323 types, 
 | From control | Action | To screen or state | Notes |
 |---|---|---|---|
 | (none) | a session starts to wait | Band compact: needs you | Every session's band turns the count to the warning colour within 5 seconds. |
-| Band compact: oldest waiting segment | read | (no move) | Names the session title and its repo, and how long it has waited. Switching to that session is Claude Code's own move. |
+| Band compact: needs-you segment | read | (no move) | Names the oldest waiting session's repo and title (its Claude Code tab title) and how long it has waited; "this session" when it is this one. Switching to it is the owner's move in their terminal; the tracker never switches (observe only). |
+| Band: Pane (`p`) | press | Pane Home: Needs you | Shows every waiting session with its reason, for when more than one waits. |
 
 ### J2 Read my asks in order
 
@@ -87,53 +90,61 @@ What the mod API allows, and so what this spec uses (Claude Code 2.1.323 types, 
 
 ### Band, compact
 
+Words: `screens.md`, Band, compact.
+
 | State | Entry or trigger | What the user sees | Words | Actions with key | Exit |
 |---|---|---|---|---|---|
-| Loading | session start, before the first read | the header segment and a dim placeholder | "tracker · reading sessions…" | Details `d`, Pane `p` | first read done |
-| Needs you | at least one session needs you | warning-coloured count, then the oldest waiting session and its wait | "● 2 need you · web-app: fix login, 6m" | Details `d`, Pane `p` | none needs you |
-| All quiet | sessions run or are done, none needs you | counts in normal colour | "◐ 3 running · ✓ 2 done" | Details `d`, Pane `p` | a session needs you |
-| Alone | this is the only live session | the header only, dim | "only this session" | Details `d`, Pane `p` | another session starts |
-| Partial | `gh` or `bd` missing or failing; sessions still read | the counts without the PR segment | as All quiet, without "PRs" | Details `d`, Pane `p` | the tool works again |
-| Error | `claude agents --json` failed twice in a row | the header and one dim line with the reason | "tracker · sessions unavailable: claude agents failed. Retrying every 5s." | Details `d`, Pane `p` | the next read works |
+| Loading | session start, before the first read | a dim placeholder | Loading | Pane `p`, Details `d` | first read done |
+| Needs you | at least one session needs you | warning-coloured count, then the oldest waiting session (normal colour) and its wait | Needs you | Pane `p`, Details `d` | none needs you |
+| Needs you, this session | this session is the oldest waiting | as Needs you, naming "this session", then the oldest other one | Needs you, this session | Pane `p`, Details `d` | |
+| All quiet | sessions run or are done, none needs you | count 0 dim, the other counts normal | Needs you, 0 | Pane `p`, Details `d` | a session needs you |
+| Alone | this is the only live session | the work segment and a dim note | Alone | Pane `p`, Details `d` | another session starts |
+| Partial | `gh` missing or failing; sessions still read | the counts without the PR segment | as All quiet | Pane `p`, Details `d` | gh works again |
+| Stale | `claude agents --json` failed twice in a row | the last good counts, dimmed, with their age and the reason | Stale | Pane `p`, Details `d` | the next read works |
+| Hidden | `/tracker band off` | no tracker row; other mods' rows unchanged | none | `/tracker band on` | `/tracker band on` |
 
 ### Band, details
 
+Words: `screens.md`, Band, details.
+
 | State | Entry or trigger | What the user sees | Words | Actions with key | Exit |
 |---|---|---|---|---|---|
-| Default | Details pressed, or kept from last time | header row, buttons right; columns below, each a label, a bold count and one dim line | header: "calvins-claude-tools · agent-tracker-1 · feature 2 of 4 · goal 14m · 2 subagents" | Copy `c`, Pane `p`, Compact `d` | Compact |
-| Column empty | a column has 0 | the count 0 and no dim line | "needs you / 0" | as Default | |
-| Loading, Partial, Error | as compact | as compact, the line under the header | as compact | as Default | as compact |
-| Narrow | `bodyColumns` below 80 | the columns drop their dim line; below 60 they fold to two rows | | as Default | wider |
+| Default | Details pressed, or kept from last time | header row, buttons right; columns below, each a label, a bold count and one line (the needs-you line in normal colour, the others dim) | Header, Column label | Copy `c`, Pane `p`, Compact `d` | Compact |
+| Column empty | a column has 0 | the count 0 and no line | Column label | as Default | |
+| Loading, Partial, Stale | as compact | as compact, in one line under the header | as compact | as Default | as compact |
+| Narrow | `bodyColumns` below 80 | the columns drop their line, except needs you; below 60 they fold into two rows of two | | as Default | wider |
 
 ### Pane, Home
 
+Words: `screens.md`, the page of the same name, by the row named in the Words column.
+
 | State | Entry or trigger | What the user sees | Words | Actions with key | Exit |
 |---|---|---|---|---|---|
-| Loading | opened before the first read | the title and a dim line | "Reading sessions…" | Close `x` | first read |
+| Loading | opened before the first read | the title and a dim line | Loading | Close `x` | first read |
 | Default | sessions exist | sections Needs you, Running, Done; each lists rows grouped under repo headings | see screens.md | Enter on a row or heading, Close `x` | Session, Repo, close |
-| All quiet | none needs you | the Needs you section shows one line | "Nothing needs you." | as Default | |
-| Empty | no live session but this one | one line | "Only this session is running. Sessions in other terminals show up here when they start." | Close `x` | a session starts |
-| Partial | gh or bd missing | rows as Default; repo headings without PR counts; one dim line at the bottom | "PRs not shown: gh is not installed or not signed in." | as Default | |
-| Error | sessions unreadable | the last good list, dim, and a line at the top | "Sessions unavailable: claude agents failed. Showing what was read 2m ago." | as Default | next read |
+| All quiet | none needs you | the Needs you section shows one line | Empty Needs you | as Default | |
+| Empty | no live session but this one | one line | Empty, alone | Close `x` | a session starts |
+| Partial | gh or bd missing | rows as Default; repo headings without PR counts; one dim line at the bottom | Partial | as Default | |
+| Stale | sessions unreadable twice in a row | the last good list, dim, and a line at the top | Stale | as Default | next read |
 
 ### Pane, Session
 
 | State | Entry or trigger | What the user sees | Words | Actions with key | Exit |
 |---|---|---|---|---|---|
-| Live | a row of a live session | header, Running now, Asks, Milestone (sdlc-run only), Numbers | see screens.md | Back `b`, repo line, Close `x` | Back, close |
-| Ended | the session left `claude agents` while open | the same, header state "ended", the time it ended | "Ended 4m ago" | as Live | |
-| From transcript | a session without the mod | Asks and Numbers from its transcript; asks not classified are marked so | "kind not known: this session ran without the tracker" | as Live | |
-| No asks | no prompt yet | Asks section one line | "No asks yet." | as Live | |
-| Not found | the session id is unknown (command argument) | one line | "No session matches \"<text>\". Open the pane to pick one." | Close `x`, Home `h` | |
+| Live | a row of a live session | header, Running now, Asks, Milestone (sdlc-run only), Numbers | Section headings | Back `b`, repo line, Close `x` | Back, close |
+| Ended | the session left `claude agents` while open | the same, header state "ended", the time it ended | State line, ended | as Live, plus Copy resume command `r` | |
+| From transcript | a session without the mod | Asks and Numbers from its transcript; asks not classified are marked so | From transcript | as Live | |
+| No asks | no prompt yet | Asks section one line | No asks | as Live | |
+| Not found | the session id is unknown (command argument) | one line | Not found | Close `x`, Home `h` | |
 
 ### Pane, Repo
 
 | State | Entry or trigger | What the user sees | Words | Actions with key | Exit |
 |---|---|---|---|---|---|
 | Default | a repo heading | Worktrees with their sessions, Open PRs, Ended | see screens.md | Back `b`, rows, PR links, Close `x` | Back, close |
-| No PRs | gh works, none open | PR section one line | "No open PRs." | as Default | |
-| No gh | gh missing or signed out | PR section one line | "PRs not shown: gh is not installed or not signed in. Run gh auth login to see them." | as Default | |
-| Not found | unknown repo name (command argument) | one line | "No repo named \"<text>\" has had a session." | Close `x`, Home `h` | |
+| No PRs | gh works, none open | PR section one line | No PRs | as Default | |
+| No gh | gh missing or signed out | PR section one line | No gh | as Default | |
+| Not found | unknown repo name (command argument) | one line | Not found | Close `x`, Home `h` | |
 
 ## State Diagrams
 
@@ -143,15 +154,15 @@ stateDiagram
     Loading --> NeedsYou: a session needs you
     Loading --> AllQuiet: none needs you
     Loading --> Alone: no other session
-    Loading --> Error: read failed twice
+    Loading --> Stale: read failed twice
     NeedsYou --> AllQuiet: last one answered
     AllQuiet --> NeedsYou: a session waits
     AllQuiet --> Alone: others end
     Alone --> AllQuiet: another starts
-    NeedsYou --> Error: read failed twice
-    AllQuiet --> Error: read failed twice
-    Error --> AllQuiet: read works
-    Error --> NeedsYou: read works
+    NeedsYou --> Stale: read failed twice
+    AllQuiet --> Stale: read failed twice
+    Stale --> AllQuiet: read works
+    Stale --> NeedsYou: read works
 ```
 
 Band view is a separate two-state toggle (compact, details), kept across sessions.
@@ -167,9 +178,10 @@ Band view is a separate two-state toggle (compact, details), kept across session
 | Band | Copy button (details) | copies the state as Markdown, toast | copies twice | nothing | nothing | nothing | nothing | `c`; Enter | nothing | IG: copy and paste |
 | Band | counts and text | nothing | nothing | nothing | nothing | nothing | nothing | nothing | nothing | IG: lists and selection |
 | Pane | session row | opens Session | opens once | nothing | nothing | nothing | nothing | Enter when focused; Tab and arrows move | one focused row, no multi-select | IG: lists and selection |
-| Pane | repo heading | opens Repo | opens once | nothing | nothing | nothing | nothing | Enter | as session row | IG: lists and selection |
+| Pane | repo heading, Repos line entry | opens Repo | opens once | nothing | nothing | nothing | nothing | Enter | as session row | IG: lists and selection |
 | Pane | PR number link | opens the PR in the browser | opens once | nothing | nothing | nothing | nothing | Enter | as session row | IG: navigation and return |
 | Pane | ask row | nothing (text only) | nothing | nothing | nothing | nothing | nothing | arrows scroll | nothing | IG: lists and selection |
+| Pane | Copy resume command button (ended session) | copies the command, toast | copies twice | nothing | nothing | nothing | nothing | `r`; Enter | nothing | IG: copy and paste |
 | Pane | Back button | previous page | goes back twice | nothing | nothing | nothing | nothing | `b`; Enter | nothing | IG: navigation and return |
 | Pane | Home button | Home | Home | nothing | nothing | nothing | nothing | `h`; Enter | nothing | IG: navigation and return |
 | Pane | Close button | closes the pane, keys to the prompt | closes | nothing | nothing | nothing | nothing | `x`; Enter; `ctrl+x x`; Escape at an empty prompt | nothing | IG: keyboard and focus |
@@ -187,7 +199,9 @@ Nothing the tracker does changes anything outside its own folder, so nothing nee
 | Open a repo | click its heading | Tab to the heading, Enter | `/tracker repo <name>` | nothing | nothing | Back | IG: navigation and return |
 | Open a PR | click its number | Tab to it, Enter | none (the browser is outside the tracker) | nothing | nothing | close the browser tab | IG: navigation and return |
 | Go back | click Back | `b` | `/tracker` (Home) | nothing | nothing | open again | IG: navigation and return |
-| Close the pane | click Close or the close mark | `x`, `ctrl+x x`, Escape at an empty prompt | none | the page and focused row are kept for the next open | nothing | `/tracker` reopens on the same page | IG: keyboard and focus |
+| Copy resume command (ended session) | click Copy resume command on its Session page | Tab to it, `r` | none | nothing | nothing | not needed (clipboard only) | IG: copy and paste |
+| Hide or show the band | none | none | `/tracker band off`, `/tracker band on` | saved at once in the settings file | nothing | the other command | IG: remembered state |
+| Close the pane | click Close or the close mark | `x`, `ctrl+x x`, Escape at an empty prompt | none | nothing | nothing | `/tracker` reopens on Home | IG: keyboard and focus |
 
 ## Feedback
 
@@ -195,26 +209,27 @@ Nothing the tracker does changes anything outside its own folder, so nothing nee
 |---|---|---|---|
 | Switch band view | visible: the band redraws | the change is the feedback | band |
 | Open the pane | visible: the pane appears with the keyboard | | pane |
-| Copy the state | visible: toast "Tracker state copied as Markdown", or "Copy failed: <reason>" | the clipboard shows nothing by itself; the toast carries nothing the user needs later | toast |
+| Copy the state, Copy resume command | visible: toast (Words: Copy toast, Copy failed toast) | the clipboard shows nothing by itself; the toast carries nothing the user needs later | toast |
 | A session starts waiting | visible: count and colour change in every band | J10 | band |
 | A read fails | visible: dim line on the band, top line in the pane | the data shown may be old; never only a toast | band, pane |
-| The store cannot be written | visible: status line "tracker: could not save this session's file: <reason>" | asks of this session may be lost | status line under the prompt |
+| The store cannot be written | visible: status line (Words: Store failed) | asks of this session are not kept until it works | status line under the prompt |
 
 ## Errors
 
+Every error reads event, consequence, action; the exact strings are in `screens.md` Words.
+
 | Event | Consequence | Action |
 |---|---|---|
-| `claude agents --json` failed or timed out. | Session states are not updated; the band shows the last read and its age. | It retries every 5 seconds; update Claude Code if it keeps failing. |
-| `gh` is not installed or not signed in. | PR counts and the PR list are not shown. | Run `gh auth login` to see them. |
-| `bd` is not installed. | Beads work is not shown (milestone 3 only). | Install Beads to see it. |
-| A transcript could not be read (too large, missing, malformed). | That session shows without asks or numbers. | Nothing to do; it is shown again when the file can be read. |
-| This session's tracker file could not be written. | Its asks from now on are not kept. | Check that the home folder's `.claude/agent-tracker` folder is writable. |
-| The ask could not be classified (model call failed). | The ask is kept, its kind shown as "not classified". | Nothing to do; the next ask is tried again. |
-| Copy failed. | Nothing was copied. | Try again, or use `/tracker copy`. |
+| Claude Code's session list could not be read twice in a row. | The counts shown are from the last good read, dimmed, with their age. | It retries every 5 seconds; if it keeps failing, update Claude Code. |
+| `gh` is not installed or not signed in. | PR counts and the PR list are not shown. | Run `gh auth login`. |
+| A transcript could not be read (missing or unreadable). | That session shows without its asks or numbers. | Nothing to do; it is read again on the next change. |
+| The tracker could not save this session's record. | Asks from now on are not kept until it can. | Check that the tracker's folder in your Claude folder can be written. |
+| An ask could not be classified (the model call failed). | The ask is kept and shown as "not classified". | Nothing to do; the next ask is tried again. |
+| Copy failed. | Nothing was copied. | Press Copy again, or run `/tracker copy`. |
+| `/tracker session <text>` or `/tracker repo <text>` matched nothing. | No page opens on that item; the pane shows the not-found line. | Open Home and pick one. |
 
 ## Open Questions
 
 | Question | Recommended answer | Why it matters |
 |---|---|---|
 | Should the tracker send one notification when a session starts waiting? | No in milestone 1 (J10 is met by the band in every session). Revisit if a waiting session is still missed. | One notification per open session would repeat Claude Code's own. |
-| Should the pane open on the page it was closed on? | Yes, with the same row focused. | Matches "Back restores"; the owner usually returns to the same session. |

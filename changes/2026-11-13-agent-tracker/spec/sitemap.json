@@ -111,13 +111,14 @@
       "status": "proposed",
       "redirectTo": null,
       "proposed": null,
-      "decide": "Which view is the default on a new session? Alternative: remember the last one used.",
+      "decide": null,
       "source": null,
       "assumptions": [
         "type embed: the band is drawn inside the host app, no closer type exists",
         "compact assumed the default view; not stated in ia.md",
         "header primary Details: the CTA inventory also marks Pane primary"
-      ]
+      ],
+      "decided": "compact is the default; the view is kept machine-wide in the tracker's settings file (ia.md, Decisions Taken Here)"
     },
     {
       "id": "band.details",
@@ -271,11 +272,12 @@
       "status": "proposed",
       "redirectTo": null,
       "proposed": null,
-      "decide": "Do ended sessions get a fourth group on Home? Alternative: only on Repo, so the queue stays live-only (recommended).",
+      "decide": null,
       "source": null,
       "assumptions": [
         "where ended sessions show on Home is not stated in ia.md"
-      ]
+      ],
+      "decided": "ended sessions show only on the Repo page, last 7 days (ia.md, Decisions Taken Here)"
     },
     {
       "id": "pane.repo",
@@ -463,7 +465,7 @@
       "assumptions": [
         "not-found added: the session can end or its files vanish while the pane is open",
         "Features section appears only in sdlc-run repos",
-        "Copy resume command is a secondary action on this page"
+        "Copy resume command is a secondary action on this page, for ended sessions only"
       ]
     }
   ],
