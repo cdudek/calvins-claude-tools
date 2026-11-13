@@ -4,7 +4,6 @@ type: intent
 change: {{CHANGE}}
 design: {{DESIGN}}
 author: {{AUTHOR}}
-class: null
 status: draft
 reviewed_by: null
 approved_at: null
@@ -65,7 +64,6 @@ What is true when this is done. Write it in the user's words. Do not say how.
 - **Must not change:** <what stays as it is>
 - **Deadline:** <date, or "none">
 - **Rules that apply:** <rule IDs or names from the files in `sdlc.json` `rules`, one per line>
-- **Class:** <Undo | Repair | Migrate | Answer> — <if this is wrong, what does it take to put right? Unsure: the higher>
 
 ## Open questions
 

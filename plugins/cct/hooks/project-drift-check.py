@@ -22,7 +22,7 @@ try:
 
     out = io.StringIO()
     with contextlib.redirect_stdout(out):
-        code = project_setup.main(["--root", str(root), "--check", "--no-decision4"])
+        code = project_setup.main(["--root", str(root), "--check"])
     items = [line[4:] for line in out.getvalue().splitlines() if line.startswith("  - ")]
     if code and items:
         more = f" (+{len(items) - 1} more)" if len(items) > 1 else ""

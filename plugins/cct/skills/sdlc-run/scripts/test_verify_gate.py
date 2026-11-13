@@ -506,7 +506,7 @@ def test_a_project_with_a_branch_or_from_before_3_7_still_syncs(
 
 
 # 3.8.0: the plan gate refuses unfinished quality records; the milestone gate refuses open ones.
-GOOD_INTENT = "---\nclass: Repair\nstatus: approved\n---\n\n# Intent\n"
+GOOD_INTENT = "---\nstatus: approved\n---\n\n# Intent\n"
 VIOLATIONS = (
     "# Plan\n\n### Justified violations\n\n"
     "| Violation | Why needed | Simpler alternative rejected because |\n|---|---|---|\n{row}\n\n"
@@ -534,10 +534,6 @@ def _commit_files(repo: Path, **files: str) -> None:
             "challenge.md: open CRITICAL",
         ),
         ({"plan_md": VIOLATIONS.format(row="| SEC-2: no PII | | |")}, "unjustified violation"),
-        ({"intent_md": "---\nclass: null\n---\n"}, "class must be one of"),
-        ({"intent_md": "---\nclass: Trivial\n---\n"}, "class must be one of"),
-        ({"intent_md": "---\nclass: undo\n---\n"}, "class must be one of"),
-        ({"intent_md": "---\nstatus: approved\n---\n"}, "class must be one of"),
     ],
 )
 def test_approve_refuses_unfinished_quality_records(
@@ -551,7 +547,7 @@ def test_approve_refuses_unfinished_quality_records(
     assert not (repo / "changes" / ID / "lock.json").exists()
 
 
-def test_approve_passes_with_finished_records_and_locks_the_class(tmp_path: Path) -> None:
+def test_approve_passes_with_finished_records(tmp_path: Path) -> None:
     repo = _repo(tmp_path, ["true"])
     _commit_files(
         repo,
@@ -565,8 +561,6 @@ def test_approve_passes_with_finished_records_and_locks_the_class(tmp_path: Path
         ),
     )
     assert _gate(repo, "approve", ID).returncode == 0
-    lock = json.loads((repo / "changes" / ID / "lock.json").read_text())
-    assert lock["class"] == "Repair"
 
 
 @pytest.mark.parametrize(
@@ -604,14 +598,6 @@ def test_milestone_passes_when_records_are_closed(tmp_path: Path) -> None:
         "## Advisory\n\n- [ ] **A1** rename a variable\n",
     )
     assert _last(_gate(repo, "milestone", ID)).startswith(f"VERIFY PASS milestone {ID}")
-
-
-@pytest.mark.parametrize("cls", ["Undo", "Repair", "Migrate", "Answer"])
-def test_every_decision4_class_locks(tmp_path: Path, cls: str) -> None:
-    repo = _repo(tmp_path, ["true"])
-    _commit_files(repo, intent_md=f"---\nclass: {cls}\n---\n")
-    assert _gate(repo, "approve", ID).returncode == 0
-    assert json.loads((repo / "changes" / ID / "lock.json").read_text())["class"] == cls
 
 
 def test_the_report_carries_operational_metrics(tmp_path: Path) -> None:

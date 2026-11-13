@@ -750,8 +750,8 @@ def adopt_ci(cfg: dict, preset: str) -> None:
         kept.extend(str(p.relative_to(ROOT)) + " (existing CI, left alone)" for p in own)
     manual.append(
         "CI: implement and audit scripts/ci-local and its pre-push hook; run the full local "
-        "suite, validate Decision4, push, then publish exact-SHA local-ci and decision4 "
-        "statuses. Require both in rulesets; never post them by hand. Keep existing required "
+        "suite, push, then publish the exact-SHA local-ci status. Require it in rulesets; "
+        "never post it by hand. Keep existing required "
         "checks until migration is applied. GitHub keeps cloud/GitHub work and schedules "
         "(references/local-first.md; references/ci-blueprint.md)."
     )
@@ -1209,28 +1209,27 @@ def main() -> int:
         _write(dest, render(src.read_text(encoding="utf-8"), values))
 
     # --- GitHub issue and PR templates
-    # Issue forms are written once, then repo-owned. The PR template retains repo content
-    # while its Decision4 block refreshes below. The shapes mirror the Linear templates in
-    # cct:linear-manage, so an issue reads the same whichever tracker it started in.
+    # Issue forms and the PR template are written once, then repo-owned. The shapes mirror the
+    # Linear templates in cct:linear-manage, so an issue reads the same whichever tracker it
+    # started in.
     for src in sorted((TPL / "github" / "ISSUE_TEMPLATE").iterdir()):
         write(
             ROOT / ".github" / "ISSUE_TEMPLATE" / src.name,
             src.read_text(encoding="utf-8"),
             keep=True,
         )
-    # Share the referenced Decision4 assets with project-repository-run. Existing
-    # boundary policy and the repository's way of running the gate stay its own.
-    from decision4_assets import asset_changes
-
-    for path, text in asset_changes(ROOT):
-        _write(path, text)
-    manual.append(
-        "Decision4: review the starter map; the AGENTS contract and PR section are installed. "
-        "Actions callers use a pinned shared workflow; an existing local gate gets a checksum-verified "
-        "fetch helper. Wire scripts/ci-local --decision4 to bash scripts/decision4-shared.sh with "
-        "the actual body/files/map arguments. Install PyYAML and jsonschema in that environment. "
-        "Never vendor checker code or fixtures; existing boundary maps stay repo-owned."
-    )
+    # A PR template in any place GitHub reads wins over the kit's.
+    if not any(
+        p.name.lower() in ("pull_request_template.md", "pull_request_template.txt")
+        for d in (ROOT, ROOT / ".github", ROOT / "docs")
+        if d.is_dir()
+        for p in d.iterdir()
+    ):
+        _write(
+            ROOT / ".github" / "PULL_REQUEST_TEMPLATE.md",
+            (TPL / "github" / "PULL_REQUEST_TEMPLATE.md").read_text(encoding="utf-8"),
+            keep=True,
+        )
 
     # --- REVIEW.md (kept once written), docs, CLAUDE.md
     write(

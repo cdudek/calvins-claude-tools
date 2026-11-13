@@ -1,6 +1,6 @@
 # CI for any stack: one workflow, one required status (`check`), every step gated on the files a PR changes.
 # Legacy remote-confirmation example; not installed by adopt. New repos use scripts/ci-local
-# and required local-ci + decision4 statuses; see references/local-first.md.
+# and a required local-ci status; see references/local-first.md.
 #
 # Copy to .github/workflows/ci.yml, then:
 #   1. Set STACK below (node | python | rust | ruby-rails | kotlin | scala) and the version lines for it.

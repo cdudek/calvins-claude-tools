@@ -261,7 +261,7 @@ Facts:
 Approach · Rules check (with Justified violations) · Where things go · Feature PRs · Design changes · Files that change · Order of work ·
 Risks · Out of scope · Done · How to run · Goal handover · Revisions. Beside it: `done.json` (the criteria as
 data), `lock.json` (their hash at approval, written by `verify_gate.py approve`), `milestone.md`
-(features and their states, the outcome) and `findings.md` (the milestone's one list: `- [ ]` blocking items, `## Converge`, `## Advisory`). `intent.md` frontmatter carries the Decision4 `class`; `approve` copies it into `lock.json`. Detail: `references/quality-passes.md`.
+(features and their states, the outcome) and `findings.md` (the milestone's one list: `- [ ]` blocking items, `## Converge`, `## Advisory`). Detail: `references/quality-passes.md`.
 
 `Done` states how `/goal` knows to stop. `How to run` is the build's process. `Goal handover` is
 committed, not spoken: a kickoff prompt, and the `/goal` line, which holds only the end state

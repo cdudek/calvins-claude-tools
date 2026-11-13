@@ -39,7 +39,7 @@ def _gate():
 @pytest.mark.parametrize(
     ("template", "needles"),
     [
-        ("intent.md", ["class: null", "## Asks", "## Job stories", "status: draft"]),
+        ("intent.md", ["## Asks", "## Job stories", "status: draft"]),
         ("facts.md", ["## Goal", "## Acceptance criteria", "status: draft"]),
         (
             "plan.md",
@@ -182,8 +182,7 @@ def test_local_first_contract_covers_failure_loop_and_exact_sha_gate() -> None:
         "scripts/ci-local",
         "pre-push hook",
         "local-ci",
-        "decision4",
-        "Never post them by hand",
+        "Never post it by hand",
         "exact SHA",
         "dirty or moved head",
         "failed status publication",

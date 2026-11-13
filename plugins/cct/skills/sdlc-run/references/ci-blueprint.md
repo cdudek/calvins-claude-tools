@@ -8,10 +8,10 @@ Follow the [local-first contract](local-first.md) for all verification and failu
    commands. `sdlc.json` `checks` and `ciCommands` can supply commands; never guess that a
    missing command means success. Keep E2E on a production build with isolated data.
 2. Implement `scripts/ci-local` and its pre-push hook according to the contract: full suite,
-   real Decision4 validation, push, then exact-SHA `local-ci` and `decision4` statuses.
+   push, then the exact-SHA `local-ci` status.
    Test failing checks, stale heads, hook recursion and publication errors. `adopt` reports
    this setup as manual work; it does not install this repo-specific script.
-3. Apply rulesets requiring both statuses on the default branch and any protected
+3. Apply rulesets requiring the status on the default branch and any protected
    `milestone/*` and `project/*` bases. Confirm the ruleset is active, not just documented.
 4. Retain remote jobs only for deploys, previews, cloud plans, GitHub operations and
    schedules. Skip bot/draft previews. Serialize deploys and cleanup with cancellation off;
@@ -42,5 +42,5 @@ locally. These lists never reduce the full gate required before a push.
 
 Keep the monthly enforcement audit in GitHub. Run `python3 scripts/verify_gate.py audit`,
 record installed, configured, executed, passed and required/applied separately, and verify
-that local-ci and decision4 protect every intended base. A documented gate without its
+that local-ci protects every intended base. A documented gate without its
 script, hook and applied ruleset is still unfinished adoption work.

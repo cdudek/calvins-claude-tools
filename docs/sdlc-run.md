@@ -100,9 +100,9 @@ The [local-first contract](../plugins/cct/skills/sdlc-run/references/local-first
 single verification rule for builders, fixes, E2E work, milestone close and PR creation.
 Use targeted local runs while diagnosing, then the full local gate once before every push.
 
-The repo owns `scripts/ci-local`: suite, Decision4 validation, push, then `local-ci` and
-`decision4` statuses on that exact commit. A pre-push hook invokes it and rulesets require
-both statuses. Never post them by hand. GitHub retains deploys, eligible previews, cloud
+The repo owns `scripts/ci-local`: suite, push, then the `local-ci` status on that exact commit.
+A pre-push hook invokes it and rulesets require that status. Never post it by hand.
+GitHub retains deploys, eligible previews, cloud
 plans and scheduled work. Existing remote CI confirms a local result; it is never the
 debugging loop. A passed PR does not need a second full CI run on main.
 
@@ -145,7 +145,7 @@ A repo newer than the plugin is told to update the plugin. The verify gate print
 
 Mechanisms are in `references/quality-passes.md` and `references/stages.md` of the skill.
 
-- **Rules and Decision4 (3.8):** `sdlc.json` takes an optional `rules` list of repo files that hold standing rules. Intent lists the rule IDs that apply and records the Decision4 class; every fact cites the IDs it touches. `approve` copies the class into `lock.json`, and the build does not go above it: higher work goes to `questions.md` unbuilt.
+- **Rules (3.8):** `sdlc.json` takes an optional `rules` list of repo files that hold standing rules. Intent lists the rule IDs that apply; every fact cites the IDs it touches.
 - **Clarify, checklist, analyze (3.8):** at most 5 clarifying questions, then defaults under `## Assumptions`. A reviewer in a fresh context writes `checklist.md`; an analyze pass writes `analyze.md`. `approve` refuses an unchecked item or an open CRITICAL.
 - **Context pack (3.8):** a builder gets its feature's facts, the plan excerpt and the cited rule text, not whole files.
 - **Converge and validation block (3.8):** an append-only converge pass at the milestone close; the gate blocks on a `not met` or `partly` row, an open finding and a missing `Converged:` line.

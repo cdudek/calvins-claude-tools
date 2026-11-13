@@ -25,17 +25,6 @@ when the diff alone cannot settle a finding — never walk the repo, the budget 
   with no `## Revisions` line is **Important**. It also follows `CLAUDE.md` and does not make a
   repo rule false without updating it.
 
-## Decision4 recovery
-
-Read the PR template's writing-rules HTML comment and the repo's `boundary-map.yaml`.
-Check the readable section headed `## How hard is it to undo this PR after merging?`:
-one selected class at the highest whole-diff floor, a specific recovery sentence,
-ordered Recovery steps (optional for Undo), Work preserved only with evidence,
-Responsible for recovery (a named person for Answer), and Classification change
-(`None` or from -> to, by whom and why). Read legacy Decision-Class, Put-right,
-Answerer and Class-Change as aliases; comments supply no values. The checker proves
-minimum fields, not truthful recovery or backup claims. A lowering needs authorization.
-
 ## Design questions
 
 While reading, also ask these four (from the CUPID properties). They add no fourth pass: a yes

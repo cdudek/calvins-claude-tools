@@ -21,7 +21,7 @@
 - **Sync:** From a clean blueprint checkout, run `python3 core/references/sync-harness-audit.py <consumer-worktree> --pin <merged-source-sha>` and inspect its dry-run diff.
 - **Apply:** Add `--write` to copy only the auditor, legacy fixtures and `.harness-audit.lock`; local owners and gate commands stay in the consumer.
 - **Manifest:** Commit `.harness-audit.json` with `version: 1`, an explicit GitHub `owner`, `default_branch`, `checks`, `legacy`, and optional ignored cache paths in `reset`.
-- **Identity and refs:** Set `repository` to the checkout’s owner/name and `protected_branches` to its interior refs; optional `required_statuses` can add to the canonical `local-ci` and `decision4` requirements.
+- **Identity and refs:** Set `repository` to the checkout’s owner/name and `protected_branches` to its interior refs; optional `required_statuses` can add to the canonical `local-ci` requirement.
 - **Check rows:** Each row names its actual `ci-local` check ID, owner, version-probe argument arrays in `tools`, configuration paths in `configs`, and claimed `rules`.
 - **Kinds:** Use `ruleset` for policy enforcement, `suite` for tests, or `execution` for artifact/build checks; explain the non-policy claim in `reason`.
 - **Ruleset proof:** `applied.command` runs the real fixture suite; `applied.required_output` names both refusal and permitted evidence that it must emit.
