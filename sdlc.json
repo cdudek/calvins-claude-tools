@@ -1,0 +1,216 @@
+{
+  "_comment": "Read by the sdlc-run skill, the hooks in .claude/hooks/ and the guardrail test. Commands run from the repo root; {file} is the edited file. docs/sdlc.md explains every key.",
+  "defaultBranch": "main",
+  "changesDir": "changes",
+  "designsDir": "docs/designs",
+  "docs": "docs/sdlc.md",
+  "verify": "python3 -m unittest discover -s tests && scripts/run-plugin-tests.sh",
+  "verifyStop": "python3 -m unittest discover -s tests",
+  "verifyDirty": [
+    "*.py",
+    "*.md",
+    "*.json",
+    "*.ts",
+    "*.tsx"
+  ],
+  "lintOnEdit": {},
+  "blocked": [
+    {
+      "match": "(^|[[:space:];&|(])(uv([[:space:]]+[^[:space:];&|]+)*[[:space:]]+(add|remove)|pip3?([[:space:]]+[^[:space:];&|]+)*[[:space:]]+install)([[:space:]]|$)",
+      "message": "dependency changes are Ask-tier: a human runs uv add in a branch and commits pyproject.toml + uv.lock; the PR gets the ask label. Say which package and why, then stop.",
+      "samples": [
+        "uv add httpx",
+        "uv remove httpx",
+        "pip install requests",
+        "cd x && uv add y",
+        "uv --directory app add x"
+      ]
+    },
+    {
+      "match": "(^|[[:space:];&|(])kubectl([[:space:]]+[^[:space:];&|]+)*[[:space:]]+(apply|delete|patch|scale)([[:space:]]|$)",
+      "message": "the cluster changes through Argo CD from a merged PR, never from a shell. Edit k8s/ in a branch. Read-only kubectl (get, describe, logs) is fine.",
+      "samples": [
+        "kubectl apply -f x.yaml",
+        "kubectl delete pod x",
+        "kubectl patch deploy x",
+        "kubectl -n prod delete job migrate",
+        "kubectl --context=c patch application app --type merge"
+      ]
+    }
+  ],
+  "toolsCommand": "install plannotator and its Claude Code plugin (docs/sdlc.md)",
+  "tests": "pytest",
+  "codeowners": [],
+  "claudeAllow": [
+    "Bash(python3 -m unittest:*)",
+    "Bash(python3 -m pytest:*)",
+    "Bash(scripts/run-plugin-tests.sh)",
+    "Bash(git:*)",
+    "Bash(gh pr:*)"
+  ],
+  "showChannel": "",
+  "keep": [],
+  "milestones": {
+    "branchPrefix": "milestone/",
+    "rebaseOnDefault": true
+  },
+  "projects": {
+    "branchPrefix": "project/",
+    "rebaseOnDefault": true
+  },
+  "hotfix": true,
+  "delivery": "one-go",
+  "builders": "claude",
+  "builderModel": "sonnet",
+  "builderEffort": "high",
+  "goal": {
+    "runTurns": 150,
+    "featureTurns": 40,
+    "milestoneTurns": 30
+  },
+  "languages": [
+    "en"
+  ],
+  "responsiveTier": "full",
+  "ux": "off",
+  "checks": {
+    "feature": [
+      "python3 -m unittest discover -s tests",
+      "scripts/run-plugin-tests.sh"
+    ],
+    "milestone": [
+      "python3 -m unittest discover -s tests",
+      "scripts/run-plugin-tests.sh"
+    ]
+  },
+  "product": "",
+  "kitTemplates": "81fafac5cb49",
+  "tiers": false,
+  "ciPaths": {
+    "docs": [
+      "changes/*",
+      "docs/*",
+      "plans/*",
+      ".claude/*",
+      "design-explorations/*",
+      "*.md",
+      "*.txt"
+    ],
+    "all": [
+      ".github/workflows/*",
+      "sdlc.json",
+      "uv.lock",
+      "poetry.lock"
+    ],
+    "code": [
+      "src/*",
+      "app/*",
+      "tests/*",
+      "e2e/*",
+      "*.py",
+      "*.sql",
+      "alembic/*",
+      "migrations/*"
+    ],
+    "config": [
+      "pyproject.toml",
+      "*.toml",
+      "*.ini",
+      "*.cfg",
+      ".python-version",
+      "Dockerfile*",
+      "*.tf",
+      "k8s/*",
+      "helm/*",
+      "deploy/*"
+    ],
+    "specs": [
+      "e2e/*test_*.py",
+      "e2e/*_test.py"
+    ],
+    "lint": {
+      "include": [
+        "src/*",
+        "app/*",
+        "tests/*",
+        "e2e/*",
+        "*.py"
+      ],
+      "exclude": [
+        "*/migrations/*",
+        "*/generated/*",
+        "*_pb2.py"
+      ]
+    },
+    "unit": {
+      "include": [
+        "src/*",
+        "app/*",
+        "tests/*",
+        "*.py",
+        "alembic/*",
+        "migrations/*",
+        "*.sql"
+      ],
+      "exclude": [
+        "e2e/*",
+        "*/static/*"
+      ]
+    },
+    "build": {
+      "include": [
+        "src/*",
+        "app/*",
+        "pyproject.toml",
+        "Dockerfile"
+      ],
+      "exclude": [
+        "tests/*",
+        "e2e/*"
+      ]
+    },
+    "e2e": {
+      "include": [
+        "src/*",
+        "app/*",
+        "e2e/*",
+        "pyproject.toml",
+        "Dockerfile",
+        "alembic/*",
+        "migrations/*",
+        "*.sql"
+      ],
+      "exclude": [
+        "tests/*"
+      ]
+    },
+    "deploy": {
+      "include": [
+        "src/*",
+        "app/*",
+        "pyproject.toml",
+        "Dockerfile",
+        "deploy/*",
+        "alembic/*",
+        "migrations/*",
+        "*.sql"
+      ],
+      "exclude": [
+        "tests/*",
+        "e2e/*"
+      ]
+    }
+  },
+  "ciCommands": {
+    "install": "pip install pyyaml==6.0.3 pytest==9.0.2",
+    "lint": "python3 -m unittest discover -s tests",
+    "unit": "python3 -m unittest discover -s tests && scripts/run-plugin-tests.sh",
+    "build": "true",
+    "e2e": "true",
+    "e2eTouched": "true"
+  },
+  "sdlcVersion": "3.13.0",
+  "tracker": {
+    "kind": "beads"
+  }
+}
