@@ -21,9 +21,8 @@ registered or a registered one that is missing.
 `approve` writes <changesDir>/<id>/lock.json: the hash of facts.md, done.json and
 sdlc.json `checks`, taken when the engineer approved the plan. `feature`/`milestone` refuse to
 run against criteria that moved since. `approve` refuses (APPROVE FAIL) an unchecked
-`checklist.md` item, an open CRITICAL in `analyze.md` or `challenge.md`, a plan violation without a justification,
-and an intent without a valid Decision4 `class` (Undo, Repair, Migrate, Answer); the class goes
-into lock.json. `milestone` blocks on a `not met` or `partly` row in `validation.md`
+`checklist.md` item, an open CRITICAL in `analyze.md` or `challenge.md` and a plan violation without a justification.
+`milestone` blocks on a `not met` or `partly` row in `validation.md`
 (validation-not-met), an unchecked item in `findings.md` outside `## Advisory` (findings-open) and
 a `## Converge` section without a `Converged:` line (not-converged). `milestone` also fails with check=parent-sync while
 origin's default branch, or project/<slug> in a project, has commits HEAD lacks: merge them in
@@ -84,7 +83,6 @@ REASONS = {
     "findings-open",  # an unchecked item in findings.md outside ## Advisory
     "not-converged",  # findings.md ## Converge has no `Converged:` line
 }
-CLASSES = ("Undo", "Repair", "Migrate", "Answer")  # Decision4 v1, lowest to highest
 LOCKED = ("facts.md", "done.json")
 TAIL = 60  # stdout lines of a failing check
 BREAKER = 3
@@ -154,11 +152,6 @@ def section(text: str, heading: str) -> str:
     return m.group(1) if m else ""
 
 
-def intent_class(change: Path) -> str:
-    m = re.search(r"^class:\s*(\S*)\s*$", read(change / "intent.md"), re.M)
-    return m.group(1) if m else ""
-
-
 def open_criticals(change: Path, name: str) -> list[str]:
     """CRITICAL rows still `open` in analyze.md or challenge.md; an absent file has none."""
     return [
@@ -169,8 +162,8 @@ def open_criticals(change: Path, name: str) -> list[str]:
 
 
 def approval_blockers(change: Path) -> list[str]:
-    """What stops the plan gate: the checklist, the analyze and challenge passes, the plan's unjustified rule
-    violations and the intent's class. A file that does not exist blocks nothing."""
+    """What stops the plan gate: the checklist, the analyze and challenge passes and the plan's unjustified rule
+    violations. A file that does not exist blocks nothing."""
     out = []
     open_items = re.findall(r"^\s*[-*] \[ \] (.*)$", read(change / "checklist.md"), re.M)
     out += [f"checklist.md: unchecked: {i[:80]}" for i in open_items]
@@ -178,8 +171,6 @@ def approval_blockers(change: Path) -> list[str]:
     for row in table_rows(section(read(change / "plan.md"), "Justified violations"))[1:]:
         if row[0].lower() != "none" and (len(row) < 3 or any(not c or c[0] == "<" for c in row)):
             out.append(f"plan.md: unjustified violation: {row[0][:80]}")
-    if (change / "intent.md").exists() and intent_class(change) not in CLASSES:
-        out.append(f"intent.md: class must be one of {', '.join(CLASSES)}")
     return out
 
 
@@ -212,7 +203,6 @@ def approve(change: Path, cfg: dict) -> int:
     lock = {
         "approved_at": dt.datetime.now(dt.timezone.utc).isoformat(timespec="seconds"),  # noqa: UP017 -- runs on macOS python3 3.9
         "sha": sh("git", "rev-parse", "HEAD"),
-        "class": intent_class(change) or None,
         "criteria": criteria_hash(change, cfg.get("checks", {})),
     }
     (change / "lock.json").write_text(json.dumps(lock, indent=2) + "\n", encoding="utf-8")

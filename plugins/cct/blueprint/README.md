@@ -14,15 +14,6 @@ Working CI/CD and project setup copied from the HeyDiff repos on 2026-10-31. Cop
 
 Every folder also has the repo's `sdlc.json`, which `cct:sdlc-run` reads.
 
-Every PR template includes the readable Decision4 section and writing-rules HTML comment.
-Run `/cct:project-repository-run` (formerly project-setup) or `/cct:sdlc-run adopt`
-when copying a blueprint: both install the shared offline checker and regression fixtures
-from `../skills/sdlc-run/templates/decision4/`, and create a starter boundary map only
-when one is absent. Keep the new repository's own boundary map and check invocation.
-Install PyYAML for the checker, run `bash tests/decision4/run.sh` for synthetic fixtures,
-and wire real PR-body/changed-path validation into its local gate. Fill PRs following
-[Decision4 PR writing](../skills/sdlc-run/references/decision4-pr.md).
-
 ## Node runtime rule
 
 Use only the owner-approved supported LTS majors, Node 24 or 26 (decision 2026-11-08).

@@ -97,17 +97,10 @@ table, which is what makes `F1` traceable from `facts.md` through the test to th
 7. The CLAUDE.md section it appended states the process and `/goal`; if the repo's
    CLAUDE.md said "ask before merging", change it to "the tier decides".
 8. **Local CI gate.** `adopt` preserves existing CI and does not install the legacy full
-   remote workflow for a repository without CI. Implement and audit `scripts/ci-local`,
-   its pre-push hook and real Decision4 validation using the [local-first contract](local-first.md).
-   Adopt installs the shared readable PR section (including its writing-rules comment),
-   a starter boundary map only when absent, and a pinned reusable-workflow caller. A repo
-   with `scripts/ci-local` gets a checksum-verified fetch helper and a shell dispatch for
-   `--decision4`; integrate actual body, changed paths and map arguments in the full gate.
-   There is no vendored checker or fixture tree. PyYAML and jsonschema belong in the local
-   gate environment. Existing boundary maps remain repo-owned.
-   Follow [Decision4 PR writing](decision4-pr.md) for new PRs and milestone close.
-   Require `local-ci` and `decision4` on default and protected interior branches; never post
-   them by hand. Verify the script, hook and applied rulesets before retiring any existing
+   remote workflow for a repository without CI. Implement and audit `scripts/ci-local`
+   and its pre-push hook using the [local-first contract](local-first.md).
+   Require `local-ci` on default and protected interior branches; never post
+   it by hand. Verify the script, hook and applied rulesets before retiring any existing
    required checks. Keep GitHub for cloud/GitHub work and scheduled jobs; `ci-blueprint.md`
    describes setup and the legacy template's migration role.
 9. **Version.** adopt stamps `sdlcVersion` in `sdlc.json`. `adopt --upgrade` on a repo with an

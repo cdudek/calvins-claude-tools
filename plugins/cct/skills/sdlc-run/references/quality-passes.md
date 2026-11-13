@@ -1,6 +1,6 @@
-# Quality passes — rules, clarify, checklist, analyze, challenge, converge, class
+# Quality passes — rules, clarify, checklist, analyze, challenge, converge
 
-Seven small mechanisms (3.8.0, challenge 3.9.0) that keep the facts honest before the build and
+Six small mechanisms (3.8.0, challenge 3.9.0) that keep the facts honest before the build and
 the build honest after it. Ideas from github/spec-kit (MIT) and, for challenge, reflection and
 the audit, Habitat-Thinking/ai-literacy-superpowers (Apache-2.0); the wording is ours. Each is
 read-only except for the one file it names.
@@ -9,7 +9,7 @@ read-only except for the one file it names.
 
 `sdlc.json` `rules` lists the repo files that hold standing rules. Default, files that exist:
 `CLAUDE.md`, `PRODUCT.md`, `DESIGN.md`, `docs/rules.md`, `<designsDir>/INDEX.md`,
-`boundary-map.yaml`, `docs/architecture-policy.md`. A list in `sdlc.json` replaces the default.
+`docs/architecture-policy.md`. A list in `sdlc.json` replaces the default.
 
 - **A rule ID** is the ID the file gives (`SEC-2`, `D4`); a file without IDs is cited as
   `<file>#<heading>`.
@@ -96,26 +96,3 @@ After validation, before the fix round. Append-only: it adds to `findings.md`, n
    `Converged: round <n>` and the milestone may close.
 
 `verify_gate.py milestone` fails `not-converged` while the section has no `Converged:` line.
-
-## Class (Decision4 v1)
-
-Source: https://github.com/Habitat-Thinking/decision4. One question per decision: if this turns
-out wrong, what does it take to put right?
-
-| Class | Putting it right takes |
-|---|---|
-| Undo | a revert |
-| Repair | real work, inside the team |
-| Migrate | coordinated change with other people |
-| Answer | an explanation to someone outside the team; nothing unmakes it |
-
-`intent.md` records the change's `class` (frontmatter, with the reason in Constraints). Unsure:
-take the higher. The engineer approves the class with the plan at gate 2 and `approve` copies it
-into `lock.json`. The `/goal` closes only work **up to that class**. A decision above it is not
-built: write it to `questions.md` with the options and what it would take, skip the item, go on.
-Raising the class during the build is always allowed and recorded; lowering it needs the
-engineer's words in `decisions.json` `protectedEdit`.
-
-## Decision record in a PR
-
-Follow [Decision4 PR writing](decision4-pr.md) for the class-specific Decision record: Repair choice story; Migrate options or forced constraint; Answer labelled evidence and challenges, with no recommendation. Omit it at Undo.

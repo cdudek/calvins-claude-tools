@@ -1,9 +1,8 @@
 #!/usr/bin/env python3
-"""Brings a repo to the blueprint baseline: declares plugins, adds the Decision4 contract and a starter
-boundary map, and checks the result. Stdlib only. Nothing is written without --yes.
+"""Brings a repo to the blueprint baseline: declares plugins and checks the result. Stdlib only. Nothing is written without --yes.
 
     project_setup.py [--root DIR] [--plugins cct@cct[,x@y]] [--marketplace-ref REF]
-                     [--marketplace-source NAME=OWNER/REPO] [--decision4|--no-decision4]
+                     [--marketplace-source NAME=OWNER/REPO]
                      [--anti-slop|--no-anti-slop] [--sdlc|--no-sdlc] [--check] [--yes] [--dry-run]
 
 Exit codes: 0 ok, 1 --check found drift or a problem, 2 unreadable settings.json.
@@ -13,35 +12,16 @@ from __future__ import annotations
 import argparse
 import copy
 import json
-import importlib.util
 import re
 import sys
 from pathlib import Path
 
 CCT_MARKETPLACE, CCT_REPO = "cct", "cdudek/calvins-claude-tools"
-CLASSES = ("Undo", "Repair", "Migrate", "Answer")
-VERSION_RE = re.compile(r"Decision4 handoff contract \(v(\d+)\)")
-HEADING = "## Decision4 handoff contract (v1)"
-SOURCE = ("Source: Decision4 v1.0.1 (https://github.com/Habitat-Thinking/decision4/blob/v1.0.1/DECISION4.md), "
-          "Habitat Thinking, CC BY 4.0.")
-# Load the same offline assets used by sdlc-run adopt.
-_spec = importlib.util.spec_from_file_location(
-    "decision4_assets", Path(__file__).resolve().parents[2] / "sdlc-run/scripts/decision4_assets.py"
-)
-_assets = importlib.util.module_from_spec(_spec)
-_spec.loader.exec_module(_assets)
-STARTER_MAP = _assets.STARTER_MAP
-CONTRACT = _assets.CONTRACT
 ANTI_SLOP_CMD = "npx skills add dmmulroy/anti-slop --skill install-anti-slop"
 
 
 def read(p: Path) -> str:
     return p.read_text() if p.exists() else ""
-
-
-def imported(root: Path, f: Path, text: str) -> list[Path]:
-    """Files a markdown agent file pulls in with a leading `@path` line (one level)."""
-    return [q for m in re.finditer(r"^@(\S+)", text, re.M) if (q := (f.parent / m.group(1))).is_file()]
 
 
 def settings_changes(root, plugins, ref, sources, problems):
@@ -73,36 +53,6 @@ def settings_changes(root, plugins, ref, sources, problems):
     return [("update", path, json.dumps(s, indent=2) + "\n", "declare marketplaces and enable plugins", True)] if s != orig else []
 
 
-def decision4_changes(root, problems):
-    for name in ("AGENTS.md", "CLAUDE.md"):
-        versions = {int(v) for v in VERSION_RE.findall(read(root / name))}
-        if versions and 1 not in versions:
-            problems.append(f"{name} carries Decision4 contract v{min(versions)}, expected v1")
-    return []  # asset_changes installs the single AGENTS source and CLAUDE import.
-
-
-def map_problems(t: str) -> list[str]:
-    # Shape only; the repo's Decision4 gate validates the schema. shortcut: line-based, no YAML parser in the stdlib.
-    out = [m for ok, m in ((re.search(r"^version:\s*1\s*$", t, re.M), "version: 1 missing"),
-                           (re.search(r"^entries:\s*$", t, re.M), "entries: missing")) if not ok]
-    floors = [f.strip("'\"") for f in re.findall(r"^\s*floor:\s*(\S+)\s*$", t, re.M)]
-    selects = len(re.findall(r"^\s*-\s*select:", t, re.M))
-    if not floors:
-        out.append("no entry has a floor")
-    if len(floors) != selects:
-        out.append(f"{selects} select blocks but {len(floors)} floors")
-    out += [f"unknown floor '{f}'" for f in floors if f not in CLASSES]
-    return out
-
-
-def map_changes(root, problems):
-    path = root / "boundary-map.yaml"
-    if not path.exists():
-        return [("create", path, STARTER_MAP, "starter boundary map (trust ground needs contained team repair)", True)]
-    problems += [f"boundary-map.yaml: {p}" for p in map_problems(read(path))]
-    return []
-
-
 def is_typescript(root: Path) -> bool:
     pkg = read(root / "package.json")
     return (root / "tsconfig.json").exists() or '"typescript"' in pkg
@@ -116,7 +66,6 @@ def main(argv=None) -> int:
     ap.add_argument("--marketplace-ref", help="git ref (tag, branch) to pin the cct marketplace to")
     ap.add_argument("--marketplace-source", action="append", default=[], metavar="NAME=OWNER/REPO",
                     help="GitHub repo of a non-cct marketplace named in --plugins")
-    ap.add_argument("--decision4", action=B, default=True)
     ap.add_argument("--anti-slop", action=B, default=None, help="default: on for TypeScript repos")
     ap.add_argument("--sdlc", action=B, default=True)
     ap.add_argument("--check", action="store_true", help="read-only drift check; exit 1 when something is missing")
@@ -133,11 +82,6 @@ def main(argv=None) -> int:
 
     problems: list[str] = []
     changes = settings_changes(root, plugins, a.marketplace_ref, sources, problems)
-    if a.decision4:
-        changes += decision4_changes(root, problems) + map_changes(root, problems)
-        changes += [("update" if path.exists() else "create", path, text,
-                     "install Decision4 contract, template and pinned shared reference", True)
-                    for path, text in _assets.asset_changes(root) if path != root / "boundary-map.yaml"]
 
     if a.check:
         missing = [f"{p.relative_to(root)}: {why}" for _, p, _, why, required in changes if required] + problems

@@ -124,9 +124,7 @@ lives here, in the skill's stages and in the hooks. Read the [local-first
 contract](https://github.com/cdudek/calvins-claude-tools/blob/main/plugins/cct/skills/sdlc-run/references/local-first.md)
 before any check or push: it owns local iteration, failures and the final full gate.
 
-- **Scope:** deliver this change in one go, per this plan and `facts.md`. Close only work up to
-  the class in `lock.json`. Anything above it is not built: write it to `questions.md` with its
-  options and skip the item.
+- **Scope:** deliver this change in one go, per this plan and `facts.md`.
 - **Milestones:** every row of `## Milestones`, in order. Each one is a local branch
   `milestone/<slug>-<n>`, cut from fresh `origin/<parent>`. `<parent>` is `project/<slug>` when
   the project has a branch, else `<default>`. A milestone with `needs:` is cut from that local
@@ -188,8 +186,7 @@ before any check or push: it owns local iteration, failures and the final full g
 - **One milestone** (`/goal` from `templates/goal/milestone.txt`): close it per `milestone.md`.
   Sync first, one fix round, diagnose locally with failing tests and affected suites until green,
   then the full local gate once before the push: unit, E2E (changed and flaky specs ×3) and
-  `python3 scripts/verify_gate.py milestone {{CHANGE}}`, output pasted. Then one push and PR, with
-  the readable Decision4 PR section per `cct:sdlc-run` `references/decision4-pr.md`. Records and
+  `python3 scripts/verify_gate.py milestone {{CHANGE}}`, output pasted. Then one push and PR. Records and
   repairs are commits there, never separate PRs.
 - **Feature PRs** (`delivery: "feature-prs"`): each feature is its own `/goal` from
   `templates/goal/feature.txt`: `cct:sdlc-feature-builder`, or `codex-build.sh` when `builders` is

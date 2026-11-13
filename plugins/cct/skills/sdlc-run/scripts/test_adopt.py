@@ -1168,7 +1168,7 @@ def test_adopt_keeps_verification_local_for_a_repo_without_ci(tmp_path: Path) ->
     assert not (repo / ".github/workflows/ci.yml").exists()
     manual = " ".join(_sections(res.stdout)["MANUAL"])
     assert "scripts/ci-local" in manual and "pre-push hook" in manual
-    assert "local-ci and decision4" in manual and "never post them by hand" in manual
+    assert "local-ci status" in manual and "never post it by hand" in manual
     cfg = json.loads((repo / "sdlc.json").read_text())
     assert cfg["ciCommands"]["lint"] and cfg["ciCommands"]["e2eTouched"]
     assert _adopt(repo).returncode == 0
@@ -1278,7 +1278,7 @@ def test_sdlc_version_line_for_missing_older_equal_and_newer(tmp_path: Path) -> 
 def test_ci_blueprint_points_to_local_contract_and_labels_legacy_workflow() -> None:
     text = (SCRIPTS.parent / "references/ci-blueprint.md").read_text()
     assert "[local-first contract](local-first.md)" in text
-    assert "local-ci" in text and "decision4" in text
+    assert "local-ci" in text
     assert "not the default" in text
     assert "Do not delete an existing required check" in text
 
@@ -1492,37 +1492,13 @@ def test_rules_must_be_a_list_of_paths(tmp_path: Path) -> None:
     assert res.returncode != 0 and "rules must be a list of repo paths" in res.stderr
 
 
-def test_adopt_installs_decision4_without_replacing_repo_policy(tmp_path: Path) -> None:
+def test_adopt_writes_the_pr_template_once_and_keeps_a_repo_one(tmp_path: Path) -> None:
     repo = _repo(tmp_path, "python")
-    policy = "version: 1\nentries:\n  - select:\n      paths: ['src/**']\n    floor: Answer\n"
-    (repo / "boundary-map.yaml").write_text(policy)
     template = repo / ".github/pull_request_template.md"
     template.write_text("## Team checklist\n- [ ] Human review\n")
-    result = _adopt(repo)
-    assert result.returncode == 0, result.stderr
-    assert (repo / "boundary-map.yaml").read_text() == policy
-    assert "## Team checklist\n- [ ] Human review" in template.read_text()
-    assert "Decision4 writing rules:" in template.read_text()
-    assert "PULL_REQUEST_TEMPLATE.md" not in [p.name for p in (repo / ".github").iterdir()]
-    assert not (repo / ".github/scripts/decision4.py").exists()
-    assert not (repo / "tests/decision4").exists()
-    assert "decision4-check.yml@" in (repo / ".github/workflows/decision4.yml").read_text()
-    assert "Decision4 handoff contract (v1)" in (repo / "AGENTS.md").read_text()
-    before = template.read_text()
     assert _adopt(repo).returncode == 0
-    assert template.read_text() == before
-    assert (repo / "boundary-map.yaml").read_text() == policy
-
-
-def test_adopt_creates_missing_decision4_map_and_keeps_check_invocation(tmp_path: Path) -> None:
-    repo = _repo(tmp_path, "node")
-    runner = repo / "tests/decision4/run.sh"
-    runner.parent.mkdir(parents=True)
-    runner.write_text("# custom repo gate\n")
-    result = _adopt(repo)
-    assert result.returncode == 0, result.stderr
-    assert "floor: Repair" in (repo / "boundary-map.yaml").read_text()
-    assert runner.read_text() == "# custom repo gate\n"
-    assert not (repo / ".github/scripts/decision4.py").exists()
-    assert (repo / ".github/workflows/decision4.yml").is_file()
-    assert "Decision4 writing rules:" in (repo / ".github/PULL_REQUEST_TEMPLATE.md").read_text()
+    assert template.read_text() == "## Team checklist\n- [ ] Human review\n"
+    assert "PULL_REQUEST_TEMPLATE.md" not in [p.name for p in (repo / ".github").iterdir()]
+    template.unlink()
+    assert _adopt(repo).returncode == 0
+    assert "## What" in (repo / ".github/PULL_REQUEST_TEMPLATE.md").read_text()

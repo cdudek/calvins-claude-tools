@@ -1,7 +1,5 @@
 # PR context
 
-Read [Decision4 PR writing and review](../../sdlc-run/references/decision4-pr.md) alongside the body and repository boundary map. Accept the readable class and fields as well as legacy aliases; compare the highest whole-diff floor, recovery claims and responsible role/person with the actual change. Ignore HTML comments as field values.
-
 Run in parallel:
 
 ```bash

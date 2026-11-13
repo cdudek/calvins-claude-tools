@@ -5,6 +5,14 @@ version warning, the **Mechanical** lines are what `adopt` does for you (it adds
 with the stack's defaults and never overwrites a value), the **Manual** lines are printed for
 the engineer. A version with no migration lines needs nothing but a re-run of `adopt`.
 
+## 3.12.0 — Decision4 removed
+
+- Decision4 is gone: the PR-body sections "How hard is it to undo this PR after merging?" and "Decision record", the `boundary-map.yaml` scaffold, the AGENTS.md handoff contract, the shared `decision4` check and the `decision4` commit status. `references/decision4-pr.md`, `templates/decision4/` and `scripts/decision4_assets.py` are deleted; PR text keeps What, Why, Proof and Before merge.
+- The intent `class` (Undo, Repair, Migrate, Answer) goes with it: `intent.md` no longer carries it, `verify_gate.py approve` neither requires nor locks it, and the build is no longer capped at an approved class.
+- `adopt` no longer installs the workflow, boundary map, AGENTS section, ci-local snippet or PR-template section; it writes the kit's PR template once when the repo has none. `local-ci` is the only required status.
+- Mechanical: re-running `adopt` refreshes `scripts/verify_gate.py` and `docs/sdlc.md` above its marker; it deletes nothing Decision4 installed.
+- Manual: delete `.github/workflows/decision4.yml` (or `scripts/decision4-shared.sh` and its `--decision4` dispatch in `scripts/ci-local`), `.decision4.lock`, `boundary-map.yaml`, the Decision4 section of `AGENTS.md` and the Decision4 sections of the PR template; drop `decision4` from the required statuses in rulesets; remove `class:` from open `intent.md` files.
+
 ## 3.10.0 — goal conditions are end states
 
 - `/goal` conditions are end states a small model can confirm from the transcript: `templates/goal/*.txt` are one sentence under 600 characters that name `python3 scripts/sdlc_status.py goal <ID>` and its `GOAL <ID> DONE` / `GOAL <ID> BLOCKED` line. The old paragraphs could not be satisfied after a merge, so the Stop hook blocked every turn.

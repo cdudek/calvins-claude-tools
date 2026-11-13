@@ -23,16 +23,14 @@ If conflicts arise, stop and show them to the user. Ask them to resolve manually
 
 ### Update PR body
 
-Preserve and refresh the readable Decision4 section using [Decision4 PR writing](../../sdlc-run/references/decision4-pr.md) and the template's writing-rules comment. Recompute the whole-diff boundary-map floor after fixes, update the concrete recovery steps and responsible role/person, record a classification change when needed, and validate the actual body before publishing successful statuses.
-
 Read [scannable bodies and the full example](../../sdlc-run/references/pr-body.md).
 Edit the existing body: put addressed feedback under What, reasons under Why, and named
-checks with results under Proof. Preserve human checklist state and recovery meaning;
+checks with results under Proof. Preserve human checklist state;
 never append a competing “Addressed feedback” section or regenerate the body blindly.
 
 ```bash
 gh pr view {number} --json body --jq .body > "${TMPDIR:-/tmp}/pr-body.md"
-# Edit the file under the scannable rules; validate Decision4 when installed.
+# Edit the file under the scannable rules.
 gh pr edit {number} --body-file "${TMPDIR:-/tmp}/pr-body.md"
 ```
 

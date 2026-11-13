@@ -1,7 +1,7 @@
 ---
 name: project-repository-run
 user_invocable: true
-description: Brings a new or existing repo to the blueprint baseline - declares the workflow plugins in .claude/settings.json (cct, optionally pinned), runs the sdlc adopt step, points to the anti-slop install for TypeScript, adds the Decision4 handoff contract and a starter boundary-map.yaml, then checks it all. Use when someone says "set up this repo", "project setup", "init the project", "declare the plugins", "add Decision4", "boundary map", "bring this repo to the blueprint", or a session start reports setup drift. For a brand-new product's context, brand and design system use project-kickoff-run.
+description: Brings a new or existing repo to the blueprint baseline - declares the workflow plugins in .claude/settings.json (cct, optionally pinned), runs the sdlc adopt step, points to the anti-slop install for TypeScript, then checks it all. Use when someone says "set up this repo", "project setup", "init the project", "declare the plugins", "bring this repo to the blueprint", or a session start reports setup drift. For a brand-new product's context, brand and design system use project-kickoff-run.
 ---
 
 # Project setup
@@ -17,7 +17,6 @@ Read the [shared worktree policy](../../references/worktree-usage.md). Check Wor
 - **Worktrunk, when missing:** use the installation prompt and decline fallback in the shared policy.
 - **Plugins:** `cct@cct` only (recommended), or more as `name@marketplace` (a non-cct marketplace also needs `NAME=OWNER/REPO`).
 - **Pin the cct marketplace?** No, follow `main` (recommended), or a tag or ref.
-- **Decision4 contract and boundary map?** Yes (recommended) or no.
 - **Anti-slop?** Only when the repo is TypeScript. Yes (recommended) or no.
 - **sdlc?** Yes (recommended) or no. `adopt` asks its own tiers question.
 
@@ -26,28 +25,19 @@ Read the [shared worktree policy](../../references/worktree-usage.md). Check Wor
 1. Plan, show it, then apply:
 
    ```bash
-   python3 ${CLAUDE_SKILL_DIR}/scripts/project_setup.py [--plugins A,B] [--marketplace-ref REF] [--no-decision4] [--no-anti-slop] [--no-sdlc]
+   python3 ${CLAUDE_SKILL_DIR}/scripts/project_setup.py [--plugins A,B] [--marketplace-ref REF] [--no-anti-slop] [--no-sdlc]
    python3 ${CLAUDE_SKILL_DIR}/scripts/project_setup.py <same options> --yes
    ```
 
-   This merges plugin declarations into `.claude/settings.json`, installs the upstream v1.0.1
-   contract in AGENTS.md (CLAUDE.md imports it), refreshes the PR template section while
-   preserving team checklists, and creates a boundary-map scaffold only when absent.
-   Actions repos get a pinned shared-workflow caller. Existing local gates get a
-   checksum-verified fetch helper and shell `--decision4` dispatch; wire the actual body,
-   changed paths and map arguments into the full gate. No checker or fixtures are copied.
+   This merges plugin declarations into `.claude/settings.json`.
 
-   Follow [Decision4 PR writing](../sdlc-run/references/decision4-pr.md). Install PyYAML and
-   jsonschema in a local gate environment; the shared host owns the tests.
-
-4. Review `boundary-map.yaml` with the owner: add floors for the repo's schema, contracts, credentials and production ground (`core/references/structure.md`, STR-26).
-5. `python3 ${CLAUDE_SKILL_DIR}/scripts/project_setup.py <same options> --check` must exit 0. Commit as one change.
+2. `python3 ${CLAUDE_SKILL_DIR}/scripts/project_setup.py <same options> --check` must exit 0. Commit as one change.
 
 Tell the user to restart Claude Code and trust the folder: `extraKnownMarketplaces` and plugin installs wait for trust.
 
 ## Options
 
-`--root DIR`, `--plugins` (repeatable or comma list, default `cct@cct`), `--marketplace-ref REF` (cct only), `--marketplace-source NAME=OWNER/REPO`, `--decision4/--no-decision4`, `--anti-slop/--no-anti-slop` (default on for TypeScript), `--sdlc/--no-sdlc`, `--check`, `--yes`, `--dry-run`. Exit 1 means drift or a problem (a marketplace pointing elsewhere, a wrong contract version, a malformed map); invalid settings JSON exits 2 and changes nothing.
+`--root DIR`, `--plugins` (repeatable or comma list, default `cct@cct`), `--marketplace-ref REF` (cct only), `--marketplace-source NAME=OWNER/REPO`, `--anti-slop/--no-anti-slop` (default on for TypeScript), `--sdlc/--no-sdlc`, `--check`, `--yes`, `--dry-run`. Exit 1 means drift or a problem (a marketplace pointing elsewhere); invalid settings JSON exits 2 and changes nothing.
 
 ## Drift check at session start
 
@@ -66,5 +56,5 @@ https://code.claude.com/docs/en/plugins/marketplace-reference.md (marketplace so
 
 ## Session notice
 
-The plugin's SessionStart hook (`hooks/project-drift-check.py`) runs `--check --no-decision4` on a repo that declares cct and prints one line when `.claude/settings.json` has drifted from the declared plugins. It is silent when the settings are fine or the repo does not declare cct, and it never blocks. Fix the drift by running this skill again.
+The plugin's SessionStart hook (`hooks/project-drift-check.py`) runs `--check` on a repo that declares cct and prints one line when `.claude/settings.json` has drifted from the declared plugins. It is silent when the settings are fine or the repo does not declare cct, and it never blocks. Fix the drift by running this skill again.
 

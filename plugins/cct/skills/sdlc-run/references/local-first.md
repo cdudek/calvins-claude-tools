@@ -26,16 +26,15 @@ needs unavailable cloud access, report the precise blocker; a blind retry is not
 
 ## Gate and status publication
 
-The repository-owned `scripts/ci-local` runs the full suite and Decision4 validation,
-pushes the verified commit, then posts `local-ci` and `decision4` commit statuses for that
-exact SHA. A pre-push hook invokes the same gate, with a recursion guard for the script's
-own push. Require both statuses in rulesets for the default branch and protected
-`milestone/*` and `project/*` branches. Never post them by hand, copy prior statuses, or
-mark skipped or failed validation successful. A dirty or moved head, failed push, failed
+The repository-owned `scripts/ci-local` runs the full suite, pushes the verified commit,
+then posts the `local-ci` commit status for that exact SHA. A pre-push hook invokes the same gate, with a recursion guard for the script's
+own push. Require the status in rulesets for the default branch and protected
+`milestone/*` and `project/*` branches. Never post it by hand, copy a prior status, or
+mark a skipped or failed check successful. A dirty or moved head, failed push, failed
 check or failed status publication leaves the gate unsuccessful. A new commit, merge or
-rebase requires fresh evidence. Decision4 reads the PR body and the boundary map's highest changed-path floor. For an
+rebase requires fresh evidence. For an
 initial PR, validate the proposed body locally, push the verified branch, create the PR,
-and validate the actual body before publishing success. Revalidate when that body or map
+and validate the actual body before publishing success. Revalidate when that body
 changes.
 
 GitHub keeps deploys, previews, cloud Terraform plans, GitHub comments/labels and scheduled
@@ -50,8 +49,8 @@ dispatched Apple app releases, never every push or PR. Standard public-repo runn
 This is a contract to implement and audit, not evidence that a gate is installed. `adopt`
 keeps existing CI and prints the local-gate setup requirement; it does not manufacture
 statuses or install a universal gate with guessed stack commands. Supply the repo's full
-suite and Decision4 validator, test their failure paths, install the pre-push hook, apply
-the rulesets and verify both required statuses before removing an existing required check.
+suite, test its failure paths, install the pre-push hook, apply
+the rulesets and verify the required status before removing an existing required check.
 A repository's existing required remote checks remain required until that migration is
 complete. See [CI setup](ci-blueprint.md) and [adoption](adopt.md).
 

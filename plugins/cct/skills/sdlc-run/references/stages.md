@@ -144,8 +144,7 @@ Worktree lifecycle commands follow the [shared worktree policy](../../../referen
      (**observed**, **reported**, **assumed**), the success measure (one number, where it is
      read, the target), problem, outcome, constraints. Read the files in `sdlc.json` `rules`
      (defaults in `references/quality-passes.md`) and list the rule IDs that touch the asks under
-     "Rules that apply". Record the Decision4 `class` (frontmatter, reason in Constraints; unsure:
-     the higher). Infer; ask only what the engineer alone knows, inside the clarify budget
+     "Rules that apply". Infer; ask only what the engineer alone knows, inside the clarify budget
      (`references/quality-passes.md`).
   2. `python3 scripts/verify_gate.py lint <id>`; fix every line it names.
   3. Show the draft in five lines: the asks, the job stories, the success measure. Then one
@@ -232,9 +231,8 @@ package), `tracking-apply` (the success-measure events). Each result lands in th
    links `spec/` and `facts.md`, so one gate covers all three. `planGate: self` only when no risk touches data safety,
    irreversible writes, security or money.
 2. Annotated: revise and re-gate. Approved: set `status: approved` on facts and plan.
-3. `python3 scripts/verify_gate.py approve <id>` writes `lock.json` (facts, done.json, checks, the
-   intent's class). It refuses (`APPROVE FAIL`) an unchecked `checklist.md` item, an open CRITICAL
-   in `analyze.md` or `challenge.md`, a row of **Justified violations** with an empty cell, and a missing class.
+3. `python3 scripts/verify_gate.py approve <id>` writes `lock.json` (facts, done.json, checks). It refuses (`APPROVE FAIL`) an unchecked `checklist.md` item, an open CRITICAL
+   in `analyze.md` or `challenge.md`, and a row of **Justified violations** with an empty cell.
 4. Commit `changes(<id>): approved by <who>`. One tracker comment with the folder permalink.
 5. One tracker sub-issue per row of `## Feature PRs`, under the change's issue (minimal first,
    then update; retry twice). Write each key into its row in `milestone.md`. Feature branches
@@ -259,8 +257,7 @@ a change small enough for one milestone has one.
    earlier milestone merges, and right before each close (the parent moves while you build).
    The merge may run in the supervisor's worktree. It is a commit, never a PR; `verify_gate.py milestone` fails with
    `check=parent-sync` until it is done, so it cannot be skipped.
-2. Per feature, in order: build only up to the class `lock.json` holds; a decision above it is
-   not built but written to `questions.md` with its options, and the item is skipped. Write the
+2. Per feature, in order: write the
    tests for its facts (`cct:test-e2e-coverage-run`, tagged `@F<n>`;
    bugs: `test-behavior-writer`, then `review-fix-implementer`), build in the plan's folders, commit,
    set the row in `milestone.md` to `done <sha>`, start the next feature at once. **Run touched tests and required pre-commit checks between features**; do not
@@ -527,13 +524,9 @@ person's own browser session. Never use Claude in Chrome or any tool driving tha
 5. **Enforcement audit**, once, before the gate: `python3 scripts/verify_gate.py audit`
    (read-only; see "Enforcement audit" below). Paste its last line into `validation.md`. A
    `problems` count above 0 is a finding for the fix round, not a gate.
-6. Compose the PR body from the repo's template, including its readable Decision4 section
-   and writing-rules HTML comment, following [Decision4 PR writing](decision4-pr.md).
-   Compute the highest boundary-map floor across the entire milestone diff against its
-   parent. Describe concrete recovery, ordered Recovery steps, actual Work preserved only,
-   Responsible for recovery (a named person for Answer), and Classification change (`None`
-   unless changed, then from -> to, by whom and why). Validate the proposed body locally
-   before pushing, then the actual body before the gate publishes successful statuses.
+6. Compose the PR body from the repo's template, following [scannable bodies](pr-body.md).
+   Validate the proposed body locally before pushing, then the actual body before the gate
+   publishes its successful status.
    One push and one PR `milestone/<slug>` → **its parent** (`project/<slug>` when the project
    has a branch, else the default branch) with the report, `validation.md` and `Closes <KEY>`
    for the change's issue, only once the gate passed on that exact head; it merges with a merge
@@ -622,8 +615,6 @@ Only when `decisions.json` has a `project`, and only once its last milestone has
 ## PR bodies and milestone close reports
 
 Read [scannable bodies and the full example](pr-body.md) before writing any feature,
-milestone or project PR. Use What → Why → Proof → Before merge (only if open), then the
-repo's exact Decision4 section when `boundary-map.yaml` exists. The milestone report,
+milestone or project PR. Use What → Why → Proof → Before merge (only if open). The milestone report,
 validation link, `Closes <KEY>` and exact-head gate results are bold-labelled bullets in
 the appropriate sections; preserve each required gate line verbatim inside its bullet.
-Follow [Decision4 PR writing](decision4-pr.md) for the class-specific Decision record: Repair choice story, Migrate options or forced constraint, Answer labelled evidence and challenges with no recommendation.

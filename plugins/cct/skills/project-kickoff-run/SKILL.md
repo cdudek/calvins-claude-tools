@@ -8,7 +8,7 @@ description: Sets up a new product before any app code exists - the context repo
 
 A new product gets its words, its look and its rules written down before the first screen is built. Agents build far better when they can read who the product is for, what things are called, how the interface behaves and which tokens to use. Without that, every screen invents its own answers and the UX review later finds the same inconsistency forty times.
 
-This skill writes the product, brand and UX documents. Wiring the repo's plugins, sdlc, Decision4 contract and gates is `cct:project-repository-run`; run it too.
+This skill writes the product, brand and UX documents. Wiring the repo's plugins, sdlc and gates is `cct:project-repository-run`; run it too.
 
 Work through the five stages in order. Each ends with an owner gate: show the result, get a yes or corrections, then move on. Write every document in plain, short sentences. Date every decision and say what was chosen over what.
 
