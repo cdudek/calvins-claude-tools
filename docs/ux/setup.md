@@ -96,6 +96,7 @@ App-wide parts: the band (always present), the pane's breadcrumb, toasts for Cop
 - **Never write to:** any Claude Code session, transcript or agent; git, gh or bd state (read only).
 - **Read only:** `~/.claude/projects/*/*.jsonl`, `claude agents --json`, `git`, `gh`, `bd`.
 - **Writes only against:** `~/.claude/agent-tracker/` (one file per session, `settings.json` for the band view and hidden flag, and the board file from milestone 2).
+- **Allowed outputs:** the clipboard (Copy, `/tracker copy`) and `settings.json` in that folder (the view and the hidden flag). Nothing else leaves the mod.
 
 ## Flows for this product
 
