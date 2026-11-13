@@ -5,7 +5,7 @@ created: 2026-11-13
 author: Claude (session with Calvin Dudek)
 ---
 
-# Handover: agent tracker, Stages 1 to 3
+# Handover: agent tracker, Stages 1 to 4 (approved)
 
 ## Where things stand
 
@@ -39,7 +39,13 @@ author: Claude (session with Calvin Dudek)
 - **Scope cuts recorded as Out of scope:** project name in the band header, a Repo-page milestone view, scheduled wake-ups, the `bd` scan.
 - **Terms:** "background session" is the one word (not background task).
 
-## Next
+## Stage 4, plan (approved 2026-11-14)
+
+- **Gate:** the owner approved spec, facts (132) and plan in plannotator; `lock.json` committed.
+- **Owner answers:** keep all four features; success measure is needs-you spot checks; the milestone PR edits CLAUDE.md and the owner merges it (`decisions.json` `autoMerge: false`), so the goal ends at `GOAL … OPEN pr-<n>-not-merged-or-armed`.
+- **Next:** Stage 5. Paste the kickoff prompt from `plan.md` `## Goal handover`, then its `/goal` line, in a fresh session.
+
+## Next (earlier stages, kept for history)
 
 0. **Stages 1 to 3 are done.** Items 1 and 3 below are done; start at Stage 4.
 
