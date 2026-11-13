@@ -14,7 +14,7 @@ Milestone 1: the band and the pane. The pane has three pages (Home, Repo, Sessio
 | Run | Something running inside a session besides the main turn: a goal, a subagent, a background task or a scheduled wake-up. | new | J7 |
 | Milestone | An sdlc-run milestone the session's branch belongs to (`changes/*/milestone.md`), with its features. Only in sdlc-run repos. | new | J3 |
 | Feature | One row of a milestone's feature table, with its state. | new | J3 |
-| Needs-you item | A session in a state that waits for the owner. Not stored: derived from Session state. | attribute of Session | J1, J5, J10 |
+| Needs-you item | A session that waits for the owner: derived from the engine state, plus a stored flag "asks a question" that the session's mod writes into its own session file at turn end. | attribute of Session | J1, J5, J10 |
 | Note (you should know, decided without you) | Milestone 3. Named here so milestone 1 leaves room. | deferred | J8 |
 
 Set aside: "agent" (a session is the unit; a subagent is a Run), "task tracker item" (Beads, Linear, GitHub issues are milestone 3 links, not objects here), "plan" (milestone 3, step 5).
@@ -99,6 +99,8 @@ Session state as shown. `claude agents --json` (2.1.323, checked 2026-11-13) rep
 
 **A question in plain text needs you too.** Owner, 2026-11-13: "Yes, via haiku" to counting a turn that ends with a plain-text question to the owner as needs you. At the end of each turn, a session running the mod has `haiku` read its last message and flag a question to the owner; that session then shows as needs you with the reason "asks a question" until the next prompt. Sessions without the mod stay "done".
 
+**Where the check reads from:** the mod's `turn.complete` hook, then the last assistant message read from the session's own transcript (grep, as the ponytail band reads its title, because `$.fs.read` stops at 4 MiB). Not the classic `Stop` hook's `last_assistant_message`: on managed machines a security plugin skips every `classic.*` hook (seen in this session for `classic.PermissionRequest`, and stated in the ponytail band's code). The flag clears at the next `prompt.submit`.
+
 ```mermaid
 stateDiagram-v2
     [*] --> running: session starts a turn
@@ -120,7 +122,8 @@ stateDiagram-v2
     [*] --> in_progress: owner sends the ask
     in_progress --> needs_you: session needs you before the turn ends
     needs_you --> in_progress: owner answers
-    in_progress --> replied: the turn ends
+    in_progress --> replied: the turn ends, no question to the owner
+    in_progress --> needs_you: the turn ends with a question to the owner
     replied --> [*]
 ```
 

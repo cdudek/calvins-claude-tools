@@ -224,6 +224,7 @@ Every error reads event, consequence, action; the exact strings are in `screens.
 | `gh` is not installed or not signed in. | PR counts and the PR list are not shown. | Run `gh auth login`. |
 | A transcript could not be read (missing or unreadable). | That session shows without its asks or numbers. | Nothing to do; it is read again on the next change. |
 | The tracker could not save this session's record. | Asks from now on are not kept until it can. | Check that the tracker's folder in your Claude folder can be written. |
+| The question check at turn end failed (model call or transcript read). | The session shows as done, without the "asks a question" flag; no false alarm. | Nothing to do; the next turn is checked again. |
 | An ask could not be classified (the model call failed). | The ask is kept and shown as "not classified". | Nothing to do; the next ask is tried again. |
 | Copy failed. | Nothing was copied. | Press Copy again, or run `/tracker copy`. |
 | `/tracker session <text>` or `/tracker repo <text>` matched nothing. | No page opens on that item; the pane shows the not-found line. | Open Home and pick one. |

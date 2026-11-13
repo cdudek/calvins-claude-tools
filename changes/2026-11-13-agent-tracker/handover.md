@@ -39,7 +39,11 @@ author: Claude (session with Calvin Dudek)
    - **Tab title:** a session's title may not match its Claude Code tab.
    - **Classic hooks:** they may be skipped on managed machines (ponytail's code says so), which affects `Stop`-based items.
    - **Haiku question check:** it runs only in sessions with the mod.
-3. **The one gate:** `spec/`, `facts.md` and `plan.md` together; on approval set `spec/validation.md` `status: approved`.
+3. **Stage 3 must cover:**
+   - **A2:** a fact that every model call pins `haiku`.
+   - **A5:** an out-of-scope line saying the web page comes in milestone 2.
+   - **The question check:** a fact that it runs at `turn.complete` and reads the transcript, never the classic `Stop` hook, which managed machines skip.
+4. **The one gate:** `spec/`, `facts.md` and `plan.md` together; on approval set `spec/validation.md` `status: approved`.
 
 ## Verified since Stage 1
 
