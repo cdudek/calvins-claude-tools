@@ -1,1 +1,1 @@
-`python3 scripts/sdlc_status.py goal <ID>` printed `GOAL <ID> DONE` or `GOAL <ID> BLOCKED` as its last run in this conversation, or stop after <TURNS> turns.
+`python3 <STATUS> goal <ID>` printed `GOAL <ID> DONE` or `GOAL <ID> BLOCKED` as its last run in this conversation, or stop after <TURNS> turns.

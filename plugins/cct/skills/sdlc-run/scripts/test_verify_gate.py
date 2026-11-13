@@ -228,7 +228,7 @@ def test_goal_templates_are_end_states_not_processes(name: str) -> None:
     """2026-11-11: a process in the condition cannot be satisfied after the merge, so it never clears."""
     text = (SKILL / "templates" / "goal" / f"{name}.txt").read_text()
     assert len(text) < 600, len(text)
-    assert "sdlc_status.py goal" in text and "DONE" in text and "BLOCKED" in text
+    assert "python3 <STATUS> goal <ID>" in text and "DONE" in text and "BLOCKED" in text
     assert "<TURNS> turns" in text
     assert not [w for w in ("milestone/", "builder", "push") if w in text]
 
@@ -248,7 +248,7 @@ def test_the_plan_template_keeps_the_process_the_goal_dropped() -> None:
     handover = plan.split("## Goal handover")[1].split("## Revisions")[0]
     assert "cct:ux-assessment-run" in run and "before arming auto-merge" in run  # 2026-10-12 rule
     assert "right before each close" in run and "re-locks" in run and "supervisor's worktree" in run
-    assert "`## How to run`" in handover and "/goal `python3 scripts/sdlc_status.py goal" in handover
+    assert "`## How to run`" in handover and "/goal `python3 <STATUS> goal" in handover
 
 
 @pytest.mark.parametrize("scope", ["feature", "milestone"])

@@ -1128,12 +1128,13 @@ def main() -> int:
     # The verify contract runs in CI and in /goal, where no plugin is installed: a copy.
     for script in (
         "verify_gate.py",
-        "sdlc_status.py",
         "design_index.py",
         "marks.py",
         "sdlc_version.py",
     ):
         _write(ROOT / "scripts" / script, (TPL / "scripts" / script).read_text(encoding="utf-8"))
+    # sdlc_status.py runs from the plugin now and is never copied into a repo.
+    remove(ROOT / "scripts" / "sdlc_status.py", "now runs from the plugin")
     gi = ROOT / ".gitignore"
     gi_lines = gi.read_text(encoding="utf-8").splitlines() if gi.exists() else []
     verify_out = f"/{changes_dir}/*/verify/"
