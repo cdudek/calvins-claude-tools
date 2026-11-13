@@ -5,7 +5,7 @@ created: 2026-11-13
 author: Claude (session with Calvin Dudek)
 ---
 
-# Handover: agent tracker, Stages 1 and 2
+# Handover: agent tracker, Stages 1 to 3
 
 ## Where things stand
 
@@ -32,7 +32,16 @@ author: Claude (session with Calvin Dudek)
 - **Owner answers, 2026-11-13:** a turn ending in a plain-text question counts as needs you, classified by haiku at turn end; WCAG 2.2 AA as a target (R2); singular page ids (EX-1); the pane's three names stay.
 - **No prototype:** none drawn. Stage 4 decides whether the plan marks the UI risky (`cct:design-mockups-create spec`).
 
+## Stage 3, facts (done 2026-11-13)
+
+- **Facts:** `facts.md` has 126 facts (F1 to F126), `status: draft`, lint passes. Five clarify questions were decided as technical calls (Assumptions); no owner question was needed.
+- **Checklist:** `checklist.md` has 46 items (gaps, ambiguities, conflicts, assumptions), all answered in the facts and ticked by a fresh reviewer.
+- **Scope cuts recorded as Out of scope:** project name in the band header, a Repo-page milestone view, scheduled wake-ups, the `bd` scan.
+- **Terms:** "background session" is the one word (not background task).
+
 ## Next
+
+0. **Stages 1 to 3 are done.** Items 1 and 3 below are done; start at Stage 4.
 
 1. **Stage 3 facts:** every fact cites asks, names its screen or state and its E2E tag; the "Fact" column of `spec/validation.md` fills from it.
 2. **Stage 4 plan:** carry the Medium and Low findings from `spec/validation.md` (the last Findings row points into `spec/review/`) into `plan.md` as Risk rows or deferrals. Add these Risks:

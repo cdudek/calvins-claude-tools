@@ -140,7 +140,7 @@ Show the counts as columns with one line each, and name what runs in this sessio
 |---|---|
 | Header, sdlc-run | "calvins-claude-tools · agent-tracker-1 · 2 of 4 features complete" (the branch is left out when its name holds the milestone slug) |
 | Header, without sdlc-run | "web-app · fix login redirect · feat/login" |
-| Header, what runs | "goal 14m · 2 subagents · 1 background task" (each part only when above 0) |
+| Header, what runs | "goal 14m · 2 subagents · 1 background session" (each part only when above 0) |
 | Column label | "needs you", "running", "done", "PRs" |
 | needs you line | "web-app: fix login 6m" (the oldest; "this session" when it is this one) |
 | running line | "api: migrate users 22m" (the longest running) |
@@ -283,7 +283,7 @@ One session: its work, what runs in it, its asks in order, its milestone feature
 | List | Columns | Sort | Empty |
 |---|---|---|---|
 | Asks | number, kind (task or question), status, time, text | oldest first (the order asked) | "No asks yet." |
-| Running now | kind, name, status, for | goal first, then subagents, then background tasks | section hidden |
+| Running now | kind, name, status, for | goal first, then subagents, then background sessions | section hidden |
 | Features | number, name, state | milestone order | section hidden (not an sdlc-run session) |
 
 ### Controls
@@ -311,7 +311,7 @@ One session: its work, what runs in it, its asks in order, its milestone feature
 | State line | "● needs you · 6m · asks permission" / "◐ running · 22m" / "✓ done · 3m ago" / "○ ended 4m ago" |
 | Branch and PR | "feat/login · PR #42 ✗ checks failing" |
 | Section headings | "Running now", "Usage", "Milestone", "Asks" |
-| Running now rows | "goal · 14m", "subagent · review-code-reviewer · running", "background task · npm test · 2m" |
+| Running now rows | "goal · 14m", "subagent · review-code-reviewer · running", "background session · docs check · 2m" |
 | Ask row | "1  task      replied       add a compact view" |
 | Ask kinds | "task", "question", "not classified" |
 | Ask status | "in progress", "needs you", "replied" |

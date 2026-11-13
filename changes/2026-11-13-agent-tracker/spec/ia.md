@@ -11,7 +11,7 @@ Milestone 1: the band and the pane. The pane has three pages (Home, Repo, Sessio
 | Worktree | A checkout of a repo (the main one or a linked worktree), with its branch. | new | J1 |
 | Ask | One prompt the owner typed in a session, kept in order, classified task or question. | new | J2 |
 | PR | A pull request on a repo's branch, with checks, review and mergeable state. | new | J11 |
-| Run | Something running inside a session besides the main turn: a goal, a subagent, a background task or a scheduled wake-up. | new | J7 |
+| Run | Something running inside a session besides the main turn: a goal, a subagent or a background session (scheduled wake-ups are out of milestone 1). | new | J7 |
 | Milestone | An sdlc-run milestone the session's branch belongs to (`changes/*/milestone.md`), with its features. Only in sdlc-run repos. | new | J3 |
 | Feature | One row of a milestone's feature table, with its state. | new | J3 |
 | Needs-you item | A session that waits for the owner: derived from the engine state, plus a stored flag "asks a question" that the session's mod writes into its own session file at turn end. | attribute of Session | J1, J5, J10 |
@@ -34,7 +34,7 @@ Set aside: "agent" (a session is the unit; a subagent is a Run), "task tracker i
 | PR | pull request, merge request | Short; the owner uses it. |
 | goal | loop, /goal run | The command's own name. |
 | subagent | agent, worker | Claude Code's word. |
-| background task | job, shell | Claude Code's word. |
+| background session | background session, job, shell | `claude agents` lists it with kind `background`. |
 | repo | repository, project | "Project" is taken by sdlc-run projects. |
 | compact, details | collapsed, expanded, mini, full | ponytail's labels (A6). |
 
@@ -79,7 +79,7 @@ The tracker never acts on a session (no-go N1). Its verbs open, switch view, cop
 | Band compact | this session's work (milestone and progress, or title) and goal age | 5 | J7; last on the line, first to be cut. |
 | Band header | repo name | 1 | J7 |
 | Band header | milestone and feature progress, or session title | 2 | J3, J7, J9 |
-| Band header | goal and its age, subagent count, background task count | 3 | J7 |
+| Band header | goal and its age, subagent count, background session count | 3 | J7 |
 | Pane Home row | state | 1 | J1 |
 | Pane Home row | session title | 2 | J7 |
 | Pane Home row | repo and branch | 3 | J1 |
@@ -89,7 +89,7 @@ The tracker never acts on a session (no-go N1). Its verbs open, switch view, cop
 | Pane Repo PR row | checks, review, mergeable | 2 | J11 |
 | Pane Repo PR row | session on that branch | 3 | J11 |
 | Pane Session | asks in order, kind and status | 1 | J2 |
-| Pane Session | running now (goal, subagents, background tasks) | 2 | J7 |
+| Pane Session | running now (goal, subagents, background sessions) | 2 | J7 |
 | Pane Session | milestone features (sdlc-run only) | 3 | J3 |
 | Pane Session | tokens, errors, retries, started, last activity | 4 | J4 |
 

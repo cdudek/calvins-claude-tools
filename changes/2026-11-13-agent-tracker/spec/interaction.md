@@ -63,7 +63,7 @@ What the mod API allows, and so what this spec uses (Claude Code 2.1.323 types, 
 | From control | Action | To screen or state | Notes |
 |---|---|---|---|
 | (none) | read | Band compact: Work segment, last on the line | Milestone and "2/4" (features complete), or repo and session title. |
-| Band compact: Details (`d`) | press | Band details: header row | Adds what runs: goal and its age, subagents, background tasks. |
+| Band compact: Details (`d`) | press | Band details: header row | Adds what runs: goal and its age, subagents, background sessions. |
 
 ### J9 Without sdlc-run
 
