@@ -106,6 +106,8 @@ GitHub retains deploys, eligible previews, cloud
 plans and scheduled work. Existing remote CI confirms a local result; it is never the
 debugging loop. A passed PR does not need a second full CI run on main.
 
+Decision4 is advisory: PRs say how hard the change is to undo (a level per `boundary-map.yaml`, a decision record above Undo). No workflow, status or hook reads it. See [Decision4 in a PR](../plugins/cct/skills/sdlc-run/references/decision4-pr.md).
+
 Follow the [CI setup guide](../plugins/cct/skills/sdlc-run/references/ci-blueprint.md) to
 implement and audit the repo-specific gate before replacing required remote checks.
 `adopt` preserves existing workflows and reports the manual gate setup. The legacy

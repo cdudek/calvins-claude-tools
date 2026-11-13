@@ -1,5 +1,7 @@
 # PR context
 
+If the body has a Decision4 section, read it with `boundary-map.yaml`: note when the level is below the lowest level for the changed paths or the recovery steps are vague ([advisory](../../sdlc-run/references/decision4-pr.md)). It never blocks a merge.
+
 Run in parallel:
 
 ```bash

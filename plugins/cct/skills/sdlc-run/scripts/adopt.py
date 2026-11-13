@@ -1218,18 +1218,17 @@ def main() -> int:
             src.read_text(encoding="utf-8"),
             keep=True,
         )
-    # A PR template in any place GitHub reads wins over the kit's.
-    if not any(
-        p.name.lower() in ("pull_request_template.md", "pull_request_template.txt")
-        for d in (ROOT, ROOT / ".github", ROOT / "docs")
-        if d.is_dir()
-        for p in d.iterdir()
-    ):
-        _write(
-            ROOT / ".github" / "PULL_REQUEST_TEMPLATE.md",
-            (TPL / "github" / "PULL_REQUEST_TEMPLATE.md").read_text(encoding="utf-8"),
-            keep=True,
-        )
+    # Decision4 is advisory: the boundary map, the AGENTS.md section and the PR-template
+    # section, never a workflow or a ci-local step. Anything already there stays the repo's.
+    from decision4_assets import asset_changes
+
+    for path, text in asset_changes(ROOT):
+        _write(path, text)
+    manual.append(
+        "Decision4 (advisory, nothing checks it): review the starter boundary-map.yaml so each "
+        "path has the right lowest level. The AGENTS.md section and PR-template section are "
+        "installed once; edit them in the repo."
+    )
 
     # --- REVIEW.md (kept once written), docs, CLAUDE.md
     write(

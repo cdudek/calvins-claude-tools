@@ -25,6 +25,12 @@ when the diff alone cannot settle a finding — never walk the repo, the budget 
   with no `## Revisions` line is **Important**. It also follows `CLAUDE.md` and does not make a
   repo rule false without updating it.
 
+## Decision4 (advisory)
+
+If the PR template has the section "How hard is it to undo this PR after merging?", read it
+against `boundary-map.yaml` and the diff: is the level at or above the lowest level for the
+changed paths, and are the recovery steps concrete? Say so in a comment. It never blocks a merge.
+
 ## Design questions
 
 While reading, also ask these four (from the CUPID properties). They add no fourth pass: a yes

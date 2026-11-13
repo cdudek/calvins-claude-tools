@@ -524,7 +524,8 @@ person's own browser session. Never use Claude in Chrome or any tool driving tha
 5. **Enforcement audit**, once, before the gate: `python3 scripts/verify_gate.py audit`
    (read-only; see "Enforcement audit" below). Paste its last line into `validation.md`. A
    `problems` count above 0 is a finding for the fix round, not a gate.
-6. Compose the PR body from the repo's template, following [scannable bodies](pr-body.md).
+6. Compose the PR body from the repo's template, including its Decision4 section when it has
+   one (advisory: [Decision4 in a PR](decision4-pr.md)), following [scannable bodies](pr-body.md).
    Validate the proposed body locally before pushing, then the actual body before the gate
    publishes its successful status.
    One push and one PR `milestone/<slug>` → **its parent** (`project/<slug>` when the project
@@ -615,6 +616,7 @@ Only when `decisions.json` has a `project`, and only once its last milestone has
 ## PR bodies and milestone close reports
 
 Read [scannable bodies and the full example](pr-body.md) before writing any feature,
-milestone or project PR. Use What → Why → Proof → Before merge (only if open). The milestone report,
+milestone or project PR. Use What → Why → Proof → Before merge (only if open), then the repo's Decision4 section
+if its template has one (advisory, see [Decision4 in a PR](decision4-pr.md)). The milestone report,
 validation link, `Closes <KEY>` and exact-head gate results are bold-labelled bullets in
 the appropriate sections; preserve each required gate line verbatim inside its bullet.

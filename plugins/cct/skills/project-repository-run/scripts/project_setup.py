@@ -1,9 +1,9 @@
 #!/usr/bin/env python3
-"""Brings a repo to the blueprint baseline: declares plugins and checks the result. Stdlib only. Nothing is written without --yes.
+"""Brings a repo to the blueprint baseline: declares plugins, adds the advisory Decision4 files and checks the result. Stdlib only. Nothing is written without --yes.
 
     project_setup.py [--root DIR] [--plugins cct@cct[,x@y]] [--marketplace-ref REF]
                      [--marketplace-source NAME=OWNER/REPO]
-                     [--anti-slop|--no-anti-slop] [--sdlc|--no-sdlc] [--check] [--yes] [--dry-run]
+                     [--decision4|--no-decision4] [--anti-slop|--no-anti-slop] [--sdlc|--no-sdlc] [--check] [--yes] [--dry-run]
 
 Exit codes: 0 ok, 1 --check found drift or a problem, 2 unreadable settings.json.
 """
@@ -11,6 +11,7 @@ from __future__ import annotations
 
 import argparse
 import copy
+import importlib.util
 import json
 import re
 import sys
@@ -53,6 +54,19 @@ def settings_changes(root, plugins, ref, sources, problems):
     return [("update", path, json.dumps(s, indent=2) + "\n", "declare marketplaces and enable plugins", True)] if s != orig else []
 
 
+def decision4_changes(root):
+    """Boundary map, AGENTS.md section and PR-template section (shared with sdlc-run adopt).
+    Advisory: no workflow, so none of these is required by --check."""
+    path = Path(__file__).resolve().parents[2] / "sdlc-run/scripts/decision4_assets.py"
+    spec = importlib.util.spec_from_file_location("decision4_assets", path)
+    mod = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(mod)
+    return [
+        ("update" if p.exists() else "create", p, text, "advisory Decision4 (nothing checks it)", False)
+        for p, text in mod.asset_changes(root)
+    ]
+
+
 def is_typescript(root: Path) -> bool:
     pkg = read(root / "package.json")
     return (root / "tsconfig.json").exists() or '"typescript"' in pkg
@@ -66,6 +80,7 @@ def main(argv=None) -> int:
     ap.add_argument("--marketplace-ref", help="git ref (tag, branch) to pin the cct marketplace to")
     ap.add_argument("--marketplace-source", action="append", default=[], metavar="NAME=OWNER/REPO",
                     help="GitHub repo of a non-cct marketplace named in --plugins")
+    ap.add_argument("--decision4", action=B, default=True, help="add the advisory Decision4 files")
     ap.add_argument("--anti-slop", action=B, default=None, help="default: on for TypeScript repos")
     ap.add_argument("--sdlc", action=B, default=True)
     ap.add_argument("--check", action="store_true", help="read-only drift check; exit 1 when something is missing")
@@ -82,6 +97,8 @@ def main(argv=None) -> int:
 
     problems: list[str] = []
     changes = settings_changes(root, plugins, a.marketplace_ref, sources, problems)
+    if a.decision4:
+        changes += decision4_changes(root)
 
     if a.check:
         missing = [f"{p.relative_to(root)}: {why}" for _, p, _, why, required in changes if required] + problems

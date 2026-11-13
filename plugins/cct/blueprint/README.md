@@ -14,6 +14,8 @@ Working CI/CD and project setup copied from the HeyDiff repos on 2026-10-31. Cop
 
 Every folder also has the repo's `sdlc.json`, which `cct:sdlc-run` reads.
 
+Every PR template has the advisory Decision4 section (how hard the change is to undo, plus a decision record above Undo). Nothing checks it. `cct:sdlc-run adopt` adds `boundary-map.yaml` and the AGENTS.md section; see `../skills/sdlc-run/references/decision4-pr.md`.
+
 ## Node runtime rule
 
 Use only the owner-approved supported LTS majors, Node 24 or 26 (decision 2026-11-08).

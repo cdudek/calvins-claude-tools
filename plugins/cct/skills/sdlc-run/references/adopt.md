@@ -123,3 +123,11 @@ When `sdlc.json` names no `tracker` (and has no `linear.team`), run
 from `references/trackers.md` with its recommendation first, write the answer into `sdlc.json`,
 and walk that tool's setup guide before the first change.
 
+## Decision4 installation
+
+Decision4 is advisory: nothing checks it and it never blocks a merge. `adopt` installs three
+things, each only when missing, and never a workflow or a `ci-local` step: a starter
+`boundary-map.yaml` (the lowest undo level per path, for the repo to edit), the AGENTS.md
+section "Decision4: how hard is this change to undo?" (with `@AGENTS.md` imported by CLAUDE.md
+when that exists), and the PR-template section with its Decision record. Existing files and
+sections stay the repo's. See [Decision4 in a PR](decision4-pr.md).

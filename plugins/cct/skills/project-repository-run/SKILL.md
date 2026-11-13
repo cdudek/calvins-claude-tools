@@ -1,7 +1,7 @@
 ---
 name: project-repository-run
 user_invocable: true
-description: Brings a new or existing repo to the blueprint baseline - declares the workflow plugins in .claude/settings.json (cct, optionally pinned), runs the sdlc adopt step, points to the anti-slop install for TypeScript, then checks it all. Use when someone says "set up this repo", "project setup", "init the project", "declare the plugins", "bring this repo to the blueprint", or a session start reports setup drift. For a brand-new product's context, brand and design system use project-kickoff-run.
+description: Brings a new or existing repo to the blueprint baseline - declares the workflow plugins in .claude/settings.json (cct, optionally pinned), runs the sdlc adopt step, adds the advisory Decision4 files (boundary map, AGENTS.md section, PR-template section), points to the anti-slop install for TypeScript, then checks it all. Use when someone says "set up this repo", "project setup", "init the project", "declare the plugins", "bring this repo to the blueprint", or a session start reports setup drift. For a brand-new product's context, brand and design system use project-kickoff-run.
 ---
 
 # Project setup
@@ -18,6 +18,7 @@ Read the [shared worktree policy](../../references/worktree-usage.md). Check Wor
 - **Plugins:** `cct@cct` only (recommended), or more as `name@marketplace` (a non-cct marketplace also needs `NAME=OWNER/REPO`).
 - **Pin the cct marketplace?** No, follow `main` (recommended), or a tag or ref.
 - **Anti-slop?** Only when the repo is TypeScript. Yes (recommended) or no.
+- **Decision4 files?** Yes (recommended) or no. Advisory: nothing checks them and no workflow is added.
 - **sdlc?** Yes (recommended) or no. `adopt` asks its own tiers question.
 
 ## Order
@@ -25,11 +26,13 @@ Read the [shared worktree policy](../../references/worktree-usage.md). Check Wor
 1. Plan, show it, then apply:
 
    ```bash
-   python3 ${CLAUDE_SKILL_DIR}/scripts/project_setup.py [--plugins A,B] [--marketplace-ref REF] [--no-anti-slop] [--no-sdlc]
+   python3 ${CLAUDE_SKILL_DIR}/scripts/project_setup.py [--plugins A,B] [--marketplace-ref REF] [--no-decision4] [--no-anti-slop] [--no-sdlc]
    python3 ${CLAUDE_SKILL_DIR}/scripts/project_setup.py <same options> --yes
    ```
 
-   This merges plugin declarations into `.claude/settings.json`.
+   This merges plugin declarations into `.claude/settings.json` and adds, only when missing, `boundary-map.yaml`, the AGENTS.md section "Decision4: how hard is this change to undo?" and the PR-template section (see `../sdlc-run/references/decision4-pr.md`).
+
+2a. Review `boundary-map.yaml` with the owner: set the lowest undo level for the repo's schema, contracts, credentials and production paths.
 
 2. `python3 ${CLAUDE_SKILL_DIR}/scripts/project_setup.py <same options> --check` must exit 0. Commit as one change.
 
@@ -37,11 +40,11 @@ Tell the user to restart Claude Code and trust the folder: `extraKnownMarketplac
 
 ## Options
 
-`--root DIR`, `--plugins` (repeatable or comma list, default `cct@cct`), `--marketplace-ref REF` (cct only), `--marketplace-source NAME=OWNER/REPO`, `--anti-slop/--no-anti-slop` (default on for TypeScript), `--sdlc/--no-sdlc`, `--check`, `--yes`, `--dry-run`. Exit 1 means drift or a problem (a marketplace pointing elsewhere); invalid settings JSON exits 2 and changes nothing.
+`--root DIR`, `--plugins` (repeatable or comma list, default `cct@cct`), `--marketplace-ref REF` (cct only), `--marketplace-source NAME=OWNER/REPO`, `--decision4/--no-decision4`, `--anti-slop/--no-anti-slop` (default on for TypeScript), `--sdlc/--no-sdlc`, `--check`, `--yes`, `--dry-run`. Exit 1 means drift or a problem (a marketplace pointing elsewhere); invalid settings JSON exits 2 and changes nothing.
 
 ## Drift check at session start
 
-`--check` is read-only and prints one line per missing piece. cct ships no SessionStart hook; a repo adds one to its own `.claude/settings.json`:
+`--check` is read-only and prints one line per missing piece. The Decision4 files are optional: `--check` never asks for them. cct ships no SessionStart hook; a repo adds one to its own `.claude/settings.json`:
 
 ```json
 {"hooks": {"SessionStart": [{"hooks": [{"type": "command", "command": "python3 \"${CLAUDE_PLUGIN_ROOT}/skills/project-repository-run/scripts/project_setup.py\" --check"}]}]}}

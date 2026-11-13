@@ -23,7 +23,7 @@ If conflicts arise, stop and show them to the user. Ask them to resolve manually
 
 ### Update PR body
 
-Read [scannable bodies and the full example](../../sdlc-run/references/pr-body.md).
+Read [scannable bodies and the full example](../../sdlc-run/references/pr-body.md). If feedback changed the risk, refresh the PR's Decision4 section ([advisory](../../sdlc-run/references/decision4-pr.md)): level, recovery steps, responsible role.
 Edit the existing body: put addressed feedback under What, reasons under Why, and named
 checks with results under Proof. Preserve human checklist state;
 never append a competing “Addressed feedback” section or regenerate the body blindly.
