@@ -8,7 +8,7 @@ What the mod API allows, and so what this spec uses (Claude Code 2.1.323 types, 
 - **Pane keys:** the same ring (`ctrl+x tab`, Tab, Enter, letter hotkeys, arrows scroll). No raw key handler, so every move is a Button. `ctrl+x x` closes a pane.
 - **Escape, one step at a time:** the first Escape hands the keyboard from the band or pane back to the prompt. The pane opens with `closeOnEscape`, so a second Escape, at an empty idle prompt, closes the pane. Over typed text or a running turn, Escape is Claude Code's own.
 - **Menu route:** the mod has no menus. The menu route for every action is the `/tracker` command with an argument (`/tracker details`, `/tracker compact`, `/tracker copy`, `/tracker repo <name>`, `/tracker session <title or id>`, `/tracker band off`, `/tracker band on`).
-- **Refresh:** the collector reads `claude agents --json` every 5 seconds and the session files on change; the band and an open pane redraw when the data changes, never more often.
+- **Refresh:** the collector reads `claude agents --json` every 5 seconds and the session files on change; the band and an open pane redraw when the data changes, and once a minute so the times ("6m", "goal 14m", "updated 2m ago") stay true. Times are shown to the minute.
 - **Words:** every on-screen string lives in the Words tables of `screens.md`. Text quoted here is the same string; where they ever differ, `screens.md` wins.
 
 ## Wireflows
@@ -26,14 +26,14 @@ What the mod API allows, and so what this spec uses (Claude Code 2.1.323 types, 
 | From control | Action | To screen or state | Notes |
 |---|---|---|---|
 | Band: Pane button (`p`) | press | Pane Home | Pane opens with the keyboard. |
-| Pane Home: session row | Enter | Pane Session | Asks section is first after the header. |
+| Pane Home: session row | Enter | Pane Session | Running now, Usage and Milestone are short and come first; Asks is the last section, scrolled with the arrows. |
 | Pane Session: Back (`b`) | press | Pane Home | Same row focused. |
 
 ### J3 See milestone progress
 
 | From control | Action | To screen or state | Notes |
 |---|---|---|---|
-| Band compact: Details (`d`) | press | Band details | Header row: milestone, "feature 2 of 4". |
+| Band compact: Details (`d`) | press | Band details | Header row: milestone, "2 of 4 features complete". |
 | Band details: Pane (`p`) | press | Pane Home | |
 | Pane Home: session row | Enter | Pane Session: Milestone section | Lists features with state. Absent without sdlc-run. |
 
@@ -62,7 +62,7 @@ What the mod API allows, and so what this spec uses (Claude Code 2.1.323 types, 
 
 | From control | Action | To screen or state | Notes |
 |---|---|---|---|
-| (none) | read | Band compact: first segment | Repo, then milestone or session title. |
+| (none) | read | Band compact: Work segment, last on the line | Milestone and "2/4" (features complete), or repo and session title. |
 | Band compact: Details (`d`) | press | Band details: header row | Adds what runs: goal and its age, subagents, background tasks. |
 
 ### J9 Without sdlc-run
@@ -84,7 +84,7 @@ What the mod API allows, and so what this spec uses (Claude Code 2.1.323 types, 
 | Band: Pane (`p`) | press | Pane Home | Each repo heading shows "3 PRs · 1 failing". |
 | Pane Home: repo heading | Enter | Pane Repo | PRs section lists each PR. |
 | Pane Repo: PR number link | Enter | the browser | Opens the PR on GitHub. |
-| Pane Repo: session on the PR's branch | Enter | Pane Session | |
+| Pane Repo: the PR row's session button | Enter | Pane Session | Only when a session ran on that branch. |
 
 ## State Tables
 
@@ -98,7 +98,7 @@ Words: `screens.md`, Band, compact.
 | Needs you | at least one session needs you | warning-coloured count, then the oldest waiting session (normal colour) and its wait | Needs you | Pane `p`, Details `d` | none needs you |
 | Needs you, this session | this session is the oldest waiting | as Needs you, naming "this session", then the oldest other one | Needs you, this session | Pane `p`, Details `d` | |
 | All quiet | sessions run or are done, none needs you | count 0 dim, the other counts normal | Needs you, 0 | Pane `p`, Details `d` | a session needs you |
-| Alone | this is the only live session | the work segment and a dim note | Alone | Pane `p`, Details `d` | another session starts |
+| Alone | this is the only live session | the needs-you segment (this session may wait), a dim note, and the work segment | Alone | Pane `p`, Details `d` | another session starts |
 | Partial | `gh` missing or failing; sessions still read | the counts without the PR segment | as All quiet | Pane `p`, Details `d` | gh works again |
 | Stale | `claude agents --json` failed twice in a row | the last good counts, dimmed, with their age and the reason | Stale | Pane `p`, Details `d` | the next read works |
 | Hidden | `/tracker band off` | no tracker row; other mods' rows unchanged | none | `/tracker band on` | `/tracker band on` |
@@ -123,8 +123,8 @@ Words: `screens.md`, the page of the same name, by the row named in the Words co
 | Loading | opened before the first read | the title and a dim line | Loading | Close `x` | first read |
 | Default | sessions exist | sections Needs you, Running, Done; each lists rows grouped under repo headings | see screens.md | Enter on a row or heading, Close `x` | Session, Repo, close |
 | All quiet | none needs you | the Needs you section shows one line | Empty Needs you | as Default | |
-| Empty | no live session but this one | one line | Empty, alone | Close `x` | a session starts |
-| Partial | gh or bd missing | rows as Default; repo headings without PR counts; one dim line at the bottom | Partial | as Default | |
+| Empty | no live session but this one | one line, then Ended today and the Repos line | Empty, alone | Close `x`, the Repos line | a session starts |
+| Partial | gh missing | rows as Default; repo headings without PR counts; one dim line at the bottom | Partial | as Default | |
 | Stale | sessions unreadable twice in a row | the last good list, dim, and a line at the top | Stale | as Default | next read |
 
 ### Pane, Session
@@ -177,7 +177,7 @@ Band view is a separate two-state toggle (compact, details), kept across session
 | Band | Pane button | opens the pane with the keyboard | opens once (already open: focuses it) | nothing | nothing | nothing | nothing | `p`; Enter | nothing | IG: side panels |
 | Band | Copy button (details) | copies the state as Markdown, toast | copies twice | nothing | nothing | nothing | nothing | `c`; Enter | nothing | IG: copy and paste |
 | Band | counts and text | nothing | nothing | nothing | nothing | nothing | nothing | nothing | nothing | IG: lists and selection |
-| Pane | session row | opens Session | opens once | nothing | nothing | nothing | nothing | Enter when focused; Tab and arrows move | one focused row, no multi-select | IG: lists and selection |
+| Pane | session row | opens Session | opens once | nothing | nothing | nothing | nothing | Enter when focused; Tab and Shift+Tab move focus; the arrows scroll | one focused row, no multi-select | IG: lists and selection |
 | Pane | repo heading, Repos line entry | opens Repo | opens once | nothing | nothing | nothing | nothing | Enter | as session row | IG: lists and selection |
 | Pane | PR number link | opens the PR in the browser | opens once | nothing | nothing | nothing | nothing | Enter | as session row | IG: navigation and return |
 | Pane | ask row | nothing (text only) | nothing | nothing | nothing | nothing | nothing | arrows scroll | nothing | IG: lists and selection |

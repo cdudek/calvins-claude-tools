@@ -33,8 +33,8 @@ The repo ships Claude Code plugins. Until the agent tracker, none had an interfa
   - **Standalone:** works in a repo without sdlc-run; sdlc-run change folders only add detail.
 - **Exceptions register:** `docs/ux/exceptions.md` (`EX-<n>`, format in `conflicts.md`)
 - **WCAG and EAA scope, one finding per surface:**
-  - Band and pane: a developer tool for one business user, so WCAG 2.2 AA is R2. Proposed by the agent 2026-11-13; awaiting the owner.
-  - Web page (milestone 2): the same scope. Proposed by the agent 2026-11-13; awaiting the owner.
+  - Band and pane: a developer tool for one business user, so WCAG 2.2 AA is R2, a target, not a legal floor; the EAA does not apply. Decided by the owner, 2026-11-13: "AA as a target".
+  - Web page (milestone 2): the same scope, by the same decision.
 
 ## The owner's words
 
@@ -79,7 +79,7 @@ Nothing is built. The proposed screens for milestone 1:
 | Band, details | the band's Details button | the same, plus a column with no items |
 | Pane, Home | `/tracker`, the band's Pane button | empty · loading · error · needs you · all quiet |
 | Pane, Session | a row on Home | live · ended · without the mod (from the transcript) |
-| Pane, Repo | a repo heading on Home | with PRs · without gh · without bd |
+| Pane, Repo | a repo heading on Home | with PRs · without gh |
 
 App-wide parts: the band (always present), the pane's breadcrumb, toasts for Copy.
 

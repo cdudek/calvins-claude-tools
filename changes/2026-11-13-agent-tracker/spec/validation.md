@@ -1,7 +1,7 @@
 ---
 type: validation
 change: 2026-11-13-agent-tracker
-verdict: not-ready
+verdict: ready
 status: draft
 reviewed_by: null
 approved_at: null
@@ -14,18 +14,18 @@ One pass, as sdlc-run Stage 2 step 5 asks: three independent reviewers on the sp
 
 ## Verdict
 
-not-ready (draft: the fix round is in progress)
+ready. No severity 3 or 4 finding is open after the one fix round; the four owner questions were answered on 2026-11-13. Medium and Low findings go to `plan.md` as Risk rows or are deferred, as sdlc-run Stage 2 step 5 asks.
 
 ## Definition Of Ready
 
 | Check | Result | Evidence |
 |---|---|---|
 | Activities | pass | brief, ia, interaction, screens, conformance done; prototype not drawn (sdlc-run draws images only when the plan marks the UI risky) |
-| Asks | pending | every ask maps to a job story and a screen below; facts follow in Stage 3 |
-| Findings | open | see Findings |
+| Asks | pass for this stage | every ask maps to a job story and a screen below; the fact column fills in Stage 3 and the gate pass checks it |
+| Findings | pass | 22 High findings from the reviewers (contradictions counted as High), 16 once merged, all fixed in the spec; none Critical; see Findings |
 | Laws of UX | pass | 30 rows and the B rows below, from reviewer 2 |
 | Concerns | pass | conformance F001 to F016 resolved or listed in Decisions Needed |
-| Questions | pending | see Decisions Needed |
+| Questions | pass | four asked in one batch, all answered 2026-11-13 |
 | Prototype | not yet: prototype follows only if the plan marks the UI risky | |
 
 ## Asks To Screens To Facts
@@ -111,16 +111,48 @@ Reviewer 2's table, as returned.
 
 | Rule | Where | Why | Owner decision needed |
 |---|---|---|---|
+| RC-1, RC-2 plural route ids | pane `repo/<repo>`, `session/<sessionId>` | ids match object names; no list page | decided: keep singular (EX-1) |
+| Relationships in words, not symbols | compact band "4 PRs · 1 ✗" | width; the details line says "1 failing", the desktop SVG `alt` spells it out | no |
+| Buttons name an action | band "Pane" | names a place, as the design file's button set and ponytail's "Board" do | decided: keep as is |
 
 ## Findings
 
+Merged from the three reviewers; the review files hold the full text. "Contradiction" items were rated 3 by rule.
+
 | Severity | Location | Finding | Status |
 |---|---|---|---|
+| 3 | ia.md, setup.md S2 | Needs-you boundary: a turn ending with a plain-text question is `idle`, counted as done; the band read "0 need you" while sessions waited (r1 R1, C7; r2 R2-10) | fixed: owner chose "Yes, via haiku"; the band also shows a done count |
+| 3 | ia.md, screens.md | No route from the band to a waiting live session; resume is for ended sessions only (r1 R2) | fixed in part: Needs you rows add the branch; that the title matches the Claude Code tab is a Risk for the plan |
+| 3 | Home | Home is a dead end for review (S3): ended sessions were 3 to 4 moves away, Empty had no way on (r1 R3; r3 9) | fixed: "Ended today" on Home; the Repos line shows in every state |
+| 3 | Session | Section order: Asks first or Running now first (r1 C1; r3 4, 6) | fixed: header, Running now, Usage, Milestone, Asks last |
+| 3 | interaction.md | Arrows scroll or move focus (r1 C2; r3 1) | fixed: Tab moves focus, the arrows scroll |
+| 3 | Home rows | Errors and retries on Running rows only, though J4 needs them on every row (r1 C3) | fixed: on every row when above 0 |
+| 3 | ia.md, screens.md | Compact band's first segment: repo or count (r1 C4) | fixed: count first, Work last, everywhere |
+| 3 | brief, interaction, screens | "feature 2 of 4" against "2/4" (r1 C5; r2 R2-04; r3) | fixed: "2 of 4 features complete"; compact "2/4" defined |
+| 3 | setup, sitemap, interaction | A "without bd" state with no screen (r1 C6) | fixed: nothing from bd in milestone 1 |
+| 3 | interaction.md | Redraw only on data change, yet times tick (r1 C8; r3 5) | fixed: a one-minute redraw, times to the minute |
+| 3 | interaction.md | Alone state drops the needs-you segment (r1 C9) | fixed: kept |
+| 3 | screens.md Home | Stale line in the footer or at the top (r3 2) | fixed: top, under the title |
+| 3 | Repo PR row | The PR's session had no control (r3 3) | fixed: a session button on the PR row |
+| 3 | Session ask row | Too narrow in a 24 to 54 column dock (r3 7) | fixed: two-line rows below 70 columns |
+| 3 | Repo PR row | One line of about 80 cells in a dock of 54; failing checks dim (r3 8) | fixed: two lines below 70; failing checks in the error colour |
+| 3 | Home rows | Needs-you wait and reason dim (r3 10) | fixed: normal colour |
+| 2 | Home | Rows re-sort under focus; a new waiting row is unmarked (r2 R2-01) | fixed: order frozen while focused, "new" marker |
+| 2 | Pane open | First focus stop unstated; Close first (r2 R2-11) | fixed: focus starts on the first row |
+| 2 | band | One drop order at every width; stale suffix placement (r3) | fixed |
+| 2 | Home | Durations above an hour; Done uncapped (r3) | fixed: "2h 10m", "3d"; Done at most 10 |
+| 2 | various | 27 more Medium and Low findings: hotkey hints, `/tracker` argument matching, layout shift when the band view changes in other sessions, PR count scope, pending classification state, duplicate Back and Home, glyph meanings and others | to `plan.md`: Risk rows or deferred (r1 R4 to R22, r2 R2-02 to R2-20, r3 Medium and Low) |
 
 ## Decisions Needed
 
-| Question | Recommended answer | Why it matters |
+None open. Answered by the owner on 2026-11-13, each the recommended option:
+
+| Question | Answer | Where written |
 |---|---|---|
+| Does a turn ending with a plain-text question count as needs you? | "Yes, via haiku" | ia.md State Diagrams |
+| WCAG scope for band and pane | "AA as a target" (R2, no EAA) | docs/ux/setup.md |
+| Singular page ids | "Keep singular" | docs/ux/exceptions.md EX-1 |
+| Three names for the pane | "Keep as is" | ia.md Decisions Taken Here |
 
 ## Did Not Run
 

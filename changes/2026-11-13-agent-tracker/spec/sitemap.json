@@ -210,6 +210,12 @@
         },
         {
           "en": "Done"
+        },
+        {
+          "en": "Ended today"
+        },
+        {
+          "en": "Repos"
         }
       ],
       "views": [],
@@ -301,17 +307,19 @@
       "tabs": [],
       "sections": [
         {
+          "en": "Open PRs"
+        },
+        {
           "en": "Worktrees"
         },
         {
-          "en": "Open PRs"
+          "en": "Ended"
         }
       ],
       "views": [],
       "states": [
         "with-prs",
         "without-gh",
-        "without-bd",
         "not-found"
       ],
       "reachedFrom": [
@@ -392,13 +400,13 @@
           "en": "Running now"
         },
         {
+          "en": "Usage"
+        },
+        {
+          "en": "Milestone"
+        },
+        {
           "en": "Asks"
-        },
-        {
-          "en": "Features"
-        },
-        {
-          "en": "Numbers"
         }
       ],
       "views": [],

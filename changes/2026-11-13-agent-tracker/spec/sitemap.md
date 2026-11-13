@@ -72,10 +72,10 @@ Tabs: none on any page. "Header primary" names the one action the page's header 
 
 - **`band/compact`, `band/details`:** empty (no other session); loading (first poll); error (poll failed); something needs you; nothing needs you. Details adds a column with no items.
 - **`home`:** empty; loading; error; needs you; all quiet.
-- **`repo/<repo>`:** with PRs; without `gh`; without `bd`; not found (assumption).
+- **`repo/<repo>`:** with PRs; without `gh`; not found (assumption).
 - **`session/<sessionId>`:** live; ended; without the mod (read from the transcript); not found (assumption).
 
-**Route-convention differences, written once (RC-1, RC-2, RC-3).** The ids are singular (`repo/<repo>`, `session/<sessionId>`), where RC-1 and RC-2 ask for a plural list plus an id. Reason: the ids match the canonical object names in the alias table and the `#/repo/...` hash routes of milestone 2; there is no `repos` or `sessions` list page to be the plural of. **decide:** `repos/<repo>` and `sessions/<sessionId>` if the owner wants RC-1 followed in milestone 2. RC-3 does not apply: nothing is created.
+**Route-convention differences, written once (RC-1, RC-2, RC-3).** The ids are singular (`repo/<repo>`, `session/<sessionId>`), where RC-1 and RC-2 ask for a plural list plus an id. Reason: the ids match the canonical object names in the alias table and the `#/repo/...` hash routes of milestone 2; there is no `repos` or `sessions` list page to be the plural of. Owner, 2026-11-13: "Keep singular"; recorded as EX-1 in `docs/ux/exceptions.md`. RC-3 does not apply: nothing is created.
 
 ### Pages whose content changes
 

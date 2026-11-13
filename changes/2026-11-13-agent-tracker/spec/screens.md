@@ -25,19 +25,21 @@ One row, left to right, segments split by " │ "; the buttons sit at the right 
 | Order | Section | Purpose |
 |---|---|---|
 | 1 | Needs you | Count, then the oldest waiting session: repo, title, wait. Warning colour when above 0. |
-| 2 | Running | Count of running sessions. |
+| 2 | Running and done | Count of running sessions, then of sessions whose turn ended (they may wait for a read). |
 | 3 | PRs | Open PRs across repos with sessions, and the failing count. |
 | 4 | Work | This session: milestone and "n/m" in sdlc-run, else repo and session title; "goal 14m" when a goal runs. |
 | 5 | Buttons | Pane, Details. |
 
 ### Layout
 
-Measured on the Words samples, in cells, separators included: Needs you 36, Running 14, PRs 14, Work 33 (separators included), buttons 15 with their gaps. Total 112. With "this session" Needs you is 43, total 119: the Work segment drops first.
+Measured on the Words samples, in cells, separators and gaps included: Needs you 39, Running and done 25, PRs 14, Work 33 (of which the goal age 11), buttons 17. Total 125.
+
+One drop order at every width, applied until the line fits `bodyColumns`: 1 the goal age, 2 the Work segment, 3 the words "running" and "done" (keeps "◐ 3 · ✓ 2"), 4 the PR segment, 5 the waiting session's title (keeps its repo and wait). The needs-you count and the buttons never drop. When Stale, its suffix "counts from 2m ago" (19) takes the Work segment's place and never drops; below 60 `bodyColumns` it shortens to "stale 2m".
 
 | Zoom | Columns | Widths | Notes |
 |---|---|---|---|
-| 100 % | one row, `bodyColumns` 115 | as measured; the title inside Needs you is cut at 20 cells with "…" | Fits whole. |
-| 150 % | one row, `bodyColumns` about 75 | | Drop in this order until it fits: Work's goal age, Work, PRs, the word "running" (keeps "◐ 3"). Then cut the waiting session's title, down to the repo alone. The count and the buttons never drop. At 75 cells: Needs you 36, "◐ 3" 6, buttons 15 = 57. |
+| 100 % | one row, `bodyColumns` 115 | goal age dropped: 114 | With "this session" (Needs you 46) the Work segment drops too: 99. |
+| 150 % | one row, `bodyColumns` about 75 | steps 1 to 3: 79; step 4: 65 | Needs you, "◐ 3 · ✓ 2" and the buttons. |
 | any | below 40 `bodyColumns` | | Count and buttons only: "● 2 need you" and Pane, Details. |
 
 ### Lists
@@ -67,9 +69,9 @@ Measured on the Words samples, in cells, separators included: Needs you 36, Runn
 | Needs you, 1 | "● 1 needs you · web-app: fix login 6m" |
 | Needs you, this session | "● 2 need you · this session 1m · web-app 6m" |
 | Needs you, 0 | "0 need you" (dim) |
-| Running | "◐ 3 running" |
+| Running and done | "◐ 3 running · ✓ 2 done" |
 | PRs | "4 PRs · 1 ✗" |
-| Work, sdlc-run | "agent-tracker-1 2/4 · goal 14m" |
+| Work, sdlc-run | "agent-tracker-1 2/4 · goal 14m" ("2/4": 2 of 4 features complete) |
 | Work, without sdlc-run | "web-app · fix login redirect" |
 | Loading | "Reading sessions…" (dim) |
 | Alone | "only this session is running" (dim), in place of Running and PRs |
@@ -110,7 +112,7 @@ Show the counts as columns with one line each, and name what runs in this sessio
 | Zoom | Columns | Widths | Notes |
 |---|---|---|---|
 | 100 % | 4 columns | each `bodyColumns / 4 - 2` (26), at least 10 | Header: work 72 + buttons 21 fit in 115; "what runs" (up to 40) goes on a second header line when the first is full. Desktop: one SVG of the four columns. |
-| 150 % | 4 columns | about 16 each | Header cuts in this order: branch, session title, milestone name (keeps "2/4"); "what runs" always on its own line. Columns drop their line except needs you; below 60 `bodyColumns` they fold into two rows of two. |
+| 150 % | 4 columns | about 16 each | Header cuts in this order: branch, session title, milestone name; "2 of 4 features complete" shortens to "2/4 complete"; "what runs" always on its own line. Columns drop their line except needs you; below 60 `bodyColumns` they fold into two rows of two. |
 
 ### Lists
 
@@ -136,7 +138,7 @@ Show the counts as columns with one line each, and name what runs in this sessio
 
 | Where | Text |
 |---|---|
-| Header, sdlc-run | "calvins-claude-tools · agent-tracker-1 · 2/4 · milestone/agent-tracker-1" |
+| Header, sdlc-run | "calvins-claude-tools · agent-tracker-1 · 2 of 4 features complete" (the branch is left out when its name holds the milestone slug) |
 | Header, without sdlc-run | "web-app · fix login redirect · feat/login" |
 | Header, what runs | "goal 14m · 2 subagents · 1 background task" (each part only when above 0) |
 | Column label | "needs you", "running", "done", "PRs" |
@@ -174,11 +176,14 @@ The triage queue: what needs the owner first, then what runs, then what is done,
 | Order | Section | Purpose |
 |---|---|---|
 | 1 | Title row | "Tracker", the time of the last read, Close. |
-| 2 | Needs you | Waiting sessions, oldest wait first, each with its reason when `waitingFor` gives one. |
-| 3 | Running | Running sessions, grouped under repo headings, longest running first. |
-| 4 | Done | Sessions whose turn ended, grouped under repo headings, latest first. |
-| 5 | Repos | Every repo with a session in the last 7 days, each a button to its Repo page with its PR count. |
-| 6 | Footer | Partial or stale line, when any. |
+| 2 | Notice | The stale or partial line, when any, directly under the title. |
+| 3 | Needs you | Waiting sessions, oldest wait first, each with its repo, branch and reason (from `waitingFor`, else "waiting"). This session is included and named "this session". |
+| 4 | Running | Running sessions, grouped under repo headings, longest running first. |
+| 5 | Done | Sessions whose turn ended, grouped under repo headings, latest first; at most 10, then "and 4 more on the Repo pages". |
+| 6 | Ended today | Sessions that ended since local midnight, newest first; at most 5, then "and 3 more on the Repo pages". |
+| 7 | Repos | Every repo with a session in the last 7 days, each a button to its Repo page with its PR count; shown in every state, Empty included. |
+
+Row order is frozen while the pane has the keyboard: new data updates the text in place, a newly waiting session is added at the end of Needs you marked "new", and the order is re-sorted when the keyboard leaves the pane or on the next open. When the pane opens, focus starts on the first row, not on Close.
 
 Each repo heading is a button that opens Repo and reads "web-app · 2 PRs · 1 failing".
 
@@ -186,22 +191,24 @@ Each repo heading is a button that opens Repo and reads "web-app · 2 PRs · 1 f
 
 | Zoom | Columns | Widths | Notes |
 |---|---|---|---|
-| 100 % | one column | dock 24 to 54 columns (Claude Code seats it), or inline full width | The longest sample row is 68 cells. Below 70 columns (every dock) a row takes two lines: glyph and title, then a dim line with branch, time and numbers. At 70 and wider (inline) one line. Only the title is cut, with "…". |
-| 150 % | one column | dock about 36 | Two-line rows; the dim line drops tokens first, then the branch. Errors and retries never drop. |
+| 100 % | one column | dock 24 to 54 columns (Claude Code seats it), or inline full width | The longest sample row is 68 cells. Below 70 columns (every dock) a row takes two lines: glyph and title, then a second line with branch, time and numbers. At 70 and wider (inline) one line. Only the title is cut, with "…". On Needs you rows the second line keeps the wait and reason in normal colour; on other rows it is dim. |
+| any | one column | below 40 columns | The second line drops tokens first, then the branch. The wait, reason, errors and retries never drop; a repo heading cuts its label, never its counts. |
 
 ### Lists
 
 | List | Columns | Sort | Empty |
 |---|---|---|---|
-| Needs you | glyph, title, repo, wait, reason | longest wait first | "Nothing needs you." |
-| Running | glyph, title, branch, running for, tokens, errors and retries when above 0 | grouped by repo (repo with the longest-running session first), then longest running | section hidden |
-| Done | glyph, title, branch, ended turn ago, tokens | grouped by repo, latest first | section hidden |
+| Needs you | glyph, title, repo, branch, wait, reason, errors and retries when above 0 | longest wait first | "Nothing needs you." |
+| Running | glyph, title, branch, turn running for, tokens, errors and retries when above 0 | grouped by repo (repo with the longest-running session first), then longest running | section hidden |
+| Done | glyph, title, branch, turn ended ago, tokens, errors and retries when above 0 | grouped by repo, latest first, at most 10 | section hidden |
+| Ended today | glyph, title, branch, ended ago, tokens | newest first, at most 5 | section hidden |
+| Repos | label, PR count | most recent session first | "No repos yet." |
 
 ### Controls
 
 | Control | Component | Label | Key | Disabled reason | State source |
 |---|---|---|---|---|---|
-| Open a session | Button (a row) | the session title | Enter | never disabled | |
+| Open a session | Button (a row; on a PR row, "session: <title>") | the session title | Enter | never disabled | |
 | Open a repo | Button (a heading, or an entry on the Repos line) | the repo label with PR counts | Enter | never disabled | |
 | Close | Button, plain | Close | `x` | never disabled | |
 
@@ -216,15 +223,18 @@ Each repo heading is a button that opens Repo and reads "web-app · 2 PRs · 1 f
 | Where | Text |
 |---|---|
 | Title | "Tracker" |
-| Last read | "updated 3s ago" |
-| Section headings | "Needs you", "Running", "Done" |
-| Needs you row | "● fix login redirect   web-app · 6m · asks permission" |
+| Last read | "updated just now" / "updated 2m ago" (to the minute) |
+| Section headings | "Needs you", "Running", "Done", "Ended today" |
+| Needs you row | "● fix login redirect   web-app · feat/login · 6m · asks permission" (reasons: "asks permission", "asks a question", or "waiting" when no reason is known; "new" appended while the order is frozen) |
 | Running row | "◐ migrate users   feat/users · 22m · 41k tokens · 2 errors · 1 retry" |
 | Done row | "✓ rename skills   main · 3m ago · 12k tokens" |
+| Ended today row | "○ fix typo   main · ended 2h ago · 4k tokens" |
+| More line | "and 4 more on the Repo pages" |
+| Durations | "6m", "2h 10m", "3d" (minutes below an hour, hours and minutes below a day, then days) |
 | Repo heading | "web-app · 2 PRs · 1 failing" |
 | Repos line | "Repos: web-app 2 PRs · api · docs 1 PR" |
 | Empty Needs you | "Nothing needs you." |
-| Empty, alone | "Only this session is running. Sessions in other terminals show up here when they start." |
+| Empty, alone | "Only this session is running. Sessions in other terminals show up here when they start." (the Repos line follows) |
 | Loading | "Reading sessions…" |
 | Partial | "PRs not shown: gh is not installed or not signed in. Run gh auth login to see them." |
 | Stale | "Session list unavailable. Showing what was read 2m ago. Retrying every 5 seconds; if it keeps failing, update Claude Code." |
@@ -257,22 +267,22 @@ One session: its work, what runs in it, its asks in order, its milestone feature
 |---|---|---|
 | 1 | Header | Title, breadcrumb "Home › web-app › fix login redirect" (text), state and time in state, repo button, branch, PR on this branch (link). |
 | 2 | Running now | Goal and its age, subagents with their status, background tasks and wake-ups. Hidden when nothing runs. |
-| 3 | Asks | Every ask in order, numbered from 1; tasks and questions marked; derived status. |
-| 4 | Milestone | sdlc-run only: the milestone sentence and its features with state. |
-| 5 | Usage | Tokens in and out, tool errors, retries, started, last activity. |
+| 3 | Usage | One line: tokens in and out, tool errors, retries, started, last activity. |
+| 4 | Milestone | sdlc-run only: the milestone sentence, "2 of 4 features complete", and the features with state. |
+| 5 | Asks | Every ask in order, numbered from 1; tasks and questions marked; derived status. Last because it is the one list without a bound; the arrows scroll it. |
 
 ### Layout
 
 | Zoom | Columns | Widths | Notes |
 |---|---|---|---|
-| 100 % | one column | as Home | Ask row: number 3, kind 9, status 13, text rest, wrapped. |
-| 150 % | one column | as Home | Ask row: number and kind on the first line, the text wrapped below. |
+| 100 %, inline at 70 columns or more | one column | as Home | Ask row: number 3, kind 9, status 13, time 6, the text in the rest, wrapped. |
+| any dock (below 70 columns) and 150 % | one column | as Home | Ask row on two lines: number, kind, status and time; then the text, wrapped, cut at 4 lines with "…". |
 
 ### Lists
 
 | List | Columns | Sort | Empty |
 |---|---|---|---|
-| Asks | number, kind (task or question), status, text, time | oldest first (the order asked) | "No asks yet." |
+| Asks | number, kind (task or question), status, time, text | oldest first (the order asked) | "No asks yet." |
 | Running now | kind, name, status, for | goal first, then subagents, then background tasks | section hidden |
 | Features | number, name, state | milestone order | section hidden (not an sdlc-run session) |
 
@@ -300,17 +310,17 @@ One session: its work, what runs in it, its asks in order, its milestone feature
 | Breadcrumb | "Home › web-app › fix login redirect" |
 | State line | "● needs you · 6m · asks permission" / "◐ running · 22m" / "✓ done · 3m ago" / "○ ended 4m ago" |
 | Branch and PR | "feat/login · PR #42 ✗ checks failing" |
-| Section headings | "Running now", "Asks", "Milestone", "Usage" |
+| Section headings | "Running now", "Usage", "Milestone", "Asks" |
 | Running now rows | "goal · 14m", "subagent · review-code-reviewer · running", "background task · npm test · 2m" |
 | Ask row | "1  task      replied       add a compact view" |
 | Ask kinds | "task", "question", "not classified" |
 | Ask status | "in progress", "needs you", "replied" |
 | No asks | "No asks yet." |
 | From transcript | "Not classified: this session ran without the tracker." (above the Asks list; each ask's kind reads "not classified") |
-| Milestone line | "agent-tracker-1: Open any Claude Code session and see …" |
+| Milestone line | "agent-tracker-1: Open any Claude Code session and see, in a band above the prompt and a pane, every session's repo, work and state, and which need you." (the sentence from milestone.md, wrapped) then "2 of 4 features complete" |
 | Feature row | "2  collector   complete" |
 | Feature states | "to do", "building", "complete", "merged", "blocked" |
-| Usage | "Tokens 41k in · 9k out", "Tool errors 2", "Retries 1", "Started 10:42", "Last activity 1m ago" |
+| Usage | "41k tokens in · 9k out · 2 tool errors · 1 retry · started 10:42 · last activity 1m ago" |
 | Not found | "No session matches \"<text>\". Pick one on Home." |
 | Buttons | "Back", "Home", "Close", "Copy resume command" |
 | Copied toast | "Resume command copied" |
@@ -341,16 +351,16 @@ One repo: its worktrees and their sessions, its open PRs, and its sessions that 
 | Order | Section | Purpose |
 |---|---|---|
 | 1 | Header | Label, breadcrumb, buttons. |
-| 2 | Worktrees | Each worktree with its branch, and the live sessions in it as rows. |
-| 3 | Open PRs | Each PR: number (link), title, checks, review, mergeable, the session on its branch. |
+| 2 | Open PRs | Each PR: number (link), title, checks, review, mergeable, and the session on its branch as a button. |
+| 3 | Worktrees | Each worktree with its branch, and the live sessions in it as rows. |
 | 4 | Ended | Sessions ended in the last 7 days, newest first. |
 
 ### Layout
 
 | Zoom | Columns | Widths | Notes |
 |---|---|---|---|
-| 100 % | one column | as Home | PR row: number 5, title up to 30, checks, review, mergeable. |
-| 150 % | one column | as Home | PR row: number and title, then a dim line with checks, review, mergeable, session. |
+| 100 %, inline at 70 columns or more | one column | as Home | PR row: number 5, title up to 30, checks, review, mergeable, session button. |
+| any dock (below 70 columns) and 150 % | one column | as Home | PR row on two lines: number, title and checks (failing checks in the error colour, never dim); then review, mergeable and the session button. |
 
 ### Lists
 
@@ -364,7 +374,7 @@ One repo: its worktrees and their sessions, its open PRs, and its sessions that 
 
 | Control | Component | Label | Key | Disabled reason | State source |
 |---|---|---|---|---|---|
-| Open a session | Button (a row) | the session title | Enter | never disabled | |
+| Open a session | Button (a row; on a PR row, "session: <title>") | the session title | Enter | never disabled | |
 | Open a PR | Link | "#42" | Enter | never disabled | gh |
 | Back, Home, Close | Button, plain | Back, Home, Close | `b`, `h`, `x` | never disabled | |
 
@@ -379,9 +389,9 @@ One repo: its worktrees and their sessions, its open PRs, and its sessions that 
 | Where | Text |
 |---|---|
 | Breadcrumb | "Home › web-app" |
-| Section headings | "Worktrees", "Open PRs", "Ended" |
+| Section headings | "Open PRs", "Worktrees", "Ended" |
 | Worktree line | "main checkout · main" / ".worktrees/login · feat/login" |
-| PR row | "#42 fix login redirect · ✗ checks failing · review requested · conflicts · fix login redirect (session)" |
+| PR row | "#42 fix login redirect · ✗ checks failing · review requested · conflicts · session: fix login" |
 | PR states | checks: "✓ checks pass", "✗ checks failing", "checks running"; review: "approved", "changes requested", "review requested", "no review"; mergeable: "↓ mergeable", "conflicts", "mergeable unknown" |
 | No PRs | "No open PRs." |
 | No gh | "PRs not shown: gh is not installed or not signed in. Run gh auth login to see them." |
@@ -394,4 +404,4 @@ One repo: its worktrees and their sessions, its open PRs, and its sessions that 
 |---|---|---|---|
 | Worktree line | Text, dim | have | |
 | Session row | Button with Text children | new variant | same as Home |
-| PR row | Box with Link and Text | new variant | |
+| PR row | Box with Link, Text and a session Button | new variant | the session Button only when a session ran on the branch |

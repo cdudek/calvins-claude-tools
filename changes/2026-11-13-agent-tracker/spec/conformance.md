@@ -280,14 +280,14 @@ What the spec did with each finding. Decisions marked "taken" are the agent's re
 
 - **F001:** resolved by the engine types: a letter `hotkey` fires only while the band or pane has the keyboard; only a bare digit fires from an empty prompt. Letters kept, digits unused; `interaction.md` says so.
 - **F002:** fixed. Widths measured on the Words samples (compact 112 of 115 cells; Home row 68; details header 72 + 21); drop orders at every width in `screens.md`.
-- **F003:** fixed. `screens.md` Words tables are the only home for strings; `interaction.md` state tables name the Words row.
+- **F003:** fixed in two steps. The conformance round made `screens.md` Words the only home for strings; validation then found "feature 2 of 4" against "2/4" still split, fixed in the validation round ("2 of 4 features complete", compact "2/4" defined).
 - **F004:** taken: root "Home" as in the sitemap; the pane's title row says "Tracker"; the breadcrumb is text, the repo button is the control.
-- **F005:** taken: "Copy resume command" on an ended session's page only; a live session is named by its tab title. Sitemap updated.
+- **F005:** taken: "Copy resume command" on an ended session's page only; a live session is named by its title, repo and branch. That the title matches the session's Claude Code tab is unverified (a Risk for the plan).
 - **F006:** taken: the Pane button and `/tracker` always open Home.
 - **F007:** fixed: band and pane both keep the last good counts, dimmed, with their age (state "Stale").
 - **F008:** taken: this session counts and is named "this session".
 - **F009:** taken: a Repos line ends Home; feature states use "complete", not "done".
-- **F010:** fixed: the needs-you line is in normal colour.
+- **F010:** fixed in two steps: the band's needs-you line first; validation found the Home needs-you rows still put wait and reason in a dim line, fixed in the validation round.
 - **F011:** taken: the tracker's row draws above other mods' rows, shares no hotkey, and `/tracker band off|on` hides and shows it.
 - **F012:** fixed: Escape goes one step at a time (keyboard to the prompt, then close at an empty prompt).
 - **F013:** fixed: band view and hidden flag in `~/.claude/agent-tracker/settings.json`; `setup.md` Safety lists it.

@@ -97,12 +97,15 @@ The tracker never acts on a session (no-go N1). Its verbs open, switch view, cop
 
 Session state as shown. `claude agents --json` (2.1.323, checked 2026-11-13) reports interactive sessions with `status` (`idle`, `busy`, `waiting`, plus a `waitingFor` string when waiting) and background sessions with `state` (`working`, `blocked`, `done`). Mapping: `busy` and `working` are running; `waiting` and `blocked` are needs you; `idle` is done; `done` (only with `--all`) is ended; a session missing from the list is ended. What `waitingFor` holds (permission or question) is read at build time and shown as the reason when present.
 
+**A question in plain text needs you too.** Owner, 2026-11-13: "Yes, via haiku" to counting a turn that ends with a plain-text question to the owner as needs you. At the end of each turn, a session running the mod has `haiku` read its last message and flag a question to the owner; that session then shows as needs you with the reason "asks a question" until the next prompt. Sessions without the mod stay "done".
+
 ```mermaid
 stateDiagram-v2
     [*] --> running: session starts a turn
     running --> needs_you: status waiting or state blocked
     needs_you --> running: the owner answers
-    running --> done: turn ends (status idle)
+    running --> done: turn ends (status idle), no question to the owner
+    running --> needs_you: turn ends with a question to the owner (haiku, sessions with the mod)
     done --> running: the owner sends a prompt
     needs_you --> ended: session exits
     running --> ended: session exits
@@ -131,7 +134,7 @@ Written by `cct:ux-sitemap-create` into [sitemap.md](sitemap.md) and [sitemap.js
 |---|---|---|---|---|---|
 | Band, compact | above the prompt | Count what needs the owner in one line, name the oldest waiting session. | J1, J5, J10 | every session, always | Band details; Pane Home |
 | Band, details | above the prompt | Columns with a count and one line each; header names this session's work. | J5, J6, J7, J11 | Band compact | Band compact; Pane Home; Copy |
-| Pane, Home | pane `home` | The triage queue: needs you first, then running, then done, grouped by repo; PR summary per repo. | J1, J4, J9, J10 | `/tracker`; band Pane | Session; Repo; Close |
+| Pane, Home | pane `home` | The triage queue: needs you first, then running, then done, grouped by repo; ended today; a Repos line with PR counts. | J1, J2, J4, J9, J10, J11 | `/tracker`; band Pane | Session; Repo; Close |
 | Pane, Repo | pane `repo/<repo>` | One repo: its worktrees with their sessions, and its open PRs. | J9, J11 | Home repo heading; Session's repo line | Session; Home (Back) |
 | Pane, Session | pane `session/<id>` | One session: header, running now, asks in order, milestone features, numbers. | J2, J3, J4, J7 | Home row; Repo session row | Repo; Home (Back) |
 
@@ -154,7 +157,7 @@ Band (always above the prompt)
 |---|---|---|---|---|
 | J1 answer the blocked one first | many times a session | Band compact (reads the oldest waiting session) | 0 | The most frequent job needs no move: the name is on the band. Switching to that session is Claude Code's own move, outside the tracker. |
 | J5 stay aware | every prompt | Band compact | 0 | Always on. |
-| J7 tell sessions apart | every prompt | Band details header; or compact title row | 0 to 1 | The header row is in details; compact keeps the repo and work in its first segment. |
+| J7 tell sessions apart | every prompt | Band compact Work segment (last on the line); Band details header | 0 to 1 | Compact shows the milestone and progress, or repo and title, at the end of the line and drops it first when narrow; details shows the full header. |
 | J6 dig from a count to one item | several times a day | Band → Pane → Home row → Session | 2 | Pane, then the row. |
 | J2 read my asks in order | daily | Band → Pane → Home row → Session (asks section) | 2 | Same as J6. |
 | J4 spot struggle | daily | Band → Pane → Home (numbers on the row) | 1 | Errors and retries show on the Home row. |
@@ -190,15 +193,19 @@ The pane has no raw key handler (the mod API gives Buttons, Tab, Enter and one-c
 - **Every repo has a way in from Home:** Home ends with a "Repos" line listing every repo with a session in the last 7 days, each a button to its Repo page with its PR count. Conformance F009.
 - **Next to ponytail's band:** the tracker draws its own row above the rows of other mods (`next(e)` below), shares no hotkey with them (ponytail's buttons have none), and `/tracker band off` hides it, `/tracker band on` shows it again. Conformance F011.
 - **Feature states:** shown as "to do", "building", "complete", "merged", "blocked"; "done" stays the word for a session whose turn ended. Conformance F009 note.
+- **Done count on the band:** the compact line shows "✓ 2 done" next to running, so sessions whose turn ended are visible even when nothing needs you (validation, reviewers 1 and 2).
+- **Stable rows:** the pane's row order is frozen while it has the keyboard; a newly waiting session is added at the end marked "new". Focus starts on the first row (validation, reviewer 2).
+- **Session page order:** header, Running now, Usage (one line), Milestone, then Asks last, the one list without a bound (validation, reviewers 1 and 3).
+- **Beads:** nothing from `bd` shows in milestone 1; Beads links come with milestone 3. The "without bd" state is removed.
 - **Breadcrumb root:** "Home", as in the sitemap; the pane's title row says "Tracker". The breadcrumb is text; the repo button in the Session header is the control. Conformance F004.
-- **Ended sessions:** not on Home (the queue stays live). The Repo page lists them under "Ended", newest first, the last 7 days.
+- **Ended sessions:** Home has an "Ended today" section (since local midnight, at most 5); the Repo page lists the last 7 days under "Ended". Changed after validation: reviewers 1 and 3 each found that after a run the session is usually ended, so the review scene (S3) needed four moves without it.
 - **Repo identity:** the git top-level path; the label is its folder name. Two repos with the same folder name get the parent folder added to both labels (`work/web-app`, `oss/web-app`). Sitemap finding SM-6.
-- **Page ids singular** (`repo/<repo>`, `session/<id>`): kept to match the alias table and milestone 2's `#/repo/…` routes. Sitemap finding SM-10, recorded for conformance.
-- **One entry, three names** (`/tracker`, the Pane button, the Home page): the pane's title is "Tracker", the band button says "Pane" (the design file's button set; ponytail's band has Board where this has Pane), the first page is Home. Sitemap finding SM-4, put to the owner in the validation pass.
+- **Page ids singular** (`repo/<repo>`, `session/<id>`): kept to match the alias table and milestone 2's `#/repo/…` routes. Sitemap finding SM-10. Owner, 2026-11-13: "Keep singular"; exception EX-1.
+- **One entry, three names** (`/tracker`, the Pane button, the Home page): the pane's title is "Tracker", the band button says "Pane" (the design file's button set; ponytail's band has Board where this has Pane), the first page is Home. Sitemap finding SM-4. Owner, 2026-11-13: "Keep as is".
 
 ## Open Questions
 
 | Question | Recommended answer | Why it matters |
 |---|---|---|
-| Does a session that finished its turn (engine `idle`) count as needs you? | No: it is "done", shown below running. Needs you is only a permission prompt or a question the session asked. | Counting every idle session would make the band's main number always high and meaningless. |
+| Does a session that finished its turn (engine `idle`) count as needs you? | Answered by the owner, 2026-11-13: only when its last message asks the owner a question ("Yes, via haiku"); otherwise "done". | Counting every idle session would make the band's main number meaningless. |
 | Is the band also shown in the session that needs the owner? | Yes, the same band in every session; the session's own state is in its header. | One band everywhere is predictable. |
