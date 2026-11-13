@@ -3,3 +3,14 @@ __pycache__/
 *.pyc
 .env
 .env.*
+
+# the SDLC hooks are the repo's, not the laptop's
+!.claude/
+!.claude/settings.json
+!.claude/hooks/
+!.claude/hooks/*.sh
+# verify_gate.py output; lock.json is committed
+/changes/*/verify/
+
+# Beads issue tracker: local only, never committed
+.beads/
