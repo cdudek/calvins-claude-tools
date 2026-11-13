@@ -103,7 +103,7 @@ Show the counts as columns with one line each, and name what runs in this sessio
 
 | Order | Section | Purpose |
 |---|---|---|
-| 1 | Header row | This session's work and what runs in it: goal and age, subagents, background tasks and wake-ups. Buttons right (21 cells). |
+| 1 | Header row | This session's work and what runs in it: goal and age, subagents, background sessions. Buttons right (21 cells). Scheduled wake-ups are not shown in milestone 1. |
 | 2 | Rule | A dim line across `bodyColumns` (terminal only; the desktop SVG draws its own). |
 | 3 | Columns | needs you · running · done · PRs. Each: label (dim), count (bold), one line (needs you in normal colour, the rest dim). |
 
@@ -230,7 +230,7 @@ Each repo heading is a button that opens Repo and reads "web-app · 2 PRs · 1 f
 | Done row | "✓ rename skills   main · 3m ago · 12k tokens" |
 | Ended today row | "○ fix typo   main · ended 2h ago · 4k tokens" |
 | More line | "and 4 more on the Repo pages" |
-| Durations | "6m", "2h 10m", "3d" (minutes below an hour, hours and minutes below a day, then days) |
+| Durations | "<1m", "6m", "2h 10m", "3d" (under a minute, minutes below an hour, hours and minutes below a day, then days) |
 | Repo heading | "web-app · 2 PRs · 1 failing" |
 | Repos line | "Repos: web-app 2 PRs · api · docs 1 PR" |
 | Empty Needs you | "Nothing needs you." |
@@ -266,7 +266,7 @@ One session: its work, what runs in it, its asks in order, its milestone feature
 | Order | Section | Purpose |
 |---|---|---|
 | 1 | Header | Title, breadcrumb "Home › web-app › fix login redirect" (text), state and time in state, repo button, branch, PR on this branch (link). |
-| 2 | Running now | Goal and its age, subagents with their status, background tasks and wake-ups. Hidden when nothing runs. |
+| 2 | Running now | Goal and its age, subagents with their status, background sessions. Hidden when nothing runs. |
 | 3 | Usage | One line: tokens in and out, tool errors, retries, started, last activity. |
 | 4 | Milestone | sdlc-run only: the milestone sentence, "2 of 4 features complete", and the features with state. |
 | 5 | Asks | Every ask in order, numbered from 1; tasks and questions marked; derived status. Last because it is the one list without a bound; the arrows scroll it. |
@@ -324,6 +324,7 @@ One session: its work, what runs in it, its asks in order, its milestone feature
 | Not found | "No session matches \"<text>\". Pick one on Home." |
 | Buttons | "Back", "Home", "Close", "Copy resume command" |
 | Copied toast | "Resume command copied" |
+| Resume copy failed toast | "Copy failed: <reason>. Press Copy resume command again." |
 
 ### Components
 
@@ -394,6 +395,7 @@ One repo: its worktrees and their sessions, its open PRs, and its sessions that 
 | PR row | "#42 fix login redirect · ✗ checks failing · review requested · conflicts · session: fix login" |
 | PR states | checks: "✓ checks pass", "✗ checks failing", "checks running"; review: "approved", "changes requested", "review requested", "no review"; mergeable: "↓ mergeable", "conflicts", "mergeable unknown" |
 | No PRs | "No open PRs." |
+| Stored PR state | "PRs as of 2h ago: no live session in this repo" (above the list, when no session with the tracker runs in the repo) |
 | No gh | "PRs not shown: gh is not installed or not signed in. Run gh auth login to see them." |
 | Ended row | "○ rename skills   main · ended 2d ago · 12k tokens" |
 | Not found | "No repo named \"<text>\" has had a session. Pick one on Home." |

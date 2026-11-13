@@ -131,7 +131,7 @@ Words: `screens.md`, the page of the same name, by the row named in the Words co
 
 | State | Entry or trigger | What the user sees | Words | Actions with key | Exit |
 |---|---|---|---|---|---|
-| Live | a row of a live session | header, Running now, Asks, Milestone (sdlc-run only), Usage | Section headings | Back `b`, repo line, Close `x` | Back, close |
+| Live | a row of a live session | header, Running now, Usage, Milestone (sdlc-run only), Asks | Section headings | Back `b`, repo line, Close `x` | Back, close |
 | Ended | the session left `claude agents` while open | the same, header state "ended", the time it ended | State line, ended | as Live, plus Copy resume command `r` | |
 | From transcript | a session without the mod | Asks and Usage from its transcript; asks not classified are marked so | From transcript | as Live | |
 | No asks | no prompt yet | Asks section one line | No asks | as Live | |
