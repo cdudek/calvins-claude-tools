@@ -72,7 +72,7 @@
     "en"
   ],
   "responsiveTier": "full",
-  "ux": "off",
+  "ux": "on",
   "checks": {
     "feature": [
       "python3 -m unittest discover -s tests",
