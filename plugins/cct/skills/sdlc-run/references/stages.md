@@ -12,7 +12,7 @@ every stage:
 - **One go is the default** (`sdlc.json` `delivery: "one-go"`, the owner's call on
   2026-10-25). Everything the engineer asked for goes into one change; the engineer pastes
   **one** `/goal` (`templates/goal/run.txt`) that builds every milestone of the plan in order.
-  The goal is an end state only: `python3 scripts/sdlc_status.py goal <ID>` prints
+  The goal is an end state only: `python3 <STATUS> goal <ID>` prints
   `GOAL <ID> DONE` or `GOAL <ID> BLOCKED`. The process the run follows is the plan's
   `## How to run`, started by the kickoff prompt in `## Goal handover`.
   Features are commits; **run touched tests and required pre-commit checks**. The full

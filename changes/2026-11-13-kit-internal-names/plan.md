@@ -199,13 +199,13 @@ Kickoff prompt:
 
 ```
 Run change 2026-11-13-kit-internal-names: follow `## How to run` in changes/2026-11-13-kit-internal-names/plan.md to the end, then
-print `python3 scripts/sdlc_status.py goal 2026-11-13-kit-internal-names`.
+print `python3 <plugin>/scripts/sdlc_status.py goal 2026-11-13-kit-internal-names`.
 ```
 
 The goal:
 
 ```
-/goal `python3 scripts/sdlc_status.py goal 2026-11-13-kit-internal-names` printed `GOAL 2026-11-13-kit-internal-names DONE` or `GOAL 2026-11-13-kit-internal-names BLOCKED` as its last run in this conversation, or stop after 40 turns.
+/goal `python3 <plugin>/scripts/sdlc_status.py goal 2026-11-13-kit-internal-names` printed `GOAL 2026-11-13-kit-internal-names DONE` or `GOAL 2026-11-13-kit-internal-names BLOCKED` as its last run in this conversation, or stop after 40 turns.
 ```
 
 ## Revisions

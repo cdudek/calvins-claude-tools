@@ -101,9 +101,10 @@ def test_every_hook_template_is_registered_by_adopt() -> None:
 def test_goal_templates_name_the_status_command_and_the_plan_names_the_gate() -> None:
     for name in ("run", "feature", "milestone"):
         text = (TEMPLATES / "goal" / f"{name}.txt").read_text(encoding="utf-8")
-        assert "scripts/sdlc_status.py goal <ID>" in text
+        assert "python3 <STATUS> goal <ID>" in text
     plan = (TEMPLATES / "change" / "plan.md").read_text(encoding="utf-8")
     assert "verify_gate.py milestone {{CHANGE}}" in plan.split("## How to run")[1]
+    assert "python3 <STATUS> goal {{CHANGE}}" in plan
 
 
 # Layer 2: the agents the stages call exist and are read-only where the stages say so

@@ -106,7 +106,7 @@ conflict.
 ## Done
 
 What must hold, as data in [done.json](done.json) (facts, test tags, pages, states). The goal
-below ends on the status line of `sdlc_status.py goal`, which reads the verify gate and the PRs,
+below ends on the status line of `sdlc_status.py goal` (from the sdlc-run plugin), which reads the verify gate and the PRs,
 so every line here is proven by a check, not by a claim.
 
 - `python3 scripts/verify_gate.py feature {{CHANGE}}` ends `VERIFY PASS` for every feature.
@@ -214,13 +214,13 @@ Kickoff prompt:
 
 ```
 Run change {{CHANGE}}: follow `## How to run` in changes/{{CHANGE}}/plan.md to the end, then
-print `python3 scripts/sdlc_status.py goal {{CHANGE}}`.
+print `python3 <STATUS> goal {{CHANGE}}`.
 ```
 
 The goal:
 
 ```
-/goal `python3 scripts/sdlc_status.py goal {{CHANGE}}` printed `GOAL {{CHANGE}} DONE` or `GOAL {{CHANGE}} BLOCKED` as its last run in this conversation, or stop after <TURNS> turns.
+/goal `python3 <STATUS> goal {{CHANGE}}` printed `GOAL {{CHANGE}} DONE` or `GOAL {{CHANGE}} BLOCKED` as its last run in this conversation, or stop after <TURNS> turns.
 ```
 
 ## Revisions

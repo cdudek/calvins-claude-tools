@@ -88,7 +88,6 @@ GENERATED = [
     "scripts/ship_show_ask.py",
     "scripts/verify_gate.py",
     "scripts/marks.py",
-    "scripts/sdlc_status.py",
     "REVIEW.md",
     "docs/sdlc.md",
 ]
@@ -136,6 +135,21 @@ def test_second_run_writes_nothing(tmp_path: Path) -> None:
     _adopt(repo)
     second = _sections(_adopt(repo).stdout)
     assert second["WROTE"] == [], second["WROTE"]
+
+
+def test_adopt_deletes_a_repo_copy_of_sdlc_status(tmp_path: Path) -> None:
+    """sdlc_status.py runs from the plugin; an older adopt copied it into scripts/."""
+    repo = _repo(tmp_path, "node")
+    (repo / "scripts").mkdir(exist_ok=True)
+    stale = repo / "scripts" / "sdlc_status.py"
+    stale.write_text("# old copy\n")
+    out = _sections(_adopt(repo).stdout)
+    assert not stale.exists()
+    assert any(
+        "scripts/sdlc_status.py (removed: now runs from the plugin)" in w for w in out["WROTE"]
+    )
+    assert not (repo / "scripts" / "sdlc_status.py").exists() and _adopt(repo).returncode == 0
+    assert not stale.exists()
 
 
 def test_pretooluse_keeps_every_hook(tmp_path: Path) -> None:

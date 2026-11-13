@@ -207,13 +207,13 @@ Kickoff prompt:
 
 ```
 Run change 2026-11-13-adopt-sdlc: follow `## How to run` in changes/2026-11-13-adopt-sdlc/plan.md to the end, then
-print `python3 scripts/sdlc_status.py goal 2026-11-13-adopt-sdlc`.
+print `python3 <plugin>/scripts/sdlc_status.py goal 2026-11-13-adopt-sdlc`.
 ```
 
 The goal:
 
 ```
-/goal `python3 scripts/sdlc_status.py goal 2026-11-13-adopt-sdlc` printed `GOAL 2026-11-13-adopt-sdlc DONE` or `GOAL 2026-11-13-adopt-sdlc BLOCKED` as its last run in this conversation, or stop after <TURNS> turns.
+/goal `python3 <plugin>/scripts/sdlc_status.py goal 2026-11-13-adopt-sdlc` printed `GOAL 2026-11-13-adopt-sdlc DONE` or `GOAL 2026-11-13-adopt-sdlc BLOCKED` as its last run in this conversation, or stop after <TURNS> turns.
 ```
 
 ## Revisions

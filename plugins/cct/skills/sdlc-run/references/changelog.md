@@ -5,6 +5,12 @@ version warning, the **Mechanical** lines are what `adopt` does for you (it adds
 with the stack's defaults and never overwrites a value), the **Manual** lines are printed for
 the engineer. A version with no migration lines needs nothing but a re-run of `adopt`.
 
+## 3.14.0 — sdlc_status.py runs from the plugin
+
+- The script lives in the plugin (`scripts/sdlc_status.py`) and runs from there with the working directory inside the repo: `python3 ${CLAUDE_SKILL_DIR}/scripts/sdlc_status.py map|goal ...`. No repo carries a copy; `/goal` conditions and `plan.md` name its absolute path through `<STATUS>` / `{{STATUS}}`.
+- Mechanical: re-running `adopt` deletes `scripts/sdlc_status.py` and its docs paragraph is replaced (`/sdlc-run status`).
+- Manual: `--upgrade` deletes nothing, so delete `scripts/sdlc_status.py` yourself, and point the `/goal` line of a change in flight at the plugin's script (`python3 <plugin>/scripts/sdlc_status.py goal <ID>`).
+
 ## 3.13.0 — Decision4 back as advisory
 
 - Decision4 returns without any gate: no workflow, no `ci-local` step, no required `decision4` status, no hook that reads a PR body, and no `class` in `intent.md` or blocker in `verify_gate.py approve` (those stay removed from 3.12.0).
