@@ -8,7 +8,7 @@
       "where": "all",
       "screen": "all",
       "states": [],
-      "check": "`collector.test.ts` › lists sessions with and without the mod; each session polls for itself"
+      "check": "`collector.test.ts` › lists sessions with and without the mod; the lease holder polls, the others read agents.json"
     },
     {
       "id": "F2",
@@ -37,7 +37,7 @@
       "states": [
         "Needs you row"
       ],
-      "check": "`collector.test.ts` › waitingFor fixture becomes the reason"
+      "check": "`collector.test.ts` › waitingFor becomes the reason, from a recorded fixture or else the default \"waiting\" logged to questions.md"
     },
     {
       "id": "F5",
@@ -166,7 +166,7 @@
       "where": "needs you",
       "screen": "needs you",
       "states": [],
-      "check": "`asks.test.ts` › turn.complete reads the transcript and calls the check"
+      "check": "`asks.test.ts` › turn.complete reads the transcript and calls the check only when the final paragraph holds a question mark"
     },
     {
       "id": "F18",
@@ -312,7 +312,7 @@
       "where": "Band compact",
       "screen": "Band compact",
       "states": [],
-      "check": "`band.test.ts` › running count against an agents fixture; by hand, 5 spot checks against `claude agents --json`"
+      "check": "`band.test.ts` › running count against an agents fixture of known values"
     },
     {
       "id": "F32",
@@ -617,7 +617,7 @@
       "where": "none",
       "screen": "none",
       "states": [],
-      "check": "`safety.test.ts` › call counts for one ask and one turn"
+      "check": "`safety.test.ts` › call counts for one ask and one turn, none for a turn without a question mark"
     },
     {
       "id": "F62",
@@ -659,13 +659,13 @@
       "id": "F66",
       "tag": "@F66",
       "feature": 1,
-      "where": "running; Session, header",
-      "screen": "running",
+      "where": "needs you; Session, header",
+      "screen": "needs you",
       "states": [
         "Session",
         "header"
       ],
-      "check": "`collector.test.ts` › unknown status shows as running with the raw value"
+      "check": "`collector.test.ts` › unknown status shows as needs you, state unknown, with the raw value"
     },
     {
       "id": "F67",
@@ -1316,6 +1316,65 @@
         "Pane"
       ],
       "check": "`band.test.ts` and `pane.test.ts` › redraw after one minute with no data change"
+    },
+    {
+      "id": "F127",
+      "tag": "@F127",
+      "feature": 1,
+      "where": "store",
+      "screen": "store",
+      "states": [],
+      "check": "`collector.test.ts` › lease taken when none is fresh, kept while fresh, dropped when another session holds it"
+    },
+    {
+      "id": "F128",
+      "tag": "@F128",
+      "feature": 1,
+      "where": "store",
+      "screen": "store",
+      "states": [],
+      "check": "`collector.test.ts` › the holder polls every 5 seconds, refreshes the heartbeat and writes agents.json by temp file and rename"
+    },
+    {
+      "id": "F129",
+      "tag": "@F129",
+      "feature": 1,
+      "where": "store; Band Stale; Home Stale",
+      "screen": "store",
+      "states": [
+        "Band Stale",
+        "Home Stale"
+      ],
+      "check": "`collector.test.ts` › a non-holder runs no call and reads agents.json; an old file counts as a failed read"
+    },
+    {
+      "id": "F130",
+      "tag": "@F130",
+      "feature": 1,
+      "where": "store",
+      "screen": "store",
+      "states": [],
+      "check": "`safety.test.ts` › every write path is the session's own file, a lease file while held, a transcripts file or settings.json"
+    },
+    {
+      "id": "F131",
+      "tag": "@F131",
+      "feature": 4,
+      "where": "Pane Home, notice",
+      "screen": "Pane Home",
+      "states": [
+        "notice"
+      ],
+      "check": "`pane.test.ts` › without-the-tracker line for one and many sessions, hidden at none"
+    },
+    {
+      "id": "F132",
+      "tag": "@F132",
+      "feature": 1,
+      "where": "done",
+      "screen": "done",
+      "states": [],
+      "check": "`asks.test.ts` › no question mark in the final paragraph: no model call, no flag"
     }
   ],
   "pages": [
@@ -1326,8 +1385,11 @@
   "widths": {
     "feature": [
       40,
+      50,
       54,
+      60,
       70,
+      75,
       80,
       115
     ],

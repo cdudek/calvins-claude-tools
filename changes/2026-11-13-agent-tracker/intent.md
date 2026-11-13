@@ -56,7 +56,9 @@ A4 was answered by the compact view of the band. A withdrawn ask is recorded und
 
 How we know after release that it worked. One number, where it is read, and the target.
 
-- **Measure:** spot checks where the band's running count equals `claude agents --json` — **read in:** a by-hand check — **target:** 5 of 5 by 2026-12-04
+- **Measure:** the band's needs-you count matches the waiting sessions the owner sees — **read in:** by-hand spot checks — **target:** 5 of 5 by 2026-12-04
+- **Waiting means:** a session in a terminal shows a permission prompt or asks the owner a question.
+- **Revised 2026-11-14:** owner, dialog, "Needs-you spot checks (Recommended)". It replaces "the band's running count equals `claude agents --json`", which compared the engine's data with itself.
 
 ## Problem
 

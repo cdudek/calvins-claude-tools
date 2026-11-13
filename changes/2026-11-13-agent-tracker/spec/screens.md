@@ -176,7 +176,7 @@ The triage queue: what needs the owner first, then what runs, then what is done,
 | Order | Section | Purpose |
 |---|---|---|
 | 1 | Title row | "Tracker", the time of the last read, Close. |
-| 2 | Notice | The stale or partial line, when any, directly under the title. |
+| 2 | Notice | The stale or partial line, when any, directly under the title, then the dim without-the-tracker line (sessions in `claude agents` that have no tracker file). |
 | 3 | Needs you | Waiting sessions, oldest wait first, each with its repo, branch and reason (from `waitingFor`, else "waiting"). This session is included and named "this session". |
 | 4 | Running | Running sessions, grouped under repo headings, longest running first. |
 | 5 | Done | Sessions whose turn ended, grouped under repo headings, latest first; at most 10, then "and 4 more on the Repo pages". |
@@ -225,7 +225,8 @@ Each repo heading is a button that opens Repo and reads "web-app · 2 PRs · 1 f
 | Title | "Tracker" |
 | Last read | "updated just now" / "updated 2m ago" (to the minute) |
 | Section headings | "Needs you", "Running", "Done", "Ended today" |
-| Needs you row | "● fix login redirect   web-app · feat/login · 6m · asks permission" (reasons: "asks permission", "asks a question", or "waiting" when no reason is known; "new" appended while the order is frozen) |
+| Needs you row | "● fix login redirect   web-app · feat/login · 6m · asks permission" (reasons: "asks permission", "asks a question", "state unknown" when the engine reports a status or state the tracker does not know, or "waiting" when no reason is known; "new" appended while the order is frozen) |
+| Without the tracker | "2 sessions run without the tracker. Questions they ask in text are not detected." (dim, directly under the title row; "1 session runs without the tracker. Questions it asks in text are not detected." for one; hidden at none) |
 | Running row | "◐ migrate users   feat/users · 22m · 41k tokens · 2 errors · 1 retry" |
 | Done row | "✓ rename skills   main · 3m ago · 12k tokens" |
 | Ended today row | "○ fix typo   main · ended 2h ago · 4k tokens" |
@@ -308,7 +309,7 @@ One session: its work, what runs in it, its asks in order, its milestone feature
 | Where | Text |
 |---|---|
 | Breadcrumb | "Home › web-app › fix login redirect" |
-| State line | "● needs you · 6m · asks permission" / "◐ running · 22m" / "✓ done · 3m ago" / "○ ended 4m ago" |
+| State line | "● needs you · 6m · asks permission" / "◐ running · 22m" / "✓ done · 3m ago" / "○ ended 4m ago"; an unknown engine state reads "● needs you · 6m · state unknown (<raw value>)" |
 | Branch and PR | "feat/login · PR #42 ✗ checks failing" |
 | Section headings | "Running now", "Usage", "Milestone", "Asks" |
 | Running now rows | "goal · 14m", "subagent · review-code-reviewer · running", "background session · docs check · 2m" |

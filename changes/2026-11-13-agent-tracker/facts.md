@@ -18,16 +18,16 @@ Open any Claude Code session and see each session's repo, work and state, and wh
 
 ## Acceptance criteria
 
-Rules: `sdlc.json` defines no `rules` list, so the two rules from `CLAUDE.md` are named here. PUB-1 is the public repo rule: no internal names, people, URLs or local paths. PUB-2 is the never-publish-to-claude.ai rule. A fact with no rule cites asks only.
+Rules: `sdlc.json` defines no `rules` list and `CLAUDE.md` gives no ids, so the two rules from `CLAUDE.md` get short names here. PUB-1 is `CLAUDE.md#Public repo rule`: no internal names, people, URLs or local paths. PUB-2 is `CLAUDE.md#Never publish to claude.ai`. A fact with no rule cites asks only.
 
 Tests are `*.test.ts` files run by `claude plugin test`, not browser E2E. The tag goes in the test title beside `@2026-11-13-agent-tracker`. Words in quotes are the strings in `spec/screens.md`. Test file names are proposed here and `plan.md` fixes the paths.
 
 ### Collector and states
 
-- [ ] **F1** (A1, A10, A12) While the mod runs, each session's own mod shall list every session from `claude agents --json` every 5 seconds. It shall list sessions without the mod too. Screen/state: all. Tag: `@F1`.
+- [ ] **F1** (A1, A10, A12) While the mod runs, the session holding the poller lease shall list every session from `claude agents --json` every 5 seconds. Every other session shall read that list from `agents.json` (F127 to F129). The list holds sessions without the mod too. Screen/state: all. Tag: `@F1`.
 - [ ] **F2** (A1, A7) While an interactive session reports status `busy` or a background session reports state `working`, the collector shall mark it running. Screen/state: running. Tag: `@F2`.
 - [ ] **F3** (A1, A9) While an interactive session reports status `waiting` or a background one reports state `blocked`, the collector shall mark it needs you. Screen/state: needs you. Tag: `@F3`.
-- [ ] **F4** (A1, A9) While a session needs you, the collector shall show a reason. It is "asks permission" when `waitingFor` matches the permission value in a fixture recorded from a real session. It is "asks a question" when the question check flagged it, else "waiting". Screen/state: Home, Needs you row. Tag: `@F4`.
+- [ ] **F4** (A1, A9) While a session needs you, the collector shall show a reason. It is "asks permission" when `waitingFor` matches the permission value recorded from a real waiting session at build. If the build had no waiting session, "asks permission" never shows and any `waitingFor` gives "waiting". It is "asks a question" when the question check flagged it, else "waiting". An unknown state has its own reason (F66). Screen/state: Home, Needs you row. Tag: `@F4`.
 - [ ] **F5** (A1) While an interactive session reports status `idle` and the question check has not flagged it, the collector shall mark it done. Screen/state: done. Tag: `@F5`.
 - [ ] **F6** (A1) When a session reports state `done` or leaves the list, the collector shall mark it ended. Screen/state: ended. Tag: `@F6`.
 - [ ] **F7** (A1, A7) The collector shall name each session's repo by the folder of its main worktree, the parent of `git rev-parse --git-common-dir`. A linked worktree's sessions group under their repo. Two repos with one folder name get the parent folder added, as `work/web-app`. Screen/state: Home, repo heading. Tag: `@F7`.
@@ -38,20 +38,24 @@ Tests are `*.test.ts` files run by `claude plugin test`, not browser E2E. The ta
 - [ ] **F12** (A10, A12) Where a session active in the last 7 days has no file, live or ended, the backfill shall read its transcript. Transcripts sit under `~/.claude/projects/`. It takes tokens, branch, folder, title, tool errors and asks. It marks each ask "not classified" and makes no model call. Screen/state: Session, from transcript. Tag: `@F12`.
 - [ ] **F13** (A12) If a transcript is over 4 MiB, then the backfill shall read it by search, a grep over the file, not whole. The search finds the prompt, usage and tool-error lines and returns the fields of F12. Screen/state: store. Tag: `@F13`.
 - [ ] **F14** (A1, A8) The mod shall read its repo's worktrees with `git worktree list`. It shall read open PRs with `gh pr list --json`, with checks, review and mergeable state. Screen/state: Repo. Tag: `@F14`.
-- [ ] **F66** (A1) If a session reports a `status` or `state` the collector does not know, then it shall show it as running. The raw value appears in the Session state line, and the session is never counted as needs you. Screen/state: running; Session, header. Tag: `@F66`.
+- [ ] **F66** (A1) If a session reports an unknown `status` or `state`, then the collector shall show needs you with the reason "state unknown". The raw value appears in the Session state line. Screen/state: needs you; Session, header. Tag: `@F66`.
 - [ ] **F67** (A1, A12) While the mod runs, it shall scan git and gh for its own session's repo every 2 minutes. It shall scan no other repo. Screen/state: Repo. Tag: `@F67`.
 - [ ] **F68** (A1, A12) The band and the pane shall merge every session file into one list. A session whose mod is gone still shows from its last file. Screen/state: store. Tag: `@F68`.
 - [ ] **F69** (A8, A12) While a repo has no live session with the mod, the pane shall show its last stored PR state. A line above it reads "PRs as of 2h ago: no live session in this repo". Screen/state: Pane Repo, Open PRs. Tag: `@F69`.
 - [ ] **F70** (A10, A12) When the backfill reads a transcript, it shall take every prompt the owner typed, in order, as an ask. It shall skip tool results, slash-command expansions and system notes. Screen/state: Session, from transcript. Tag: `@F70`.
 - [ ] **F71** (A7, A8) The collector shall count a feature complete when its state is `done` or `merged`. Screen/state: Band compact, Work; Band details, Header; Session, Milestone. Tag: `@F71`.
+- [ ] **F127** (A1, A12) When no lease in `~/.claude/agent-tracker/poller.json` is fresh, a session's mod shall take it by writing its session id and the time. A lease is fresh when its heartbeat is under 15 seconds old. A holder that finds another session's fresh lease shall stop polling. Screen/state: store. Tag: `@F127`.
+- [ ] **F128** (A1, A12) While a mod holds the lease, it shall poll `claude agents --json` every 5 seconds. Each poll refreshes the heartbeat and writes `agents.json` without exposing half a file: a temp file in the same folder, then a rename. Without a rename in the mod API, it writes the whole file and readers keep their last good copy (F68). Screen/state: store. Tag: `@F128`.
+- [ ] **F129** (A1, A12) While another session holds a fresh lease, a mod shall not run `claude agents --json`. It shall read `agents.json` every 5 seconds. An `agents.json` older than 15 seconds, or one that cannot be read, counts as a failed read for F52 and F123. Screen/state: store; Band Stale; Home Stale. Tag: `@F129`.
+- [ ] **F130** (A12) Each session's mod shall write only its own session file. While it holds the lease it also writes `poller.json` and `agents.json`. The backfill writes only `transcripts/` files and the view choice only `settings.json`. Screen/state: store. Tag: `@F130`.
 
 <details>
 <summary>Verification</summary>
 
-- F1 — tag `@F1`: `collector.test.ts` › lists sessions with and without the mod; each session polls for itself
+- F1 — tag `@F1`: `collector.test.ts` › lists sessions with and without the mod; the lease holder polls, the others read agents.json
 - F2 — tag `@F2`: `collector.test.ts` › busy and working map to running
 - F3 — tag `@F3`: `collector.test.ts` › waiting and blocked map to needs you
-- F4 — tag `@F4`: `collector.test.ts` › waitingFor fixture becomes the reason
+- F4 — tag `@F4`: `collector.test.ts` › waitingFor becomes the reason, from a recorded fixture or else the default "waiting" logged to questions.md
 - F5 — tag `@F5`: `collector.test.ts` › idle maps to done unless the question flag is set
 - F6 — tag `@F6`: `collector.test.ts` › done state or absence maps to ended
 - F7 — tag `@F7`: `collector.test.ts` › repo label from the main worktree, same folder name twice
@@ -62,12 +66,16 @@ Tests are `*.test.ts` files run by `claude plugin test`, not browser E2E. The ta
 - F12 — tag `@F12`: `backfill.test.ts` › fixture transcript fields, live and ended
 - F13 — tag `@F13`: `backfill.test.ts` › transcript over 4 MiB read by search
 - F14 — tag `@F14`: `scans.test.ts` › git and gh output fixtures
-- F66 — tag `@F66`: `collector.test.ts` › unknown status shows as running with the raw value
+- F66 — tag `@F66`: `collector.test.ts` › unknown status shows as needs you, state unknown, with the raw value
 - F67 — tag `@F67`: `scans.test.ts` › own repo only, every 2 minutes
 - F68 — tag `@F68`: `collector.test.ts` › files of several sessions merge into one list
 - F69 — tag `@F69`: `scans.test.ts` › stored PR state and its age with no live mod session
 - F70 — tag `@F70`: `backfill.test.ts` › asks skip tool results, slash commands and system notes
 - F71 — tag `@F71`: `collector.test.ts` › done and merged count as complete
+- F127 — tag `@F127`: `collector.test.ts` › lease taken when none is fresh, kept while fresh, dropped when another session holds it
+- F128 — tag `@F128`: `collector.test.ts` › the holder polls every 5 seconds, refreshes the heartbeat and writes agents.json by temp file and rename
+- F129 — tag `@F129`: `collector.test.ts` › a non-holder runs no call and reads agents.json; an old file counts as a failed read
+- F130 — tag `@F130`: `safety.test.ts` › every write path is the session's own file, a lease file while held, a transcripts file or settings.json
 
 </details>
 
@@ -76,7 +84,7 @@ Tests are `*.test.ts` files run by `claude plugin test`, not browser E2E. The ta
 
 - [ ] **F15** (A1) When the owner sends a prompt, the session's own mod shall store it as the next ask, numbered from 1. At `prompt.submit` it shall classify the ask with `haiku` as "task" or "question". Screen/state: Session, Asks. Tag: `@F15`.
 - [ ] **F16** (A1) The mod shall derive each ask's status, never set by hand. Words: "in progress", "needs you", "replied". Screen/state: Session, Asks. Tag: `@F16`.
-- [ ] **F17** (A1, A2) When `turn.complete` fires in a session with the mod, the mod shall read the last assistant message from the transcript. It shall ask `haiku` whether that message asks the owner a question. Screen/state: needs you. Tag: `@F17`.
+- [ ] **F17** (A1, A2) When `turn.complete` fires in a session with the mod, the mod shall read the last assistant message from the transcript. Only when its final paragraph holds a "?" shall it ask `haiku` whether that message asks the owner a question (F132). Screen/state: needs you. Tag: `@F17`.
 - [ ] **F18** (A1) The question check shall not depend on the classic `Stop` hook or any `classic.*` hook, which managed machines skip. Screen/state: needs you. Tag: `@F18`.
 - [ ] **F19** (A1, A9) When `haiku` flags a question, the session shall show as needs you with the reason "asks a question". The next prompt clears the flag. Screen/state: Home, Needs you row. Tag: `@F19`.
 - [ ] **F20** (A1, A10) While a session runs without the mod, the collector shall leave it done after a turn that asks a question. Screen/state: done. Tag: `@F20`.
@@ -85,6 +93,7 @@ Tests are `*.test.ts` files run by `claude plugin test`, not browser E2E. The ta
 - [ ] **F73** (A1) While the session needs you during an ask, the mod shall show that ask as "needs you". Screen/state: Session, Asks. Tag: `@F73`.
 - [ ] **F74** (A1) When an ask's turn ends, the mod shall show the ask as "replied", or as "needs you" when the question check flags it. Screen/state: Session, Asks. Tag: `@F74`.
 - [ ] **F75** (A1) When the owner sends the next prompt, the mod shall close the previous ask as "replied". Screen/state: Session, Asks. Tag: `@F75`.
+- [ ] **F132** (A1, A2) At `turn.complete`, with no "?" in the last message's final paragraph, the mod shall make no call and set no flag. Screen/state: done. Tag: `@F132`.
 
 <details>
 <summary>Scenario — proves the flag and its clearing</summary>
@@ -105,7 +114,7 @@ Scenario: a finished turn that asks the owner a question
 
 - F15 — tag `@F15`: `asks.test.ts` › prompt stored in order, classified at prompt.submit
 - F16 — tag `@F16`: `asks.test.ts` › ask status derives from session state
-- F17 — tag `@F17`: `asks.test.ts` › turn.complete reads the transcript and calls the check
+- F17 — tag `@F17`: `asks.test.ts` › turn.complete reads the transcript and calls the check only when the final paragraph holds a question mark
 - F18 — tag `@F18`: `asks.test.ts` › the check registers no classic hook
 - F19 — tag `@F19`: `asks.test.ts` › flagged question shows needs you
 - F20 — tag `@F20`: `asks.test.ts` › a session without the mod stays done
@@ -114,6 +123,7 @@ Scenario: a finished turn that asks the owner a question
 - F73 — tag `@F73`: `asks.test.ts` › needs you while the session waits during the ask
 - F74 — tag `@F74`: `asks.test.ts` › replied at turn end, or needs you when flagged
 - F75 — tag `@F75`: `asks.test.ts` › the next prompt closes the previous ask as replied
+- F132 — tag `@F132`: `asks.test.ts` › no question mark in the final paragraph: no model call, no flag
 
 </details>
 
@@ -129,7 +139,7 @@ Scenario: a finished turn that asks the owner a question
 - [ ] **F28** (A4) If the line exceeds `bodyColumns`, then the band shall drop parts in a fixed order. Order: goal age, work segment, the words "running" and "done", PR segment, waiting title. When `bodyColumns` is below 40, only "● 2 need you" and the buttons stay. Screen/state: Band compact, narrow. Tag: `@F28`.
 - [ ] **F29** (A6) When the owner runs `/tracker band off`, the band shall draw no row in any session until `/tracker band on`. The choice is kept in the settings file. Other mods' rows stay. Screen/state: Band, Hidden. Tag: `@F29`.
 - [ ] **F30** (A1) When a session starts to wait, every open band shall show the new count by the next poll and its redraw. Screen/state: Band compact, Needs you. Tag: `@F30`.
-- [ ] **F31** (A1, A12) The band's running count shall equal the running sessions in `claude agents --json`. Screen/state: Band compact. Tag: `@F31`.
+- [ ] **F31** (A1, A12) The band's running count shall equal the running sessions in `claude agents --json`, for sessions whose status or state the collector knows. Screen/state: Band compact. Tag: `@F31`.
 - [ ] **F32** (A1) While only this session is live, the band shall replace the running and PR segments with "only this session is running". The needs-you and work segments stay. Screen/state: Band compact, Alone. Tag: `@F32`.
 - [ ] **F76** (A1, A6) While exactly one session needs you, the band shall write the count as "● 1 needs you · web-app: fix login 6m". Screen/state: Band compact, Needs you. Tag: `@F76`.
 - [ ] **F77** (A1, A6) While no session needs you, the band shall write "0 need you" in the dim colour. Screen/state: Band compact, All quiet. Tag: `@F77`.
@@ -161,7 +171,7 @@ Scenario: this session is the one that waits
 - F28 — tag `@F28`: `band.test.ts` › drop order at 115, 75 and 50 columns; below 40 bodyColumns
 - F29 — tag `@F29`: `band.test.ts` › band off and on, kept in settings.json, every session
 - F30 — tag `@F30`: `band.test.ts` › redraw by the next poll after a state change
-- F31 — tag `@F31`: `band.test.ts` › running count against an agents fixture; by hand, 5 spot checks against `claude agents --json`
+- F31 — tag `@F31`: `band.test.ts` › running count against an agents fixture of known values
 - F32 — tag `@F32`: `band.test.ts` › alone note replaces running and PRs
 - F76 — tag `@F76`: `band.test.ts` › one needs you
 - F77 — tag `@F77`: `band.test.ts` › zero need you, dim
@@ -233,6 +243,7 @@ Scenario: this session is the one that waits
 - [ ] **F100** (A4, A9) While the pane is below 40 columns wide, the second line shall drop tokens first, then the branch. Wait, reason, errors and retries never drop, and a repo heading cuts its label, never its counts. Screen/state: Pane Home, narrow. Tag: `@F100`.
 - [ ] **F101** (A1) Home shall show the time of the last read in the title row, to the minute. Words: "updated just now" and "updated 2m ago". Screen/state: Pane Home. Tag: `@F101`.
 - [ ] **F102** (A1, A9) While only this session is live and it waits, Home shall list it under Needs you as "this session". The Empty line then does not show. Screen/state: Pane Home, Needs you. Tag: `@F102`.
+- [ ] **F131** (A1, A10) While `claude agents --json` lists sessions that have no `sessions/` file, Home shall show a dim line under the title row. Words: "2 sessions run without the tracker. Questions they ask in text are not detected." For one session: "1 session runs without the tracker. Questions it asks in text are not detected." With none the line is hidden. Screen/state: Pane Home, notice. Tag: `@F131`.
 
 <details>
 <summary>Verification</summary>
@@ -260,6 +271,7 @@ Scenario: this session is the one that waits
 - F100 — tag `@F100`: `pane.test.ts` › second line drops tokens then branch below 40
 - F101 — tag `@F101`: `pane.test.ts` › updated just now and updated 2m ago
 - F102 — tag `@F102`: `pane.test.ts` › alone and waiting
+- F131 — tag `@F131`: `pane.test.ts` › without-the-tracker line for one and many sessions, hidden at none
 
 </details>
 
@@ -383,7 +395,7 @@ Scenario: this session is the one that waits
 ### Observe only and cost
 
 - [ ] **F60** (A2) Every model call shall pin `haiku` from one constant, including any `claude -p` call. Screen/state: none. Tag: `@F60`.
-- [ ] **F61** (A2) The mod shall make at most one classification call per ask and one question check per completed turn. Screen/state: none. Tag: `@F61`.
+- [ ] **F61** (A2) The mod shall make at most one classification call per ask and one question check per completed turn. A turn whose final paragraph holds no "?" gets no check. Screen/state: none. Tag: `@F61`.
 - [ ] **F62** (A1) The tracker shall never write to a session, git, gh or bd: no hidden note, no automatic continue, no queued answer. Screen/state: none. Tag: `@F62`.
 - [ ] **F63** (A12) The tracker shall write no file outside `~/.claude/agent-tracker/`. The clipboard is not a file. Screen/state: store. Tag: `@F63`.
 - [ ] **F64** (A12; rules PUB-1) The committed fixtures and screenshots shall hold no internal names, people, URLs or local paths. Screen/state: none. Tag: `@F64`.
@@ -393,7 +405,7 @@ Scenario: this session is the one that waits
 <summary>Verification</summary>
 
 - F60 — tag `@F60`: `safety.test.ts` › every model call passes the MODEL constant
-- F61 — tag `@F61`: `safety.test.ts` › call counts for one ask and one turn
+- F61 — tag `@F61`: `safety.test.ts` › call counts for one ask and one turn, none for a turn without a question mark
 - F62 — tag `@F62`: `safety.test.ts` › no write call reaches a session
 - F63 — tag `@F63`: `safety.test.ts` › every fs write path is under the folder
 - F64 — tag `@F64`: `tests/test_plugin.py` (existing public repo grep) over the new files
@@ -406,7 +418,7 @@ Scenario: this session is the one that waits
 What proves the whole change, beyond the per-fact checks.
 
 - **Automated:** `python3 -m unittest discover -s tests && scripts/run-plugin-tests.sh` exits 0, and `claude plugin test plugins/agent-tracker` passes.
-- **Success measure:** by hand, 5 spot checks where the band's running count equals `claude agents --json`. Target 5 of 5 by 2026-12-04.
+- **Success measure:** by hand, 5 spot checks where the band's needs-you count matches the sessions the owner sees waiting. Waiting means a permission prompt or a question to the owner. Target 5 of 5 by 2026-12-04. The owner revised it on 2026-11-14 in `intent.md`.
 - **Manual:** open the band and the pane at 100 percent and 150 percent in the terminal, and the details columns on the desktop app.
 
 ## Out of scope
@@ -424,12 +436,12 @@ What proves the whole change, beyond the per-fact checks.
 ## Assumptions
 
 - **Clarify, decided by the agent on 2026-11-13** (technical calls, no owner question needed):
-  - **Reason text (F4):** "asks permission" only when `waitingFor` matches the permission value in a fixture recorded from a real session in the build. Any other `waitingFor` gives "waiting".
+  - **Reason text (F4):** "asks permission" only when `waitingFor` matches the permission value the builder records from a real waiting session at build. With no waiting session then, "asks permission" never shows, any `waitingFor` gives "waiting", and the build logs it to `questions.md`.
   - **Goal end (F11):** a mod sees no goal-end event, so the goal age shows only while the session is running or needs you.
   - **Retry (F21):** the same tool name and input called directly after that call failed.
   - **Background tasks (F11):** where classic hooks are skipped, only subagents (`$.agent.list()`) and background sessions from `claude agents --json` are shown. Wake-ups are out of scope.
-  - **Who classifies (F15, F17):** the session's own mod does, at `prompt.submit` and `turn.complete`, with `haiku` from the one constant.
-  - **Collector topology (F1, F67, F68):** every session with the mod polls `claude agents --json` itself every 5 seconds. It scans git and gh only for its own repo, every 2 minutes. Each session writes only its own file, and the pane merges all files. A repo with no live mod session shows its last stored PR state with its age.
+  - **Who classifies (F15, F17, F132):** the session's own mod, with `haiku` from the one constant. It classifies at `prompt.submit`. At `turn.complete` it checks only when the final paragraph holds a "?".
+  - **Collector topology (F1, F67, F68, F127 to F130):** one session polls. Its mod takes a lease file, `poller.json`, when none is fresh (older than 15 seconds). The holder polls `claude agents --json` every 5 seconds and writes `agents.json`; every other session reads it. Each session scans git and gh only for its own repo, every 2 minutes, and writes its own file. The pane merges all files. A repo with no live mod session shows its last stored PR state with its age.
   - **Ask status (F72 to F75):** in progress from the prompt until the turn ends. Needs you while the session needs you. Replied at turn end, or needs you when flagged.
   - **Copy as Markdown (F85):** the four counts, one line per needs-you and running session, then open PRs with state. It holds no path beyond repo names.
 
@@ -437,7 +449,8 @@ What proves the whole change, beyond the per-fact checks.
 - **Feature "complete":** a feature in state `done` or `merged` counts as complete (F71). It is the owner's word for finished.
 - **Spec wins on the band:** the design file's Board button and you-should-know columns are left out, because the design file says the spec wins.
 - **No classification outside a session:** a session without the mod shows "not classified". The spec says so and it saves a model call.
-- **Without the mod:** the question check never runs, so such a session stays done. That is the owner's answer.
+- **Without the mod:** the question check never runs, so such a session stays done. That is the owner's answer. Home says how many sessions run this way (F131).
+- **Unknown state:** a status or state the collector does not know counts as needs you, so a changed engine never hides a waiting session (F66). A technical call of 2026-11-14, taken over counting it as running.
 - **Plugin folder:** the design file says the line "one plugin" in `CLAUDE.md` is updated when the mod lands. `plan.md` names `plugins/agent-tracker/`.
 - **Test layout:** `*.test.ts` files under `plugins/agent-tracker/`, the tag and the change tag in each title.
 

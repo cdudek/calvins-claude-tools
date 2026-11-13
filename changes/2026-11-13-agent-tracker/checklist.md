@@ -46,7 +46,7 @@ Items test how `facts.md` is written, not whether the software works. Ticked onl
 - [x] **Gap** (spec screens preamble) "Colour never carries meaning alone: every glyph has a word or a count" is a rule with no fact or test.
   Answered: F124 (a word or a count beside every glyph).
 - [x] **Gap** (F2, F3, F5, F6) Statuses and states `claude agents --json` can return beyond `busy`, `working`, `waiting`, `blocked`, `idle` and `done` (any other value) map to no session state.
-  Answered: F66 (unknown status or state shows as running, raw value in the state line, never needs you).
+  Answered: F66 (unknown status or state shows as needs you with the reason "state unknown", raw value in the state line; revised 2026-11-14).
 
 ## Ambiguity
 
@@ -109,6 +109,6 @@ Items test how `facts.md` is written, not whether the software works. Ticked onl
 - [x] **Assumption** (F3, F4, F17, F18, F37) The facts rest on Claude Code 2.1.323 mod API fields (`waitingFor`, `turn.complete`, `bodyColumns`, `Svg`, `$.agent.list()`) and on managed machines skipping classic hooks, none of which is stated as an assumption.
   Answered: New Assumption: Mod API (2.1.323 engine types, checked 2026-11-13) and the managed-machine skip of `classic.*` hooks.
 - [x] **Assumption** (F1, F8, F14, F30) Every session with the mod runs its own collector, but no fact says whether the polls of `claude agents --json`, git and gh are shared or repeated per session.
-  Answered: F1, F67, F68, F69 and an Assumption (each session polls and scans for itself and writes its own file; the pane merges).
+  Answered: F1, F67, F68, F69, F127 to F130 and an Assumption (one session polls by lease and writes `agents.json`; each session scans for itself and writes its own file; the pane merges; revised 2026-11-14).
 - [x] **Assumption** (F4, Assumptions "Reason text") "asks permission" depends on a `waitingFor` value whose content is "checked in the build", so F4 cannot be tested from the facts.
   Answered: F4 reworded and its Assumption: "asks permission" is tested against a `waitingFor` fixture recorded from a real session.

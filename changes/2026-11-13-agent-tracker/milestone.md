@@ -33,7 +33,7 @@ branch), `merged` (feature PRs) or `blocked: <reason>`.
 - `python3 scripts/verify_gate.py milestone 2026-11-13-agent-tracker` ends `VERIFY PASS milestone`.
 - `findings.md` has no open blocking item after the one fix round.
 - Row 0 ran after the last earlier milestone merged (the gate's `parent-sync` check proves it).
-- One push and one PR from `milestone/agent-tracker-1` to its parent, after the gate passed, auto-merge armed.
+- One push and one PR from `milestone/agent-tracker-1` to its parent, after the gate passed. Not auto-merged: the owner merges it (`decisions.json` `autoMerge: false`).
   No other PR or push for this milestone (`pr-gate.sh`).
 
 ## Outcome
