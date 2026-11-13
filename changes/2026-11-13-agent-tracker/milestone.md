@@ -21,7 +21,7 @@ branch), `merged` (feature PRs) or `blocked: <reason>`.
 
 | # | Change | Feature | PR or commit | State |
 |---|---|---|---|---|
-| 0 | 2026-11-13-agent-tracker | sync: `git fetch origin && git merge origin/<default>` (in a project also `origin/project/<slug>`), locally; again after every earlier milestone merges | <commit> | todo |
+| 0 | 2026-11-13-agent-tracker | sync: `git fetch origin && git merge origin/<default>` (in a project also `origin/project/<slug>`), locally; again after every earlier milestone merges | 9b00eb0 (origin/main already merged) | done |
 | 1 | 2026-11-13-agent-tracker | collector: `claude agents --json` plus the mod's per-session file, asks classified task or question with a pinned cheap model | <commit> | todo |
 | 2 | 2026-11-13-agent-tracker | backfill and scans: sessions without the mod from transcripts, plus git and gh scans | <commit> | todo |
 | 3 | 2026-11-13-agent-tracker | band: details and compact views, Copy and Pane buttons, header naming repo, work and what runs | <commit> | todo |

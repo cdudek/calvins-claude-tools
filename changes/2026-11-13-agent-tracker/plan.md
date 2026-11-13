@@ -231,7 +231,7 @@ Each step has a proof. The proof is a command, a file, or a fact. After each ste
 runs `claude plugin validate --strict plugins/agent-tracker`, `claude plugin test plugins/agent-tracker`
 and `python3 -m unittest discover -s tests`, then commits with a Conventional Commit subject.
 
-- [ ] 0. Sync the milestone branch with `origin/main`. Proof: `git merge-base --is-ancestor origin/main HEAD` exits 0.
+- [x] 0. Sync the milestone branch with `origin/main`. Proof: `git merge-base --is-ancestor origin/main HEAD` exits 0.
 - [ ] 1. Feature 1, wiring: manifest, `tracker-hooks.json`, empty `register.tsx`, marketplace, READMEs, `CLAUDE.md`, the script block, the three Python tests. Proof: `scripts/run-plugin-tests.sh` prints both `ok   agent-tracker` lines.
 - [ ] 2. Feature 1, design edits and the `docs/ux/setup.md` line. Proof: `python3 scripts/design_index.py write` leaves `git diff --stat docs/designs/INDEX.md` empty.
 - [ ] 3. Feature 1, fixtures: a scrubbed `claude agents --json` list. If a session is waiting when the builder runs this step, also record its `waitingFor` value for F4. If none waits, record nothing, test F4 with the documented default ("waiting"; "asks permission" never shows) and log that to `questions.md`. Proof: `git grep -nE '/Users/|/home/' plugins/agent-tracker/tests/fixtures` prints nothing.
