@@ -1,0 +1,6 @@
+{
+  "hooks": {},
+  "modules": [
+    "./tracker/register.tsx"
+  ]
+}

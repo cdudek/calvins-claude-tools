@@ -7,6 +7,11 @@
       "name": "cct",
       "source": "./plugins/cct",
       "description": "The SDLC in one self-contained plugin: sdlc-run and every skill, agent and hook it runs, including the UX suite, the product skills, the engineering and data skills run by hand, a project kickoff and the Docker + GitHub Actions blueprint."
+    },
+    {
+      "name": "agent-tracker",
+      "source": "./plugins/agent-tracker",
+      "description": "A Claude Code mod: a band above every prompt and a /tracker pane that show each session's repo, work and state, and which sessions need you. Early access: Claude Code 2.1.323."
     }
   ]
 }
