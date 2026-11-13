@@ -1,0 +1,8 @@
+{
+  "size": "L",
+  "kind": "feature",
+  "milestone": {"kind": "new", "slug": "agent-tracker-1"},
+  "project": {"kind": "new", "slug": "agent-tracker", "branch": false},
+  "ticket": "cct-83h.1",
+  "design": "docs/designs/agent-tracker.md"
+}
