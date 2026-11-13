@@ -115,8 +115,8 @@ Ask status, derived, never set by hand (no-go N6):
 ```mermaid
 stateDiagram-v2
     [*] --> in_progress: owner sends the ask
-    in_progress --> waiting_on_you: session needs you before the turn ends
-    waiting_on_you --> in_progress: owner answers
+    in_progress --> needs_you: session needs you before the turn ends
+    needs_you --> in_progress: owner answers
     in_progress --> replied: the turn ends
     replied --> [*]
 ```

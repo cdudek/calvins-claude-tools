@@ -295,3 +295,22 @@ What the spec did with each finding. Decisions marked "taken" are the agent's re
 - **F015:** resolved by the engine types: `Link` exists on the terminal; `setup.md` lists it.
 - **F016:** taken: the needs-you count goes first, as in the owner's sketch in the design file.
 - **Still open for the owner:** singular page ids (`repo/<repo>`) against route conventions RC-1 and RC-2 (sitemap).
+
+## Copy pass, 2026-11-13
+
+`screens.md` Words tables, English only. Before → after:
+
+| Where | Before | After |
+|---|---|---|
+| Status line, store failed | "Tracker: this session's asks are not being kept: could not write to the tracker folder. Check it can be written." | "Tracker could not save this session's record. Asks from now on are not kept. Check that the agent-tracker folder in your Claude folder can be written." |
+| Band, stale | "read 2m ago · session list unavailable" | "session list unavailable · counts from 2m ago" |
+| Pane Home, stale | "Session list unavailable: showing what was read 2m ago. Retrying every 5s; update Claude Code if this stays." | "Session list unavailable. Showing what was read 2m ago. Retrying every 5 seconds; if it keeps failing, update Claude Code." |
+| Session, not found | "… Open the pane to pick one." | "… Pick one on Home." (the owner is already in the pane) |
+| Repo, not found | "No repo named "<text>" has had a session." | "… Pick one on Home." (the error had no action) |
+| Session section | "Numbers" | "Usage" |
+| Ask status | "waiting on you" | "needs you" (one word per meaning, alias table) |
+| From transcript | "Kinds not known: …" | "Not classified: …" (the same words as the kind label) |
+| PR mergeable states | "↓ mergeable", "not mergeable", "conflicts" | "↓ mergeable", "conflicts", "mergeable unknown" (gh's three states, no overlap) |
+| Repo heading | "web-app · 2 PRs · 1 ✗" | "web-app · 2 PRs · 1 failing" (a word, not a symbol) |
+
+Kept on purpose: "4 PRs · 1 ✗" on the compact band (width; the details line says "1 failing", the desktop SVG's `alt` spells it out). The "Pane" button names a place, not an action, matching the owner's design file and ponytail's "Board".

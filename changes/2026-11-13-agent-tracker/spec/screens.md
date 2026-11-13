@@ -73,8 +73,8 @@ Measured on the Words samples, in cells, separators included: Needs you 36, Runn
 | Work, without sdlc-run | "web-app · fix login redirect" |
 | Loading | "Reading sessions…" (dim) |
 | Alone | "only this session is running" (dim), in place of Running and PRs |
-| Stale | the last counts dimmed, then "read 2m ago · session list unavailable" |
-| Store failed (status line) | "Tracker: this session's asks are not being kept: could not write to the tracker folder. Check it can be written." |
+| Stale | the last counts dimmed, then "session list unavailable · counts from 2m ago" |
+| Store failed (status line) | "Tracker could not save this session's record. Asks from now on are not kept. Check that the agent-tracker folder in your Claude folder can be written." |
 | Buttons | "Pane", "Details" |
 
 ### Components
@@ -180,7 +180,7 @@ The triage queue: what needs the owner first, then what runs, then what is done,
 | 5 | Repos | Every repo with a session in the last 7 days, each a button to its Repo page with its PR count. |
 | 6 | Footer | Partial or stale line, when any. |
 
-Each repo heading is a button that opens Repo and reads "web-app · 2 PRs · 1 ✗".
+Each repo heading is a button that opens Repo and reads "web-app · 2 PRs · 1 failing".
 
 ### Layout
 
@@ -221,13 +221,13 @@ Each repo heading is a button that opens Repo and reads "web-app · 2 PRs · 1 �
 | Needs you row | "● fix login redirect   web-app · 6m · asks permission" |
 | Running row | "◐ migrate users   feat/users · 22m · 41k tokens · 2 errors · 1 retry" |
 | Done row | "✓ rename skills   main · 3m ago · 12k tokens" |
-| Repo heading | "web-app · 2 PRs · 1 ✗" |
+| Repo heading | "web-app · 2 PRs · 1 failing" |
 | Repos line | "Repos: web-app 2 PRs · api · docs 1 PR" |
 | Empty Needs you | "Nothing needs you." |
 | Empty, alone | "Only this session is running. Sessions in other terminals show up here when they start." |
 | Loading | "Reading sessions…" |
 | Partial | "PRs not shown: gh is not installed or not signed in. Run gh auth login to see them." |
-| Stale | "Session list unavailable: showing what was read 2m ago. Retrying every 5s; update Claude Code if this stays." |
+| Stale | "Session list unavailable. Showing what was read 2m ago. Retrying every 5 seconds; if it keeps failing, update Claude Code." |
 | Close button | "Close" |
 
 ### Components
@@ -259,7 +259,7 @@ One session: its work, what runs in it, its asks in order, its milestone feature
 | 2 | Running now | Goal and its age, subagents with their status, background tasks and wake-ups. Hidden when nothing runs. |
 | 3 | Asks | Every ask in order, numbered from 1; tasks and questions marked; derived status. |
 | 4 | Milestone | sdlc-run only: the milestone sentence and its features with state. |
-| 5 | Numbers | Tokens in and out, tool errors, retries, started, last activity. |
+| 5 | Usage | Tokens in and out, tool errors, retries, started, last activity. |
 
 ### Layout
 
@@ -300,18 +300,18 @@ One session: its work, what runs in it, its asks in order, its milestone feature
 | Breadcrumb | "Home › web-app › fix login redirect" |
 | State line | "● needs you · 6m · asks permission" / "◐ running · 22m" / "✓ done · 3m ago" / "○ ended 4m ago" |
 | Branch and PR | "feat/login · PR #42 ✗ checks failing" |
-| Section headings | "Running now", "Asks", "Milestone", "Numbers" |
+| Section headings | "Running now", "Asks", "Milestone", "Usage" |
 | Running now rows | "goal · 14m", "subagent · review-code-reviewer · running", "background task · npm test · 2m" |
 | Ask row | "1  task      replied       add a compact view" |
 | Ask kinds | "task", "question", "not classified" |
-| Ask status | "in progress", "waiting on you", "replied" |
+| Ask status | "in progress", "needs you", "replied" |
 | No asks | "No asks yet." |
-| From transcript | "Kinds not known: this session ran without the tracker." (above the Asks list; each ask's kind reads "not classified") |
+| From transcript | "Not classified: this session ran without the tracker." (above the Asks list; each ask's kind reads "not classified") |
 | Milestone line | "agent-tracker-1: Open any Claude Code session and see …" |
 | Feature row | "2  collector   complete" |
 | Feature states | "to do", "building", "complete", "merged", "blocked" |
-| Numbers | "Tokens 41k in · 9k out", "Tool errors 2", "Retries 1", "Started 10:42", "Last activity 1m ago" |
-| Not found | "No session matches \"<text>\". Open the pane to pick one." |
+| Usage | "Tokens 41k in · 9k out", "Tool errors 2", "Retries 1", "Started 10:42", "Last activity 1m ago" |
+| Not found | "No session matches \"<text>\". Pick one on Home." |
 | Buttons | "Back", "Home", "Close", "Copy resume command" |
 | Copied toast | "Resume command copied" |
 
@@ -322,7 +322,7 @@ One session: its work, what runs in it, its asks in order, its milestone feature
 | Header | Box, Text, Button, Link | have | |
 | Ask row | Box with Text | new variant | not focusable; the arrows scroll |
 | Feature row | Box with Text | new variant | |
-| Numbers | Box with Text pairs | have | |
+| Usage | Box with Text pairs | have | |
 
 ## Pane, Repo
 
@@ -381,12 +381,12 @@ One repo: its worktrees and their sessions, its open PRs, and its sessions that 
 | Breadcrumb | "Home › web-app" |
 | Section headings | "Worktrees", "Open PRs", "Ended" |
 | Worktree line | "main checkout · main" / ".worktrees/login · feat/login" |
-| PR row | "#42 fix login redirect · ✗ checks failing · review requested · not mergeable · fix login redirect (session)" |
-| PR states | checks: "✓ checks pass", "✗ checks failing", "checks running"; review: "approved", "changes requested", "review requested", "no review"; mergeable: "↓ mergeable", "not mergeable", "conflicts" |
+| PR row | "#42 fix login redirect · ✗ checks failing · review requested · conflicts · fix login redirect (session)" |
+| PR states | checks: "✓ checks pass", "✗ checks failing", "checks running"; review: "approved", "changes requested", "review requested", "no review"; mergeable: "↓ mergeable", "conflicts", "mergeable unknown" |
 | No PRs | "No open PRs." |
 | No gh | "PRs not shown: gh is not installed or not signed in. Run gh auth login to see them." |
 | Ended row | "○ rename skills   main · ended 2d ago · 12k tokens" |
-| Not found | "No repo named \"<text>\" has had a session." |
+| Not found | "No repo named \"<text>\" has had a session. Pick one on Home." |
 
 ### Components
 

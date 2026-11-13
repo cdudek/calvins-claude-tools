@@ -42,7 +42,7 @@ What the mod API allows, and so what this spec uses (Claude Code 2.1.323 types, 
 | From control | Action | To screen or state | Notes |
 |---|---|---|---|
 | Band: Pane (`p`) | press | Pane Home | Each row shows tokens, and errors and retries when above zero. |
-| Pane Home: session row | Enter | Pane Session: Numbers section | Tokens in and out, tool errors, retries, started, last activity. |
+| Pane Home: session row | Enter | Pane Session: Usage section | Tokens in and out, tool errors, retries, started, last activity. |
 
 ### J5 Stay aware while typing
 
@@ -131,9 +131,9 @@ Words: `screens.md`, the page of the same name, by the row named in the Words co
 
 | State | Entry or trigger | What the user sees | Words | Actions with key | Exit |
 |---|---|---|---|---|---|
-| Live | a row of a live session | header, Running now, Asks, Milestone (sdlc-run only), Numbers | Section headings | Back `b`, repo line, Close `x` | Back, close |
+| Live | a row of a live session | header, Running now, Asks, Milestone (sdlc-run only), Usage | Section headings | Back `b`, repo line, Close `x` | Back, close |
 | Ended | the session left `claude agents` while open | the same, header state "ended", the time it ended | State line, ended | as Live, plus Copy resume command `r` | |
-| From transcript | a session without the mod | Asks and Numbers from its transcript; asks not classified are marked so | From transcript | as Live | |
+| From transcript | a session without the mod | Asks and Usage from its transcript; asks not classified are marked so | From transcript | as Live | |
 | No asks | no prompt yet | Asks section one line | No asks | as Live | |
 | Not found | the session id is unknown (command argument) | one line | Not found | Close `x`, Home `h` | |
 
