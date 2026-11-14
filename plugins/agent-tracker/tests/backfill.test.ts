@@ -64,6 +64,7 @@ describe('backfill from transcripts', () => {
     w.put(`${DIR}/sessions/has-file.json`, { v: 1, sessionId: 'has-file' })
     w.put(other(w.id), TRANSCRIPT_TEXT) // this session's own transcript: it has its own file
     w.put(`${HOME}/.claude/projects/${PROJECT_DIR}/notes.txt`, 'not a transcript')
+    w.put(other('old'), TRANSCRIPT_TEXT) // a transcript, but older than 7 days
     w.mtimes.set(other('old'), NOW - WEEK_MS - 1)
     await run($, w)
     expect(w.writes.filter(p => p.includes('/transcripts/')).sort()).toEqual([STORED])
