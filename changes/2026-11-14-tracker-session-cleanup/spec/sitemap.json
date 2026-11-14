@@ -1,0 +1,92 @@
+{
+  "generated": "2026-11-14",
+  "source": { "stack": "claude-code-mod", "routeRoot": "plugins/agent-tracker/hooks/tracker", "ref": "935c8d6" },
+  "locales": ["en"],
+  "defaultLocale": "en",
+  "localePrefix": "never",
+  "hosts": [],
+  "navigation": [
+    {
+      "area": "pane",
+      "items": [
+        { "label": { "en": "Clear" }, "route": "session/[sessionId]", "group": { "en": "page action" }, "position": "body", "status": "proposed" },
+        { "label": { "en": "Remove worktree" }, "route": "session/[sessionId]", "group": { "en": "page action" }, "position": "body", "status": "proposed" },
+        { "label": { "en": "Tidy" }, "route": "home", "group": { "en": "pane" }, "position": "foot", "status": "proposed" }
+      ],
+      "settings": [],
+      "commandMenu": ["/tracker", "/tracker session <text>", "/tracker tidy"],
+      "account": null,
+      "signOut": null
+    }
+  ],
+  "pages": [
+    {
+      "id": "pane.home",
+      "area": "pane",
+      "route": "home",
+      "params": [],
+      "query": [],
+      "labels": { "en": "Agent tracker" },
+      "type": "home",
+      "purpose": "The triage queue: open tasks first, then who needs the owner, then what runs; a last dim line offers a tidy pass.",
+      "roles": ["owner"],
+      "tabs": [],
+      "sections": [{ "en": "YOUR TASKS NOT DONE" }, { "en": "NEEDS YOU" }, { "en": "RUNNING" }, { "en": "REPOS" }, { "en": "TIDY" }],
+      "views": [],
+      "states": ["loading", "stale", "partial", "no-tasks", "tidy-sessions", "tidy-worktrees", "tidy-both", "narrow"],
+      "reachedFrom": [
+        { "kind": "navigation", "from": "band", "detail": "Pane button", "source": "plugins/agent-tracker/hooks/tracker/band.tsx:108" },
+        { "kind": "command-menu", "from": null, "detail": "/tracker", "source": "plugins/agent-tracker/hooks/tracker/pane.tsx:115" },
+        { "kind": "breadcrumb", "from": "session/[sessionId]", "detail": "Home crumb", "source": "plugins/agent-tracker/hooks/tracker/core/session-model.ts:100" }
+      ],
+      "breadcrumb": [],
+      "back": null,
+      "access": { "roles": ["owner"], "host": null, "public": false },
+      "inboundLinks": [],
+      "status": "as-built",
+      "redirectTo": null,
+      "proposed": {
+        "purpose": "Adds a last, dim Tidy line when something is idle 30 days or more.",
+        "states": ["tidy-sessions", "tidy-worktrees", "tidy-both", "narrow"]
+      },
+      "decide": null,
+      "source": "plugins/agent-tracker/hooks/tracker/core/pane-model.ts:174",
+      "assumptions": []
+    },
+    {
+      "id": "pane.session.record",
+      "area": "pane",
+      "route": "session/[sessionId]",
+      "params": [{ "name": "sessionId", "kind": "id" }],
+      "query": [],
+      "labels": { "en": "{title}" },
+      "type": "record",
+      "purpose": "One session: state, real age, branch, usage, tasks, worktree, and for an ended session Clear.",
+      "roles": ["owner"],
+      "tabs": [],
+      "sections": [],
+      "views": [],
+      "states": ["needs-you", "running", "done", "ended", "from-transcript", "not-found"],
+      "reachedFrom": [
+        { "kind": "row", "from": "home", "detail": "session row or task row", "source": "plugins/agent-tracker/hooks/tracker/core/pane-model.ts:104" },
+        { "kind": "row", "from": "repo/[repo]", "detail": "session row", "source": null },
+        { "kind": "command-menu", "from": null, "detail": "/tracker session <text>", "source": "plugins/agent-tracker/hooks/tracker/pane.tsx:122" }
+      ],
+      "breadcrumb": [{ "label": { "en": "Home" }, "route": "home" }, { "label": { "en": "{repo}" }, "route": "repo/[repo]" }],
+      "back": "previous pane page",
+      "access": { "roles": ["owner"], "host": null, "public": false },
+      "inboundLinks": [],
+      "status": "as-built",
+      "redirectTo": null,
+      "proposed": {
+        "tabs": [],
+        "states": ["live-interactive", "live-background", "ended-something-to-clear", "cleared", "partly-cleared", "clear-failed", "worktree-offer", "worktree-stays", "nothing-to-clear", "list-unreadable"]
+      },
+      "decide": null,
+      "source": "plugins/agent-tracker/hooks/tracker/core/session-model.ts:37",
+      "assumptions": ["The Repo page's session rows reach this page; read from milestone 1's spec, not re-read here."]
+    }
+  ],
+  "redirects": [],
+  "links": []
+}
