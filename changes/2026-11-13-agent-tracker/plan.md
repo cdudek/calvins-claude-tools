@@ -232,12 +232,12 @@ runs `claude plugin validate --strict plugins/agent-tracker`, `claude plugin tes
 and `python3 -m unittest discover -s tests`, then commits with a Conventional Commit subject.
 
 - [x] 0. Sync the milestone branch with `origin/main`. Proof: `git merge-base --is-ancestor origin/main HEAD` exits 0.
-- [ ] 1. Feature 1, wiring: manifest, `tracker-hooks.json`, empty `register.tsx`, marketplace, READMEs, `CLAUDE.md`, the script block, the three Python tests. Proof: `scripts/run-plugin-tests.sh` prints both `ok   agent-tracker` lines.
-- [ ] 2. Feature 1, design edits and the `docs/ux/setup.md` line. Proof: `python3 scripts/design_index.py write` leaves `git diff --stat docs/designs/INDEX.md` empty.
-- [ ] 3. Feature 1, fixtures: a scrubbed `claude agents --json` list. If a session is waiting when the builder runs this step, also record its `waitingFor` value for F4. If none waits, record nothing, test F4 with the documented default ("waiting"; "asks permission" never shows) and log that to `questions.md`. Proof: `git grep -nE '/Users/|/home/' plugins/agent-tracker/tests/fixtures` prints nothing.
-- [ ] 4. Feature 1, tests first, then `core/` types, states, usage, repo and milestone, then `store.ts` and `collector.ts`. Proof: F1 to F11, F21, F58, F66, F68, F71 and F127 to F129 pass in `collector.test.ts`.
-- [ ] 5. Feature 1, tests first, then `asks.ts` with the single model helper. Proof: F15 to F20, F56, F57, F72 to F75 and F132 pass in `asks.test.ts`. F21 is proved in `collector.test.ts` (step 4).
-- [ ] 6. Feature 1, `safety.test.ts` over the whole plugin. Proof: F60 to F63 and F130 pass in `safety.test.ts`. F64 and F65 pass when the extended `tests/test_no_claude_ai_publishing.py` and the fixture scan in `safety.test.ts` both pass.
+- [x] 1. Feature 1, wiring: manifest, `tracker-hooks.json`, empty `register.tsx`, marketplace, READMEs, `CLAUDE.md`, the script block, the three Python tests. Proof: `scripts/run-plugin-tests.sh` prints both `ok   agent-tracker` lines.
+- [x] 2. Feature 1, design edits and the `docs/ux/setup.md` line. Proof: `python3 scripts/design_index.py write` leaves `git diff --stat docs/designs/INDEX.md` empty.
+- [x] 3. Feature 1, fixtures: a scrubbed `claude agents --json` list. If a session is waiting when the builder runs this step, also record its `waitingFor` value for F4. If none waits, record nothing, test F4 with the documented default ("waiting"; "asks permission" never shows) and log that to `questions.md`. Proof: `git grep -nE '/Users/|/home/' plugins/agent-tracker/tests/fixtures` prints nothing.
+- [x] 4. Feature 1, tests first, then `core/` types, states, usage, repo and milestone, then `store.ts` and `collector.ts`. Proof: F1 to F11, F21, F58, F66, F68, F71 and F127 to F129 pass in `collector.test.ts`.
+- [x] 5. Feature 1, tests first, then `asks.ts` with the single model helper. Proof: F15 to F20, F56, F57, F72 to F75 and F132 pass in `asks.test.ts`. F21 is proved in `collector.test.ts` (step 4).
+- [x] 6. Feature 1, `safety.test.ts` over the whole plugin. Proof: F60 to F63 and F130 pass in `safety.test.ts`. F64 and F65 pass when the extended `tests/test_no_claude_ai_publishing.py` and the fixture scan in `safety.test.ts` both pass.
 - [ ] 7. Feature 2, tests first, then `core/transcript.ts` and `backfill.ts`. Proof: F12, F13, F55 and F70 pass in `backfill.test.ts`.
 - [ ] 8. Feature 2, tests first, then `core/git.ts` and `scan.ts`. Proof: F14, F67 and F69 pass in `scans.test.ts`.
 - [ ] 9. Feature 3, compact band: `core/format.ts`, `words.ts`, `rank.ts`, `band-model.ts`, `band.tsx`. Proof: F22 to F32, F52, F76 to F78 and F125 pass in `band.test.ts`.
