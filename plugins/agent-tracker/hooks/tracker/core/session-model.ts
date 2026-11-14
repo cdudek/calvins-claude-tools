@@ -9,10 +9,11 @@ import { completeCount } from './milestone'
 import { repoLabel } from './rank'
 import { DOT, bar, dim, join, sp } from './paint'
 import type { Spans } from './paint'
-import { REASON, endedAt, firstKey, hint, tidy } from './pane-model'
+import { REASON, firstKey, hint, tidy } from './pane-model'
 import type { Block, Local, PaneModel } from './pane-model'
 import { checksGlyph } from './repo-model'
-import { CHECKS_WORDS, DETACHED, FROM_TRANSCRIPT, MERGE_WORDS, PANE_BUTTONS, REVIEW_WORDS, UNTITLED } from './words'
+import { lastActivity, startedWords } from './activity'
+import { CHECKS_WORDS, DETACHED, FROM_TRANSCRIPT, MERGE_WORDS, PANE_BUTTONS, REVIEW_WORDS, UNKNOWN_ACTIVITY, UNTITLED, endedWords } from './words'
 
 export const SESSION_ASKS_SHOWN = 6
 
@@ -27,8 +28,10 @@ const stateSpans = (r: SessionRecord, now: number): Spans => {
       return [sp(`◐ ${['running', since].filter(Boolean).join(' ')}`, 'yellow')]
     case 'done':
       return [sp(`✓ ${['done', since === null ? null : `${since} ago`].filter(Boolean).join(' ')}`, 'green')]
-    default:
-      return [dim(`○ ended ${duration(now - endedAt(r))} ago`)]
+    default: {
+      const at = r.endedAt ?? lastActivity(r)
+      return [dim(endedWords(at === null ? null : duration(now - at)))]
+    }
   }
 }
 
@@ -43,7 +46,8 @@ export const sessionModel = (snap: Snapshot, id: string, now: number, local: Loc
   const lines: Spans[] = []
 
   const branch = r.branch ?? (r.repo ? DETACHED : null)
-  lines.push([...(branch !== null ? [...line('branch', sp(branch)), sp('  ')] : []), ...line('since', sp(local.clock(r.startedAt))), sp('  '), ...line('last activity', sp(`${duration(now - r.lastActivityAt)} ago`))])
+  const active = lastActivity(r)
+  lines.push([...(branch !== null ? [...line('branch', sp(branch)), sp('  ')] : []), ...line('started', sp(startedWords(r.startedAt, now, local))), sp('  '), ...(active === null ? [dim(UNKNOWN_ACTIVITY)] : line('last activity', sp(`${duration(now - active)} ago`)))])
   const u = r.usage
   lines.push(line('tokens', sp(`in ${tokens(u.tokensIn)}`), sp(' '), sp(`out ${tokens(u.tokensOut)}`)))
   lines.push(line('struggles', u.retries > 0 ? sp(plural(u.retries, 'retry', 'retries'), 'yellow') : dim('0 retries'), DOT, u.toolErrors > 0 ? sp(plural(u.toolErrors, 'tool error', 'tool errors'), 'yellow') : dim('0 tool errors')))

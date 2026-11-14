@@ -13,6 +13,7 @@ import type { World } from './fixtures/world'
 // triage queue with "You should know" and "Decided without you", the Repo, Milestone and Feature pages, the Session page.
 // The layout facts of change 2026-11-13-agent-tracker are superseded by them; its behaviour facts keep their tags.
 const TAG = '@2026-11-13-agent-tracker'
+const CLEANUP = '@2026-11-14-tracker-session-cleanup'
 const DIR = '/u/.claude/agent-tracker'
 
 // The snapshot the collector would have written, as the state read answers it. `box.value` changes between draws.
@@ -426,7 +427,8 @@ describe('Session detail', () => {
     expect(await colorOf(ui, '● permission 4m')).toMatchObject({ color: 'error' })
     const body = all.join('\n')
     expect(body).toContain('branch ')
-    expect(body).toContain('since ')
+    expect(body).toContain('started ')
+    expect(body).not.toContain('since ')
     expect(body).toContain('10:42')
     expect(body).toContain('in 41k')
     expect(body).toContain('out 9k')
@@ -480,6 +482,51 @@ describe('Session detail', () => {
     box.value = snapAt(paneTown())
     await ui.redraw()
     expect(await texts(ui)).toContain('No session matches "web-9". Pick one on Home.')
+    await ui.unmount()
+  })
+
+  // The page of `web-9` redrawn with `extra` while it is open: what the facts line and the header then say.
+  const DAY = 24 * 60 * 60_000
+  const redrawn = async ($: Engine, on: On) => {
+    const { ui, box } = await sessionPage($, on, [...paneTown(), waiting()], 'web-9')
+    const show = async (extra: Partial<SessionRecord>) => {
+      box.value = snapAt([...paneTown(), waiting({ asks: [], ...extra })])
+      await ui.redraw()
+      return (await texts(ui)).join('')
+    }
+    return { ui, show }
+  }
+
+  test(`@F5 ${CLEANUP} Session first line reads started and last activity, never since`, async ($, on) => {
+    const { ui, show } = await redrawn($, on)
+    const all = await show({ state: 'ended', reason: null, branch: 'main', startedAt: new Date(2026, 8, 12, 8, 13).getTime(), lastActivityAt: NOON - 63 * DAY })
+    expect(all).toContain('branch main  started 12 Sep 08:13  last activity 63d ago')
+    expect(all).not.toContain('since')
+    await ui.unmount()
+  })
+
+  test(`@F6 ${CLEANUP} started date format for today, this week, older and over a year`, async ($, on) => {
+    const { ui, show } = await redrawn($, on)
+    const when = async (started: Date) => /started (.*?)  last activity/.exec(await show({ startedAt: started.getTime(), lastActivityAt: NOON }))?.[1]
+    expect(await when(new Date(2026, 10, 14, 9, 5))).toBe('09:05') // today
+    expect(await when(new Date(2026, 10, 13, 16, 13))).toBe('Fri 16:13') // yesterday
+    expect(await when(new Date(2026, 10, 8, 16, 13))).toBe('Sun 16:13') // 6 days back
+    expect(await when(new Date(2026, 10, 7, 16, 13))).toBe('7 Nov 16:13') // 7 days back
+    expect(await when(new Date(2026, 8, 12, 16, 13))).toBe('12 Sep 16:13')
+    expect(await when(new Date(2025, 8, 12, 16, 13))).toBe('12 Sep 2025 16:13') // over a year
+    await ui.unmount()
+  })
+
+  test(`@F7 ${CLEANUP} ended header with and without a time`, async ($, on) => {
+    const { ui, show } = await redrawn($, on)
+    const ended = { state: 'ended' as const, reason: null, endedAt: null }
+    await show({ ...ended, startedAt: NOON - 70 * DAY, lastActivityAt: NOON - 63 * DAY })
+    expect(await texts(ui)).toContain('○ ended 63d ago')
+    expect((await colorOf(ui, '○ ended 63d ago'))?.dimColor).toBe(true)
+    // No prompt, turn or transcript line: its last activity is only its start, which is no time.
+    const none = await show({ ...ended, startedAt: STARTED, lastActivityAt: STARTED })
+    expect(await texts(ui)).toContain('○ ended')
+    expect(none).toContain('last activity unknown')
     await ui.unmount()
   })
 
