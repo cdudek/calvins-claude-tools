@@ -2,7 +2,7 @@
 
 Verification and every push follow the [local-first contract](plugins/cct/skills/sdlc-run/references/local-first.md); read it before running checks or preparing a push.
 
-One Claude Code plugin (`cct`) in `plugins/cct/`. It is the source of truth: edit it directly. Nothing in this repo reads from, builds from or needs access to any other repository.
+Two Claude Code plugins: `cct` in `plugins/cct/` (skills, agents, hooks) and `agent-tracker` in `plugins/agent-tracker/` (a mod: a band above every prompt and a `/tracker` pane). They are the source of truth: edit them directly. Nothing in this repo reads from, builds from or needs access to any other repository.
 
 ## Naming a skill or agent (enforced by the tests)
 
@@ -29,6 +29,8 @@ No internal names, private repo names, people, URLs or local paths of any employ
 ```bash
 python3 -m unittest discover -s tests
 scripts/run-plugin-tests.sh
+claude plugin validate --strict plugins/agent-tracker
+claude plugin test plugins/agent-tracker
 ```
 
 @AGENTS.md

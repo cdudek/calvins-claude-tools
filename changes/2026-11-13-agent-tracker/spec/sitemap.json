@@ -1,0 +1,482 @@
+{
+  "generated": "2026-11-13",
+  "source": {
+    "stack": "claude-code-mod",
+    "routeRoot": null,
+    "ref": "cfe2db6"
+  },
+  "locales": [
+    "en"
+  ],
+  "defaultLocale": "en",
+  "localePrefix": null,
+  "hosts": [],
+  "navigation": [
+    {
+      "area": "band",
+      "items": [
+        {
+          "label": {
+            "en": "Details"
+          },
+          "route": "band/details",
+          "group": null,
+          "position": "body",
+          "status": "proposed"
+        },
+        {
+          "label": {
+            "en": "Compact"
+          },
+          "route": "band/compact",
+          "group": null,
+          "position": "body",
+          "status": "proposed"
+        },
+        {
+          "label": {
+            "en": "Pane"
+          },
+          "route": "home",
+          "group": null,
+          "position": "body",
+          "status": "proposed"
+        }
+      ],
+      "settings": [],
+      "commandMenu": [],
+      "account": null,
+      "signOut": null
+    },
+    {
+      "area": "pane",
+      "items": [],
+      "settings": [],
+      "commandMenu": [
+        "home"
+      ],
+      "account": null,
+      "signOut": null
+    }
+  ],
+  "pages": [
+    {
+      "id": "band.compact",
+      "area": "band",
+      "route": "band/compact",
+      "params": [],
+      "query": [],
+      "labels": {
+        "en": "Compact"
+      },
+      "type": "embed",
+      "purpose": "Count what needs the owner in one line and name the oldest waiting session",
+      "roles": [
+        "owner"
+      ],
+      "tabs": [],
+      "sections": [],
+      "views": [],
+      "states": [
+        "empty",
+        "loading",
+        "error",
+        "needs-you",
+        "nothing-needs-you"
+      ],
+      "reachedFrom": [
+        {
+          "kind": "after-action",
+          "from": "session start",
+          "detail": "every session, always",
+          "source": "changes/2026-11-13-agent-tracker/spec/ia.md#move-table"
+        },
+        {
+          "kind": "link",
+          "from": "band/details",
+          "detail": "Compact button",
+          "source": "changes/2026-11-13-agent-tracker/spec/ia.md#move-table"
+        }
+      ],
+      "breadcrumb": [],
+      "back": null,
+      "access": {
+        "roles": [
+          "owner"
+        ],
+        "host": null,
+        "public": false
+      },
+      "inboundLinks": [],
+      "status": "proposed",
+      "redirectTo": null,
+      "proposed": null,
+      "decide": null,
+      "source": null,
+      "assumptions": [
+        "type embed: the band is drawn inside the host app, no closer type exists",
+        "compact assumed the default view; not stated in ia.md",
+        "header primary Details: the CTA inventory also marks Pane primary"
+      ],
+      "decided": "compact is the default; the view is kept machine-wide in the tracker's settings file (ia.md, Decisions Taken Here)"
+    },
+    {
+      "id": "band.details",
+      "area": "band",
+      "route": "band/details",
+      "params": [],
+      "query": [],
+      "labels": {
+        "en": "Details"
+      },
+      "type": "embed",
+      "purpose": "Show columns with a count and one line each, and this session's repo and work in the header",
+      "roles": [
+        "owner"
+      ],
+      "tabs": [],
+      "sections": [
+        {
+          "en": "Header"
+        },
+        {
+          "en": "Columns"
+        }
+      ],
+      "views": [],
+      "states": [
+        "empty",
+        "loading",
+        "error",
+        "needs-you",
+        "nothing-needs-you",
+        "column-without-items"
+      ],
+      "reachedFrom": [
+        {
+          "kind": "link",
+          "from": "band/compact",
+          "detail": "Details button",
+          "source": "changes/2026-11-13-agent-tracker/spec/ia.md#move-table"
+        },
+        {
+          "kind": "after-action",
+          "from": "session start",
+          "detail": "remembered view state; not a visible way in",
+          "source": "changes/2026-11-13-agent-tracker/spec/ia.md#move-table"
+        }
+      ],
+      "breadcrumb": [],
+      "back": null,
+      "access": {
+        "roles": [
+          "owner"
+        ],
+        "host": null,
+        "public": false
+      },
+      "inboundLinks": [],
+      "status": "proposed",
+      "redirectTo": null,
+      "proposed": null,
+      "decide": null,
+      "source": null,
+      "assumptions": [
+        "type embed: see band.compact",
+        "the Copy button (state as Markdown) lives here; it is an action, not a page"
+      ]
+    },
+    {
+      "id": "pane.home",
+      "area": "pane",
+      "route": "home",
+      "params": [],
+      "query": [],
+      "labels": {
+        "en": "Home"
+      },
+      "type": "home",
+      "purpose": "The triage queue: needs you first, then running, then done, grouped by repo, with a PR summary per repo",
+      "roles": [
+        "owner"
+      ],
+      "tabs": [],
+      "sections": [
+        {
+          "en": "Needs you"
+        },
+        {
+          "en": "Running"
+        },
+        {
+          "en": "Done"
+        },
+        {
+          "en": "Ended today"
+        },
+        {
+          "en": "Repos"
+        }
+      ],
+      "views": [],
+      "states": [
+        "empty",
+        "loading",
+        "error",
+        "needs-you",
+        "all-quiet"
+      ],
+      "reachedFrom": [
+        {
+          "kind": "link",
+          "from": "band/compact",
+          "detail": "Pane button",
+          "source": "changes/2026-11-13-agent-tracker/spec/ia.md#move-table"
+        },
+        {
+          "kind": "link",
+          "from": "band/details",
+          "detail": "Pane button",
+          "source": "changes/2026-11-13-agent-tracker/spec/ia.md#move-table"
+        },
+        {
+          "kind": "command-menu",
+          "from": null,
+          "detail": "/tracker",
+          "source": "changes/2026-11-13-agent-tracker/spec/ia.md#move-table"
+        },
+        {
+          "kind": "breadcrumb",
+          "from": "repo/[repo]",
+          "detail": "Back",
+          "source": "changes/2026-11-13-agent-tracker/spec/ia.md#move-table"
+        },
+        {
+          "kind": "breadcrumb",
+          "from": "session/[sessionId]",
+          "detail": "Back",
+          "source": "changes/2026-11-13-agent-tracker/spec/ia.md#move-table"
+        }
+      ],
+      "breadcrumb": [
+        {
+          "label": {
+            "en": "Home"
+          },
+          "route": "home"
+        }
+      ],
+      "back": null,
+      "access": {
+        "roles": [
+          "owner"
+        ],
+        "host": null,
+        "public": false
+      },
+      "inboundLinks": [],
+      "status": "proposed",
+      "redirectTo": null,
+      "proposed": null,
+      "decide": null,
+      "source": null,
+      "assumptions": [
+        "where ended sessions show on Home is not stated in ia.md"
+      ],
+      "decided": "ended sessions show only on the Repo page, last 7 days (ia.md, Decisions Taken Here)"
+    },
+    {
+      "id": "pane.repo",
+      "area": "pane",
+      "route": "repo/[repo]",
+      "params": [
+        {
+          "name": "repo",
+          "kind": "slug"
+        }
+      ],
+      "query": [],
+      "labels": {
+        "en": "{repo}"
+      },
+      "type": "record",
+      "purpose": "One repo: its worktrees with their sessions, and its open PRs",
+      "roles": [
+        "owner"
+      ],
+      "tabs": [],
+      "sections": [
+        {
+          "en": "Open PRs"
+        },
+        {
+          "en": "Worktrees"
+        },
+        {
+          "en": "Ended"
+        }
+      ],
+      "views": [],
+      "states": [
+        "with-prs",
+        "without-gh",
+        "not-found"
+      ],
+      "reachedFrom": [
+        {
+          "kind": "link",
+          "from": "home",
+          "detail": "repo heading",
+          "source": "changes/2026-11-13-agent-tracker/spec/ia.md#move-table"
+        },
+        {
+          "kind": "link",
+          "from": "session/[sessionId]",
+          "detail": "repo line in the session header",
+          "source": "changes/2026-11-13-agent-tracker/spec/ia.md#move-table"
+        },
+        {
+          "kind": "breadcrumb",
+          "from": "session/[sessionId]",
+          "detail": "Back",
+          "source": "changes/2026-11-13-agent-tracker/spec/ia.md#move-table"
+        }
+      ],
+      "breadcrumb": [
+        {
+          "label": {
+            "en": "Home"
+          },
+          "route": "home"
+        },
+        {
+          "label": {
+            "en": "{repo}"
+          },
+          "route": "repo/[repo]"
+        }
+      ],
+      "back": "previous pane page: home or session/[sessionId]",
+      "access": {
+        "roles": [
+          "owner"
+        ],
+        "host": null,
+        "public": false
+      },
+      "inboundLinks": [],
+      "status": "proposed",
+      "redirectTo": null,
+      "proposed": null,
+      "decide": null,
+      "source": null,
+      "assumptions": [
+        "not-found added: a repo can disappear while the pane is open",
+        "a repo is named by its folder, so two repos with the same folder name would share one address"
+      ]
+    },
+    {
+      "id": "pane.session",
+      "area": "pane",
+      "route": "session/[sessionId]",
+      "params": [
+        {
+          "name": "sessionId",
+          "kind": "id"
+        }
+      ],
+      "query": [],
+      "labels": {
+        "en": "{title}"
+      },
+      "type": "record",
+      "purpose": "One session: header, running now, asks in order, milestone features, numbers",
+      "roles": [
+        "owner"
+      ],
+      "tabs": [],
+      "sections": [
+        {
+          "en": "Running now"
+        },
+        {
+          "en": "Usage"
+        },
+        {
+          "en": "Milestone"
+        },
+        {
+          "en": "Asks"
+        }
+      ],
+      "views": [],
+      "states": [
+        "live",
+        "ended",
+        "without-the-mod",
+        "not-found"
+      ],
+      "reachedFrom": [
+        {
+          "kind": "row",
+          "from": "home",
+          "detail": "session row",
+          "source": "changes/2026-11-13-agent-tracker/spec/ia.md#move-table"
+        },
+        {
+          "kind": "row",
+          "from": "repo/[repo]",
+          "detail": "session row",
+          "source": "changes/2026-11-13-agent-tracker/spec/ia.md#move-table"
+        },
+        {
+          "kind": "breadcrumb",
+          "from": "repo/[repo]",
+          "detail": "Back",
+          "source": "changes/2026-11-13-agent-tracker/spec/ia.md#move-table"
+        }
+      ],
+      "breadcrumb": [
+        {
+          "label": {
+            "en": "Home"
+          },
+          "route": "home"
+        },
+        {
+          "label": {
+            "en": "{repo}"
+          },
+          "route": "repo/[repo]"
+        },
+        {
+          "label": {
+            "en": "{title}"
+          },
+          "route": "session/[sessionId]"
+        }
+      ],
+      "back": "previous pane page: home or repo/[repo]",
+      "access": {
+        "roles": [
+          "owner"
+        ],
+        "host": null,
+        "public": false
+      },
+      "inboundLinks": [],
+      "status": "proposed",
+      "redirectTo": null,
+      "proposed": null,
+      "decide": null,
+      "source": null,
+      "assumptions": [
+        "not-found added: the session can end or its files vanish while the pane is open",
+        "Features section appears only in sdlc-run repos",
+        "Copy resume command is a secondary action on this page, for ended sessions only"
+      ]
+    }
+  ],
+  "redirects": [],
+  "links": []
+}
