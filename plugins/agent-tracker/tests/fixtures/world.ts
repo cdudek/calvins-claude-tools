@@ -27,12 +27,17 @@ export type World = {
   failWrite: (path: string) => boolean
   agents: { json: string | null }
   git: Record<string, Git>
+  worktrees: Record<string, string> // `git worktree list --porcelain` output by folder; none: exit 128
+  gh: { json: string | null; missing: boolean } // `gh pr list` output; null: signed out (exit 1); missing: no gh binary
+  unreadable: Set<string> // files that exist and cannot be read, by read or by grep
+  sizes: Map<string, number> // a file's size as the engine reports it, when a test needs a big one
   messages: SessionMessage[]
   subagents: AgentInfo[]
   tool: (e: unknown) => { result: object; isError?: boolean }
   classify: (text: string, labels: readonly string[]) => string | undefined | Error
   id: string
   cwd: string
+  mtimes: Map<string, number> // a file's modification time, set by put
   put: (path: string, value: unknown) => void
   json: (path: string) => unknown
 }
@@ -59,12 +64,17 @@ export function world(on: On, o: { id?: string; cwd?: string; now?: number } = {
     failWrite: () => false,
     agents: { json: '[]' },
     git: {},
+    worktrees: {},
+    gh: { json: null, missing: false },
+    unreadable: new Set(),
+    sizes: new Map(),
     messages: [],
     subagents: [],
     tool: () => ({ result: {} }),
     classify: () => 'task',
     id: o.id ?? 'self-0000',
     cwd: o.cwd ?? '/work/repo-self',
+    mtimes,
     put: (path, value) => {
       w.files.set(path, typeof value === 'string' ? value : JSON.stringify(value))
       mtimes.set(path, clock.now())
@@ -95,7 +105,13 @@ export function world(on: On, o: { id?: string; cwd?: string; now?: number } = {
     return {}
   })
 
-  on('fs.read', (_, e) => (w.files.has(e.path) ? { value: w.files.get(e.path)! } : { deny: `ENOENT ${e.path}` }))
+  // Like the engine: a read over 4 MiB rejects.
+  const MAX_READ = 4 * 1024 * 1024
+  on('fs.read', (_, e) => {
+    if (!w.files.has(e.path)) return { deny: `ENOENT ${e.path}` }
+    if (w.unreadable.has(e.path)) return { deny: `EACCES ${e.path}` }
+    return (w.sizes.get(e.path) ?? w.files.get(e.path)!.length) > MAX_READ ? { deny: `EFBIG ${e.path}` } : { value: w.files.get(e.path)! }
+  })
   on('fs.exists', (_, e) => ({ value: w.files.has(e.path) }))
   on('fs.write', (_, e) => {
     w.writes.push(e.path)
@@ -111,7 +127,7 @@ export function world(on: On, o: { id?: string; cwd?: string; now?: number } = {
       const rest = path.slice(prefix.length)
       const name = rest.split('/')[0]!
       const isFile = !rest.includes('/')
-      seen.set(name, { name, kind: isFile ? 'file' : 'dir', size: text.length, mtimeMs: isFile ? (mtimes.get(path) ?? 0) : 0, isLink: false })
+      seen.set(name, { name, kind: isFile ? 'file' : 'dir', size: isFile ? (w.sizes.get(path) ?? text.length) : text.length, mtimeMs: isFile ? (mtimes.get(path) ?? 0) : 0, isLink: false })
     }
     return seen.size === 0 ? { deny: `ENOENT ${e.path}` } : { value: [...seen.values()] }
   })
@@ -122,7 +138,22 @@ export function world(on: On, o: { id?: string; cwd?: string; now?: number } = {
     if (argv[0] === 'claude' && argv[1] === 'agents') {
       return w.agents.json === null ? { value: { exitCode: 1, stdout: '', ...RUN, stderr: 'failed' } } : { value: { exitCode: 0, stdout: w.agents.json, ...RUN } }
     }
+    if (argv[0] === 'gh') {
+      if (w.gh.missing) return { deny: 'ENOENT gh' }
+      return w.gh.json === null ? { value: { exitCode: 1, stdout: '', ...RUN, stderr: 'gh auth login' } } : { value: { exitCode: 0, stdout: w.gh.json, ...RUN } }
+    }
+    // grep -o -E <pattern> <file>: the pattern runs as a JS regex over the file text, one match per line.
+    if (argv[0] === 'grep') {
+      const text = w.files.get(argv[argv.length - 1]!)
+      if (text === undefined || w.unreadable.has(argv[argv.length - 1]!)) return { value: { exitCode: 2, stdout: '', ...RUN, stderr: 'No such file' } }
+      const found = text.match(new RegExp(argv[argv.length - 2]!, 'g')) ?? []
+      return { value: { exitCode: found.length ? 0 : 1, stdout: found.length ? `${found.join('\n')}\n` : '', ...RUN } }
+    }
     if (argv[0] === 'git') {
+      if (argv[1] === 'worktree') {
+        const list = w.worktrees[init?.cwd ?? w.cwd]
+        return list === undefined ? { value: { exitCode: 128, stdout: '', ...RUN, stderr: 'not a git repository' } } : { value: { exitCode: 0, stdout: list, ...RUN } }
+      }
       const g = w.git[init?.cwd ?? w.cwd]
       if (!g) return { value: { exitCode: 128, stdout: '', ...RUN, stderr: 'not a git repository' } }
       if (argv.includes('--git-common-dir')) return g.commonDir === null ? { value: { exitCode: 128, stdout: '', ...RUN } } : { value: { exitCode: 0, stdout: `${g.commonDir}\n`, ...RUN } }

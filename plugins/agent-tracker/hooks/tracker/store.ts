@@ -24,6 +24,8 @@ export type State = {
   isTicking: boolean
   hasTimer: boolean
   scannedAt: number
+  isBackfilling: boolean // a backfill pass or a repo scan is running: the next timer fire skips
+  isScanning: boolean
 }
 
 export const newState = (): State => ({
@@ -38,10 +40,16 @@ export const newState = (): State => ({
   isTicking: false,
   hasTimer: false,
   scannedAt: 0,
+  isBackfilling: false,
+  isScanning: false,
 })
 
+export async function claudeDir($: Engine) {
+  return `${(await $.env.get('HOME')) ?? ''}/.claude`
+}
+
 export async function dir($: Engine) {
-  return `${(await $.env.get('HOME')) ?? ''}/.claude/agent-tracker`
+  return `${await claudeDir($)}/agent-tracker`
 }
 
 export async function readJson($: Engine, path: string): Promise<unknown> {
@@ -124,11 +132,16 @@ async function readMilestone($: Engine, cwd: string, branch: string | null): Pro
   return null
 }
 
+// The repo a folder belongs to, or null (F7).
+export async function repoOf($: Engine, cwd: string) {
+  const common = await git($, cwd, ['rev-parse', '--path-format=absolute', '--git-common-dir'])
+  return common === null ? null : repoFromCommonDir(common)
+}
+
 // Repo, branch and milestone of a folder; read at the start and again about once a minute.
 export async function where($: Engine, cwd: string) {
-  const common = await git($, cwd, ['rev-parse', '--path-format=absolute', '--git-common-dir'])
   const branch = (await git($, cwd, ['branch', '--show-current'])) || null // empty: a detached HEAD
-  return { repo: common === null ? null : repoFromCommonDir(common), branch, milestone: await readMilestone($, cwd, branch) }
+  return { repo: await repoOf($, cwd), branch, milestone: await readMilestone($, cwd, branch) }
 }
 
 // Start this session's record, once. A /clear goes on under a new id with no session.start, so a later hook

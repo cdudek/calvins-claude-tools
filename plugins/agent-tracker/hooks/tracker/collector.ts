@@ -2,6 +2,7 @@
 import { atom, update } from 'claude-code'
 import type { EngineInterface, On } from 'claude-code'
 
+import { startBackfill } from './backfill'
 import { POLL_MS, agentsFresh, deriveState, leaseState, mergeSessions, noteTool, parseAgents } from './core'
 import type { AgentRow, Lease, SessionRecord, Snapshot } from './types'
 import { dir, initOwn, readAgentsFile, readFolder, readLease, saveOwn, where, writeJson } from './store'
@@ -74,12 +75,13 @@ const tick = async ($: Engine, s: State) => {
   }
 }
 
-// The first poll now, then one every 5 seconds.
+// The first poll now, then one every 5 seconds; the backfill runs beside it on its own timer.
 const begin = async ($: Engine, s: State) => {
   await tick($, s).catch(() => undefined)
   if (!s.hasTimer) {
     s.hasTimer = true
     $.clock.every(POLL_MS, () => void tick($, s).catch(() => undefined))
+    startBackfill($, s)
   }
 }
 
