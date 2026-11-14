@@ -26,6 +26,8 @@ export type World = {
   copies: { text: string; surface?: string }[]
   failCopy: string | null // the reason $.ui.copy fails with, or null: it works
   commands: string[] // each command the mod registered
+  opens: { id: string; title?: string; focus?: boolean; closeOnEscape?: boolean }[] // each pane the mod opened
+  closes: string[] // each pane the mod closed
   statuses: (string | undefined)[]
   states: Map<string, unknown>
   snapshot: () => Snapshot
@@ -49,7 +51,7 @@ export type World = {
 
 const RUN = { stderr: '', isStdoutTruncated: false, isStderrTruncated: false } as const
 
-export function world(on: On, o: { id?: string; cwd?: string; now?: number } = {}): World {
+export function world(on: On, o: { id?: string; cwd?: string; now?: number; panes?: boolean } = {}): World {
   const clock = mock.clock(on, { now: o.now ?? 0 })
   mock.store(on)
   const mtimes = new Map<string, number>()
@@ -68,6 +70,8 @@ export function world(on: On, o: { id?: string; cwd?: string; now?: number } = {
     copies: [],
     failCopy: null,
     commands: [],
+    opens: [],
+    closes: [],
     statuses: [],
     states: new Map(),
     snapshot: () => w.states.get('agent-tracker/snapshot') as Snapshot,
@@ -202,6 +206,17 @@ export function world(on: On, o: { id?: string; cwd?: string; now?: number } = {
     w.invalidations += 1
     return { value: undefined }
   })
+  // Opt in with `panes: true`: a test that answers ui.open itself would register it twice.
+  if (o.panes) {
+    on('ui.open', (_, e) => {
+      w.opens.push({ id: e.id, title: e.title, focus: e.focus, closeOnEscape: e.closeOnEscape })
+      return { value: { isPlaced: true as const } }
+    })
+    on('ui.close', (_, e) => {
+      w.closes.push(e.id)
+      return { value: undefined }
+    })
+  }
   on('ui.copy', (_, e) => {
     w.copies.push({ text: e.text, surface: e.surface })
     return { value: w.failCopy === null ? { isCopied: true as const } : { isCopied: false as const, reason: w.failCopy } } as never

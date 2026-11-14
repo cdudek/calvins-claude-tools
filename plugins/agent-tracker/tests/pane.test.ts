@@ -1,0 +1,425 @@
+import { describe, expect, test } from 'claude-code/testing'
+import type { On } from 'claude-code'
+import type { Engine } from 'claude-code/testing'
+
+import { ONLY_THIS, PRS_NOT_SHOWN, cells, staleTop } from '../hooks/tracker/core'
+import type { SessionRecord, Snapshot } from '../hooks/tracker/types'
+import { MIN, NOON, SELF, aloneTown, at, paneTown, rec, sess, snapAt, use } from './fixtures/pane'
+import { scan } from './fixtures/band'
+import { world } from './fixtures/world'
+import type { World } from './fixtures/world'
+
+const TAG = '@2026-11-13-agent-tracker'
+
+// The snapshot the collector would have written, as the state read answers it. `box.value` changes between draws.
+const withSnap = (on: On, sessions: SessionRecord[], extra: Partial<Snapshot> = {}, now = NOON) => {
+  const w = world(on, { now, id: SELF, cwd: '/work/platform-tools-suite', panes: true })
+  const box = { value: snapAt(sessions, extra) }
+  on('state.get', (_, e, next) => (e.key === 'snapshot' ? ({ value: { value: box.value, version: 1 } } as never) : next(e)))
+  return { w, box }
+}
+
+const PANE = (columns: number, isFocused: boolean) =>
+  ({ component: 'Pane', requestId: 'tracker', props: { title: 'Tracker', isFocused, bodyColumns: columns, placement: 'dock', scroll: { offset: 0, bodyRows: 40 }, view: {} } }) as const
+const mount = ($: Engine, columns = 115, isFocused = false, surface: 'terminal' | 'desktop' = 'terminal') => $.ui.mount({ plugin: 'agent-tracker', surface, ...PANE(columns, isFocused) } as never)
+const props = (columns: number, isFocused: boolean) => PANE(columns, isFocused).props as never
+const run = ($: Engine, args: string) => $.command.run({ command: 'tracker', args, origin: { kind: 'composer' }, presentation: {} as never })
+
+type Ui = Awaited<ReturnType<typeof mount>>
+const texts = async (ui: Ui) => (await ui.findAll({ type: 'Text' })).map(t => t.text ?? '')
+const buttons = async (ui: Ui, prefix = '') => (await ui.findAll({ type: 'Button' })).filter(b => String(b.props.key ?? '').startsWith(prefix))
+const keys = async (ui: Ui, prefix: string) => (await buttons(ui, prefix)).map(b => String(b.props.key))
+const rowText = async (ui: Ui, key: string) => (await ui.find({ key }))?.text
+const headings = async (ui: Ui) => (await texts(ui)).filter(t => ['Needs you', 'Running', 'Done', 'Ended today'].includes(t))
+
+describe('Home, the shell', () => {
+  test(`@F38 ${TAG} Pane button and /tracker open Home with focus on the first row`, async ($, on) => {
+    const { w } = withSnap(on, paneTown())
+    await run($, '')
+    expect(w.opens).toEqual([{ id: 'tracker', title: 'Tracker', focus: true, closeOnEscape: true }])
+    const ui = await mount($, 115, true)
+    expect((await texts(ui))[0]).toBe('Tracker') // the title, first line of the page
+    const first = (await buttons(ui, 'session:'))[0]!
+    expect(first.props.key).toBe('session:web-1')
+    expect(first.props.autoFocus).toBe(true) // focus starts on the first row, not on Close
+    expect((await ui.find({ key: 'close' }))?.props.autoFocus).not.toBe(true)
+    await ui.unmount()
+  })
+
+  test(`@F38 ${TAG} the band's Pane button opens the same pane`, async ($, on) => {
+    const { w } = withSnap(on, paneTown())
+    const band = await $.ui.mount({ plugin: 'agent-tracker', surface: 'terminal', component: 'AbovePrompt', props: { hasSurvey: false, isWorking: false, maxRows: 12, bodyColumns: 115, scroll: { offset: 0, bodyRows: 12 }, view: {} } } as never)
+    await band.press({ key: 'pane' })
+    expect(w.opens.map(o => o.id)).toEqual(['tracker'])
+    expect([w.opens[0]!.focus, w.opens[0]!.closeOnEscape]).toEqual([true, true])
+    await band.unmount()
+  })
+
+  test(`@F92 ${TAG} two-step Escape: the pane opens with closeOnEscape, so Escape hands the keys back and a second one at an idle prompt closes`, async ($, on) => {
+    const { w } = withSnap(on, paneTown())
+    await run($, '')
+    expect(w.opens[0]!.closeOnEscape).toBe(true)
+    expect(w.opens[0]!.focus).toBe(true)
+  })
+
+  test(`@F91 ${TAG} Close closes the pane, and nothing here refuses the person's own close (ctrl+x x, Escape)`, async ($, on) => {
+    const { w } = withSnap(on, paneTown())
+    const ui = await mount($)
+    await ui.press({ key: 'close' })
+    expect(w.closes).toEqual(['tracker'])
+    await ui.unmount()
+  })
+
+  test(`@F39 ${TAG} section order: Needs you, Running, Done, Ended today, Repos`, async ($, on) => {
+    withSnap(on, paneTown())
+    const ui = await mount($)
+    expect(await headings(ui)).toEqual(['Needs you', 'Running', 'Done', 'Ended today'])
+    const all = await texts(ui)
+    expect(all.indexOf('Ended today')).toBeLessThan(all.indexOf('Repos:'))
+    expect(all.at(-1)).not.toBe('Tracker')
+    await ui.unmount()
+  })
+
+  test(`@F40 ${TAG} Needs you rows, longest wait first, with the reason, errors and retries`, async ($, on) => {
+    withSnap(on, paneTown())
+    const ui = await mount($)
+    const needs = (await keys(ui, 'session:')).slice(0, 2)
+    expect(needs).toEqual(['session:web-1', 'session:docs-1']) // 6m before 2m
+    expect(await rowText(ui, 'session:web-1')).toBe('● fix login redirect   web-app · feat/login · 6m · asks permission · 2 errors · 1 retry')
+    expect(await rowText(ui, 'session:docs-1')).toBe('● edit pages   docs-site · main · 2m · asks a question')
+    await ui.unmount()
+  })
+
+  test(`@F40 ${TAG} the reason words: state unknown and waiting`, async ($, on) => {
+    withSnap(on, [sess('a', 'needs-you', 3, 'web-app', 'x', { reason: 'unknown', unknownValue: 'weird' }), sess('b', 'needs-you', 2, 'web-app', 'y', { reason: 'waiting' }), sess(SELF, 'running', 1, 'web-app', 'me')])
+    const ui = await mount($)
+    expect(await rowText(ui, 'session:a')).toContain('3m · state unknown')
+    expect(await rowText(ui, 'session:b')).toContain('2m · waiting')
+    await ui.unmount()
+  })
+
+  test(`@F41 ${TAG} Done and Ended today caps, then a more line`, async ($, on) => {
+    const done = Array.from({ length: 12 }, (_, i) => sess(`d${i}`, 'done', i + 1, 'web-app', `done ${i}`))
+    const ended = Array.from({ length: 7 }, (_, i) => sess(`e${i}`, 'ended', 60 + i, 'web-app', `ended ${i}`, { endedAt: at(60 + i) }))
+    withSnap(on, [sess(SELF, 'running', 1, 'web-app', 'me'), ...done, ...ended])
+    const ui = await mount($)
+    expect((await keys(ui, 'session:')).filter(k => k.startsWith('session:d')).length).toBe(10)
+    expect((await keys(ui, 'session:')).filter(k => k.startsWith('session:e')).length).toBe(5)
+    expect((await texts(ui)).filter(t => t.startsWith('and '))).toEqual(['and 2 more on the Repo pages', 'and 2 more on the Repo pages'])
+    await ui.unmount()
+  })
+
+  test(`@F42 ${TAG} the Repos line, most recent session first, entries are buttons, in every state`, async ($, on) => {
+    const { box } = withSnap(on, paneTown())
+    const ui = await mount($)
+    const entries = await buttons(ui, 'repos:')
+    expect(entries.map(b => b.props.label ?? b.text)).toEqual(['docs-site', 'api', 'web-app 4 PRs', 'platform-tools-suite'])
+    expect(await texts(ui)).toContain('Repos:')
+    // Alone, stale, partial and quiet states keep the line.
+    for (const next of [snapAt(aloneTown()), snapAt(paneTown(), { failedReads: 2 }), snapAt(paneTown().map(r => (r.scan ? { ...r, scan: { ...r.scan, ghOk: false } } : r))), snapAt(paneTown().filter(r => r.state !== 'needs-you'))]) {
+      box.value = next
+      await ui.redraw()
+      expect(await texts(ui)).toContain('Repos:')
+      expect((await buttons(ui, 'repos:')).length).toBeGreaterThan(0)
+    }
+    await ui.unmount()
+  })
+
+  test(`@F44 ${TAG} empty Needs you reads Nothing needs you`, async ($, on) => {
+    withSnap(on, paneTown().filter(r => r.state !== 'needs-you'))
+    const ui = await mount($)
+    expect(await texts(ui)).toContain('Nothing needs you.')
+    expect(await texts(ui)).not.toContain(ONLY_THIS)
+    await ui.unmount()
+  })
+
+  test(`@F45 ${TAG} Empty, alone: the one line, no Running section, then Repos`, async ($, on) => {
+    withSnap(on, aloneTown())
+    const ui = await mount($)
+    const all = await texts(ui)
+    expect(all).toContain('Only this session is running. Sessions in other terminals show up here when they start.')
+    expect(all).not.toContain('Nothing needs you.')
+    expect(await headings(ui)).toEqual(['Needs you'])
+    expect(all).toContain('Repos:')
+    await ui.unmount()
+  })
+
+  test(`@F102 ${TAG} alone and waiting: this session under Needs you, no Empty line`, async ($, on) => {
+    withSnap(on, aloneTown('needs-you'))
+    const ui = await mount($)
+    expect(await rowText(ui, `session:${SELF}`)).toBe('● this session   platform-tools-suite · main · 4m · waiting')
+    expect(await texts(ui)).not.toContain(ONLY_THIS)
+    await ui.unmount()
+  })
+
+  test(`@F43 ${TAG} frozen order, the new mark, re-sort on leave and reopen`, async ($, on) => {
+    const { box } = withSnap(on, paneTown())
+    const ui = await mount($, 115, true) // the pane has the keyboard
+    const order = async () => (await keys(ui, 'session:')).slice(0, 3)
+    expect(await order()).toEqual(['session:web-1', 'session:docs-1', 'session:api-1'])
+    // A session waits for 30 minutes: it would sort first, but the order is frozen and it is added last, marked new.
+    box.value = snapAt([...paneTown(), sess('late-1', 'needs-you', 30, 'api', 'late one', { reason: 'waiting' })])
+    await ui.redraw()
+    expect((await keys(ui, 'session:')).slice(0, 3)).toEqual(['session:web-1', 'session:docs-1', 'session:late-1'])
+    expect(await rowText(ui, 'session:late-1')).toContain('30m · waiting · new')
+    expect(await rowText(ui, 'session:web-1')).not.toContain('new')
+    // The keyboard leaves: it sorts, and the mark goes.
+    await ui.redraw(props(115, false))
+    expect((await keys(ui, 'session:'))[0]).toBe('session:late-1')
+    expect(await rowText(ui, 'session:late-1')).not.toContain('new')
+    // The keyboard returns: the order is frozen again from here.
+    await ui.redraw(props(115, true))
+    box.value = snapAt([...paneTown(), sess('late-1', 'needs-you', 30, 'api', 'late one', { reason: 'waiting' }), sess('late-2', 'needs-you', 40, 'api', 'later one', { reason: 'waiting' })])
+    await ui.redraw()
+    expect((await keys(ui, 'session:')).slice(0, 4)).toEqual(['session:late-1', 'session:web-1', 'session:docs-1', 'session:late-2'])
+    // Reopening starts afresh.
+    await run($, '')
+    await ui.redraw()
+    expect((await keys(ui, 'session:'))[0]).toBe('session:late-2')
+    expect(await rowText(ui, 'session:late-2')).not.toContain('new')
+    await ui.unmount()
+  })
+
+  test(`@F53 ${TAG} loading line`, async ($, on) => {
+    withSnap(on, [], { at: 0, okAt: 0 })
+    const ui = await mount($)
+    const all = await texts(ui)
+    expect(all).toContain('Reading sessions…')
+    expect(all[0]).toBe('Tracker')
+    expect(await headings(ui)).toEqual([])
+    expect(await ui.find({ key: 'close' })).toBeDefined()
+    await ui.unmount()
+  })
+
+  test(`@F54 ${TAG} partial line: gh missing, headings without PR counts`, async ($, on) => {
+    withSnap(on, paneTown().map(r => (r.scan ? { ...r, scan: { ...r.scan, ghOk: false } } : r)))
+    const ui = await mount($)
+    const all = await texts(ui)
+    expect(all).toContain(PRS_NOT_SHOWN)
+    expect(PRS_NOT_SHOWN).toBe('PRs not shown: gh is not installed or not signed in. Run gh auth login to see them.')
+    expect(all.indexOf(PRS_NOT_SHOWN)).toBeLessThan(all.indexOf('Needs you')) // directly under the title row
+    for (const b of await buttons(ui, 'repo:')) expect(String(b.text)).not.toMatch(/PR/)
+    for (const b of await buttons(ui, 'repos:')) expect(String(b.text)).not.toMatch(/PR/)
+    await ui.unmount()
+  })
+
+  test(`@F123 ${TAG} stale line on Home, the last list dimmed`, async ($, on) => {
+    withSnap(on, paneTown(), { failedReads: 2, okAt: NOON - 2 * MIN })
+    const ui = await mount($)
+    const all = await texts(ui)
+    expect(all).toContain('Session list unavailable. Showing what was read 2m ago. Retrying every 5 seconds; if it keeps failing, update Claude Code.')
+    expect(staleTop(null)).toBe('Session list unavailable. Retrying every 5 seconds; if it keeps failing, update Claude Code.')
+    const title = (await ui.find({ type: 'Text', text: /fix login redirect/ }))!
+    expect(title.props.dimColor).toBe(true)
+    await ui.unmount()
+  })
+
+  test(`@F123 ${TAG} one failed read does not show the stale line`, async ($, on) => {
+    withSnap(on, paneTown(), { failedReads: 1 })
+    const ui = await mount($)
+    expect((await texts(ui)).some(t => t.startsWith('Session list unavailable'))).toBe(false)
+    await ui.unmount()
+  })
+
+  test(`@F101 ${TAG} updated just now and updated 2m ago`, async ($, on) => {
+    const { w } = withSnap(on, paneTown())
+    const ui = await mount($)
+    expect(await texts(ui)).toContain('updated just now')
+    await w.clock.advance(2 * MIN)
+    await ui.redraw()
+    expect(await texts(ui)).toContain('updated 2m ago')
+    await ui.unmount()
+  })
+
+  test(`@F126 ${TAG} redraw after one minute with no data change`, async ($, on) => {
+    const { w } = withSnap(on, paneTown())
+    const ui = await mount($)
+    const before = w.invalidations
+    await w.clock.advance(60_000)
+    expect(w.invalidations).toBeGreaterThan(before) // the pane asked for a redraw with no band mounted
+    await ui.redraw()
+    expect(await rowText(ui, 'session:web-1')).toContain('7m · asks permission')
+    await ui.unmount()
+  })
+
+  test(`@F131 ${TAG} without-the-tracker line for one and many sessions, hidden at none`, async ($, on) => {
+    const engine = (id: string) => sess(id, 'running', 3, 'web-app', `e ${id}`, { source: 'engine' })
+    const { box } = withSnap(on, [...paneTown(), engine('x1'), engine('x2')])
+    const ui = await mount($)
+    const many = '2 sessions run without the tracker. Questions they ask in text are not detected.'
+    expect(await texts(ui)).toContain(many)
+    expect((await ui.find({ type: 'Text', text: many }))?.props.dimColor).toBe(true)
+    box.value = snapAt([...paneTown(), engine('x1')])
+    await ui.redraw()
+    expect(await texts(ui)).toContain('1 session runs without the tracker. Questions it asks in text are not detected.')
+    box.value = snapAt(paneTown())
+    await ui.redraw()
+    expect((await texts(ui)).some(t => t.includes('without the tracker'))).toBe(false)
+    // An ended session without a file is not running: it does not count.
+    box.value = snapAt([...paneTown(), sess('x3', 'ended', 90, 'web-app', 'gone', { source: 'engine', endedAt: at(90) })])
+    await ui.redraw()
+    expect((await texts(ui)).some(t => t.includes('without the tracker'))).toBe(false)
+    await ui.unmount()
+  })
+})
+
+describe('Home, the lists', () => {
+  test(`@F93 ${TAG} Running rows under repo headings, the repo with the longest-running session first`, async ($, on) => {
+    withSnap(on, paneTown())
+    const ui = await mount($)
+    const order = (await keys(ui, 'session:')).filter(k => ['session:api-1', 'session:api-2', `session:${SELF}`].includes(k))
+    expect(order).toEqual(['session:api-1', 'session:api-2', `session:${SELF}`])
+    expect(await rowText(ui, 'session:api-1')).toBe('◐ migrate users   feat/users · 22m · 41k tokens · 2 errors · 1 retry')
+    expect(await rowText(ui, 'session:api-2')).toBe('◐ seed data   main · 5m · 900 tokens')
+    expect(await rowText(ui, `session:${SELF}`)).toBe('◐ build the band   milestone/agent-tracker-1 · 20m · 41k tokens')
+    const headings = (await keys(ui, 'repo:')).slice(0, 2)
+    expect(headings).toEqual(['repo:/work/api', 'repo:/work/platform-tools-suite'])
+    await ui.unmount()
+  })
+
+  test(`@F94 ${TAG} Done rows, latest first, under repo headings`, async ($, on) => {
+    withSnap(on, paneTown())
+    const ui = await mount($)
+    expect(await rowText(ui, 'session:docs-2')).toBe('✓ rename skills   main · 3m ago · 12k tokens')
+    expect(await rowText(ui, 'session:web-2')).toBe('✓ dark mode   feat/dark · 9m ago · 4k tokens · 1 error')
+    const keysInOrder = await keys(ui, 'session:')
+    expect(keysInOrder.indexOf('session:docs-2')).toBeLessThan(keysInOrder.indexOf('session:web-2'))
+    await ui.unmount()
+  })
+
+  test(`@F95 ${TAG} Ended today rows since local midnight, newest first`, async ($, on) => {
+    withSnap(on, paneTown())
+    const ui = await mount($)
+    expect(await rowText(ui, 'session:web-3')).toBe('○ fix typo   main · ended 2h ago · 4k tokens')
+    expect(await ui.find({ key: 'session:web-4' })).toBeUndefined() // ended yesterday
+    await ui.unmount()
+  })
+
+  test(`@F96 ${TAG} empty sections are hidden`, async ($, on) => {
+    withSnap(on, paneTown().filter(r => r.state !== 'done' && r.state !== 'ended'))
+    const ui = await mount($)
+    expect(await headings(ui)).toEqual(['Needs you', 'Running'])
+    await ui.unmount()
+  })
+
+  test(`@F97 ${TAG} each repo heading is a button with its PR counts`, async ($, on) => {
+    withSnap(on, paneTown())
+    const ui = await mount($)
+    const web = (await ui.find({ key: 'repo:/work/web-app' }))!
+    expect(web.text).toBe('web-app · 4 PRs · 2 failing')
+    expect(web.type).toBe('Button')
+    await ui.unmount()
+  })
+
+  test(`@F98 ${TAG} no repos reads No repos yet`, async ($, on) => {
+    withSnap(on, [rec(SELF, { state: 'running', cwd: '/work/solo' }), rec('b', { state: 'done', cwd: '/work/solo2' })])
+    const ui = await mount($)
+    expect(await texts(ui)).toContain('No repos yet.')
+    expect(await buttons(ui, 'repos:')).toEqual([])
+    await ui.unmount()
+  })
+
+  test(`@F99 ${TAG} two-line rows at 54 columns, one line at 70`, async ($, on) => {
+    withSnap(on, paneTown())
+    const narrow = await mount($, 54)
+    expect((await rowText(narrow, 'session:web-1'))!.split('\n')).toEqual(['● fix login redirect', '  web-app · feat/login · 6m · asks permission · 2 errors · 1 retry'])
+    expect((await rowText(narrow, 'session:api-2'))!.split('\n')).toEqual(['◐ seed data', '  main · 5m · 900 tokens'])
+    await narrow.unmount()
+    const wide = await mount($, 70)
+    expect((await rowText(wide, 'session:web-1'))!.includes('\n')).toBe(false)
+    await wide.unmount()
+  })
+
+  test(`@F99 ${TAG} only the title is cut, with an ellipsis`, async ($, on) => {
+    const long = 'a very long title that cannot fit in the pane at all, not even in the wide view of seventy columns'
+    withSnap(on, [sess(SELF, 'running', 1, 'web-app', 'me'), sess('long-1', 'running', 7, 'web-app', long, { branch: 'feat/x' })])
+    const narrow = await mount($, 54)
+    const [first, second] = (await rowText(narrow, 'session:long-1'))!.split('\n')
+    expect(cells(first!)).toBeLessThanOrEqual(54)
+    expect(first!.endsWith('…')).toBe(true)
+    expect(second).toBe('  feat/x · 7m')
+    await narrow.unmount()
+    const wide = await mount($, 70)
+    const line = (await rowText(wide, 'session:long-1'))!
+    expect(cells(line)).toBeLessThanOrEqual(70)
+    expect(line).toContain('…   feat/x · 7m')
+    await wide.unmount()
+  })
+
+  test(`@F100 ${TAG} below 40 columns the second line drops tokens, then the branch; wait, reason, errors and retries stay`, async ($, on) => {
+    withSnap(on, paneTown())
+    const at39 = await mount($, 39)
+    expect((await rowText(at39, 'session:api-1'))!.split('\n')[1]).toBe('  feat/users · 22m · 2 errors · 1 retry') // tokens go first
+    await at39.unmount()
+    const at30 = await mount($, 30)
+    expect((await rowText(at30, 'session:api-1'))!.split('\n')[1]).toBe('  22m · 2 errors · 1 retry') // then the branch
+    expect((await rowText(at30, 'session:web-1'))!.split('\n')[1]).toContain('6m · asks permission · 2 errors · 1 retry')
+    await at30.unmount()
+  })
+
+  test(`@F100 ${TAG} a repo heading cuts its label, never its counts`, async ($, on) => {
+    const prs = scan([], true, at(1))
+    const many = [1, 2].map(n => ({ number: n, title: `t${n}`, url: `https://example.test/${n}`, branch: `b${n}`, createdAt: '2026-11-01T00:00:00Z', checks: n === 1 ? ('failing' as const) : ('pass' as const), review: 'none' as const, mergeable: 'unknown' as const }))
+    withSnap(on, [sess(SELF, 'running', 1, 'web-app', 'me'), sess('r1', 'running', 4, 'a-very-long-repository-name', 'x', { scan: { ...prs, prs: many } })])
+    const ui = await mount($, 30)
+    const heading = (await ui.find({ key: 'repo:/work/a-very-long-repository-name' }))!.text!
+    expect(heading.endsWith(' · 2 PRs · 1 failing')).toBe(true)
+    expect(heading).toContain('…')
+    expect(cells(heading)).toBeLessThanOrEqual(30)
+    await ui.unmount()
+  })
+
+  test(`@F124 ${TAG} a word or a count beside every glyph`, async ($, on) => {
+    withSnap(on, paneTown())
+    const ui = await mount($)
+    const rows = await buttons(ui, 'session:')
+    expect(rows.length).toBeGreaterThan(5)
+    for (const b of rows) {
+      expect(String(b.text)).toMatch(/^[●◐✓○] \S/) // a glyph, then the title
+      expect(String(b.text)).toMatch(/\d+(m|h|d)\b|<1m/) // a count of time beside it
+    }
+    expect(await headings(ui)).toEqual(['Needs you', 'Running', 'Done', 'Ended today']) // the section names the state
+    await ui.unmount()
+  })
+})
+
+describe('navigation between pages', () => {
+  test(`@F88 ${TAG} Close (x) on Home; Back (b), Home (h) and Close (x) on a Session page`, async ($, on) => {
+    withSnap(on, paneTown())
+    const ui = await mount($)
+    const close = (await ui.find({ key: 'close' }))!
+    expect([close.props.label, close.props.hotkey, close.props.plain]).toEqual(['Close', 'x', true])
+    expect(await ui.find({ key: 'back' })).toBeUndefined()
+    expect(await ui.find({ key: 'home' })).toBeUndefined()
+    await ui.press({ key: 'session:web-1' })
+    await ui.redraw()
+    const nav = await Promise.all(['back', 'home', 'close'].map(async k => (await ui.find({ key: k }))!.props))
+    expect(nav.map(p => [p.label, p.hotkey, p.plain])).toEqual([['Back', 'b', true], ['Home', 'h', true], ['Close', 'x', true]])
+    await ui.unmount()
+  })
+
+  test(`@F89 ${TAG} Back shows the previous page with the same row focused`, async ($, on) => {
+    withSnap(on, paneTown())
+    const ui = await mount($, 115, true)
+    await ui.press({ key: 'session:docs-1' })
+    await ui.redraw()
+    expect(await ui.find({ key: 'session:docs-1' })).toBeUndefined() // the Session page
+    await ui.press({ key: 'back' })
+    await ui.redraw()
+    expect((await ui.find({ key: 'session:docs-1' }))?.props.autoFocus).toBe(true)
+    expect((await ui.find({ key: 'session:web-1' }))?.props.autoFocus).not.toBe(true)
+    await ui.unmount()
+  })
+
+  test(`@F90 ${TAG} Home button shows the Home page`, async ($, on) => {
+    withSnap(on, paneTown())
+    const ui = await mount($)
+    await ui.press({ key: 'session:web-1' })
+    await ui.redraw()
+    await ui.press({ key: 'home' })
+    await ui.redraw()
+    expect(await headings(ui)).toEqual(['Needs you', 'Running', 'Done', 'Ended today'])
+    expect((await ui.find({ key: 'session:web-1' }))?.props.autoFocus).toBe(true) // the first row again
+    await ui.unmount()
+  })
+})

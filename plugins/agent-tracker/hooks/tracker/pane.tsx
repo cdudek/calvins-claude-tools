@@ -1,0 +1,76 @@
+// The pane: Home, Session and Repo pages, and the /tracker words that open them. It only reads the snapshot and the
+// clock; the one thing it writes is the clipboard. `$` is passed only to plain top-level functions.
+import { atom, read } from 'claude-code'
+import type { EngineInterface, On } from 'claude-code'
+
+import { PANE_ID, homeModel } from './core'
+import type { Page } from './core'
+import type { Actions } from './pane/chrome'
+import { homeView } from './pane/home'
+import { sessionView } from './pane/session'
+import { newPane, openPane, startUi } from './store'
+import type { State } from './store'
+import type { Snapshot } from './types'
+
+type Engine = EngineInterface
+// The collector writes it; the band and the pane read it. The same literal, declared where it is read.
+const snapshot = atom({ plugin: 'agent-tracker', key: 'snapshot' } as const, { at: 0, agentsOk: true, okAt: 0, failedReads: 0, sessions: [] } as Snapshot)
+
+// The local day and clock face: core reads no time zone, so they come from here.
+function localDay(now: number) {
+  const day = new Date(now)
+  day.setHours(0, 0, 0, 0)
+  const two = (n: number) => String(n).padStart(2, '0')
+  return { midnight: day.getTime(), clock: (ms: number) => `${two(new Date(ms).getHours())}:${two(new Date(ms).getMinutes())}` }
+}
+
+// Go to a page: Back returns to this one with the same row holding the ring (F89).
+function go($: Engine, s: State, page: Page, from: string | null) {
+  s.pane = { ...s.pane, history: [...s.pane.history, { page: s.pane.page, focus: from }], page, focus: null }
+  $.ui.invalidate('ui.render')
+}
+
+function back($: Engine, s: State) {
+  const last = s.pane.history.at(-1)
+  s.pane = last === undefined ? newPane() : { ...s.pane, history: s.pane.history.slice(0, -1), page: last.page, focus: last.focus }
+  $.ui.invalidate('ui.render')
+}
+
+function home($: Engine, s: State) {
+  s.pane = newPane()
+  $.ui.invalidate('ui.render')
+}
+
+async function close($: Engine) {
+  await $.ui.close({ id: PANE_ID }).catch(() => undefined)
+}
+
+export const registerPane = (on: On, s: State) => {
+  on('command.run', { command: 'tracker' }, async ($, e, next) => {
+    if (e.args.trim() !== '') return next(e)
+    await openPane($, s)
+    return { text: '' }
+  })
+
+  on('ui.render', { component: 'Pane', requestId: 'tracker' }, async ($, e) => {
+    await startUi($, s)
+    const snap = await read($, snapshot)
+    const now = await $.clock.now()
+    const selfId = await $.session.id()
+    const ui = $.ui.resolve(e)
+    const columns = e.props.bodyColumns
+    const actions: Actions = {
+      open: (key, page) => go($, s, page, key),
+      back: () => back($, s),
+      home: () => home($, s),
+      close: () => void close($),
+      resume: () => undefined,
+    }
+    const page = s.pane.page
+    if (page.kind === 'session') return sessionView(ui, page.id, actions)
+    // Home keeps its order while the pane has the keyboard, and sorts again when the keyboard leaves (F43).
+    const model = homeModel(snap, selfId, now, localDay(now), e.props.isFocused ? s.pane.frozen : null)
+    s.pane.frozen = e.props.isFocused ? model.frozen : null
+    return homeView(ui, model, actions, columns, s.pane.focus)
+  })
+}

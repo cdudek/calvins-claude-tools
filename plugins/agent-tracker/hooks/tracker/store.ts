@@ -3,13 +3,18 @@
 // `$` is passed only to plain top-level functions: the engine's source scan reads no other spelling.
 import type { EngineInterface } from 'claude-code'
 
-import { askStatuses, emptyRecord, parseMilestone, repoFromCommonDir } from './core'
+import { COMMAND_DESCRIPTION, COMMAND_HINT, PANE_ID, PANE_TITLE, REDRAW_MS, askStatuses, emptyRecord, parseMilestone, repoFromCommonDir } from './core'
+import type { Frozen, Page } from './core'
 import type { AgentsFile, Lease, SessionRecord, Settings } from './types'
 
 type Engine = EngineInterface
 
 export const WRITE_FAILED =
   "Tracker could not save this session's record. Asks from now on are not kept. Check that the agent-tracker folder in your Claude folder can be written."
+
+// The pane's own state: the page shown, where Back goes, the row holding the ring, and the order Home froze.
+export type PaneState = { page: Page; history: { page: Page; focus: string | null }[]; focus: string | null; frozen: Frozen | null }
+export const newPane = (page: Page = { kind: 'home' }): PaneState => ({ page, history: [], focus: null, frozen: null })
 
 // All the mod's changing state, one object per registration, so a reload or a test starts clean.
 export type State = {
@@ -29,7 +34,8 @@ export type State = {
   okAt: number // time of the last good list read, and the failed reads since (F52)
   failedReads: number
   settings: Settings // the last good read of settings.json
-  hasBand: boolean // the band started: its command is registered and the one-minute redraw runs (F126)
+  hasBand: boolean // the band or the pane started: its command is registered and the one-minute redraw runs (F126)
+  pane: PaneState
 }
 
 export const newState = (): State => ({
@@ -50,6 +56,7 @@ export const newState = (): State => ({
   failedReads: 0,
   settings: { v: 1, view: 'compact', bandHidden: false },
   hasBand: false,
+  pane: newPane(),
 })
 
 export async function claudeDir($: Engine) {
@@ -84,6 +91,21 @@ export async function writeSettings($: Engine, s: State, change: Partial<Setting
   s.settings = next
   await writeJson($, `${await dir($)}/settings.json`, next).catch(() => undefined) // not kept: the choice holds for this session
   $.ui.invalidate('ui.render')
+}
+
+// Once per session, at the first draw of the band or the pane: the /tracker command and the one-minute redraw.
+export async function startUi($: Engine, s: State) {
+  if (s.hasBand) return
+  s.hasBand = true
+  $.clock.every(REDRAW_MS, () => $.ui.invalidate('ui.render'))
+  await $.command.register({ name: 'tracker', description: COMMAND_DESCRIPTION, argumentHint: COMMAND_HINT, immediate: true }).catch(() => undefined)
+}
+
+// Open the pane on a page, with the keys. Escape hands them back and, at an idle empty prompt, closes it (F92).
+export async function openPane($: Engine, s: State, page: Page = { kind: 'home' }) {
+  s.pane = newPane(page)
+  $.ui.invalidate('ui.render')
+  await $.ui.open({ id: PANE_ID, title: PANE_TITLE, focus: true, closeOnEscape: true }).catch(() => undefined)
 }
 
 export async function readLease($: Engine, base: string): Promise<Lease | null> {
