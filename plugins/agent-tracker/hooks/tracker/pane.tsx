@@ -3,7 +3,7 @@
 import { atom, read } from 'claude-code'
 import type { EngineInterface, On } from 'claude-code'
 
-import { PANE_ID, homeModel } from './core'
+import { PANE_ID, RESUME_COPIED, homeModel, resumeFailed, sessionModel } from './core'
 import type { Page } from './core'
 import type { Actions } from './pane/chrome'
 import { homeView } from './pane/home'
@@ -41,6 +41,14 @@ function home($: Engine, s: State) {
   $.ui.invalidate('ui.render')
 }
 
+type Surface = Parameters<Engine['ui']['copy']>[0]['surface']
+
+// Copy the command that resumes an ended session. The toast says whether it worked (F49, F112).
+async function copyResume($: Engine, text: string, surface: Surface) {
+  const done = await $.ui.copy({ text, ...(surface === undefined ? {} : { surface }) })
+  $.ui.toast(done.isCopied ? RESUME_COPIED : resumeFailed(done.reason))
+}
+
 async function close($: Engine) {
   await $.ui.close({ id: PANE_ID }).catch(() => undefined)
 }
@@ -59,17 +67,19 @@ export const registerPane = (on: On, s: State) => {
     const selfId = await $.session.id()
     const ui = $.ui.resolve(e)
     const columns = e.props.bodyColumns
+    const local = localDay(now)
+    const page = s.pane.page
+    const session = page.kind === 'session' ? sessionModel(snap, page.id, now, local) : null
     const actions: Actions = {
-      open: (key, page) => go($, s, page, key),
+      open: (key, to) => go($, s, to, key),
       back: () => back($, s),
       home: () => home($, s),
       close: () => void close($),
-      resume: () => undefined,
+      resume: () => void copyResume($, session?.resume ?? '', e.surface),
     }
-    const page = s.pane.page
-    if (page.kind === 'session') return sessionView(ui, page.id, actions)
+    if (session !== null) return sessionView(ui, session, actions, columns)
     // Home keeps its order while the pane has the keyboard, and sorts again when the keyboard leaves (F43).
-    const model = homeModel(snap, selfId, now, localDay(now), e.props.isFocused ? s.pane.frozen : null)
+    const model = homeModel(snap, selfId, now, local, e.props.isFocused ? s.pane.frozen : null)
     s.pane.frozen = e.props.isFocused ? model.frozen : null
     return homeView(ui, model, actions, columns, s.pane.focus)
   })

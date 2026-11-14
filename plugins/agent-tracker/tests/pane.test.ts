@@ -5,6 +5,7 @@ import type { Engine } from 'claude-code/testing'
 import { ONLY_THIS, PRS_NOT_SHOWN, cells, staleTop } from '../hooks/tracker/core'
 import type { SessionRecord, Snapshot } from '../hooks/tracker/types'
 import { MIN, NOON, SELF, aloneTown, at, paneTown, rec, sess, snapAt, use } from './fixtures/pane'
+import type { Ask } from '../hooks/tracker/types'
 import { scan } from './fixtures/band'
 import { world } from './fixtures/world'
 import type { World } from './fixtures/world'
@@ -420,6 +421,247 @@ describe('navigation between pages', () => {
     await ui.redraw()
     expect(await headings(ui)).toEqual(['Needs you', 'Running', 'Done', 'Ended today'])
     expect((await ui.find({ key: 'session:web-1' }))?.props.autoFocus).toBe(true) // the first row again
+    await ui.unmount()
+  })
+})
+
+// Session page: open a session from its Home row, as the person does.
+const openSession = async (ui: Ui, id: string) => {
+  await ui.press({ key: `session:${id}` })
+  await ui.redraw()
+}
+const ask = (n: number, text: string, extra: Partial<Ask> = {}): Ask => ({ n, text, kind: 'task', status: 'replied', at: at(30 - n), ...extra })
+const STARTED = new Date(2026, 10, 14, 10, 42).getTime()
+// This session at its fullest: a goal, a subagent, a background session, a milestone and two asks.
+const full = (extra: Partial<SessionRecord> = {}) =>
+  sess(SELF, 'running', 22, 'web-app', 'fix login redirect', {
+    branch: 'feat/login',
+    startedAt: STARTED,
+    lastActivityAt: at(1),
+    usage: use(41000, 9000, 2, 1),
+    runs: { goalSince: at(14), subagents: [{ id: 's1', name: 'review-code-reviewer', status: 'running' }], background: [{ id: 'b1', name: 'docs check', since: at(2) }] },
+    asks: [ask(1, 'add a compact view'), ask(2, 'why does login redirect twice?', { kind: 'question', status: 'needs-you' })],
+    scan: { at: at(1), ghOk: true, worktrees: [], prs: [{ number: 42, title: 'fix login redirect', url: 'https://example.test/pr/42', branch: 'feat/login', createdAt: '2026-11-10T08:00:00Z', checks: 'failing', review: 'requested', mergeable: 'conflicts' }] },
+    milestone: { slug: 'agent-tracker-1', sentence: 'Open any session and see every session.', features: [{ n: 1, name: 'collector', state: 'done abc1234' }, { n: 2, name: 'backfill', state: 'merged' }, { n: 3, name: 'band', state: 'building' }, { n: 4, name: 'pane', state: 'todo' }, { n: 5, name: 'web', state: 'blocked' }] },
+    ...extra,
+  })
+const sessionPage = async ($: Engine, on: On, sessions: SessionRecord[], id = SELF, columns = 115, extra: Partial<Snapshot> = {}) => {
+  // Alone, Home lists no Running row for this session: a second live session makes it reachable by its row.
+  const reachable = sessions.some(r => r.sessionId !== SELF && r.state !== 'ended') ? sessions : [...sessions, sess('bystander', 'running', 1, 'api', 'bystander')]
+  const h = withSnap(on, reachable, extra)
+  const ui = await mount($, columns)
+  await openSession(ui, id)
+  return { ...h, ui }
+}
+// The lines of an ask row, one Text each.
+const askLines = async (ui: Ui, n: number) => (await ui.findAll({ key: `ask:${n}` }))[0]!.children!.map(c => (c as { children: string[] }).children.join(''))
+
+describe('the Session page', () => {
+  test(`@F46 ${TAG} Session section order: header, Running now, Usage, Milestone, Asks`, async ($, on) => {
+    const { ui } = await sessionPage($, on, [full()])
+    const all = await texts(ui)
+    const at = (s: string) => all.indexOf(s)
+    expect(at('fix login redirect')).toBeGreaterThanOrEqual(0)
+    expect([at('Running now'), at('Usage'), at('Milestone'), at('Asks')].every(i => i >= 0)).toBe(true)
+    expect(at('fix login redirect')).toBeLessThan(at('Running now'))
+    expect(at('Running now')).toBeLessThan(at('Usage'))
+    expect(at('Usage')).toBeLessThan(at('Milestone'))
+    expect(at('Milestone')).toBeLessThan(at('Asks'))
+    await ui.unmount()
+  })
+
+  test(`@F46 ${TAG} the page opens from a session row`, async ($, on) => {
+    withSnap(on, paneTown())
+    const ui = await mount($)
+    await openSession(ui, 'web-1')
+    expect(await texts(ui)).toContain('fix login redirect')
+    expect(await ui.find({ key: 'session:web-1' })).toBeUndefined()
+    await ui.unmount()
+  })
+
+  test(`@F103 ${TAG} header: title, state line, the repo as a button to Repo, the branch`, async ($, on) => {
+    const { ui } = await sessionPage($, on, [full()])
+    const all = await texts(ui)
+    expect(all.indexOf('fix login redirect')).toBeLessThan(all.indexOf('◐ running · 22m'))
+    const repo = (await ui.find({ key: 'repo:/work/web-app' }))!
+    expect([repo.type, repo.text]).toEqual(['Button', 'web-app'])
+    expect(all).toContain('feat/login')
+    await ui.unmount()
+  })
+
+  test(`@F104 ${TAG} the state line in each state`, async ($, on) => {
+    const { ui, box } = await sessionPage($, on, [full({ state: 'needs-you', reason: 'permission', engine: { since: at(6) } })])
+    expect(await texts(ui)).toContain('● needs you · 6m · asks permission')
+    const lines = async (r: Partial<SessionRecord>) => {
+      box.value = snapAt([full(r)])
+      await ui.redraw()
+      return texts(ui)
+    }
+    expect(await lines({ state: 'running', engine: { since: at(22) } })).toContain('◐ running · 22m')
+    expect(await lines({ state: 'done', engine: { since: at(3) } })).toContain('✓ done · 3m ago')
+    expect(await lines({ state: 'ended', endedAt: at(4), engine: { since: at(22) } })).toContain('○ ended 4m ago')
+    expect(await lines({ state: 'needs-you', reason: 'unknown', unknownValue: 'weird', engine: { since: at(6) } })).toContain('● needs you · 6m · state unknown (weird)')
+    await ui.unmount()
+  })
+
+  test(`@F105 ${TAG} the branch and the link to its PR with its checks`, async ($, on) => {
+    const { ui, box } = await sessionPage($, on, [full()])
+    const link = (await ui.find({ type: 'Link' }))!
+    expect([link.props.href, link.text]).toEqual(['https://example.test/pr/42', '#42'])
+    const all = await texts(ui)
+    expect(all).toContain('feat/login')
+    expect(all).toContain(' · PR ')
+    expect(all).toContain(' ✗ checks failing')
+    // A branch with no PR shows the branch alone.
+    box.value = snapAt([full({ branch: 'feat/other' })])
+    await ui.redraw()
+    expect(await ui.find({ type: 'Link' })).toBeUndefined()
+    expect((await texts(ui)).some(t => t.includes('PR '))).toBe(false)
+    await ui.unmount()
+  })
+
+  test(`@F106 ${TAG} the Usage line`, async ($, on) => {
+    const { ui, box } = await sessionPage($, on, [full()])
+    expect(await texts(ui)).toContain('41k tokens in · 9k out · 2 tool errors · 1 retry · started 10:42 · last activity 1m ago')
+    box.value = snapAt([full({ usage: use(500, 0, 1, 2) })])
+    await ui.redraw()
+    expect(await texts(ui)).toContain('500 tokens in · 0 out · 1 tool error · 2 retries · started 10:42 · last activity 1m ago')
+    await ui.unmount()
+  })
+
+  test(`@F107 ${TAG} Running now: goal, subagents, background sessions; hidden when empty`, async ($, on) => {
+    const { ui, box } = await sessionPage($, on, [full()])
+    const all = await texts(ui)
+    const rows = ['goal · 14m', 'subagent · review-code-reviewer · running', 'background session · docs check · 2m'].map(s => all.indexOf(s))
+    expect(rows.every(i => i > all.indexOf('Running now'))).toBe(true)
+    expect(rows).toEqual([...rows].sort((a, b) => a - b))
+    box.value = snapAt([full({ runs: { goalSince: null, subagents: [], background: [] } })])
+    await ui.redraw()
+    expect(await texts(ui)).not.toContain('Running now')
+    // A goal of a session that is done is not running.
+    box.value = snapAt([full({ state: 'done', runs: { goalSince: at(14), subagents: [], background: [] } })])
+    await ui.redraw()
+    expect(await texts(ui)).not.toContain('Running now')
+    await ui.unmount()
+  })
+
+  test(`@F48 ${TAG} Milestone only with sdlc-run; done reads complete, merged reads merged`, async ($, on) => {
+    const { ui, box } = await sessionPage($, on, [full()])
+    const all = await texts(ui)
+    expect(all).toContain('agent-tracker-1: Open any session and see every session.')
+    expect(all).toContain('2 of 5 features complete')
+    for (const row of ['1  collector   complete', '2  backfill   merged', '3  band   building', '4  pane   to do', '5  web   blocked']) expect(all).toContain(row)
+    box.value = snapAt([full({ milestone: null })])
+    await ui.redraw()
+    expect(await texts(ui)).not.toContain('Milestone')
+    await ui.unmount()
+  })
+
+  test(`@F108 ${TAG} the sentence, then the count, then one row per feature in milestone order`, async ($, on) => {
+    const { ui } = await sessionPage($, on, [full()])
+    const all = await texts(ui)
+    const order = ['Milestone', 'agent-tracker-1: Open any session and see every session.', '2 of 5 features complete', '1  collector   complete', '5  web   blocked'].map(s => all.indexOf(s))
+    expect(order.every(i => i >= 0)).toBe(true)
+    expect(order).toEqual([...order].sort((a, b) => a - b))
+    await ui.unmount()
+  })
+
+  test(`@F47 ${TAG} asks oldest first, the empty line, and the transcript note`, async ($, on) => {
+    const { ui, box } = await sessionPage($, on, [full()])
+    expect(await askLines(ui, 1)).toEqual(['1  task      replied       29m    add a compact view'])
+    expect((await askLines(ui, 2))[0]).toMatch(/^2  question  needs you     28m    why does/)
+    const keysOf = (await ui.findAll({ type: 'Box' })).map(b => String(b.props.key ?? '')).filter(k => k.startsWith('ask:'))
+    expect(keysOf).toEqual(['ask:1', 'ask:2'])
+    box.value = snapAt([full({ asks: [] })])
+    await ui.redraw()
+    expect(await texts(ui)).toContain('No asks yet.')
+    box.value = snapAt([full({ source: 'transcript', asks: [ask(1, 'old work', { kind: 'not-classified' })] })])
+    await ui.redraw()
+    const t = await texts(ui)
+    expect(t).toContain('Not classified: this session ran without the tracker.')
+    expect(t.some(x => x.startsWith('1  not classified'))).toBe(true)
+    expect(t.indexOf('Not classified: this session ran without the tracker.')).toBeGreaterThan(t.indexOf('Asks'))
+    await ui.unmount()
+  })
+
+  test(`@F109 ${TAG} an ask row at 70 columns: number, kind, status, time and the wrapped text`, async ($, on) => {
+    const long = 'make the compact view fit a narrow dock without cutting the count and keep every word readable'
+    const { ui } = await sessionPage($, on, [full({ asks: [ask(1, long)] })], SELF, 70)
+    const [first, ...rest] = await askLines(ui, 1)
+    expect(first).toBe('1  task      replied       29m    make the compact view fit a narrow')
+    expect(rest.every(l => l.startsWith(' '.repeat(34)))).toBe(true)
+    expect([first!.slice(34), ...rest.map(l => l.slice(34))].join(' ')).toBe(long)
+    expect([first, ...rest].every(l => [...l!].length <= 70)).toBe(true)
+    await ui.unmount()
+  })
+
+  test(`@F110 ${TAG} an ask row at 54 columns takes two lines, the text cut at 4 lines`, async ($, on) => {
+    const long = Array.from({ length: 40 }, (_, i) => `word${i}`).join(' ')
+    const { ui } = await sessionPage($, on, [full({ asks: [ask(1, long), ask(2, 'short ask', { kind: 'question' })] })], SELF, 54)
+    const one = await askLines(ui, 1)
+    expect(one[0]).toBe('1  task  replied  29m')
+    expect(one.length).toBe(5) // the first line, then the text cut at 4
+    expect(one[4]!.endsWith('…')).toBe(true)
+    expect(one.every(l => [...l].length <= 54)).toBe(true)
+    expect(await askLines(ui, 2)).toEqual(['2  question  replied  28m', '   short ask'])
+    await ui.unmount()
+  })
+
+  test(`@F49 ${TAG} the resume command for an ended session only, the folder single-quoted`, async ($, on) => {
+    const ended = sess('gone-1', 'ended', 90, 'web-app', 'old job', { endedAt: at(90), cwd: "/work/my web-app's copy" })
+    const { ui, w, box } = await sessionPage($, on, [sess(SELF, 'running', 1, 'web-app', 'me'), ended], 'gone-1')
+    const resume = (await ui.find({ key: 'resume' }))!
+    expect([resume.props.label, resume.props.hotkey, resume.props.plain]).toEqual(['Copy resume command', 'r', true])
+    await ui.press({ key: 'resume' })
+    expect(w.copies.map(c => c.text)).toEqual(["cd '/work/my web-app'\\''s copy' && claude --resume gone-1"])
+    // A live session offers none.
+    box.value = snapAt([sess('gone-1', 'running', 1, 'web-app', 'old job')])
+    await ui.redraw()
+    expect(await ui.find({ key: 'resume' })).toBeUndefined()
+    await ui.unmount()
+  })
+
+  test(`@F49 ${TAG} a failed copy says how to retry`, async ($, on) => {
+    const ended = sess('gone-2', 'ended', 90, 'web-app', 'old job', { endedAt: at(90), cwd: '/work/web app' })
+    const { ui, w } = await sessionPage($, on, [sess(SELF, 'running', 1, 'web-app', 'me'), ended], 'gone-2')
+    w.failCopy = 'no-clipboard'
+    await ui.press({ key: 'resume' })
+    expect(w.copies[0]!.text).toBe("cd '/work/web app' && claude --resume gone-2")
+    expect(w.toasts).toEqual(['Copy failed: no-clipboard. Press Copy resume command again.'])
+    await ui.unmount()
+  })
+
+  test(`@F112 ${TAG} resume toast`, async ($, on) => {
+    const ended = sess('gone-3', 'ended', 90, 'web-app', 'old job', { endedAt: at(90) })
+    const { ui, w } = await sessionPage($, on, [sess(SELF, 'running', 1, 'web-app', 'me'), ended], 'gone-3')
+    await ui.press({ key: 'resume' })
+    expect(w.toasts).toEqual(['Resume command copied'])
+    await ui.unmount()
+  })
+
+  test(`@F111 ${TAG} an open page turns ended when the session leaves the list`, async ($, on) => {
+    const { ui, box } = await sessionPage($, on, [full(), sess('other', 'running', 1, 'web-app', 'x')], 'other')
+    expect(await texts(ui)).toContain('◐ running · 1m')
+    expect(await ui.find({ key: 'resume' })).toBeUndefined()
+    box.value = snapAt([full(), sess('other', 'ended', 1, 'web-app', 'x', { endedAt: at(1) })])
+    await ui.redraw()
+    expect(await texts(ui)).toContain('○ ended 1m ago')
+    expect(await ui.find({ key: 'resume' })).toBeDefined()
+    await ui.unmount()
+  })
+
+  test(`@F113 ${TAG} the breadcrumb`, async ($, on) => {
+    const { ui } = await sessionPage($, on, [full()])
+    expect(await texts(ui)).toContain('Home › web-app › fix login redirect')
+    await ui.unmount()
+  })
+
+  test(`@F124 ${TAG} the Session page puts a word or count beside every glyph`, async ($, on) => {
+    const { ui } = await sessionPage($, on, [full()])
+    for (const t of await texts(ui)) {
+      if (/[●◐✓○]/.test(t)) expect(t).toMatch(/[●◐✓○] (needs you|running|done|ended)/)
+      if (t.includes('✗')) expect(t).toMatch(/✗ checks failing/)
+    }
     await ui.unmount()
   })
 })

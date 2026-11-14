@@ -36,8 +36,19 @@ export const withoutTracker = (n: number) =>
   n === 1
     ? '1 session runs without the tracker. Questions it asks in text are not detected.'
     : `${n} sessions run without the tracker. Questions they ask in text are not detected.`
+export const RESUME_COPIED = 'Resume command copied'
+export const resumeFailed = (reason: string) => `Copy failed: ${reason}. Press Copy resume command again.`
+export const NO_ASKS = 'No asks yet.'
+export const FROM_TRANSCRIPT = 'Not classified: this session ran without the tracker.'
+export const SECTION_WORDS = { running: 'Running now', usage: 'Usage', milestone: 'Milestone', asks: 'Asks' } as const
+export const ASK_KIND = { task: 'task', question: 'question', 'not-classified': 'not classified' } as const
+export const ASK_STATUS = { 'in-progress': 'in progress', 'needs-you': 'needs you', replied: 'replied' } as const
+export const CHECKS_WORDS = { pass: '✓ checks pass', failing: '✗ checks failing', running: 'checks running' } as const
+export const REVIEW_WORDS = { approved: 'approved', changes: 'changes requested', requested: 'review requested', none: 'no review' } as const
+export const MERGE_WORDS = { mergeable: '↓ mergeable', conflicts: 'conflicts', unknown: 'mergeable unknown' } as const
+export const sessionNotFound = (text: string) => `No session matches "${text}". Pick one on Home.`
 export const REASON_WORDS = { permission: 'asks permission', question: 'asks a question', waiting: 'waiting', unknown: 'state unknown' } as const
 
-export const BUTTON_LABELS ={ pane: 'Pane', details: 'Details', copy: 'Copy', compact: 'Compact' } as const
+export const BUTTON_LABELS = { pane: 'Pane', details: 'Details', copy: 'Copy', compact: 'Compact' } as const
 export const COMMAND_DESCRIPTION = "Show each session's repo, work and state"
 export const COMMAND_HINT = 'details | compact | copy | repo <name> | session <text> | band on | band off'

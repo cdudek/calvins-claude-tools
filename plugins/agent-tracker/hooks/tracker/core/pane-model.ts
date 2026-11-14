@@ -6,7 +6,8 @@ import { repoPrs } from './git'
 import type { RepoPrs } from './git'
 import { cells } from './band-model'
 import { isLive, repoLabel } from './rank'
-import { DETACHED, NEW_MARK, REASON_WORDS, THIS_SESSION, UNTITLED, moreLine, staleTop, updatedWords, withoutTracker } from './words'
+import { isComplete } from './milestone'
+import { ASK_KIND, ASK_STATUS, CHECKS_WORDS, DETACHED, NEW_MARK, REASON_WORDS, THIS_SESSION, UNTITLED, moreLine, staleTop, updatedWords, withoutTracker } from './words'
 
 export const WIDE = 70 // a row takes one line from here, two below
 export const NARROW = 40 // below this the second line drops tokens, then the branch
@@ -195,4 +196,126 @@ export const homeModel = (snap: Snapshot, selfId: string, now: number, local: Lo
       seenNeeds: seen ?? needsList.map(r => r.sessionId),
     },
   }
+}
+
+// ---- the Session page ----
+
+export type AskView = { n: number; kind: string; status: string; time: string; text: string }
+export type SessionModel = {
+  id: string
+  title: string
+  crumbs: string
+  state: string // "● needs you · 6m · asks permission"
+  repo: { path: string; label: string } | null
+  branch: string | null
+  pr: { number: number; url: string; checks: string } | null
+  running: string[] // goal, subagents, background sessions
+  usage: string
+  milestone: { sentence: string; count: string; rows: string[] } | null
+  asks: AskView[]
+  fromTranscript: boolean
+  resume: string | null // the command to copy, for an ended session only
+}
+
+const stateLine = (r: SessionRecord, now: number) => {
+  const since = duration(now - r.engine.since)
+  switch (r.state) {
+    case 'needs-you':
+      return `● needs you · ${since} · ${r.reason === 'unknown' ? `${REASON_WORDS.unknown} (${r.unknownValue ?? ''})` : REASON_WORDS[r.reason ?? 'waiting']}`
+    case 'running':
+      return `◐ running · ${since}`
+    case 'done':
+      return `✓ done · ${since} ago`
+    default:
+      return `○ ended ${duration(now - endedAt(r))} ago`
+  }
+}
+
+const featureState = (state: string) => (/^done\b/.test(state) ? 'complete' : /^merged\b/.test(state) ? 'merged' : /^building\b/.test(state) ? 'building' : /^blocked\b/.test(state) ? 'blocked' : 'to do')
+
+// The command that resumes an ended session, the folder single-quoted (an embedded quote closes, escapes and reopens).
+export const resumeCommand = (r: SessionRecord) => `cd '${r.cwd.replace(/'/g, "'\\''")}' && claude --resume ${r.sessionId}`
+
+export const sessionModel = (snap: Snapshot, id: string, now: number, local: Local): SessionModel | null => {
+  const r = snap.sessions.find(x => x.sessionId === id)
+  if (r === undefined) return null
+  const title = r.title ?? UNTITLED
+  const prs = r.repo ? repoPrs(snap.sessions, r.repo.path, now) : null
+  const onBranch = prs !== null && prs.ghOk && r.branch !== null ? prs.prs.find(p => p.branch === r.branch) : undefined
+  const goal = r.runs.goalSince !== null && (r.state === 'running' || r.state === 'needs-you') ? [`goal · ${duration(now - r.runs.goalSince)}`] : []
+  const m = r.milestone
+  return {
+    id,
+    title,
+    crumbs: ['Home', ...(r.repo ? [repoLabel(r)] : []), title].join(' › '),
+    state: stateLine(r, now),
+    repo: r.repo ? { path: r.repo.path, label: repoLabel(r) } : null,
+    branch: r.branch ?? (r.repo ? DETACHED : null),
+    pr: onBranch ? { number: onBranch.number, url: onBranch.url, checks: CHECKS_WORDS[onBranch.checks] } : null,
+    running: [
+      ...goal,
+      ...r.runs.subagents.map(a => `subagent · ${a.name} · ${a.status}`),
+      ...r.runs.background.map(b => `background session · ${b.name} · ${duration(now - b.since)}`),
+    ],
+    usage: [
+      `${tokens(r.usage.tokensIn)} tokens in`,
+      `${tokens(r.usage.tokensOut)} out`,
+      plural(r.usage.toolErrors, 'tool error', 'tool errors'),
+      plural(r.usage.retries, 'retry', 'retries'),
+      `started ${local.clock(r.startedAt)}`,
+      `last activity ${duration(now - r.lastActivityAt)} ago`,
+    ].join(' · '),
+    milestone: m
+      ? { sentence: `${m.slug}: ${m.sentence}`, count: `${m.features.filter(f => isComplete(f.state)).length} of ${m.features.length} features complete`, rows: m.features.map(f => `${f.n}  ${f.name}   ${featureState(f.state)}`) }
+      : null,
+    asks: r.asks.map(a => ({ n: a.n, kind: ASK_KIND[a.kind], status: ASK_STATUS[a.status], time: duration(now - a.at), text: a.text.replace(/\s+/g, ' ').trim() })),
+    fromTranscript: r.source === 'transcript',
+    resume: r.state === 'ended' ? resumeCommand(r) : null,
+  }
+}
+
+// Greedy word wrap in cells; a word longer than the width is broken.
+export const wrapText = (text: string, width: number): string[] => {
+  const w = Math.max(1, width)
+  const lines: string[] = []
+  let line = ''
+  for (const word of text.split(' ').filter(Boolean)) {
+    let rest = [...word]
+    while (rest.length > w) {
+      if (line !== '') lines.push(line)
+      lines.push(rest.slice(0, w).join(''))
+      rest = rest.slice(w)
+      line = ''
+    }
+    const piece = rest.join('')
+    if (line === '') line = piece
+    else if (cells(line) + 1 + rest.length <= w) line += ` ${piece}`
+    else {
+      lines.push(line)
+      line = piece
+    }
+  }
+  return line === '' && lines.length > 0 ? lines : [...lines, line]
+}
+
+export const ASK_LINES_MAX = 4
+const pad = (s: string, n: number) => s + ' '.repeat(Math.max(0, n - cells(s)))
+
+// The widest kind word, so "not classified" keeps its column.
+export const kindWidth = (asks: AskView[]) => Math.max(10, ...asks.map(a => cells(a.kind) + 1))
+
+// An ask as the lines it takes. From 70 columns: number 3, kind, status 14 and time 7 in columns, the text wrapped in
+// the rest. Below: one line of number, kind, status and time, then the text wrapped and cut at 4 lines with "…" (F109, F110).
+export const askLines = (a: AskView, columns: number, kinds: number): string[] => {
+  if (columns >= WIDE) {
+    const prefix = 3 + kinds + 14 + 7
+    const [first = '', ...rest] = wrapText(a.text, columns - prefix)
+    return [`${pad(String(a.n), 3)}${pad(a.kind, kinds)}${pad(a.status, 14)}${pad(a.time, 7)}${first}`, ...rest.map(l => ' '.repeat(prefix) + l)]
+  }
+  const width = columns - 3
+  const body = wrapText(a.text, width)
+  const kept = body.slice(0, ASK_LINES_MAX)
+  // Cut: the last kept line ends in "…" within the width.
+  if (body.length > ASK_LINES_MAX) kept[ASK_LINES_MAX - 1] = cut(`${kept[ASK_LINES_MAX - 1]}…`, width)
+  return [`${a.n}  ${a.kind}  ${a.status}  ${a.time}`, ...kept.map(l => `   ${l}`)]
 }
