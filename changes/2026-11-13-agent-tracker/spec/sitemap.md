@@ -39,7 +39,7 @@ None, as built or proposed. The tracker sends no mail and no page in milestone 1
 | 6 | Session row (on `home` and `repo/<repo>`) | pane | state | J2, J6 |
 | 7 | Repo line in the session header | pane | none | J11 |
 | 8 | Back (every pane page but `home`) | pane chrome | none | every forward move |
-| 9 | Close (every pane page; Escape at an empty prompt) | pane chrome | none | return to work |
+| 9 | Close (every pane page; `x` or `ctrl+x x`) | pane chrome | none | return to work |
 
 **Gone from the navigation, and why:**
 

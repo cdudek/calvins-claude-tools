@@ -6,7 +6,7 @@ What the mod API allows, and so what this spec uses (Claude Code 2.1.323 types, 
 
 - **Band keys:** `ctrl+x tab` or a click gives the band the keyboard; Tab and the arrows walk its buttons, Enter presses one, a one-letter `hotkey` presses it directly. A letter hotkey never fires from the prompt: only while the band or pane has the keyboard (engine types, the `hotkey` rule). Digit hotkeys are not used, because a bare digit in an empty prompt does press them.
 - **Pane keys:** the same ring (`ctrl+x tab`, Tab, Enter, letter hotkeys, arrows scroll). No raw key handler, so every move is a Button. `ctrl+x x` closes a pane.
-- **Escape, one step at a time:** the first Escape hands the keyboard from the band or pane back to the prompt. The pane opens with `closeOnEscape`, so a second Escape, at an empty idle prompt, closes the pane. Over typed text or a running turn, Escape is Claude Code's own.
+- **Escape, one step at a time:** Escape hands the keyboard from the band or pane back to the prompt; the pane stays open. Close (`x`) or `ctrl+x x` closes it. Over typed text or a running turn, Escape is Claude Code's own. (Owner, 2026-11-14: "Escape returns keys only"; the engine cannot close on a second Escape only.)
 - **Menu route:** the mod has no menus. The menu route for every action is the `/tracker` command with an argument (`/tracker details`, `/tracker compact`, `/tracker copy`, `/tracker repo <name>`, `/tracker session <title or id>`, `/tracker band off`, `/tracker band on`).
 - **Refresh:** the collector reads `claude agents --json` every 5 seconds and the session files on change; the band and an open pane redraw when the data changes, and once a minute so the times ("6m", "goal 14m", "updated 2m ago") stay true. Times are shown to the minute.
 - **Words:** every on-screen string lives in the Words tables of `screens.md`. Text quoted here is the same string; where they ever differ, `screens.md` wins.
@@ -184,7 +184,7 @@ Band view is a separate two-state toggle (compact, details), kept across session
 | Pane | Copy resume command button (ended session) | copies the command, toast | copies twice | nothing | nothing | nothing | nothing | `r`; Enter | nothing | IG: copy and paste |
 | Pane | Back button | previous page | goes back twice | nothing | nothing | nothing | nothing | `b`; Enter | nothing | IG: navigation and return |
 | Pane | Home button | Home | Home | nothing | nothing | nothing | nothing | `h`; Enter | nothing | IG: navigation and return |
-| Pane | Close button | closes the pane, keys to the prompt | closes | nothing | nothing | nothing | nothing | `x`; Enter; `ctrl+x x`; Escape at an empty prompt | nothing | IG: keyboard and focus |
+| Pane | Close button | closes the pane, keys to the prompt | closes | nothing | nothing | nothing | nothing | `x`; Enter; `ctrl+x x` | nothing | IG: keyboard and focus |
 
 ## Action Behaviour
 
@@ -201,7 +201,7 @@ Nothing the tracker does changes anything outside its own folder, so nothing nee
 | Go back | click Back | `b` | `/tracker` (Home) | nothing | nothing | open again | IG: navigation and return |
 | Copy resume command (ended session) | click Copy resume command on its Session page | Tab to it, `r` | none | nothing | nothing | not needed (clipboard only) | IG: copy and paste |
 | Hide or show the band | none | none | `/tracker band off`, `/tracker band on` | saved at once in the settings file | nothing | the other command | IG: remembered state |
-| Close the pane | click Close or the close mark | `x`, `ctrl+x x`, Escape at an empty prompt | none | nothing | nothing | `/tracker` reopens on Home | IG: keyboard and focus |
+| Close the pane | click Close or the close mark | `x`, `ctrl+x x` | none | nothing | nothing | `/tracker` reopens on Home | IG: keyboard and focus |
 
 ## Feedback
 

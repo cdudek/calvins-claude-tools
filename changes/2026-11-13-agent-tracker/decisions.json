@@ -1,10 +1,29 @@
 {
   "size": "L",
   "kind": "feature",
-  "milestone": {"kind": "new", "slug": "agent-tracker-1"},
-  "project": {"kind": "new", "slug": "agent-tracker", "branch": false},
+  "milestone": {
+    "kind": "new",
+    "slug": "agent-tracker-1"
+  },
+  "project": {
+    "kind": "new",
+    "slug": "agent-tracker",
+    "branch": false
+  },
   "ticket": "cct-83h.1",
   "design": "docs/designs/agent-tracker.md",
   "autoMerge": false,
-  "autoMergeReason": "Owner, 2026-11-14: \"Edit it, you merge\". The milestone PR edits CLAUDE.md (Repair), so the owner merges it; the run never arms auto-merge on it."
+  "autoMergeReason": "Owner, 2026-11-14: \"Edit it, you merge\". The milestone PR edits CLAUDE.md (Repair), so the owner merges it; the run never arms auto-merge on it.",
+  "protectedEdit": {
+    "date": "2026-11-14",
+    "by": "Calvin Dudek",
+    "files": [
+      "facts.md"
+    ],
+    "facts": [
+      "F92"
+    ],
+    "words": "Escape returns keys only (Recommended)",
+    "why": "the Claude Code pane cannot close on a second Escape only (questions.md Q26)"
+  }
 }

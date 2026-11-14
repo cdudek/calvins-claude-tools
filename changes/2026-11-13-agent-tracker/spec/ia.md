@@ -182,7 +182,7 @@ Band (always above the prompt)
 | Pane Repo | session row | Pane Session | forward | J6 | Pane Repo | selected row, scroll |
 | Pane Session | repo line in the header | Pane Repo | lateral | J11 | Pane Session | selected row, scroll |
 | Pane (any page but Home) | Back button | previous pane page | back | every forward move | | the previous page's focused row and scroll |
-| Pane (any page) | Close button, `ctrl+x x`, or Escape at an empty prompt | prompt | up | return to work | | prompt focus and draft |
+| Pane (any page) | Close button or `ctrl+x x` (Escape only returns the keys) | prompt | up | return to work | | prompt focus and draft |
 
 The pane has no raw key handler (the mod API gives Buttons, Tab, Enter and one-character hotkeys only), so every move is a Button: rows are Buttons, Back and Close are Buttons with hotkeys.
 

@@ -428,3 +428,5 @@ The goal:
 Only after approval. One line per change: `YYYY-MM-DD — what changed, and why`.
 
 Verification follows the [local-first contract](https://github.com/cdudek/calvins-claude-tools/blob/main/plugins/cct/skills/sdlc-run/references/local-first.md).
+
+- **2026-11-14, F92:** the owner chose "Escape returns keys only" (decisions.json `protectedEdit`): the engine cannot close a pane on a second Escape only (questions.md Q26). F92 reworded; the pane opens without `closeOnEscape`; re-locked with `verify_gate.py approve`.
