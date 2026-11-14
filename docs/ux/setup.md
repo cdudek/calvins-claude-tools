@@ -26,10 +26,10 @@ The repo ships Claude Code plugins. Until the agent tracker, none had an interfa
 - **Glossary:** none yet; `docs/ux/glossary-proposal.md` collects terms.
 - **Voice and writing rules:** the shared `writing.md`, plus the repo's style: plain words, short sentences, sentence case, no exclamation marks.
 - **Hard rules** that override UX preferences:
-  - **Observe only:** the tracker never writes to a session or the agent (no hidden notes, no automatic continue, no queued decisions).
+  - **Acts only on the owner's press:** the tracker never acts on its own (no hidden notes, no automatic continue, no queued decisions). It writes outside its folder only after the owner presses Clear or Remove worktree, each behind a confirm. It never stops a session, forces a removal or deletes a branch. The skill `git-cleanup-run` acts only on the ids the owner picks in its question. (Owner, 2026-11-14; the ADR `docs/designs/2026-11-14-adr-tracker-acts-on-owner-press.md`.)
   - **Public repo:** no internal names, private repo names, people, URLs or local paths in anything committed (`tests/test_plugin.py`).
   - **Never publish to claude.ai:** pages are local files.
-  - **Cheap model:** every model call pins `haiku`.
+  - **Cheap model:** every model call the mod makes pins `haiku`. The skill's subagents run on `haiku` and only read.
   - **Standalone:** works in a repo without sdlc-run; sdlc-run change folders only add detail.
 - **Exceptions register:** `docs/ux/exceptions.md` (`EX-<n>`, format in `conflicts.md`)
 - **WCAG and EAA scope, one finding per surface:**
@@ -93,14 +93,15 @@ App-wide parts: the band (always present), the pane's breadcrumb, toasts for Cop
 
 ## Safety
 
-- **Never write to:** any Claude Code session, transcript or agent; git, gh or bd state (read only).
+- **Writes only on the owner's press:** the Session page's Clear runs `claude rm` for an ended session and closes its open tasks. Remove worktree runs `git worktree remove` without force from the main checkout. The skill `git-cleanup-run` runs the same two commands from its script, for the ids the owner chose. Both confirm or ask first. Nothing is stopped, forced or branch-deleted.
+- **Never write to:** a running session, a transcript, `git branch -D`, `claude stop`, gh or bd state.
 - **Read only:** `~/.claude/projects/*/*.jsonl`, `claude agents --json`, `git`, `gh`, `bd`.
-- **Writes only against:** `~/.claude/agent-tracker/` (one file per session, `settings.json` for the band view and hidden flag, and the board file from milestone 2).
-- **Allowed outputs:** the clipboard (Copy, `/tracker copy`) and `settings.json` in that folder (the view and the hidden flag). Nothing else leaves the mod.
+- **Writes against:** `~/.claude/agent-tracker/` (one file per session, `settings.json` for the band view, the hidden flag and closed tasks, and the board file), plus the two commands above after a press.
+- **Allowed outputs:** the clipboard (Copy, `/tracker copy`) and the folder above. Nothing else leaves the mod.
 
 ## Flows for this product
 
-Beyond the minimum in `rule-areas.md` (most of which do not apply, since the tracker edits nothing):
+Beyond the minimum in `rule-areas.md` (most of which apply only to Clear and the worktree offer, since the tracker edits nothing else):
 
 - **F1 Answer the session that waits longest** (S2): band → that session named → switch to it.
 - **F2 Read what I asked in a session, in order** (S3): band → Pane → Session → Tasks.
