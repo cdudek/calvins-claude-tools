@@ -11,6 +11,7 @@ import {
   PRS_NOT_SHOWN,
   SEP,
   bandData,
+  homeModel,
   columnsSvg,
   compactLayout,
   detailsLayout,
@@ -166,6 +167,14 @@ describe('compact band, the model', () => {
     const one = [inState(SELF, 'running', 1, 'a', 't', { scan: scan([pr(1)]) }), inState('x', 'running', 1, 'b', 'u')]
     expect(text(compact(one, 200))).toContain('1 PR')
     expect(text(compact(one, 200))).not.toContain('✗')
+  })
+
+  test(`@F54 ${TAG} a repo that is not on GitHub is not a gh failure: no PR segment, no gh line, on the band and in Home (R9)`, () => {
+    const elsewhere = town().map(r => (r.scan ? { ...r, scan: { ...r.scan, ghOk: false, github: false as const, prs: [] } } : r))
+    expect(bandData(snap(elsewhere), SELF, NOW)).toMatchObject({ prs: null, partial: false })
+    expect(homeModel(snap(elsewhere), SELF, NOW, { midnight: 0, clock: () => '' }, null).partial).toBe(false)
+    const missing = town().map(r => (r.scan ? { ...r, scan: { ...r.scan, ghOk: false } } : r)) // gh itself failed: the line stays
+    expect(homeModel(snap(missing), SELF, NOW, { midnight: 0, clock: () => '' }, null).partial).toBe(true)
   })
 
   test(`@F54 ${TAG} no PR segment when gh gave nothing`, () => {

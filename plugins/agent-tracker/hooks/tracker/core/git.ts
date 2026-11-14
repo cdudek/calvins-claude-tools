@@ -60,7 +60,7 @@ export const parsePrs = (json: string): Pr[] | null => {
     }))
 }
 
-export type RepoPrs = { prs: Pr[]; at: number; ghOk: boolean; ageMs: number; hasLive: boolean }
+export type RepoPrs = { prs: Pr[]; at: number; ghOk: boolean; github: boolean; ageMs: number; hasLive: boolean }
 
 // A repo's PR state is the scan with the latest time among its sessions (F69, F78). A live session is a mod
 // session that has not ended: while there is none, the state is the last stored one and the pane says so.
@@ -69,7 +69,7 @@ export const repoPrs = (sessions: SessionRecord[], repoPath: string, now: number
   const latest = inRepo.reduce<Scan | null>((best, s) => (s.scan && (best === null || s.scan.at > best.at) ? s.scan : best), null)
   if (latest === null) return null
   const hasLive = inRepo.some(s => s.source === 'mod' && s.state !== 'ended')
-  return { prs: latest.prs, at: latest.at, ghOk: latest.ghOk, ageMs: Math.max(0, now - latest.at), hasLive }
+  return { prs: latest.prs, at: latest.at, ghOk: latest.ghOk, github: latest.github !== false, ageMs: Math.max(0, now - latest.at), hasLive }
 }
 
 // The line above stored PRs; none while a session of the mod keeps them current.

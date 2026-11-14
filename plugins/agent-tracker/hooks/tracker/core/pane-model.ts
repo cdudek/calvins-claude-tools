@@ -179,7 +179,7 @@ export const homeModel = (snap: Snapshot, selfId: string, now: number, local: Lo
   return {
     loading: snap.at === 0,
     stale: isStale ? staleTop(snap.okAt > 0 ? duration(Math.max(0, now - snap.okAt)) : null) : null,
-    partial: scanned.some(p => !p.ghOk),
+    partial: scanned.some(p => !p.ghOk && p.github), // a repo not on GitHub is not a gh failure (R9)
     withoutTracker: lost > 0 ? withoutTracker(lost) : null,
     updated: updatedWords(duration(Math.max(0, now - snap.at))),
     alone,
@@ -376,9 +376,9 @@ export const repoModel = (snap: Snapshot, path: string, now: number, selfId: str
     path,
     label,
     crumbs: `Home › ${label}`,
-    stored: found === null ? null : prsLine(found),
+    stored: found === null || !found.github ? null : prsLine(found),
     prs,
-    prsNote: !ghOk && found !== null ? PRS_NOT_SHOWN : prs.length === 0 ? NO_PRS : null,
+    prsNote: found !== null && !found.github ? null : !ghOk && found !== null ? PRS_NOT_SHOWN : prs.length === 0 ? NO_PRS : null,
     worktrees,
     worktreesNote: worktrees.length === 0 ? NO_WORKTREES : null,
     ended: inRepo.filter(r => r.state === 'ended').sort((a, b) => endedAt(b) - endedAt(a) || a.sessionId.localeCompare(b.sessionId)).map(r => rowOf(r, 'ended', now, selfId, false)),

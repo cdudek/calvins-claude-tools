@@ -52,7 +52,8 @@ export type SessionRecord = {
     background: { id: string; name: string; since: number }[]
   }
   milestone: { slug: string; sentence: string; features: { n: number; name: string; state: string }[] } | null
-  scan: { at: number; ghOk: boolean; worktrees: { path: string; branch: string | null }[]; prs: Pr[] } | null
+  // `github: false`: the origin is not on github.com, gh was never asked, and no PR line shows (R9).
+  scan: { at: number; ghOk: boolean; github?: false; worktrees: { path: string; branch: string | null }[]; prs: Pr[] } | null
 }
 
 // One row of `claude agents --json`, the 2.1.323 fields the mod reads.

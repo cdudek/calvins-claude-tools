@@ -42,7 +42,7 @@ const prsOf = (sessions: SessionRecord[], now: number): Pick<BandData, 'prs' | '
   let asked = false
   for (const [path, name] of repos) {
     const p = repoPrs(sessions, path, now)
-    if (p === null) continue
+    if (p === null || !p.github) continue // not on GitHub: gh was never asked (R9)
     asked = true
     if (!p.ghOk) continue
     ok = true

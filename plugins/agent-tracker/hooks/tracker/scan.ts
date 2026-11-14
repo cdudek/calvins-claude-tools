@@ -25,7 +25,7 @@ export async function scanPass($: Engine, s: State) {
   try {
     const now = await $.clock.now()
     const worktrees = parseWorktrees((await out($, gitArgv('worktree', 'list', '--porcelain'), r.cwd)) ?? '')
-    // gh only for a github.com origin; any other remote, or none, shows the no-gh line (S2).
+    // gh only for a github.com origin; any other remote, or none, is marked `github: false` and shows no PR line (S2, R9).
     const isGithub = isGithubRemote((await out($, gitArgv('remote', 'get-url', 'origin'), r.cwd)) ?? '')
     const prs = isGithub ? parsePrs((await out($, ['gh', 'pr', 'list', '--state', 'open', '--limit', '100', '--json', GH_FIELDS], r.cwd)) ?? '') : null
     const before = r.scan
@@ -33,7 +33,7 @@ export async function scanPass($: Engine, s: State) {
     const scan: Scan =
       prs !== null
         ? { at: now, ghOk: true, worktrees, prs }
-        : { at: before?.at ?? now, ghOk: false, worktrees: worktrees.length ? worktrees : (before?.worktrees ?? []), prs: before?.prs ?? [] }
+        : { at: before?.at ?? now, ghOk: false, ...(isGithub ? {} : { github: false as const }), worktrees: worktrees.length ? worktrees : (before?.worktrees ?? []), prs: before?.prs ?? [] }
     await saveOwn($, s, m => ({ ...m, scan }))
   } finally {
     s.isScanning = false

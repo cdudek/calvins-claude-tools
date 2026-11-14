@@ -112,14 +112,14 @@ describe('git and gh scans', () => {
     expect(own(w).scan).toMatchObject({ ghOk: true, prs: EXPECTED_PRS })
   })
 
-  test(`@F54 ${TAG} a remote that is not GitHub: gh never runs and the no-gh line shows (S2)`, async ($, on) => {
+  test(`@F54 ${TAG} a remote that is not GitHub: gh never runs and the scan says so (S2, R9)`, async ($, on) => {
     const w = world(on, { now: NOW })
     scripted(w)
     w.git[w.cwd] = { commonDir: `${w.cwd}/.git`, branch: 'main', remote: 'https://gitlab.example.test/acme/repo.git' }
     await start($, w)
     await w.clock.advance(1000)
     expect(ghCalls(w).length).toBe(0)
-    expect(own(w).scan).toEqual({ at: NOW, ghOk: false, worktrees: EXPECTED_WORKTREES, prs: [] })
+    expect(own(w).scan).toEqual({ at: NOW, ghOk: false, github: false, worktrees: EXPECTED_WORKTREES, prs: [] })
     // Every git call carries the guard; a remote that names github.com in its path only is not GitHub.
     expect(w.procs.filter(p => p.argv[0] === 'git').every(p => p.argv.slice(1, 5).join(' ') === '-c core.fsmonitor=false -c core.hooksPath=/dev/null')).toBe(true)
     for (const url of ['https://github.com/a/b', 'git@github.com:a/b.git', 'ssh://git@github.com/a/b']) expect(isGithubRemote(url)).toBe(true)
