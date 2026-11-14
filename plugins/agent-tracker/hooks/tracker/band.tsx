@@ -4,8 +4,9 @@
 import { atom, read } from 'claude-code'
 import type { EngineInterface, On } from 'claude-code'
 
-import { BUTTON_LABELS, COPIED, SEP, bandData, columnsAlt, columnsSvg, compactLayout, copyFailed, detailsLayout, stateMarkdown } from './core'
+import { BAND_REPLY, BUTTON_LABELS, COPIED, bandData, columnsAlt, columnsSvg, compactLayout, copyFailed, detailsLayout, stateMarkdown } from './core'
 import type { Chunk, Column } from './core'
+import { ensureCollector } from './collector'
 import { openPane, readSettings, startUi, writeSettings } from './store'
 import type { State } from './store'
 import type { Snapshot } from './types'
@@ -22,7 +23,9 @@ async function current($: Engine) {
 // Copy the state as Markdown. The toast says whether it worked (F36, F86).
 async function copyState($: Engine, surface: Surface) {
   const done = await $.ui.copy({ text: stateMarkdown(await current($)), ...(surface === undefined ? {} : { surface }) })
-  $.ui.toast(done.isCopied ? COPIED : copyFailed(done.reason))
+  const said = done.isCopied ? COPIED : copyFailed(done.reason)
+  $.ui.toast(said)
+  return said
 }
 
 async function toggleView($: Engine, s: State) {
@@ -34,10 +37,10 @@ export async function bandCommand($: Engine, s: State, args: string): Promise<st
   const [first, second, ...rest] = args.trim().toLowerCase().split(/\s+/).filter(Boolean)
   if (rest.length > 0 || first === undefined) return null
   if (second === undefined && (first === 'details' || first === 'compact')) await writeSettings($, s, { view: first })
-  else if (second === undefined && first === 'copy') await copyState($, undefined)
+  else if (second === undefined && first === 'copy') return copyState($, undefined)
   else if (first === 'band' && (second === 'on' || second === 'off')) await writeSettings($, s, { bandHidden: second === 'off' })
   else return null
-  return ''
+  return second === undefined ? BAND_REPLY[first as 'details' | 'compact'] : BAND_REPLY[second === 'off' ? 'hidden' : 'shown']
 }
 
 export const registerBand = (on: On, s: State) => {
@@ -49,6 +52,7 @@ export const registerBand = (on: On, s: State) => {
   on('ui.render', { component: 'AbovePrompt' }, async ($, e, next) => {
     if (e.props.hasSurvey) return next(e)
     await startUi($, s)
+    await ensureCollector($, s)
     const settings = await readSettings($, s)
     if (settings.bandHidden) return next(e)
     // Other mods share this slot: draw theirs below ours instead of replacing it.
@@ -63,7 +67,7 @@ export const registerBand = (on: On, s: State) => {
     const width = isTerminal ? columns : undefined
     const stack = (mine: NonNullable<typeof below>) => (below ? <Box flexDirection="column">{mine}{below}</Box> : mine)
     const view = () => toggleView($, s)
-    const pane = <Button key="pane" plain label={BUTTON_LABELS.pane} hotkey="p" onPress={() => openPane($, s)} />
+    const pane = <Button key="pane" plain label={BUTTON_LABELS.pane} onPress={() => openPane($, s)} />
 
     if (settings.view !== 'details') {
       const chunk = (c: Chunk, i: number) => (
@@ -73,15 +77,16 @@ export const registerBand = (on: On, s: State) => {
       )
       return stack(
         <Box flexDirection="row" alignItems="center" width={width}>
-          {compactLayout(data, columns).segments.map((seg, i) => (
+          {compactLayout(data, columns).segments.map(seg => (
             <Box key={seg.id} flexDirection="row">
-              {i > 0 && <Text dimColor>{SEP}</Text>}
               {seg.chunks.map(chunk)}
             </Box>
           ))}
-          <Box flexGrow={1} />
-          {pane}
-          <Button key="details" plain label={BUTTON_LABELS.details} hotkey="d" onPress={view} />
+          <Box flexGrow={1} width={2} />
+          <Box flexDirection="row" gap={2}>
+            {pane}
+            <Button key="details" plain label={BUTTON_LABELS.details} onPress={view} />
+          </Box>
         </Box>,
       )
     }
@@ -89,7 +94,7 @@ export const registerBand = (on: On, s: State) => {
     const d = detailsLayout(data, columns)
     const cols = d.rows.flat()
     const cell = (c: Column) => (
-      <Box key={c.key} flexDirection="column" {...(isTerminal ? { width: d.colWidth } : { flexGrow: 1 })}>
+      <Box key={c.key} flexDirection="column" width={d.colWidth}>
         <Text dimColor>{c.label}</Text>
         <Text bold dimColor={c.tone === 'dim' && data.stale !== null}>
           {c.count}
@@ -109,7 +114,7 @@ export const registerBand = (on: On, s: State) => {
           </Text>
         )}
         {d.rows.map((r, i) => (
-          <Box key={`row-${i}`} flexDirection="row" gap={2}>
+          <Box key={`row-${i}`} flexDirection="row">
             {r.map(cell)}
           </Box>
         ))}
@@ -126,12 +131,14 @@ export const registerBand = (on: On, s: State) => {
       <Box flexDirection="column" width={width} gap={e.surface === 'desktop' ? 1 : 0}>
         <Box flexDirection="row" alignItems="center">
           <Text wrap="truncate-end">{d.header[0]}</Text>
-          <Box flexGrow={1} />
-          <Button key="copy" plain label={BUTTON_LABELS.copy} hotkey="c" onPress={() => copyState($, e.surface)} />
-          {pane}
-          <Button key="details" plain label={BUTTON_LABELS.compact} hotkey="d" onPress={view} />
+          <Box flexGrow={1} width={2} />
+          <Box flexDirection="row" gap={2}>
+            <Button key="copy" plain label={BUTTON_LABELS.copy} onPress={() => void copyState($, e.surface)} />
+            {pane}
+            <Button key="details" plain label={BUTTON_LABELS.compact} onPress={view} />
+          </Box>
         </Box>
-        {d.header[1] !== undefined && <Text>{d.header[1]}</Text>}
+        {d.header[1] !== undefined && <Text wrap="truncate-end">{d.header[1]}</Text>}
         {d.note !== null && <Text dimColor>{d.note}</Text>}
         {cols.length > 0 && table}
       </Box>,

@@ -8,6 +8,8 @@ Components: everything is built from Claude Code's mod components (`Box`, `Text`
 
 ## Band, compact
 
+Superseded 2026-11-14: the band follows the owner's mockup (agent-tracker-designs.html)
+
 ### Purpose
 
 Count what needs the owner in one line and name the session that has waited longest (J1, J5, J7, J10).
@@ -85,9 +87,11 @@ One drop order at every width, applied until the line fits `bodyColumns`: 1 the 
 |---|---|---|---|
 | Row | Box (row, gap 2) | have | as the ponytail band's compact row |
 | Segments | Text | have | |
-| Buttons | Button, plain, hotkey | have | |
+| Buttons | Button, plain, hotkey | have | Superseded 2026-11-14: no hotkeys (owner) |
 
 ## Band, details
+
+Superseded 2026-11-14: the band follows the owner's mockup (agent-tracker-designs.html)
 
 ### Purpose
 

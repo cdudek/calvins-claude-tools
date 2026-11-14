@@ -3,12 +3,13 @@
 import { atom, read } from 'claude-code'
 import type { EngineInterface, On } from 'claude-code'
 
-import { COMMAND_HELP, PANE_ID, RESUME_COPIED, homeModel, matchRepo, matchSession, repoModel, repoNotFound, resumeFailed, sessionModel, sessionNotFound } from './core'
+import { COMMAND_HELP, PANE_ID, PANE_OPENED, RESUME_COPIED, homeModel, matchRepo, matchSession, repoModel, repoNotFound, resumeFailed, sessionModel, sessionNotFound } from './core'
 import type { Page } from './core'
 import type { Actions } from './pane/chrome'
 import { homeView } from './pane/home'
 import { missingView, repoView } from './pane/repo'
 import { sessionView } from './pane/session'
+import { ensureCollector } from './collector'
 import { newPane, openPane, startUi } from './store'
 import type { State } from './store'
 import type { Snapshot } from './types'
@@ -77,7 +78,7 @@ export const registerPane = (on: On, s: State) => {
     else if (kind === 'session') await openFound($, s, text)
     else if (kind === 'repo') await openFoundRepo($, s, text)
     else return { text: COMMAND_HELP }
-    return { text: '' }
+    return { text: PANE_OPENED }
   })
 
   // The ring moves by Tab, the arrows or a click: remember where, so a redraw and Back keep it (Q27).
@@ -88,6 +89,7 @@ export const registerPane = (on: On, s: State) => {
 
   on('ui.render', { component: 'Pane', requestId: 'tracker' }, async ($, e) => {
     await startUi($, s)
+    await ensureCollector($, s)
     const snap = await read($, snapshot)
     const now = await $.clock.now()
     const selfId = await $.session.id()

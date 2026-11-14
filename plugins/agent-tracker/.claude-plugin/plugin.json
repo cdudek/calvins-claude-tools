@@ -1,6 +1,6 @@
 {
   "name": "agent-tracker",
-  "version": "0.1.0",
+  "version": "0.1.1",
   "description": "A Claude Code mod that draws a band above every prompt and a /tracker pane: each session's repo, work and state, and which sessions need you.",
   "author": {
     "name": "Calvin Dudek"

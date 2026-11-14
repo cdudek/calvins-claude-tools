@@ -3,13 +3,11 @@ import type { On } from 'claude-code'
 import type { Engine } from 'claude-code/testing'
 
 import {
-  ALONE,
   BUTTONS_COMPACT,
   BUTTONS_DETAILS,
   COPIED,
   LOADING,
   PRS_NOT_SHOWN,
-  SEP,
   bandData,
   homeModel,
   columnsSvg,
@@ -23,12 +21,12 @@ import type { CompactLayout, Details } from '../hooks/tracker/core'
 import type { SessionRecord, Settings, Snapshot } from '../hooks/tracker/types'
 import { AGENTS_JSON, ID, T0 } from './fixtures/agents'
 import { MIN, MILESTONE, NOW, PRS, SELF, inState, pr, rec, scan, snap, town, townSelfWaiting } from './fixtures/band'
-import { DIR, start, world } from './fixtures/world'
+import { DIR, settle, start, world } from './fixtures/world'
 import type { World } from './fixtures/world'
 
 const TAG = '@2026-11-13-agent-tracker'
 
-const text = (l: CompactLayout) => l.segments.map(s => s.chunks.map(c => c.text).join('')).join(SEP)
+const text = (l: CompactLayout) => l.segments.map(s => s.chunks.map(c => c.text).join('')).join('')
 const compact = (sessions: SessionRecord[], columns: number, extra: Partial<Snapshot> = {}) => compactLayout(bandData(snap(sessions, extra), SELF, NOW), columns)
 const details = (sessions: SessionRecord[], columns: number, extra: Partial<Snapshot> = {}) => detailsLayout(bandData(snap(sessions, extra), SELF, NOW), columns)
 const ids = (d: Details) => d.rows.map(r => r.map(c => c.key))
@@ -37,113 +35,114 @@ const col = (d: Details, key: string) => d.rows.flat().find(c => c.key === key)!
 const texts = async (ui: { findAll: (q: object) => Promise<{ text?: string }[]> }) => (await ui.findAll({ type: 'Text' })).map(t => t.text ?? '')
 const row = async (ui: { findAll: (q: object) => Promise<{ text?: string }[]> }) => (await texts(ui)).join('')
 
+// Layout superseded 2026-11-14: the band follows the owner's mockup (agent-tracker-designs.html), work first, no done column,
+// no quick keys, fixed 21-cell columns. The facts of change 2026-11-13-agent-tracker keep their tags; the owner's words win.
 describe('compact band, the model', () => {
-  test(`@F24 ${TAG} segments in order: needs you, running and done, PRs, work, then the buttons; 125 cells at full width`, () => {
+  const seg = (l: CompactLayout, id: string) => l.segments.find(s => s.id === id)!.chunks.map(c => c.text).join('')
+
+  test(`@F24 ${TAG} segments in order: work, needs you, running, PRs, the waiting session, then the buttons; 95 cells at full width`, () => {
     const l = compact(town(), 200)
-    expect(text(l)).toBe('● 2 need you · web-app: fix login 6m │ ◐ 3 running · ✓ 2 done │ 4 PRs · 1 ✗ │ agent-tracker-1 2/4 · goal 14m')
-    expect(l.segments.map(s => s.id)).toEqual(['needs', 'run', 'prs', 'work'])
-    expect(l.width).toBe(125) // the spec's measure: 39 + 25 + 14 + 33 + 17, less the last gap
-    expect(BUTTONS_COMPACT).toBe(17)
+    expect(text(l)).toBe('agent-tracker-1 2/4 goal 14m · ● 2 need you  ◐3  PRs 1✗ 2↓  · fix login waits 6m')
+    expect(l.segments.map(s => s.id)).toEqual(['work', 'needs', 'run', 'prs', 'tail'])
+    expect(l.width).toBe(95) // 80 cells of text and 15 for Pane and Details, 2 apart and 2 after the text
+    expect(BUTTONS_COMPACT).toBe(15)
   })
 
-  test(`@F22 ${TAG} the compact row is the default and its buttons are Pane and Details`, () => {
-    // Words: "◐ 3 running · ✓ 2 done" and "4 PRs · 1 ✗".
-    expect(text(compact(town(), 200))).toContain('◐ 3 running · ✓ 2 done')
-    expect(text(compact(town(), 200))).toContain('4 PRs · 1 ✗')
+  test(`@F22 ${TAG} the compact row is the default; two spaces between the segments`, () => {
+    expect(text(compact(town(), 200))).toContain('● 2 need you  ◐3  PRs 1✗ 2↓  · ')
   })
 
-  test(`@F25 ${TAG} needs you with the oldest waiting session, in the warning colour`, () => {
+  test(`@F25 ${TAG} needs you in the warning colour, then the session waiting longest`, () => {
     const l = compact(town(), 200)
-    expect(l.segments[0]!.chunks[0]).toEqual({ text: '● 2 need you', tone: 'warning' })
-    expect(l.segments[0]!.chunks[1]).toEqual({ text: ' · web-app: fix login 6m' }) // the oldest, in the normal colour
+    expect(l.segments.find(s => s.id === 'needs')!.chunks).toEqual([{ text: ' · ' }, { text: '● 2 need you', tone: 'warning' }])
+    expect(seg(l, 'tail')).toBe('  · fix login waits 6m') // the oldest wait
   })
 
   test(`@F76 ${TAG} one needs you`, () => {
     const one = town().map(r => (r.sessionId === 'docs-1' ? { ...r, state: 'done' as const } : r))
-    expect(text(compact(one, 200)).startsWith('● 1 needs you · web-app: fix login 6m')).toBe(true)
+    expect(seg(compact(one, 200), 'needs')).toBe(' · ● 1 needs you')
   })
 
-  test(`@F77 ${TAG} zero need you, dim`, () => {
+  test(`@F77 ${TAG} nothing waiting: all clear, dim, and no waiting session`, () => {
     const quiet = town().filter(r => r.state !== 'needs-you')
     const l = compact(quiet, 200)
-    expect(l.segments[0]!.chunks).toEqual([{ text: '0 need you', tone: 'dim' }])
-    expect(text(l).startsWith('0 need you │ ◐ 3 running')).toBe(true)
+    expect(l.segments.find(s => s.id === 'needs')!.chunks.at(-1)).toEqual({ text: '○ all clear', tone: 'dim' })
+    expect(text(l)).toBe('agent-tracker-1 2/4 goal 14m · ○ all clear  ◐3  PRs 1✗ 2↓')
+    // With no work segment and no gh the line goes quiet: "○ all clear  ◐3".
+    expect(text(compact([inState('x', 'running', 1, 'api', 'job')].map(r => ({ ...r, sessionId: 'other' })), 200))).toBe('○ all clear  ◐1')
   })
 
-  test(`@F26 ${TAG} this session names itself, then the oldest other one`, () => {
-    const l = compact(townSelfWaiting(), 200)
-    expect(l.segments[0]!.chunks.map(c => c.text).join('')).toBe('● 2 need you · this session 1m · web-app 6m')
-    // Only this session waits.
+  test(`${TAG} a wait with no known start reads "waiting", with a start "waits 6m"`, () => {
+    // An unknown wait sorts after every known one, so it is the oldest only when it is the only one.
+    const unknown = town().filter(r => r.sessionId !== 'docs-1').map(r => (r.sessionId === 'web-1' ? { ...r, engine: { since: null } } : r))
+    expect(seg(compact(unknown, 200), 'tail')).toBe('  · fix login waiting')
+    expect(seg(compact(town(), 200), 'tail')).toBe('  · fix login waits 6m')
+    expect(col(details(unknown, 200), 'needs').line).toBe('fix login · waiting') // the reason stays, the age goes
+  })
+
+  test(`@F26 ${TAG} the waiting session is named, "this session" when it is this one`, () => {
+    expect(seg(compact(townSelfWaiting(), 200), 'tail')).toBe('  · fix login waits 6m') // web-app waits longer than this session
     const mine = town().map(r => (r.sessionId === SELF ? { ...r, state: 'needs-you' as const, engine: { since: NOW - MIN } } : r)).filter(r => r.sessionId === SELF || r.state !== 'needs-you')
-    expect(text(compact(mine, 200)).startsWith('● 1 needs you · this session 1m')).toBe(true)
+    expect(seg(compact(mine, 200), 'tail')).toBe('  · this session waits 1m')
+    expect(seg(compact(mine, 200), 'needs')).toBe(' · ● 1 needs you')
   })
 
   test(`@F27 ${TAG} work segment with and without sdlc-run`, () => {
-    expect(compact(town(), 200).segments.at(-1)!.chunks.map(c => c.text).join('')).toBe('agent-tracker-1 2/4 · goal 14m')
+    expect(seg(compact(town(), 200), 'work')).toBe('agent-tracker-1 2/4 goal 14m')
     const plain = town().map(r => (r.sessionId === SELF ? inState(SELF, 'running', 20, 'web-app', 'fix login redirect') : r))
-    expect(compact(plain, 200).segments.at(-1)!.chunks.map(c => c.text).join('')).toBe('web-app · fix login redirect')
+    expect(seg(compact(plain, 200), 'work')).toBe('web-app · fix login redirect')
     // A goal without sdlc-run still shows its age; a done session has none (F11).
     const goal = town().map(r => (r.sessionId === SELF ? inState(SELF, 'running', 20, 'web-app', 'fix login redirect', { runs: { goalSince: NOW - 14 * MIN, subagents: [], background: [] } }) : r))
-    expect(compact(goal, 200).segments.at(-1)!.chunks.map(c => c.text).join('')).toBe('web-app · fix login redirect · goal 14m')
+    expect(seg(compact(goal, 200), 'work')).toBe('web-app · fix login redirect goal 14m')
     const finished = goal.map(r => (r.sessionId === SELF ? { ...r, state: 'done' as const } : r))
-    expect(compact(finished, 200).segments.at(-1)!.chunks.map(c => c.text).join('')).toBe('web-app · fix login redirect')
+    expect(seg(compact(finished, 200), 'work')).toBe('web-app · fix login redirect')
     // No title yet: the folder name and "untitled session".
-    expect(compact([rec(SELF, { cwd: '/work/some-folder' })], 200).segments.at(-1)!.chunks.map(c => c.text).join('')).toBe('some-folder · untitled session')
+    expect(seg(compact([rec(SELF, { cwd: '/work/some-folder' })], 200), 'work')).toBe('some-folder · untitled session')
   })
 
-  test(`@F28 ${TAG} drop order at 115, 75 and 50 columns; below 40 bodyColumns`, () => {
-    // 1 goal age: 125 -> 114, fits 115.
-    const w115 = compact(town(), 115)
-    expect(text(w115)).toBe('● 2 need you · web-app: fix login 6m │ ◐ 3 running · ✓ 2 done │ 4 PRs · 1 ✗ │ agent-tracker-1 2/4')
-    expect(w115.width).toBe(114)
-    // With "this session" (needs you 46 cells) the Work segment drops too: 99.
-    const mine = compact(townSelfWaiting(), 115)
-    expect(mine.width).toBe(99)
-    expect(mine.segments.map(s => s.id)).toEqual(['needs', 'run', 'prs'])
-    // Steps 1 to 3 together are 79 cells; the words go before the PR segment.
-    const w79 = compact(town(), 79)
-    expect(text(w79)).toBe('● 2 need you · web-app: fix login 6m │ ◐ 3 · ✓ 2 │ 4 PRs · 1 ✗')
-    expect(w79.width).toBe(79)
-    expect(text(compact(town(), 92))).toContain('◐ 3 running · ✓ 2 done') // words stay while the row fits (goal and work gone: 92)
-    // 4 the PR segment: 65, fits 75.
-    const w75 = compact(town(), 75)
-    expect(text(w75)).toBe('● 2 need you · web-app: fix login 6m │ ◐ 3 · ✓ 2')
-    expect(w75.width).toBe(65)
-    // 5 the waiting session's title, keeping its repo and wait: 54.
-    const w54 = compact(town(), 54)
-    expect(text(w54)).toBe('● 2 need you · web-app 6m │ ◐ 3 · ✓ 2')
-    expect(w54.width).toBe(54)
-    // Nothing else fits at 50: the counts go before the waiting session (questions.md Q16).
+  test(`@F28 ${TAG} drop order: the waiting session, PRs, the goal age, the work shortened; below 40 columns the work and the running count`, () => {
+    const w100 = compact(town(), 100)
+    expect(w100.width).toBe(95)
+    expect(text(w100)).toBe('agent-tracker-1 2/4 goal 14m · ● 2 need you  ◐3  PRs 1✗ 2↓  · fix login waits 6m')
+    // 1 the waiting session: 73.
+    const w90 = compact(town(), 94)
+    expect(text(w90)).toBe('agent-tracker-1 2/4 goal 14m · ● 2 need you  ◐3  PRs 1✗ 2↓')
+    expect(w90.width).toBe(73)
+    // 2 PRs: 62.
+    const w70 = compact(town(), 72)
+    expect(text(w70)).toBe('agent-tracker-1 2/4 goal 14m · ● 2 need you  ◐3')
+    expect(w70.width).toBe(62)
+    // 3 the goal age: 53.
+    const w60 = compact(town(), 61)
+    expect(text(w60)).toBe('agent-tracker-1 2/4 · ● 2 need you  ◐3')
+    expect(w60.width).toBe(53)
+    // 4 the work shortened: 37.
     const w50 = compact(town(), 50)
-    expect(text(w50)).toBe('● 2 need you · web-app 6m')
-    expect(w50.width).toBe(42)
-    // Below 40 only the count and the buttons stay.
-    const w39 = compact(town(), 39)
-    expect(text(w39)).toBe('● 2 need you')
-    expect(w39.width).toBe(12 + BUTTONS_COMPACT)
-    expect(text(compact(town(), 20))).toBe('● 2 need you')
+    expect(text(w50)).toBe('2/4 · ● 2 need you  ◐3')
+    expect(w50.width).toBe(37)
+    // Below 40 columns only the count and the buttons stay: 27.
+    expect(text(compact(town(), 39))).toBe('● 2 need you')
+    expect(compact(town(), 30).width).toBe(27)
     // The count and the buttons never drop, at any width.
-    for (const columns of [10, 20, 39, 40, 50, 54, 75, 79, 115, 200]) expect(text(compact(town(), columns)).startsWith('● 2 need you')).toBe(true)
+    for (const columns of [10, 20, 39, 40, 50, 54, 75, 79, 115, 200]) expect(text(compact(town(), columns))).toContain('● 2 need you')
+    // Without sdlc-run the work shortens to the repo.
+    const plain = town().map(r => (r.sessionId === SELF ? inState(SELF, 'running', 20, 'web-app', 'fix login redirect') : r))
+    expect(text(compact(plain, 42))).toBe('web-app · ● 2 need you  ◐3')
   })
 
   test(`@F31 ${TAG} running count is the running sessions of the list`, () => {
     // Known values: 3 busy or working, 2 waiting, 2 idle.
-    const l = compact(town(), 200)
-    expect(l.segments.find(s => s.id === 'run')!.chunks[0]!.text).toBe('◐ 3 running')
+    expect(seg(compact(town(), 200), 'run')).toBe('  ◐3')
     // A history record never counts, and neither does an ended session.
     const history = [...town(), rec('old-1', { source: 'transcript', state: 'running' }), rec('old-2', { state: 'ended' })]
-    expect(compact(history, 200).segments.find(s => s.id === 'run')!.chunks[0]!.text).toBe('◐ 3 running')
+    expect(seg(compact(history, 200), 'run')).toBe('  ◐3')
   })
 
-  test(`@F32 ${TAG} alone note replaces running and PRs`, () => {
+  test(`@F32 ${TAG} no alone note any more: a lone session reads all clear, and the details line counts the live sessions`, () => {
     const alone = [inState(SELF, 'running', 20, 'platform-tools-suite', 'build the band', { scan: scan(PRS), milestone: MILESTONE })]
-    expect(text(compact(alone, 200))).toBe(`0 need you │ ${ALONE} │ agent-tracker-1 2/4`)
-    // This session may still wait, and the work segment stays.
-    const waiting = [{ ...alone[0]!, state: 'needs-you' as const, engine: { since: NOW - MIN } }]
-    expect(text(compact(waiting, 200))).toBe(`● 1 needs you · this session 1m │ ${ALONE} │ agent-tracker-1 2/4`)
-    expect(compact(alone, 200).segments[1]!.chunks[0]!.tone).toBe('dim')
-    // Another live session: the note is gone.
-    expect(text(compact([...alone, inState('x', 'running', 1, 'api', 'job')], 200))).not.toContain(ALONE)
+    expect(text(compact(alone, 200))).toBe('agent-tracker-1 2/4 · ○ all clear  ◐1  PRs 1✗ 2↓')
+    expect(details(alone, 200).header[1]).toBe('1 live')
+    expect(details([...alone, inState('x', 'running', 1, 'api', 'job')], 200).header[1]).toBe('2 live')
   })
 
   test(`@F78 ${TAG} PR count over repos with a session in 7 days, each from its latest scan`, () => {
@@ -162,11 +161,23 @@ describe('compact band, the model', () => {
     expect(merged.some(r => r.sessionId === 'old-1')).toBe(false)
     const d = bandData(snap(merged), SELF, NOW)
     expect(d.prs).toMatchObject({ open: 4, failing: 1 }) // platform-tools-suite 1 + api 3
-    expect(text(compactLayout(d, 200))).toContain('4 PRs · 1 ✗')
-    // No failing: no "✗". One PR: singular.
+    expect(seg(compactLayout(d, 200), 'prs')).toBe('  PRs 1✗')
+    // Nothing failing or mergeable: the open count. Failing and mergeable: only those.
     const one = [inState(SELF, 'running', 1, 'a', 't', { scan: scan([pr(1)]) }), inState('x', 'running', 1, 'b', 'u')]
-    expect(text(compact(one, 200))).toContain('1 PR')
+    expect(seg(compact(one, 200), 'prs')).toBe('  PRs 1')
     expect(text(compact(one, 200))).not.toContain('✗')
+    expect(seg(compact(town(), 200), 'prs')).toBe('  PRs 1✗ 2↓')
+    expect(seg(compact(town().map(r => (r.scan ? { ...r, scan: scan([pr(1, { mergeable: 'mergeable' })]) } : r)), 200), 'prs')).toBe('  PRs 1↓') // only the parts above 0
+  })
+
+  test(`${TAG} thousands of transcripts in a week still fit the 4 MiB state value, and this session and the mod's sessions stay`, () => {
+    const history = Array.from({ length: 3000 }, (_, i) => rec(`t${i}`, { source: 'transcript', state: 'done', title: 'x'.repeat(2000), lastActivityAt: NOW - i * 1000, engine: { since: null, status: 'idle' } }))
+    const files = [rec(SELF, { title: 'mine' }), rec('other-mod', { title: 'theirs' })]
+    const merged = mergeSessions({ files, transcripts: history, agents: null, now: NOW, selfId: SELF })
+    expect(JSON.stringify(merged).length).toBeLessThan(4 * 1024 * 1024)
+    expect(merged.map(r => r.sessionId)).toEqual(expect.arrayContaining([SELF, 'other-mod', 't0']))
+    expect(merged.some(r => r.sessionId === 't2999')).toBe(false) // the oldest history goes first
+    expect(merged.length).toBeLessThan(3002)
   })
 
   test(`@F54 ${TAG} a repo that is not on GitHub is not a gh failure: no PR segment, no gh line, on the band and in Home (R9)`, () => {
@@ -179,11 +190,11 @@ describe('compact band, the model', () => {
 
   test(`@F54 ${TAG} no PR segment when gh gave nothing`, () => {
     const noGh = town().map(r => (r.scan ? { ...r, scan: { ...r.scan, ghOk: false } } : r))
-    expect(compact(noGh, 200).segments.map(s => s.id)).toEqual(['needs', 'run', 'work'])
+    expect(compact(noGh, 200).segments.map(s => s.id)).toEqual(['work', 'needs', 'run', 'tail'])
     expect(bandData(snap(noGh), SELF, NOW).partial).toBe(true)
     // Never scanned: no segment either, and nothing is "partial".
     const never = town().map(r => ({ ...r, scan: null }))
-    expect(compact(never, 200).segments.map(s => s.id)).toEqual(['needs', 'run', 'work'])
+    expect(compact(never, 200).segments.map(s => s.id)).toEqual(['work', 'needs', 'run', 'tail'])
     expect(bandData(snap(never), SELF, NOW).partial).toBe(false)
   })
 
@@ -219,9 +230,9 @@ describe('compact band, the model', () => {
     expect([duration(0), duration(59_000), duration(6 * MIN), duration(59 * MIN), duration(130 * MIN), duration(2 * 60 * MIN), duration(3 * 24 * 60 * MIN + 5 * MIN)]).toEqual(['<1m', '<1m', '6m', '59m', '2h 10m', '2h', '3d'])
     // The band writes durations in this format.
     const long = town().map(r => (r.sessionId === 'web-1' ? { ...r, engine: { since: NOW - 130 * MIN } } : r))
-    expect(text(compact(long, 200))).toContain('web-app: fix login 2h 10m')
+    expect(text(compact(long, 200))).toContain('fix login waits 2h 10m')
     const days = town().map(r => (r.sessionId === 'web-1' ? { ...r, engine: { since: NOW - 3 * 24 * 60 * MIN } } : r))
-    expect(text(compact(days, 200))).toContain('web-app: fix login 3d')
+    expect(text(compact(days, 200))).toContain('fix login waits 3d')
   })
 })
 
@@ -231,90 +242,96 @@ describe('details view, the model', () => {
   const plain = (extra: Partial<SessionRecord> = {}) =>
     town().map(r => (r.sessionId === SELF ? inState(SELF, 'running', 20, 'web-app', 'fix login redirect', { branch: 'feat/login', ...extra }) : r))
 
-  test(`@F33 ${TAG} details header in both forms, branch left out when it holds the slug`, () => {
-    // The slug is in the branch name: left out.
-    expect(details(branch('milestone/agent-tracker-1'), 200).header[0]).toBe('platform-tools-suite · agent-tracker-1 · 2 of 4 features complete')
-    // Any other branch follows the progress.
-    expect(details(branch('feat/band'), 200).header[0]).toBe('platform-tools-suite · agent-tracker-1 · 2 of 4 features complete · feat/band')
+  test(`@F33 ${TAG} first line in both forms: repo, project, the feature being built and its progress; else repo, title, branch`, () => {
+    // The branch is not shown in an sdlc-run repo.
+    expect(details(branch('milestone/agent-tracker-1'), 200).header[0]).toBe('platform-tools-suite · agent-tracker-1 · band ◐ 2/4')
+    expect(details(branch('feat/band'), 200).header[0]).toBe('platform-tools-suite · agent-tracker-1 · band ◐ 2/4')
     // Without sdlc-run: the title and the branch.
     expect(details(plain(), 200).header[0]).toBe('web-app · fix login redirect · feat/login')
     // Fallbacks: no title, detached HEAD.
     expect(details(plain({ title: null, branch: null }), 200).header[0]).toBe('web-app · untitled session · detached HEAD')
+    // Every feature complete: the progress alone.
+    const finished = branch(null, { milestone: { ...MILESTONE, features: MILESTONE.features.map(f => ({ ...f, state: 'done abc1234' })) } })
+    expect(details(finished, 200).header[0]).toBe('platform-tools-suite · agent-tracker-1 · ◐ 4/4')
   })
 
-  test(`@F34 ${TAG} what runs, zero parts hidden, second line when full`, () => {
+  test(`@F34 ${TAG} second line: what runs, then the other sessions that need you and the live count; each part only when there is one`, () => {
     const runs = (goal: number | null, subagents: number, background: number) =>
       plain({ runs: { goalSince: goal === null ? null : NOW - goal * MIN, subagents: Array.from({ length: subagents }, (_, i) => ({ id: `s${i}`, name: 'x', status: 'running' })), background: Array.from({ length: background }, (_, i) => ({ id: `b${i}`, name: 'x', since: NOW })) } })
-    // Wide: one line. Full header and runs would not fit 100 cells with the buttons: a second line.
-    const all = details(runs(14, 2, 1), 100)
-    expect(all.header).toEqual(['web-app · fix login redirect · feat/login', 'goal 14m · 2 subagents · 1 background session'])
-    expect(details(runs(14, 2, 1), 160).header).toEqual(['web-app · fix login redirect · feat/login · goal 14m · 2 subagents · 1 background session'])
+    expect(details(runs(14, 2, 1), 200).header).toEqual(['web-app · fix login redirect · feat/login', '/goal running 14m · 2 subagents · 1 background session · ● 2 need you elsewhere · 7 live'])
     // Each part only when above 0, and singular at 1.
-    expect(details(runs(14, 0, 0), 100).header).toEqual(['web-app · fix login redirect · feat/login · goal 14m'])
-    expect(details(runs(null, 1, 0), 100).header).toEqual(['web-app · fix login redirect · feat/login · 1 subagent'])
-    expect(details(runs(null, 0, 2), 100).header).toEqual(['web-app · fix login redirect · feat/login · 2 background sessions'])
-    expect(details(runs(null, 0, 0), 100).header).toEqual(['web-app · fix login redirect · feat/login'])
+    expect(details(runs(null, 1, 0), 200).header[1]).toBe('1 subagent · ● 2 need you elsewhere · 7 live')
+    expect(details(runs(null, 0, 2), 200).header[1]).toBe('2 background sessions · ● 2 need you elsewhere · 7 live')
+    expect(details(runs(null, 0, 0), 200).header[1]).toBe('● 2 need you elsewhere · 7 live')
+    // This session waiting is not "elsewhere".
+    const mine = plain().map(r => (r.sessionId === SELF ? { ...r, state: 'needs-you' as const } : r)).filter(r => r.state !== 'needs-you' || r.sessionId === SELF)
+    expect(details(mine, 200).header[1]).toBe('5 live')
+    // A narrow line gives up its last parts rather than wrap.
+    expect(details(runs(14, 2, 1), 60).header[1]).toBe('/goal running 14m · 2 subagents · 1 background session')
   })
 
-  test(`@F84 ${TAG} header cut order at 80 columns`, () => {
-    const sdlc = (b: string) => branch(b)
-    const wide = 'platform-tools-suite · agent-tracker-1 · 2 of 4 features complete · feat/band'
-    expect(details(sdlc('feat/band'), 200).header[0]).toBe(wide)
-    // Cut 1: the branch. The full header and the 24 button cells are 101; without the branch, 89.
-    expect(details(sdlc('feat/band'), 101).header[0]).toBe(wide)
-    expect(details(sdlc('feat/band'), 100).header[0]).toBe('platform-tools-suite · agent-tracker-1 · 2 of 4 features complete')
-    expect(details(sdlc('feat/band'), 89).header[0]).toBe('platform-tools-suite · agent-tracker-1 · 2 of 4 features complete')
-    // Then "2 of 4 features complete" shortens: at 80 columns, the case the fact names.
-    expect(details(sdlc('feat/band'), 88).header[0]).toBe('platform-tools-suite · agent-tracker-1 · 2/4 complete')
-    expect(details(sdlc('feat/band'), 80).header[0]).toBe('platform-tools-suite · agent-tracker-1 · 2/4 complete')
-    expect(details(sdlc('feat/band'), 77).header[0]).toBe('platform-tools-suite · agent-tracker-1 · 2/4 complete')
+  test(`@F84 ${TAG} first line cut order`, () => {
+    const sdlc = () => branch('feat/band')
+    const full = 'platform-tools-suite · agent-tracker-1 · band ◐ 2/4'
+    expect(details(sdlc(), 200).header[0]).toBe(full)
+    // The full line and the 21 button cells are 72.
+    expect(details(sdlc(), 72).header[0]).toBe(full)
+    // Cut 1: the feature being built.
+    expect(details(sdlc(), 71).header[0]).toBe('platform-tools-suite · agent-tracker-1 · ◐ 2/4')
+    expect(details(sdlc(), 67).header[0]).toBe('platform-tools-suite · agent-tracker-1 · ◐ 2/4')
     // Last the milestone name.
-    expect(details(sdlc('feat/band'), 76).header[0]).toBe('platform-tools-suite · 2/4 complete')
-    expect(details(sdlc('feat/band'), 59).header[0]).toBe('platform-tools-suite · 2/4 complete')
-    // Without sdlc-run: branch, then title.
-    expect(details(plain(), 65).header[0]).toBe('web-app · fix login redirect · feat/login')
-    expect(details(plain(), 64).header[0]).toBe('web-app · fix login redirect')
-    expect(details(plain(), 52).header[0]).toBe('web-app · fix login redirect')
-    expect(details(plain(), 51).header[0]).toBe('web-app')
-    // What runs stays on its own line.
-    const goal = plain({ runs: { goalSince: NOW - 14 * MIN, subagents: [], background: [] } })
-    expect(details(goal, 60).header).toEqual(['web-app · fix login redirect', 'goal 14m'])
-    expect(BUTTONS_DETAILS).toBe(24)
+    expect(details(sdlc(), 66).header[0]).toBe('platform-tools-suite · ◐ 2/4')
+    expect(details(sdlc(), 40).header[0]).toBe('platform-tools-suite · ◐ 2/4')
+    // Without sdlc-run: the branch, then the title.
+    expect(details(plain(), 62).header[0]).toBe('web-app · fix login redirect · feat/login')
+    expect(details(plain(), 61).header[0]).toBe('web-app · fix login redirect')
+    expect(details(plain(), 49).header[0]).toBe('web-app · fix login redirect')
+    expect(details(plain(), 48).header[0]).toBe('web-app')
+    expect(BUTTONS_DETAILS).toBe(21) // Copy, Pane, Compact: 15 label cells, 2 before the buttons and 2 between
   })
 
-  test(`@F35 ${TAG} four columns, empty column`, () => {
-    const d = details(town(), 115)
-    expect(ids(d)).toEqual([['needs', 'running', 'done', 'prs']])
-    expect(d.rows[0]!.map(c => c.label)).toEqual(['needs you', 'running', 'done', 'PRs'])
-    expect(d.rows[0]!.map(c => c.count)).toEqual(['2', '3', '2', '4 open'])
-    expect(d.colWidth).toBe(26) // 115 / 4 - 2
+  test(`@F35 ${TAG} three columns of 21 cells, empty column`, () => {
+    const d = details(town(), 200)
+    expect(ids(d)).toEqual([['needs', 'running', 'prs']])
+    expect(d.rows[0]!.map(c => c.label)).toEqual(['needs you', 'running', 'PRs']) // no done column
+    expect(d.rows[0]!.map(c => c.count)).toEqual(['2', '3', '4 open'])
+    expect(d.colWidth).toBe(21) // never stretched to the terminal
+    expect(details(town(), 115).colWidth).toBe(21)
+    expect(details(town(), 63).colWidth).toBe(21)
+    expect(details(town(), 60).colWidth).toBe(20) // three columns of the width that is left
     // A column with 0 shows the count and no line.
-    const none = town().filter(r => r.state !== 'done')
-    expect(col(details(none, 115), 'done')).toMatchObject({ count: '0', line: '' })
-    // At least 10 wide.
-    expect(details(town(), 60).colWidth).toBeGreaterThanOrEqual(10)
+    const none = town().filter(r => r.state !== 'running')
+    expect(col(details(none, 115), 'running')).toMatchObject({ count: '0', line: '' })
+    // Every line fits its column with a 2-cell gutter: 19 of the 21.
+    for (const c of d.rows.flat()) expect([...c.line].length).toBeLessThanOrEqual(d.colWidth - 2)
     // Below 80 the lines drop except needs you.
     const narrow = details(town(), 79)
-    expect(narrow.rows[0]!.map(c => c.line !== '')).toEqual([true, false, false, false])
+    expect(narrow.rows[0]!.map(c => c.line !== '')).toEqual([true, false, false])
     expect(details(town(), 80).rows[0]!.every(c => c.line !== '')).toBe(true)
   })
 
-  test(`@F81 ${TAG} needs you, running and done lines`, () => {
-    const d = details(town(), 115)
-    expect(col(d, 'needs').line).toBe('web-app: fix login 6m') // the oldest waiting
-    expect(col(d, 'running').line).toBe('api: migrate users 22m') // the longest running
-    expect(col(d, 'done').line).toBe('docs-site: rename skills 3m ago') // the latest done
-    // Needs you in the normal colour, the others dim.
+  test(`@F81 ${TAG} needs you and running lines`, () => {
+    const worded = town().map(r => (r.sessionId === 'web-1' ? { ...r, reason: 'permission' as const } : r.sessionId === 'api-1' ? { ...r, title: 'tracker', milestone: MILESTONE } : r))
+    const d = details(worded, 115)
+    expect(col(d, 'needs').line).toBe('fix login · perm 6m') // the oldest waiting, with its reason
+    expect(col(d, 'running').line).toBe('tracker 2/4 · 50%') // the longest running, with its milestone progress
+    // Without a milestone: its name and how long it has run.
+    expect(col(details(town(), 115), 'running').line).toBe('migrate users 22m')
+    // Needs you in the normal colour, running dim.
     expect(col(d, 'needs').tone).toBeUndefined()
-    expect([col(d, 'running').tone, col(d, 'done').tone]).toEqual(['dim', 'dim'])
+    expect(col(d, 'running').tone).toBe('dim')
+    // A long name gives way to "…", the wait stays.
+    const long = town().map(r => (r.sessionId === 'web-1' ? { ...r, title: 'fix the login redirect loop' } : r))
+    expect(col(details(long, 115), 'needs').line.endsWith('· waiting 6m')).toBe(true)
+    expect(col(details(long, 115), 'needs').line).toContain('…')
     // "this session" when it is this one.
-    const mine = town().map(r => (r.sessionId === SELF ? { ...r, state: 'needs-you' as const, engine: { since: NOW - 10 * MIN } } : r))
-    expect(col(details(mine, 115), 'needs').line).toBe('this session 10m')
+    const mine = town().map(r => (r.sessionId === SELF ? { ...r, state: 'needs-you' as const, reason: 'question' as const, engine: { since: NOW - 10 * MIN } } : r))
+    expect(col(details(mine, 115), 'needs').line).toMatch(/^thi.*· question 10m$/)
   })
 
   test(`@F82 ${TAG} PRs count and line`, () => {
     const d = details(town(), 115)
-    expect(col(d, 'prs')).toMatchObject({ count: '4 open', line: '1 failing · 2 mergeable' })
+    expect(col(d, 'prs')).toMatchObject({ count: '4 open', line: '1 ✗ · 2 mergeable' })
     const some = town().map(r => (r.scan ? { ...r, scan: scan([pr(1, { mergeable: 'mergeable' }), pr(2)]) } : r))
     expect(col(details(some, 115), 'prs')).toMatchObject({ count: '2 open', line: '1 mergeable' })
     const clean = town().map(r => (r.scan ? { ...r, scan: scan([pr(1)]) } : r))
@@ -322,11 +339,11 @@ describe('details view, the model', () => {
   })
 
   test(`@F83 ${TAG} columns fold below 60 bodyColumns`, () => {
-    expect(ids(details(town(), 60))).toEqual([['needs', 'running', 'done', 'prs']])
-    expect(ids(details(town(), 59))).toEqual([['needs', 'running'], ['done', 'prs']])
-    expect(details(town(), 59).colWidth).toBe(27) // 59 / 2 - 2
-    expect(ids(details(town(), 30))).toEqual([['needs', 'running'], ['done', 'prs']])
-    expect(details(town(), 30).colWidth).toBe(13)
+    expect(ids(details(town(), 60))).toEqual([['needs', 'running', 'prs']])
+    expect(ids(details(town(), 59))).toEqual([['needs', 'running'], ['prs']])
+    expect(details(town(), 59).colWidth).toBe(21)
+    expect(ids(details(town(), 30))).toEqual([['needs', 'running'], ['prs']])
+    expect(details(town(), 30).colWidth).toBe(15)
   })
 
   test(`@F87 ${TAG} Loading, Partial and Stale line under the header`, () => {
@@ -341,19 +358,20 @@ describe('details view, the model', () => {
     const noGh = town().map(r => (r.scan ? { ...r, scan: { ...r.scan, ghOk: false } } : r))
     const partial = details(noGh, 115)
     expect(partial.note).toBe(PRS_NOT_SHOWN)
-    expect(ids(partial)).toEqual([['needs', 'running', 'done']])
+    expect(ids(partial)).toEqual([['needs', 'running']])
     // One line: stale wins over partial.
     expect(details(noGh, 115, failed).note).toBe('session list unavailable · counts from 2m ago')
   })
 
-  test(`@F37 ${TAG} the SVG alt lists every label and value`, () => {
+  test(`@F37 ${TAG} the SVG packs fixed columns from the left`, () => {
     const d = details(town(), 115)
-    const svg = columnsSvg(d.rows.flat(), 720)
+    const svg = columnsSvg(d.rows.flat())
     expect(svg.startsWith('<svg')).toBe(true)
+    expect(svg).toContain('width="480"') // three columns of 160, whatever the terminal
     for (const c of d.rows.flat()) expect(svg).toContain(c.label)
     // Escaped: a title can hold markup.
     const risky = town().map(r => (r.sessionId === 'web-1' ? { ...r, title: 'a<b>&c' } : r))
-    expect(columnsSvg(details(risky, 115).rows.flat(), 720)).toContain('a&lt;b&gt;&amp;c')
+    expect(columnsSvg(details(risky, 115).rows.flat())).toContain('a&lt;b&gt;&amp;c')
   })
 })
 
@@ -363,6 +381,7 @@ describe('every width the spec lists', () => {
   const cases: [string, SessionRecord[], Partial<Snapshot>][] = [
     ['town', town(), {}],
     ['this session waits', townSelfWaiting(), {}],
+    ['quiet', town().filter(r => r.state !== 'needs-you'), {}],
     ['stale', town(), failed],
     ['alone', [inState(SELF, 'running', 20, 'platform-tools-suite', 'build', { milestone: MILESTONE, scan: scan(PRS) })], {}],
     ['loading', [], { at: 0, okAt: 0 }],
@@ -372,7 +391,7 @@ describe('every width the spec lists', () => {
     for (const columns of WIDTHS) {
       for (const [name, sessions, extra] of cases) {
         const l = compact(sessions, columns, extra)
-        const floor = text(l).startsWith('●') || text(l).startsWith('0 need') ? 12 + BUTTONS_COMPACT : 0
+        const floor = compact(sessions, 1, extra).width // the count and the buttons
         expect([name, columns, l.width <= Math.max(columns, floor)]).toEqual([name, columns, true])
         expect(l.width).toBe([...text(l)].length + BUTTONS_COMPACT)
       }
@@ -385,6 +404,8 @@ describe('every width the spec lists', () => {
         const first = details(sessions, columns, extra).header[0]!
         const narrowest = details(sessions, 1, extra).header[0] // the ladder's last form: nothing is left to cut
         expect([name, columns, [...first].length + BUTTONS_DETAILS <= columns || first === narrowest]).toEqual([name, columns, true])
+        const second = details(sessions, columns, extra).header[1]
+        if (second !== undefined) expect([name, columns, [...second].length <= columns]).toEqual([name, columns, true])
       }
     }
   })
@@ -448,18 +469,45 @@ describe('the band on screen', () => {
     await ui.unmount()
   })
 
-  test(`@F23 ${TAG} buttons are Pane and Details only, with hotkeys p and d`, async ($, on) => {
+  test(`@F23 ${TAG} buttons are Pane and Details only, with no quick keys`, async ($, on) => {
     await withTown($, on, town())
     const ui = await mount($, 'terminal')
     const pane = (await ui.find({ key: 'pane' }))!
     const detailsButton = (await ui.find({ key: 'details' }))!
-    expect([pane.props.label, pane.props.hotkey, pane.props.plain]).toEqual(['Pane', 'p', true])
-    expect([detailsButton.props.label, detailsButton.props.hotkey, detailsButton.props.plain]).toEqual(['Details', 'd', true])
+    expect([pane.props.label, pane.props.hotkey, pane.props.plain]).toEqual(['Pane', undefined, true])
+    expect([detailsButton.props.label, detailsButton.props.hotkey, detailsButton.props.plain]).toEqual(['Details', undefined, true])
     expect(await ui.find({ key: 'board' })).toBeUndefined() // no Board button
     expect((await ui.findAll({ type: 'Button' })).length).toBe(2)
     // The row is as wide as the terminal and is drawn from the layout.
-    expect(await row(ui)).toBe('● 2 need you · web-app: fix login 6m │ ◐ 3 running · ✓ 2 done │ 4 PRs · 1 ✗ │ agent-tracker-1 2/4')
+    expect(await row(ui)).toBe('agent-tracker-1 2/4 goal 14m · ● 2 need you  ◐3  PRs 1✗ 2↓  · fix login waits 6m')
     await ui.unmount()
+  })
+
+  test(`${TAG} no button has a quick key, and the buttons sit 2 cells apart, in both views`, async ($, on) => {
+    await withTown($, on, town())
+    const ui = await mount($, 'terminal')
+    for (const view of ['compact', 'details']) {
+      await run($, view)
+      await ui.redraw()
+      const buttons = await ui.findAll({ type: 'Button' })
+      expect(buttons.length).toBe(view === 'compact' ? 2 : 3)
+      expect(buttons.every(b => b.props.hotkey === undefined)).toBe(true)
+      expect((await ui.findAll({ type: 'Box' })).some(b => b.props.gap === 2)).toBe(true) // the row of buttons
+    }
+    await ui.unmount()
+  })
+
+  test(`${TAG} each band command answers with one short line`, async ($, on) => {
+    const w = await withTown($, on, town())
+    const said = async (args: string) => ((await run($, args)) as { text: string }).text
+    expect(await said('details')).toBe('Band switched to details.')
+    expect(await said('compact')).toBe('Band switched to compact.')
+    expect(await said('band off')).toBe('Band hidden. /tracker band on shows it again.')
+    expect(await said('band on')).toBe('Band shown.')
+    expect(await said('copy')).toBe(COPIED) // the reply is the toast
+    expect(w.toasts.at(-1)).toBe(COPIED)
+    w.failCopy = 'no-clipboard'
+    expect(await said('copy')).toBe('Copy failed: no-clipboard. Press Copy again or run /tracker copy.')
   })
 
   test(`@F29 ${TAG} band off and on, kept in settings.json, every session`, async ($, on) => {
@@ -503,13 +551,13 @@ describe('the band on screen', () => {
     await ui.unmount()
   })
 
-  test(`@F80 ${TAG} details buttons and hotkeys`, async ($, on) => {
+  test(`@F80 ${TAG} details buttons, no quick keys`, async ($, on) => {
     const w = await withTown($, on, town())
     const ui = await mount($, 'terminal')
     await run($, 'details')
     await ui.redraw()
     const keys = await ui.findAll({ type: 'Button' })
-    expect(keys.map(b => [b.props.key, b.props.label, b.props.hotkey])).toEqual([['copy', 'Copy', 'c'], ['pane', 'Pane', 'p'], ['details', 'Compact', 'd']])
+    expect(keys.map(b => [b.props.key, b.props.label, b.props.hotkey])).toEqual([['copy', 'Copy', undefined], ['pane', 'Pane', undefined], ['details', 'Compact', undefined]])
     expect(keys.every(b => b.props.plain === true)).toBe(true)
     await ui.press({ key: 'details' }) // Compact
     expect(settings(w)?.view).toBe('compact')
@@ -524,9 +572,12 @@ describe('the band on screen', () => {
     await run($, 'details')
     await ui.redraw()
     const all = await texts(ui)
-    for (const word of ['needs you', 'running', 'done', 'PRs', '2', '3', '4 open', 'web-app: fix login 6m', 'api: migrate users 22m', 'docs-site: rename skills 3m ago', '1 failing · 2 mergeable']) expect(all).toContain(word)
+    for (const word of ['needs you', 'running', 'PRs', '2', '3', '4 open', 'fix l… · waiting 6m', 'migrate users 22m', '1 ✗ · 2 mergeable']) expect(all).toContain(word)
+    expect(all).not.toContain('done') // no done column
+    expect(all).toContain('/goal running 14m · ● 2 need you elsewhere · 7 live') // the second header line
     expect(all.some(t => /^─+$/.test(t) && t.length === 115)).toBe(true) // the rule across bodyColumns
-    expect((await ui.findAll({ type: 'Box' })).some(b => b.props.width === 26)).toBe(true)
+    // Three columns of 21 cells, packed from the left: no stretching to the 115 columns.
+    expect((await ui.findAll({ type: 'Box' })).filter(b => b.props.width === 21).length).toBe(3)
     await ui.unmount()
   })
 
@@ -538,7 +589,8 @@ describe('the band on screen', () => {
     const svg = (await ui.find({ type: 'Svg' }))!
     expect(svg).toBeDefined()
     const alt = String(svg.props.alt)
-    for (const part of ['needs you 2', 'running 3', 'done 2', 'PRs 4 open', 'web-app: fix login 6m', 'api: migrate users 22m', 'docs-site: rename skills 3m ago', '1 failing · 2 mergeable']) expect(alt).toContain(part)
+    for (const part of ['needs you 2: fix l… · waiting 6m', 'running 3: migrate users 22m', 'PRs 4 open: 1 ✗ · 2 mergeable']) expect(alt).toContain(part)
+    expect(alt).not.toContain('done')
     // The terminal draws Text instead; the desktop draws no rule.
     expect(await ui.find({ type: 'Text', text: /^─+$/ })).toBeUndefined()
     await ui.unmount()
@@ -633,11 +685,13 @@ describe('the band on screen', () => {
   test(`@F124 ${TAG} every glyph has a word or count beside it`, () => {
     for (const columns of [200, 115, 90, 79, 75, 54, 50, 39]) {
       const line = text(compact(town(), columns))
-      expect(line).not.toMatch(/[●◐✓] \D/) // a count follows ● ◐ ✓
-      expect(line).not.toMatch(/(^|\D) ✗/) // a count comes before ✗
+      expect(line).not.toMatch(/●(?! \d)/) // a count follows ●
+      expect(line).not.toMatch(/◐(?!\d)/) // and ◐
+      expect(line).not.toMatch(/(^|\D)[✗↓]/) // a count comes before ✗ and ↓
     }
+    expect(text(compact(town().filter(r => r.state !== 'needs-you'), 200))).toContain('○ all clear') // ○ has its words
     // At full width each count has its word as well.
-    expect(text(compact(town(), 200))).toMatch(/● 2 need you.*◐ 3 running · ✓ 2 done.*4 PRs · 1 ✗/)
+    expect(text(compact(town(), 200))).toMatch(/● 2 need you.*◐3.*PRs 1✗ 2↓/)
   })
 })
 
@@ -650,7 +704,26 @@ describe('the band follows the data', () => {
     const ui = await mount($, 'terminal', 200)
     const line = await row(ui)
     expect(line).toContain('● 2 need you')
-    expect(line).toContain('◐ 2 running · ✓ 1 done')
+    expect(line).toContain('◐2')
+    await ui.unmount()
+  })
+
+  test(`@F53 ${TAG} a mod loaded mid-session gets no session.start: its first draw starts the collector, and the band loads`, async ($, on) => {
+    const w = world(on, { now: T0 + 3_600_000, id: ID.busy, cwd: '/work/repo-4' })
+    w.agents.json = AGENTS_JSON
+    const ui = await mount($, 'terminal', 200) // no start(): nothing has polled yet
+    await settle() // the poll the draw started and did not wait for
+    await ui.redraw()
+    expect(await row(ui)).not.toContain(LOADING)
+    expect(await row(ui)).toContain('● 2 need you')
+    expect(w.snapshot().at).not.toBe(0)
+    const polls = () => w.procs.filter(p => p.argv[1] === 'agents').length
+    expect(polls()).toBe(1)
+    await ui.redraw() // a second draw does not start a second collector
+    await settle()
+    expect(polls()).toBe(1)
+    await w.clock.advance(5000) // the timer polls on
+    expect(polls()).toBe(2)
     await ui.unmount()
   })
 
@@ -701,7 +774,7 @@ describe('the band follows the data', () => {
     expect(w.invalidations).toBeGreaterThan(before) // the band asked for a redraw
     // The times are read at each draw: a minute later the wait reads one minute more.
     await ui.redraw()
-    expect(await row(ui)).toContain('web-app: fix login 7m')
+    expect(await row(ui)).toContain('fix login waits 7m')
     await ui.unmount()
   })
 })

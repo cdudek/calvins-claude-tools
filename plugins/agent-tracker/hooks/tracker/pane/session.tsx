@@ -21,7 +21,7 @@ export function sessionView(ui: Ui, m: SessionModel, a: Actions, columns: number
         {m.pr !== null && <Link href={m.pr.url} label={`#${m.pr.number}`} />}
         {m.pr !== null && <Text> {m.pr.checks}</Text>}
       </Box>
-      {m.resume !== null && <Button key="resume" plain autoFocus={ringOn(a, 'resume')} label={PANE_BUTTONS.resume} hotkey="r" onPress={a.resume} />}
+      {m.resume !== null && <Button key="resume" plain autoFocus={ringOn(a, 'resume')} label={PANE_BUTTONS.resume} onPress={a.resume} />}
       {m.running.length > 0 && (
         <Box key="running" flexDirection="column">
           <Text bold>{SECTION_WORDS.running}</Text>

@@ -56,3 +56,9 @@ export const REASON_WORDS = { permission: 'asks permission', question: 'asks a q
 export const BUTTON_LABELS = { pane: 'Pane', details: 'Details', copy: 'Copy', compact: 'Compact' } as const
 export const COMMAND_DESCRIPTION = "Show each session's repo, work and state"
 export const COMMAND_HINT = 'details | compact | copy | repo <name> | session <text> | band on | band off'
+
+// What a /tracker command answers in the transcript, one short line each. A copy answers with its toast.
+export const BAND_REPLY = { details: 'Band switched to details.', compact: 'Band switched to compact.', hidden: 'Band hidden. /tracker band on shows it again.', shown: 'Band shown.' } as const
+export const PANE_OPENED = 'Tracker pane opened.'
+// A waiting session's reason in two or three words, for the band's column line.
+export const SHORT_REASON = { permission: 'perm', question: 'question', waiting: 'waiting', unknown: 'waiting' } as const
