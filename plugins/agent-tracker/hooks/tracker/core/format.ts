@@ -30,3 +30,4 @@ export const resumeCommand = (cwd: string, sessionId: string): string | null =>
 
 // Tokens as the pane writes them: "950", "12k", "41k", "1.2M".
 export const tokens = (n: number) => (n < 1000 ? String(n) : n < 1_000_000 ? `${Math.round(n / 1000)}k` : `${(n / 1_000_000).toFixed(1).replace(/\.0$/, '')}M`)
+

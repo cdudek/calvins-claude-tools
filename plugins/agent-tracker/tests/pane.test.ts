@@ -503,9 +503,8 @@ describe('/tracker words and what the pane touches', () => {
     await run($, 'session zzz')
     await ui.redraw()
     expect(await texts(ui)).toContain('No session matches "zzz". Pick one on Home.')
-    // `web` is not the pane's: it goes on, and nothing here answers it with the hint.
-    w.answerCommand = e => (e.args === 'web' ? { text: 'Board opened' } : undefined)
-    expect(((await run($, 'web')) as { text: string }).text).toBe('Board opened')
+    // `web` is the Board's (registered before the pane): it writes the page and answers, never the pane's hint.
+    expect(((await run($, 'web')) as { text: string }).text).toContain('~/.claude/agent-tracker/board.html')
     await ui.unmount()
   })
 
