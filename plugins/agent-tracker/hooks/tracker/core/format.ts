@@ -16,3 +16,8 @@ export const plural = (n: number, one: string, many: string) => `${n} ${n === 1 
 
 // Tokens as the pane writes them: "950", "12k", "41k", "1.2M".
 export const tokens = (n: number) => (n < 1000 ? String(n) : n < 1_000_000 ? `${Math.round(n / 1000)}k` : `${(n / 1_000_000).toFixed(1).replace(/\.0$/, '')}M`)
+
+// The command that resumes a session, to paste into a shell: the folder single-quoted (an embedded quote closes,
+// escapes and reopens). null when the id is not a plain id, so nothing but an id is ever put on the line.
+export const resumeCommand = (cwd: string, sessionId: string): string | null =>
+  /^[A-Za-z0-9_-]{1,64}$/.test(sessionId) ? `cd '${cwd.replace(/'/g, "'\\''")}' && claude --resume ${sessionId}` : null

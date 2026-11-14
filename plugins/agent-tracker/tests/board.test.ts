@@ -2,7 +2,8 @@ import { describe, expect, test } from 'claude-code/testing'
 import type { On } from 'claude-code'
 import type { Engine } from 'claude-code/testing'
 
-import { boardData, boardHtml, inlineJson, needsCount, titleOf } from '../hooks/tracker/core/board-html'
+import { boardHtml } from '../hooks/tracker/board-page'
+import { boardData, inlineJson, needsCount, titleOf } from '../hooks/tracker/core/board-html'
 import type { ChangeFiles } from '../hooks/tracker/core/board-html'
 import type { SessionRecord, Snapshot } from '../hooks/tracker/types'
 import { MILESTONE_MD } from './fixtures/milestone'
@@ -132,7 +133,17 @@ describe('the web page, built from a snapshot', () => {
     for (const word of ['YOU SHOULD KNOW', 'DECIDED WITHOUT YOU', 'Copy overrule']) expect(html).toContain(word)
   })
 
-  test(`web page ${TAG} an old session is left out and a stale list is marked`, () => {
+  test(`web page ${TAG} the resume command holds only a plain session id`, () => {
+    const ended = (id: string) => sess(id, 'ended', 30, 'web-app', 'done work', { endedAt: NOON - 30 * 60_000, cwd: "/work/it's here" })
+    const d = boardData(snapAt([ended('abc-123_X'), ended('x; rm -rf ~'), ended('a'.repeat(65))]), [], NOON)
+    const resume = (id: string) => d.sessions.find(s => s.id === id)!.resume
+    expect(resume('abc-123_X')).toBe("cd '/work/it'\\''s here' && claude --resume abc-123_X") // the folder stays single-quoted
+    expect(resume('x; rm -rf ~')).toBeNull() // no command, so no button
+    expect(resume('a'.repeat(65))).toBeNull()
+    expect(boardHtml(d)).not.toContain('claude --resume x;')
+  })
+
+  test(`web page ${TAG} an old session is left out and a stale list is marked`,() => {
     const old = sess('old-1', 'ended', 10 * 24 * 60, 'web-app', 'ancient', { endedAt: NOON - 10 * 24 * 3600_000, lastActivityAt: NOON - 10 * 24 * 3600_000 })
     const d = boardData(snapAt([old, ...aloneOf()], { failedReads: 2 }), [], NOON)
     expect(d.sessions.map(s => s.id)).toEqual([SELF])

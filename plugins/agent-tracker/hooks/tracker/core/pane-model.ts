@@ -1,7 +1,7 @@
 // The pane as plain data: what each page says (homeModel, ...) and how a row fits a width (rowLayout).
 // Widths are terminal cells. Time and the local day are parameters: nothing here reads a clock.
 import type { SessionRecord, Snapshot } from '../types'
-import { duration, plural, tokens } from './format'
+import { duration, plural, resumeCommand, tokens } from './format'
 import { prsLine, repoPrs } from './git'
 import type { RepoPrs } from './git'
 import { cells } from './band-model'
@@ -236,9 +236,6 @@ const stateLine = (r: SessionRecord, now: number) => {
 
 const featureState = (state: string) => (/^done\b/.test(state) ? 'complete' : /^merged\b/.test(state) ? 'merged' : /^building\b/.test(state) ? 'building' : /^blocked\b/.test(state) ? 'blocked' : 'to do')
 
-// The command that resumes an ended session, the folder single-quoted (an embedded quote closes, escapes and reopens).
-export const resumeCommand = (r: SessionRecord) => `cd '${r.cwd.replace(/'/g, "'\\''")}' && claude --resume ${r.sessionId}`
-
 export const sessionModel = (snap: Snapshot, id: string, now: number, local: Local): SessionModel | null => {
   const r = snap.sessions.find(x => x.sessionId === id)
   if (r === undefined) return null
@@ -273,7 +270,7 @@ export const sessionModel = (snap: Snapshot, id: string, now: number, local: Loc
       : null,
     asks: r.asks.map(a => ({ n: a.n, kind: ASK_KIND[a.kind], status: ASK_STATUS[a.status], time: duration(now - a.at), text: a.text.replace(/\s+/g, ' ').trim() })),
     fromTranscript: r.source === 'transcript',
-    resume: r.state === 'ended' ? resumeCommand(r) : null,
+    resume: r.state === 'ended' ? resumeCommand(r.cwd, r.sessionId) : null,
   }
 }
 
