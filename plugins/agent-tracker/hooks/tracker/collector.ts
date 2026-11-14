@@ -3,7 +3,7 @@ import { atom, read, update } from 'claude-code'
 import type { EngineInterface, On } from 'claude-code'
 
 import { startBackfill } from './backfill'
-import { POLL_MS, agentsFresh, clean, deriveState, leaseState, mergeSessions, noteTool, parseAgents } from './core'
+import { LEASE_GEN, POLL_MS, agentsFresh, clean, deriveState, leaseState, mergeSessions, noteTool, parseAgents } from './core'
 import { startScan } from './scan'
 import type { AgentRow, Lease, SessionRecord, Snapshot } from './types'
 import { dir, initOwn, readAgentsFile, readEntrypoints, readFolder, readLateChecks, readLease, saveOwn, where, writeJson } from './store'
@@ -23,7 +23,7 @@ async function readAgents($: Engine, base: string, me: string, now: number): Pro
   }
   // No fresh lease, or this session's own: write it (taking it when free) and poll. The API has no rename, so the
   // files are written whole and a reader keeps its last good copy (questions.md Q2).
-  await writeJson($, `${base}/poller.json`, { v: 1, sessionId: me, heartbeat: now } satisfies Lease).catch(() => undefined)
+  await writeJson($, `${base}/poller.json`, { v: 1, sessionId: me, heartbeat: now, gen: LEASE_GEN } satisfies Lease).catch(() => undefined)
   const run = await $.process.run(['claude', 'agents', '--json'], { timeoutMs: 10_000 }).catch(() => null)
   const agents = run !== null && run.exitCode === 0 ? parseAgents(run.stdout) : null
   if (agents !== null) await writeJson($, `${base}/agents.json`, { v: 1, readAt: now, agents }).catch(() => undefined)

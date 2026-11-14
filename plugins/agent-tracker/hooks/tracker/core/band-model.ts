@@ -6,7 +6,7 @@ import { DOT, cutSpans, dim, dimmed, join, sp, spanCells } from './paint'
 import type { Span, Spans, Tone } from './paint'
 import { repoPrs } from './git'
 import type { NoteItem } from './notes'
-import { unseenCount } from './notes'
+import { isNews, unseenCount } from './notes'
 import type { TaskItem } from './tasks'
 import { taskCounts } from './tasks'
 import { completeCount, isComplete } from './milestone'
@@ -89,7 +89,7 @@ export const bandData = (snap: Snapshot, selfId: string, now: number, items: Not
     done: doneLines(snap.sessions, selfId, now),
     live: live.length,
     ...prsOf(snap.sessions, now),
-    notes: { know: unseenCount(items, 'know'), decided: unseenCount(items, 'decided'), topKnow: items.find(i => i.kind === 'know' && !i.seen)?.text ?? null, topDecided: items.find(i => i.kind === 'decided' && !i.seen)?.text ?? null },
+    notes: { know: unseenCount(items, 'know'), decided: unseenCount(items, 'decided'), topKnow: items.find(i => i.kind === 'know' && isNews(i))?.text ?? null, topDecided: items.find(i => i.kind === 'decided' && isNews(i))?.text ?? null },
     work: workOf(snap.sessions.find(r => r.sessionId === selfId), now),
     tasks: taskCounts(tasks),
   }

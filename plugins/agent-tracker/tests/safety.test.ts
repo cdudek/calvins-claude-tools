@@ -38,7 +38,7 @@ const runSession = async ($: Engine, w: World, isHolder: boolean) => {
   w.agents.json = JSON.stringify([{ kind: 'interactive', status: 'idle', sessionId: w.id, cwd: w.cwd, name: 'this one', startedAt: NOW }])
   // Another session holds the lease and keeps it fresh.
   const other = () => {
-    w.put(`${DIR}/poller.json`, { v: 1, sessionId: 'someone-else', heartbeat: w.clock.now() })
+    w.put(`${DIR}/poller.json`, { v: 1, sessionId: 'someone-else', heartbeat: w.clock.now(), gen: 2 })
     w.put(`${DIR}/agents.json`, { v: 1, readAt: w.clock.now(), agents: [] })
   }
   if (!isHolder) other()

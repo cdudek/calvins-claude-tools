@@ -9,7 +9,7 @@ import { dim, DOT, join, sp } from './paint'
 import type { Span, Spans } from './paint'
 import { HEADINGS, NOTHING_NEEDS, ONLY_THIS, NO_REPOS, NO_TASKS, NEW_MARK, PRS_NOT_SHOWN, THIS_SESSION, KEY_HINTS, staleTop, updatedWords, withoutTracker } from './words'
 import type { NoteItem } from './notes'
-import { unseenCount } from './notes'
+import { isNews } from './notes'
 import type { TaskItem } from './tasks'
 import { TASK_LABEL, taskCounts } from './tasks'
 
@@ -155,12 +155,12 @@ const noteSection = (kind: 'know' | 'decided', items: NoteItem[], local: Local, 
   const mine = items.filter(i => i.kind === kind)
   if (mine.length === 0) return []
   const st = NOTE_STYLE[kind]
-  const unseen = mine.filter(i => !i.seen)
-  const seen = mine.filter(i => i.seen).slice(0, NOTES_SEEN_SHOWN)
+  const unseen = mine.filter(isNews)
+  const seen = mine.filter(i => !isNews(i)).slice(0, NOTES_SEEN_SHOWN) // seen notes, and a change folder's records by their source
   const lw = clamp(columns - 2 - 2 - TIME_W - 1, 10, LABEL_MAX)
   const row = (i: NoteItem): Block =>
-    i.seen
-      ? { kind: 'row', key: `note:${i.key}`, to: { kind: 'note', key: i.key }, lines: [[dim(`· ${pad(cut(i.label, lw), lw)} ${noteWhen(i, local)}  seen`)]] }
+    !isNews(i)
+      ? { kind: 'row', key: `note:${i.key}`, to: { kind: 'note', key: i.key }, lines: [[dim(`· ${pad(cut(i.label, lw), lw)} ${noteWhen(i, local)}  ${i.seen ? 'seen' : (i.ref ?? 'file')}`)]] }
       : { kind: 'row', key: `note:${i.key}`, to: { kind: 'note', key: i.key }, lines: [[sp(st.glyph, st.tone), sp(' '), sp(pad(cut(i.label, lw), lw)), sp(' '), dim(noteWhen(i, local))], [sp('   '), sp(cut(i.text, columns - 4))]] }
   const more = unseen.length - NOTES_UNSEEN_SHOWN
   return [

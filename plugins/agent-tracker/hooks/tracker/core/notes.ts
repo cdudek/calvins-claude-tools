@@ -13,7 +13,6 @@ export const NOTES_MAX = 50 // per session, newest kept
 export const NOTES_EACH = 3 // per kind and turn
 export const NOTE_TEXT_MAX = 160
 export const SEEN_MAX = 500 // the seen keys settings.json keeps, newest last
-export const DAY_MS = 24 * 3600 * 1000 // a change folder's item older than this counts as already seen
 export const FILE_REVISIONS = 3 // the newest revisions of a change that count, and only the last week's
 
 export const NOTES_PROMPT = `Read the message an AI coding agent wrote at the end of its turn. Reply with JSON only, no other words, in the form {"know":["..."],"decided":["..."]}.
@@ -115,13 +114,13 @@ const sentence = (text: string) => clean((/^(.+?[.!?])(\s|$)/.exec(text)?.[1] ??
 // All the items, newest first. `changes` are the change folders by repo path; a merged change adds nothing.
 export const noteItems = (snap: Snapshot, changes: ReadonlyMap<string, Change[]>, seen: ReadonlySet<string>, now: number): NoteItem[] => {
   const out: NoteItem[] = []
-  const old = (at: number) => now - at > DAY_MS // a change folder's item the owner had a day to see is no longer news; a turn's note stays until marked
   for (const r of snap.sessions as SessionRecord[]) {
     for (const n of r.notes ?? []) {
       const key = turnKey(r.sessionId, n.id)
       out.push({ key, kind: n.kind, text: n.text, at: n.at, dayOnly: false, seen: n.seen || seen.has(key), repo: repoLabel(r), label: sessionLabel(r), session: r.title ?? r.branch, sessionId: r.sessionId, source: null, ref: null, question: null })
     }
   }
+  // A change folder's questions and revisions are listed by their source, never counted as news: only a turn's note is (isNews).
   for (const [path, list] of changes) {
     const inRepo = snap.sessions.filter(r => r.repo?.path === path)
     const name = inRepo[0] ? repoLabel(inRepo[0]) : (path.split('/').pop() ?? path)
@@ -130,18 +129,19 @@ export const noteItems = (snap: Snapshot, changes: ReadonlyMap<string, Change[]>
       const base = { repo: name, label: `${name}/${c.slug}`, session: session ? (session.title ?? session.branch) : null, sessionId: session?.sessionId ?? null }
       for (const q of c.questions) {
         const key = `q:${c.dir}:${q.id}`
-        out.push({ ...base, key, kind: 'decided', text: q.fallback !== '' ? `${sentence(q.fallback).replace(/\.+$/, '')} (default taken, ${q.id})` : `${q.title} (open, ${q.id})`, at: c.questionsAt, dayOnly: false, seen: seen.has(key) || old(c.questionsAt), source: `changes/${c.dir}/questions.md`, ref: q.id, question: q.title })
+        out.push({ ...base, key, kind: 'decided', text: q.fallback !== '' ? `${sentence(q.fallback).replace(/\.+$/, '')} (default taken, ${q.id})` : `${q.title} (open, ${q.id})`, at: c.questionsAt, dayOnly: false, seen: seen.has(key), source: `changes/${c.dir}/questions.md`, ref: q.id, question: q.title })
       }
       for (const rev of c.revisions.filter(x => now - x.at <= WEEK_MS).slice(-FILE_REVISIONS)) {
         const key = `r:${c.dir}:${rev.at}:${rev.text.length}`
-        out.push({ ...base, key, kind: 'decided', text: sentence(rev.text), at: rev.at, dayOnly: true, seen: seen.has(key) || old(rev.at), source: `changes/${c.dir}/plan.md`, ref: rev.ref === '' ? 'Revisions' : rev.ref, question: null })
+        out.push({ ...base, key, kind: 'decided', text: sentence(rev.text), at: rev.at, dayOnly: true, seen: seen.has(key), source: `changes/${c.dir}/plan.md`, ref: rev.ref === '' ? 'Revisions' : rev.ref, question: null })
       }
     }
   }
   return out.sort((a, b) => Number(a.seen) - Number(b.seen) || b.at - a.at || a.key.localeCompare(b.key))
 }
 
-export const unseenCount = (items: NoteItem[], kind: Note['kind']) => items.filter(i => i.kind === kind && !i.seen).length
+export const isNews = (i: NoteItem) => !i.seen && i.source === null
+export const unseenCount = (items: NoteItem[], kind: Note['kind']) => items.filter(i => i.kind === kind && isNews(i)).length
 
 // What to paste into the session to overrule an item.
 export const overruleText = (i: NoteItem): string => {

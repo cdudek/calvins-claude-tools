@@ -1,6 +1,6 @@
 import type { AgentRow, Ask, Lease, Reason, SessionRecord, SessionState } from '../types'
 import { clean } from './format'
-import { LEASE_FRESH_MS, PERMISSION_WAITING_FOR } from './types'
+import { LEASE_FRESH_MS, LEASE_GEN, PERMISSION_WAITING_FOR } from './types'
 
 type Engine = Pick<AgentRow, 'kind' | 'status' | 'state' | 'waitingFor'>
 export type Derived = { state: SessionState; reason: Reason | null; unknownValue: string | null }
@@ -71,7 +71,7 @@ const isFresh = (at: number, now: number) => now - at < LEASE_FRESH_MS
 
 // Who holds the poller lease: nobody fresh, this session, or another (F127).
 export const leaseState = (lease: Lease | null, sessionId: string, now: number): 'free' | 'mine' | 'other' =>
-  lease === null || !isFresh(lease.heartbeat, now) ? 'free' : lease.sessionId === sessionId ? 'mine' : 'other'
+  lease === null || !isFresh(lease.heartbeat, now) || (lease.gen ?? 1) < LEASE_GEN ? 'free' : lease.sessionId === sessionId ? 'mine' : 'other'
 
 // An agents.json older than 15 s counts as a failed read (F129).
 export const agentsFresh = (readAt: number, now: number) => isFresh(readAt, now)
