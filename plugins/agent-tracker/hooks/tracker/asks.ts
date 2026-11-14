@@ -26,9 +26,11 @@ export const registerAsks = (on: On, s: State) => {
         const asks = [...m.asks, { n, text, kind: 'not-classified' as const, status: 'in-progress' as const, at: now }].slice(-ASKS_MAX)
         return { ...m, asks, questionFlag: null, state: 'running', reason: null, unknownValue: null, lastActivityAt: now }
       })
-      // One classification per ask; a failure keeps the ask as "not classified" (F57).
-      const kind = await $.model.classify(text, ['task', 'question'], { model: MODEL }).catch(() => undefined)
-      if (kind === 'task' || kind === 'question') await saveOwn($, s, m => ({ ...m, asks: m.asks.map(a => (a.n === n ? { ...a, kind } : a)) }))
+      // One classification per ask, after the prompt went on; a failure keeps the ask as "not classified" (F57).
+      void $.model
+        .classify(text, ['task', 'question'], { model: MODEL })
+        .then(kind => (kind === 'task' || kind === 'question' ? saveOwn($, s, m => ({ ...m, asks: m.asks.map(a => (a.n === n ? { ...a, kind } : a)) })) : undefined))
+        .catch(() => undefined)
     } catch {
       // an observer never fails the prompt
     }

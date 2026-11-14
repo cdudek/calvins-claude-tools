@@ -3,7 +3,7 @@ import { atom, update } from 'claude-code'
 import type { EngineInterface, On } from 'claude-code'
 
 import { startBackfill } from './backfill'
-import { POLL_MS, agentsFresh, deriveState, leaseState, mergeSessions, noteTool, parseAgents } from './core'
+import { POLL_MS, agentsFresh, clean, deriveState, leaseState, mergeSessions, noteTool, parseAgents } from './core'
 import { startScan } from './scan'
 import type { AgentRow, Lease, SessionRecord, Snapshot } from './types'
 import { dir, initOwn, readAgentsFile, readFolder, readLease, saveOwn, where, writeJson } from './store'
@@ -40,7 +40,7 @@ const tick = async ($: Engine, s: State) => {
     const now = await $.clock.now()
     const base = await dir($)
     const agents = await readAgents($, base, first.sessionId, now)
-    const subagents = (await $.agent.list().catch(() => [])).map(a => ({ id: a.id, name: a.description, status: String(a.status) }))
+    const subagents = (await $.agent.list().catch(() => [])).map(a => ({ id: a.id, name: clean(a.description, 200), status: String(a.status) }))
     const scan = now - s.scannedAt >= RESCAN_MS ? await where($, first.cwd) : null
     if (scan !== null) s.scannedAt = now
 
@@ -92,7 +92,7 @@ const begin = async ($: Engine, s: State) => {
 export const registerCollector = (on: On, s: State) => {
   on('session.start', async ($, e, next) => {
     const r = await next(e)
-    await begin($, s)
+    void begin($, s).catch(() => undefined) // the first poll runs on; the session does not wait for `claude agents --json`
     return r
   })
 
@@ -120,7 +120,7 @@ export const registerCollector = (on: On, s: State) => {
       const before = s.mine?.usage ?? { tokensIn: 0, tokensOut: 0, toolErrors: 0, retries: 0 }
       const step = noteTool(before, s.lastCall, JSON.stringify(input), failed)
       s.lastCall = step.last
-      if (String(e.tool) === 'ProposeGoal') {
+      if (String(e.tool) === 'ProposeGoal' && !failed && !('deny' in r)) {
         const now = await $.clock.now()
         await saveOwn($, s, m => ({ ...m, runs: { ...m.runs, goalSince: now } }))
       } else if (step.usage.toolErrors !== before.toolErrors || step.usage.retries !== before.retries) {

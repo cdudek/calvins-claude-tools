@@ -165,6 +165,22 @@ describe('collector and states', () => {
     expect(u).toEqual({ tokensIn: 2020, tokensOut: 50, toolErrors: 3, retries: 2 })
   })
 
+  test(`@F11 ${TAG} a proposed goal counts only when the call went through; a failed one is an error (R6)`, async ($, on) => {
+    const w = world(on, { now: NOW })
+    await start($, w)
+    const own = () => w.json(`${DIR}/sessions/${w.id}.json`) as SessionRecord
+    w.tool = () => ({ result: {}, isError: true })
+    await $.tool.call({ tool: 'ProposeGoal', condition: 'ship it' })
+    expect(own().runs.goalSince).toBeNull()
+    expect(own().usage.toolErrors).toBe(1)
+    w.tool = () => ({ deny: 'not now' }) as never
+    await $.tool.call({ tool: 'ProposeGoal', condition: 'ship it' })
+    expect(own().runs.goalSince).toBeNull()
+    w.tool = () => ({ result: {}, isError: false })
+    await $.tool.call({ tool: 'ProposeGoal', condition: 'ship it' })
+    expect(own().runs.goalSince).toBe(NOW)
+  })
+
   test(`@F58 ${TAG} write failure sets the status line`, async ($, on) => {
     const w = world(on, { now: NOW })
     w.failWrite = p => p.includes('/sessions/')

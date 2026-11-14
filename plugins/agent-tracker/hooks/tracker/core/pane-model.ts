@@ -209,7 +209,7 @@ export type SessionModel = {
   repo: { path: string; label: string } | null
   branch: string | null
   pr: { number: number; url: string; checks: string } | null
-  running: string[] // goal, subagents, background sessions
+  running: { id: string; text: string }[] // goal, subagents, background sessions, each with its own id
   usage: string
   milestone: { sentence: string; count: string; rows: string[] } | null
   asks: AskView[]
@@ -253,9 +253,9 @@ export const sessionModel = (snap: Snapshot, id: string, now: number, local: Loc
     branch: r.branch ?? (r.repo ? DETACHED : null),
     pr: onBranch ? { number: onBranch.number, url: onBranch.url, checks: CHECKS_WORDS[onBranch.checks] } : null,
     running: [
-      ...goal,
-      ...r.runs.subagents.map(a => `subagent · ${a.name} · ${a.status}`),
-      ...r.runs.background.map(b => `background session · ${b.name} · ${duration(now - b.since)}`),
+      ...goal.map(text => ({ id: 'goal', text })),
+      ...r.runs.subagents.map(a => ({ id: `subagent:${a.id}`, text: `subagent · ${a.name} · ${a.status}` })),
+      ...r.runs.background.map(b => ({ id: `background:${b.id}`, text: `background session · ${b.name} · ${duration(now - b.since)}` })),
     ],
     usage: [
       `${tokens(r.usage.tokensIn)} tokens in`,

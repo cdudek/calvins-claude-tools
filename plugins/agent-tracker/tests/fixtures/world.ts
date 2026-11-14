@@ -243,5 +243,13 @@ export function world(on: On, o: { id?: string; cwd?: string; now?: number; pane
   return w
 }
 
-export const start = ($: Engine, w: World) =>
-  $.session.start({ cwd: w.cwd, surface: 'terminal', isInteractive: true })
+declare function setTimeout(run: () => void, ms: number): unknown // the runtime has it; the plugin's type set does not
+
+// Work a hook starts and does not wait for (the first poll, an ask's classification) lands within a macrotask.
+export const settle = () => new Promise<void>(done => setTimeout(done, 0))
+
+export const start = async ($: Engine, w: World) => {
+  const r = await $.session.start({ cwd: w.cwd, surface: 'terminal', isInteractive: true })
+  await settle()
+  return r
+}

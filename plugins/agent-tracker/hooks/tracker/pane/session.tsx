@@ -26,7 +26,7 @@ export function sessionView(ui: Ui, m: SessionModel, a: Actions, columns: number
         <Box key="running" flexDirection="column">
           <Text bold>{SECTION_WORDS.running}</Text>
           {m.running.map(r => (
-            <Text key={r}>{r}</Text>
+            <Text key={r.id}>{r.text}</Text>
           ))}
         </Box>
       )}

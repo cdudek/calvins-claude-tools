@@ -65,12 +65,12 @@ export function sessionRow(ui: Ui, row: Row, columns: number, o: { key: string; 
 }
 
 // A repo heading: a button that opens the Repo page, its label cut and its counts whole.
-export function repoHeading(ui: Ui, g: Group, columns: number, o: { dim: boolean; autoFocus: boolean; onPress: () => void }) {
+export function repoHeading(ui: Ui, g: Group, columns: number, o: { key: string; dim: boolean; autoFocus: boolean; onPress: () => void }) {
   const { Text, Button } = ui
   const text = headingText(g, columns)
-  if (g.path === null) return <Text key={`folder:${g.key}`} bold dimColor={o.dim}>{text}</Text>
+  if (g.path === null) return <Text key={o.key} bold dimColor={o.dim}>{text}</Text>
   return (
-    <Button key={`repo:${g.path}`} plain autoFocus={o.autoFocus ? true : undefined} onPress={o.onPress}>
+    <Button key={o.key} plain autoFocus={o.autoFocus ? true : undefined} onPress={o.onPress}>
       <Text bold dimColor={o.dim}>{text}</Text>
     </Button>
   )

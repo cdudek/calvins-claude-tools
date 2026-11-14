@@ -5,14 +5,18 @@ import { askStatuses } from '../hooks/tracker/core'
 import { register } from '../hooks/tracker/register'
 import type { Ask, SessionRecord } from '../hooks/tracker/types'
 import { AGENTS, T0 } from './fixtures/agents'
-import { DIR, start, world } from './fixtures/world'
+import { DIR, settle, start, world } from './fixtures/world'
 import type { World } from './fixtures/world'
 
 const TAG = '@2026-11-13-agent-tracker'
 const NOW = T0 + 3_600_000
 const ASK_LABELS = ['task', 'question']
 
-const submit = ($: Engine, text: string) => $.prompt.submit({ text, wait: false, origin: { kind: 'composer' } })
+const submit = async ($: Engine, text: string) => {
+  const r = await $.prompt.submit({ text, wait: false, origin: { kind: 'composer' } })
+  await settle() // the classification runs after the prompt went on
+  return r
+}
 const complete = ($: Engine) => $.turn.complete({ answer: 'ok', durationMs: 1, isAborted: false, turnId: 't1', reason: 'answer' })
 const mine = (w: World) => w.json(`${DIR}/sessions/${w.id}.json`) as SessionRecord
 const lastAsk = (w: World) => mine(w).asks.at(-1)!

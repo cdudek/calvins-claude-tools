@@ -21,12 +21,16 @@ export function homeView(ui: Ui, m: HomeModel, a: Actions, columns: number) {
   const first = firstRow(m)
   const ring = a.ring ?? (first === null ? null : `session:${first}`)
   const row = (r: Row) => sessionRow(ui, r, columns, { key: `session:${r.id}`, dim, autoFocus: ring === `session:${r.id}`, onPress: () => a.open(`session:${r.id}`, { kind: 'session', id: r.id }) })
-  const group = (g: Group) => (
-    <Box key={g.key} flexDirection="column">
-      {repoHeading(ui, g, columns, { dim, autoFocus: ring === `repo:${g.path}`, onPress: () => a.open(`repo:${g.path}`, { kind: 'repo', path: g.path ?? '' }) })}
-      {g.rows.map(row)}
-    </Box>
-  )
+  // A repo with running and done sessions has a heading in each section: the Done one takes a suffix then, so key and focus id stay unique.
+  const group = (section: 'running' | 'done') => (g: Group) => {
+    const id = `${g.path === null ? 'folder' : 'repo'}:${g.path ?? g.key}${section === 'done' && m.running.some(x => x.key === g.key) ? ':done' : ''}`
+    return (
+      <Box key={`${section}:${g.key}`} flexDirection="column">
+        {repoHeading(ui, g, columns, { key: id, dim, autoFocus: ring === id, onPress: () => a.open(id, { kind: 'repo', path: g.path ?? '' }) })}
+        {g.rows.map(row)}
+      </Box>
+    )
+  }
 
   return (
     <Box flexDirection="column">
@@ -41,13 +45,13 @@ export function homeView(ui: Ui, m: HomeModel, a: Actions, columns: number) {
       {m.running.length > 0 && (
         <Box key="running" flexDirection="column">
           <Text bold>{HEADINGS.running}</Text>
-          {m.running.map(group)}
+          {m.running.map(group('running'))}
         </Box>
       )}
       {m.done.length > 0 && (
         <Box key="done" flexDirection="column">
           <Text bold>{HEADINGS.done}</Text>
-          {m.done.map(group)}
+          {m.done.map(group('done'))}
           {m.doneMore !== null && <Text dimColor>{m.doneMore}</Text>}
         </Box>
       )}
