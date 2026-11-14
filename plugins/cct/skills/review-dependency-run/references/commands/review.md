@@ -196,7 +196,7 @@ If lint fails:
 **WARNING — Behavioral rules**: Some linter rules look like style fixes but change runtime behavior. After applying lint fixes, **always run the full test suite** (Step 7e) to catch breakage.
 
 ### 7e: Run full test suite
-During diagnosis run only failing tests plus the directly affected suite until green. After batching all fixes (code, lint, cross-check), run the **full local gate once before pushing**, using the repo's `scripts/ci-local` or full local suite. Lint fixes from behavioral rules can break tests in unexpected places far from the changed files.
+During diagnosis run only failing tests plus the directly affected suite until green. After batching all fixes (code, lint, cross-check), run the **full suite once before pushing**. Lint fixes from behavioral rules can break tests in unexpected places far from the changed files.
 
 Report pass/fail status.
 

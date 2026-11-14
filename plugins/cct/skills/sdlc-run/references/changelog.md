@@ -5,6 +5,23 @@ version warning, the **Mechanical** lines are what `adopt` does for you (it adds
 with the stack's defaults and never overwrites a value), the **Manual** lines are printed for
 the engineer. A version with no migration lines needs nothing but a re-run of `adopt`.
 
+## 3.15.1 — verify-on-stop runs only after a turn that changed code
+
+- The Stop hook ran `verify` (up to 300 s) after every turn, even a chat reply, because it asked "is anything uncommitted?" and not "did this turn change anything?". It also read the whole transcript on every Stop and re-ran a failing `verify` after every later turn.
+- A new `UserPromptSubmit` hook, `turn-start.sh`, snapshots the source diff hash when you send a prompt. `verify-on-stop.sh` runs `verify` only when the hash differs at Stop.
+- A state that was verified, pass or fail, is not verified again. A red state blocks once; it does not block again until the code changes.
+- The `/goal` check reads the transcript last, only when `verify` would otherwise run.
+- Mechanical: re-running `adopt` refreshes `verify-on-stop.sh` and `sdlc-config.sh`, adds `turn-start.sh` and registers the `UserPromptSubmit` hook in `.claude/settings.json`.
+- Manual: restart open Claude Code sessions so they load the new hook. A repo that lists `.claude/hooks/verify-on-stop.sh` under `keep` in `sdlc.json` copies the new `verify-on-stop.sh` and `sdlc-config.sh` by hand.
+
+## 3.15.0 — the local gate is removed; GitHub's required checks are the gate
+
+- The local CI gate from 3.9.1 and 3.11.0 is gone: the plugin's Bash `PreToolUse` hook (`hooks/local-gate.py`) no longer blocks `git push`, `gh pr create` or `gh pr ready` without a `scripts/ci-local` receipt, and nothing posts a `local-ci` status. Merge protection is the repository's required GitHub Actions checks.
+- `references/local-first.md` keeps the local iteration and failure loop (reproduce locally, batch fixes, no speculative pushes); `references/ci-blueprint.md` now says required checks are the gate, not confirmation.
+- `adopt` no longer tells a repo to implement `scripts/ci-local`, a pre-push hook or a `local-ci` ruleset; it points at the required checks. The PR templates' "Local gate" line is now "Checks".
+- Mechanical: re-running `adopt` refreshes `docs/sdlc.md` above its marker; the CLAUDE.md section and the PR template are written once, so edit "Local gate" and "full local gate" wording in them by hand.
+- Manual: a repo that adopted the local gate deletes `scripts/ci-local`, the receipt-checking pre-push hook (`.githooks/pre-push`) and the `prepare` script that sets `core.hooksPath` (then runs `git config --unset core.hooksPath`), and replaces the required `local-ci` status in its rulesets with its GitHub Actions check.
+
 ## 3.14.0 — sdlc_status.py runs from the plugin
 
 - The script lives in the plugin (`scripts/sdlc_status.py`) and runs from there with the working directory inside the repo: `python3 ${CLAUDE_SKILL_DIR}/scripts/sdlc_status.py map|goal ...`. No repo carries a copy; `/goal` conditions and `plan.md` name its absolute path through `<STATUS>` / `{{STATUS}}`.

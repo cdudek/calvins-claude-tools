@@ -742,18 +742,16 @@ def ci_gaps(text: str) -> list[str]:
 
 
 def adopt_ci(cfg: dict, preset: str) -> None:
-    """Preserve remote CI; report the repo-owned local gate setup, never fake statuses."""
+    """Preserve remote CI; report that GitHub's required checks are the merge gate."""
     wf = ROOT / ".github" / "workflows"
     kit_names = {p.name for p in (TPL / "workflows").glob("*.yml")}
     own = sorted(p for p in (*wf.glob("*.yml"), *wf.glob("*.yaml")) if p.name not in kit_names)
     if own:
         kept.extend(str(p.relative_to(ROOT)) + " (existing CI, left alone)" for p in own)
     manual.append(
-        "CI: implement and audit scripts/ci-local and its pre-push hook; run the full local "
-        "suite, push, then publish the exact-SHA local-ci status. Require it in rulesets; "
-        "never post it by hand. Keep existing required "
-        "checks until migration is applied. GitHub keeps cloud/GitHub work and schedules "
-        "(references/local-first.md; references/ci-blueprint.md)."
+        "CI: GitHub Actions required checks are the merge gate; require them in the rulesets "
+        "of the default and protected interior branches. Nothing local gates a push. Keep "
+        "existing required checks (references/ci-blueprint.md; references/local-first.md)."
     )
 
 
@@ -1021,6 +1019,7 @@ def main() -> int:
     # kept only the last one.
     spec = [
         ("SessionStart", None, "session-check.sh", 5),
+        ("UserPromptSubmit", None, "turn-start.sh", 5),
         ("PermissionRequest", "ExitPlanMode", "plan-gate.sh", 345600),
         ("PreToolUse", "Bash", "gate-bash.sh", 5),
         ("PreToolUse", "Bash", "pr-gate.sh", 20),
@@ -1220,7 +1219,7 @@ def main() -> int:
             keep=True,
         )
     # Decision4 is advisory: the boundary map, the AGENTS.md section and the PR-template
-    # section, never a workflow or a ci-local step. Anything already there stays the repo's.
+    # section, never a workflow. Anything already there stays the repo's.
     from decision4_assets import asset_changes
 
     for path, text in asset_changes(ROOT):

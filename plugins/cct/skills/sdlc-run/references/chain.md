@@ -268,7 +268,7 @@ committed, not spoken: a kickoff prompt, and the `/goal` line, which holds only 
 (`python3 <STATUS> goal <ID>` printed `GOAL <ID> DONE` or `BLOCKED`) because a small
 model judges the condition from the transcript and cannot read files or GitHub.
 
-**Risk:** `goal_active()` in `chain-gate.sh`, `pr-gate.sh` and `verify-on-stop.sh` reads the last
+**Risk:** `goal_active()` in `chain-gate.sh` and `pr-gate.sh`, and the goal check in `verify-on-stop.sh`, read the last
 `goal_status` attachment of the transcript. Claude Code does not document that entry, so a release
 may rename it. The hooks' fixtures (`test_chain_gate.py`, `test_pr_gate.py`, `test_sdlc.py`) pin
 today's shape; a failing fixture after a Claude Code update means the entry moved.

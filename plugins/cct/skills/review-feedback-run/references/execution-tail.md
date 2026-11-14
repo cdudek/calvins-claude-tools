@@ -44,7 +44,7 @@ Follow `references/execute-phases.md` for Phase RED/GREEN execution of the selec
 
 After all phases complete:
 
-1. **Re-run checks** — reproduce and fix each exact failed test locally; rerun only failing tests and the directly affected suite until green. The caller batches fixes and runs the full local gate once before any push.
+1. **Re-run checks** — reproduce and fix each exact failed test locally; rerun only failing tests and the directly affected suite until green. The caller batches fixes and runs the full suite once before any push.
 2. **Show diff** — display `git diff` of all changes made.
 3. **If checks fail** — `GATE=interactive`: report the failure and ask the user how to proceed. `GATE=autonomous`: there is no user to ask — record the failure and continue per `references/policies.md` → Error handling (Per-item failures), leaving the tree for the caller to inspect. Never silently continue as if the checks passed, and never self-resolve by weakening a test.
 

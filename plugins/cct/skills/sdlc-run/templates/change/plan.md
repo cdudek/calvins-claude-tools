@@ -122,7 +122,7 @@ so every line here is proven by a check, not by a claim.
 The process of the build. The `/goal` below holds only the end state; everything the run does
 lives here, in the skill's stages and in the hooks. Read the [local-first
 contract](https://github.com/cdudek/calvins-claude-tools/blob/main/plugins/cct/skills/sdlc-run/references/local-first.md)
-before any check or push: it owns local iteration, failures and the final full gate.
+before any check or push: it owns local iteration, failures and the final full check.
 
 - **Scope:** deliver this change in one go, per this plan and `facts.md`.
 - **Milestones:** every row of `## Milestones`, in order. Each one is a local branch
@@ -168,7 +168,7 @@ before any check or push: it owns local iteration, failures and the final full g
   milestone that needs another opens its PR after that one merges.
 - **Red CI:** CI is the last check, not the test loop. Read the exact failed job or test and its
   reason, reproduce it locally, fix it, then run only the failing tests plus the directly affected
-  suite until green, the full local gate once, and one batched push. Never a pipeline retry or a
+  suite until green, the full suite once, and one batched push. Never a pipeline retry or a
   speculative push.
 - **Scope the owner adds:** it re-locks (`verify_gate.py approve {{CHANGE}}`) and gets one more
   close. Log it under `## Revisions`.
@@ -185,13 +185,13 @@ before any check or push: it owns local iteration, failures and the final full g
   builders yourself, never through a closer agent that spawns its own.
 - **One milestone** (`/goal` from `templates/goal/milestone.txt`): close it per `milestone.md`.
   Sync first, one fix round, diagnose locally with failing tests and affected suites until green,
-  then the full local gate once before the push: unit, E2E (changed and flaky specs ×3) and
+  then the full suite once before the push: unit, E2E (changed and flaky specs ×3) and
   `python3 scripts/verify_gate.py milestone {{CHANGE}}`, output pasted. Then one push and PR. Records and
   repairs are commits there, never separate PRs.
 - **Feature PRs** (`delivery: "feature-prs"`): each feature is its own `/goal` from
   `templates/goal/feature.txt`: `cct:sdlc-feature-builder`, or `codex-build.sh` when `builders` is
   `codex`, with `builderModel` and `builderEffort`. Run the touched tests and affected suites until
-  green, then the full local gate before the push, `python3 scripts/verify_gate.py feature
+  green, then the full suite before the push, `python3 scripts/verify_gate.py feature
   {{CHANGE}}`, output pasted. Use this worktree's E2E slot. After opening the PR run
   `cct:ux-assessment-run` unless `ux` is off, and fix Critical and High before arming auto-merge.
   Tick plan tasks and log departures under `## Revisions`. Stages 5 and 6 in `stages.md` have the

@@ -40,7 +40,7 @@ The two touchpoints are the intent and the plan. After the plan is approved, `lo
 
 ## One /goal per milestone
 
-`delivery: "one-go"` is the default in `sdlc.json`. Everything you asked for at once is one change. One `/goal` builds every milestone in the plan, in order, each on its own local branch `milestone/<slug>-<n>` cut from the default branch, so it merges on its own. Only a milestone whose plan row says `needs: M<k>` is cut from that one; it builds at once and opens its PR after that one merges. Nothing is pushed before the milestone's gate passes. Each feature is a commit. The full local gate runs once on the final milestone head before push; failure diagnosis stays targeted.
+`delivery: "one-go"` is the default in `sdlc.json`. Everything you asked for at once is one change. One `/goal` builds every milestone in the plan, in order, each on its own local branch `milestone/<slug>-<n>` cut from the default branch, so it merges on its own. Only a milestone whose plan row says `needs: M<k>` is cut from that one; it builds at once and opens its PR after that one merges. Nothing is pushed before the milestone's gate passes. Each feature is a commit. The full suite runs once on the final milestone head before push; failure diagnosis stays targeted.
 
 `delivery: "feature-prs"` keeps the older shape: one PR per feature, auto-merged into the milestone branch. It suits teams building features in parallel.
 
@@ -98,13 +98,12 @@ The agent may never build outside `/goal`, change the approved plan, edit a test
 
 The [local-first contract](../plugins/cct/skills/sdlc-run/references/local-first.md) is the
 single verification rule for builders, fixes, E2E work, milestone close and PR creation.
-Use targeted local runs while diagnosing, then the full local gate once before every push.
+Use targeted local runs while diagnosing, then the full suite once before every push.
 
-The repo owns `scripts/ci-local`: suite, push, then the `local-ci` status on that exact commit.
-A pre-push hook invokes it and rulesets require that status. Never post it by hand.
-GitHub retains deploys, eligible previews, cloud
-plans and scheduled work. Existing remote CI confirms a local result; it is never the
-debugging loop. A passed PR does not need a second full CI run on main.
+GitHub Actions required checks are the merge gate; the rulesets require them. Nothing local
+(no script, receipt or hook) gates a push or a PR. GitHub also runs deploys, eligible previews,
+cloud plans and scheduled work. Required checks are never the debugging loop. A passed PR does
+not need a second full CI run on main.
 
 Decision4 is advisory: PRs say how hard the change is to undo (a level per `boundary-map.yaml`, a decision record above Undo). No workflow, status or hook reads it. See [Decision4 in a PR](../plugins/cct/skills/sdlc-run/references/decision4-pr.md).
 
@@ -129,7 +128,7 @@ It first asks whether to use Ship/Show/Ask merge tiers (a code owner approves ri
 - Hooks in `.claude/hooks/` that refuse edits outside `/goal` and to locked files, and `scripts/verify_gate.py`.
 - The review and tier workflows, `docs/sdlc.md`, issue and PR templates, and a section for `CLAUDE.md`.
 
-`adopt` preserves existing CI and does not install a remote verification workflow in a repo without one. It reports the repo-specific local gate, pre-push hook and required statuses as manual setup. Re-run it whenever the plugin updates, because the hooks and workflows are copies that do not update themselves.
+`adopt` preserves existing CI and does not install a remote verification workflow in a repo without one. It points at GitHub's required checks as the merge gate. Re-run it whenever the plugin updates, because the hooks and workflows are copies that do not update themselves.
 
 ## Staying current
 

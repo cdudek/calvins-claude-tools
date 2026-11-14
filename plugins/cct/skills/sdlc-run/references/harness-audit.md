@@ -8,7 +8,7 @@
 
 - **Installed:** Explicit version probes succeed, and the older checker or hook source exists with any required executable bit.
 - **Configured:** Every declared local check has a manifest row, actual configuration files are hashed, and older hooks have registration or caller evidence.
-- **Executed:** The owned `scripts/ci-local --check` runs once, and each checker leaves a fresh log for the frozen head and comparison base.
+- **Executed:** The repository's full check suite runs once, and each checker leaves a fresh log for the frozen head and comparison base.
 - **Passed:** That invocation reports success; stale logs, skipped checks and empty suites cannot supply a pass.
 - **Applied:** Ruleset checks must exercise real refusal and allowed fixtures against the production configuration; exit zero alone is insufficient.
 - **Platform enforcement:** Read active GitHub rulesets and classic branch protection for the default and declared protected interior refs. Missing access or required statuses remain owned applied-state gaps.
@@ -21,13 +21,13 @@
 - **Sync:** From a clean blueprint checkout, run `python3 core/references/sync-harness-audit.py <consumer-worktree> --pin <merged-source-sha>` and inspect its dry-run diff.
 - **Apply:** Add `--write` to copy only the auditor, legacy fixtures and `.harness-audit.lock`; local owners and gate commands stay in the consumer.
 - **Manifest:** Commit `.harness-audit.json` with `version: 1`, an explicit GitHub `owner`, `default_branch`, `checks`, `legacy`, and optional ignored cache paths in `reset`.
-- **Identity and refs:** Set `repository` to the checkout’s owner/name and `protected_branches` to its interior refs; optional `required_statuses` can add to the canonical `local-ci` requirement.
-- **Check rows:** Each row names its actual `ci-local` check ID, owner, version-probe argument arrays in `tools`, configuration paths in `configs`, and claimed `rules`.
+- **Identity and refs:** Set `repository` to the checkout’s owner/name and `protected_branches` to its interior refs; `required_statuses` lists the required GitHub check names.
+- **Check rows:** Each row names its actual check ID, owner, version-probe argument arrays in `tools`, configuration paths in `configs`, and claimed `rules`.
 - **Kinds:** Use `ruleset` for policy enforcement, `suite` for tests, or `execution` for artifact/build checks; explain the non-policy claim in `reason`.
 - **Ruleset proof:** `applied.command` runs the real fixture suite; `applied.required_output` names both refusal and permitted evidence that it must emit.
 - **Legacy inventory:** Record every older hook/check path, owner, role in `kind`, reason, `invoked_by`, and source paths in `via` that actually register/call it.
 - **Legacy execution:** Set `via_check` to the gate step that runs its fixtures and `required_output` to their real result markers; absent evidence remains a gap.
-- **Git hook registration:** Use `git:core.hooksPath` in `via` for `.githooks/pre-push`; the auditor checks the installed Git setting.
+- **Git hook registration:** Use `git:core.hooksPath` in `via` for a repo-owned hook script; the auditor checks the installed Git setting.
 - **Gate wiring:** Add `python3 scripts/legacy-guards-test.py` and `python3 scripts/harness-audit --verify-config` as cheap local steps; inventory both new check IDs.
 - **Existing negatives:** Keep migration, architecture and scanner refusal suites in the full gate when adding these steps.
 
@@ -45,16 +45,16 @@
 
 ## Legacy refusal fixtures
 
-- **Forbidden edit:** A dirty source tree cannot publish using a previously green receipt; approved chain criteria cannot be edited silently.
-- **Missing evidence:** An unverified head must run the actual owned runner, whose failing checker blocks publication; a missing chain lock blocks source edits.
-- **Stale lock:** An old head's green receipt cannot authorize a new source commit; a lock over a draft plan does not permit a chain source edit.
+- **Forbidden edit:** Approved chain criteria cannot be edited silently.
+- **Missing evidence:** A missing chain lock blocks source edits.
+- **Stale lock:** A lock over a draft plan does not permit a chain source edit.
 - **Criteria hashes:** The installed legacy verifier also refuses changed approved criteria, a missing approval lock and a stale criteria fingerprint; unchanged locked criteria must pass.
-- **Allowed:** A clean head verified by the real runner is accepted without a redundant suite; an approved active chain permits its source edit.
+- **Allowed:** An approved active chain permits its source edit.
 - **Isolation:** Fixtures copy the installed guards into disposable repositories, clear parent Git/gate context, and never run product deployments or production commands.
-- **Targeted development:** `python3 scripts/legacy-guards-test.py --case prepush`, `--case chain`, `--case verify`, and `--case config` select the directly affected fixture group.
+- **Targeted development:** `python3 scripts/legacy-guards-test.py --case chain`, `--case verify`, and `--case config` select the directly affected fixture group.
 
 ## Source development
 
 - **Canonical tests:** In a clean blueprint checkout, run `python3 -m unittest discover -s core/tests -p test_harness_audit.py -v` for focused development.
-- **Required checks:** Follow that repository's instructions and complete its local gate before every push; the shared source and tests stay together there.
-- **Consumer rollout:** Merge the canonical change first, sync from its merged SHA, then run each consumer's full local gate on its exact proposed head.
+- **Required checks:** Run the repository's full suite before every push; its required GitHub checks are the merge gate, as [local-first](local-first.md) says.
+- **Consumer rollout:** Merge the canonical change first, sync from its merged SHA, then run each consumer's full suite on its exact proposed head.

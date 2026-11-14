@@ -23,7 +23,7 @@ Full example for a Repair change (illustrative evidence, not claims to copy). Om
 ## Proof
 
 - **Migration tests:** 12 passed, including reading the old format.
-- **Local gate:** `scripts/ci-local --check` passed on the proposed head.
+- **Checks:** The repo's verify command passed on the proposed head.
 
 ## Before merge
 

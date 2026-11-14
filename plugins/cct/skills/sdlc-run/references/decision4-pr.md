@@ -1,7 +1,7 @@
 # Decision4 in a PR (advisory)
 
 Decision4 says how hard a change is to undo. It is guidance for the reviewer. No workflow, no
-`ci-local` step and no status check reads it, and it never blocks a merge.
+step in any workflow and no status check reads it, and it never blocks a merge.
 
 Where things live in an adopted repo:
 

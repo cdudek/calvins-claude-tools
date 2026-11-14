@@ -82,6 +82,7 @@ GENERATED = [
     ".claude/hooks/plan-gate.sh",
     ".claude/hooks/pr-gate.sh",
     ".claude/hooks/session-check.sh",
+    ".claude/hooks/turn-start.sh",
     ".claude/hooks/verify-on-stop.sh",
     ".github/tiers.json",
     ".github/workflows/ship-show-ask.yml",
@@ -1174,28 +1175,28 @@ def test_ci_template_changes_script_and_actionlint() -> None:
         assert lint.returncode == 0, lint.stdout
 
 
-def test_adopt_keeps_verification_local_for_a_repo_without_ci(tmp_path: Path) -> None:
+def test_adopt_names_required_checks_as_the_gate_for_a_repo_without_ci(tmp_path: Path) -> None:
     repo = _repo(tmp_path, "python")
     (repo / ".github/workflows/ci.yml").unlink()
     res = _adopt(repo)
     assert res.returncode == 0, res.stderr
     assert not (repo / ".github/workflows/ci.yml").exists()
     manual = " ".join(_sections(res.stdout)["MANUAL"])
-    assert "scripts/ci-local" in manual and "pre-push hook" in manual
-    assert "local-ci status" in manual and "never post it by hand" in manual
+    assert "required checks are the merge gate" in manual
+    assert "ci-local" not in manual and "local-ci" not in manual
     cfg = json.loads((repo / "sdlc.json").read_text())
     assert cfg["ciCommands"]["lint"] and cfg["ciCommands"]["e2eTouched"]
     assert _adopt(repo).returncode == 0
     assert not (repo / ".github/workflows/ci.yml").exists()
 
 
-def test_adopt_preserves_existing_required_ci_during_migration(tmp_path: Path) -> None:
+def test_adopt_preserves_existing_required_ci(tmp_path: Path) -> None:
     repo = _repo(tmp_path, "node")
     before = (repo / ".github/workflows/ci.yml").read_text()
     res = _adopt(repo)
     manual = " ".join(_sections(res.stdout)["MANUAL"])
-    assert "Keep existing required checks until migration is applied" in manual
-    assert "GitHub keeps cloud/GitHub work and schedules" in manual
+    assert "Keep existing required checks" in manual
+    assert "required checks are the merge gate" in manual
     assert (repo / ".github/workflows/ci.yml").read_text() == before
 
 
@@ -1292,9 +1293,9 @@ def test_sdlc_version_line_for_missing_older_equal_and_newer(tmp_path: Path) -> 
 def test_ci_blueprint_points_to_local_contract_and_labels_legacy_workflow() -> None:
     text = (SCRIPTS.parent / "references/ci-blueprint.md").read_text()
     assert "[local-first contract](local-first.md)" in text
-    assert "local-ci" in text
-    assert "not the default" in text
-    assert "Do not delete an existing required check" in text
+    assert "required checks are the gate" in text
+    assert "local-ci" not in text and "ci-local" not in text
+    assert "do not delete an existing required check" in text
 
 
 def _tree(repo: Path) -> dict[str, bytes | None]:

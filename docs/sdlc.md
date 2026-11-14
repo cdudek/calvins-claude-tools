@@ -67,7 +67,7 @@ none.
 | `builderModel`, `builderEffort` | which model builds and how hard (default `sonnet`, `high`): the `model` and `effort` of every builder agent, or the Codex model and reasoning when `builders` is `codex`. Set `opus` for a repo whose changes are hard; a plan's Approach may override both for one change |
 | `languages`, `responsiveTier`, `ux` | what the product ships, the device matrix tier, UX on or off |
 | `ciPaths` | which changed files run which CI step (lint, unit, build, e2e, deploy): a file in `code` or `config` runs the steps whose include matches it, `all` runs everything, a file in neither `code` nor `config` (or in `docs`) runs nothing; `specs` names the E2E spec files |
-| `ciCommands` | stack commands for the local gate and any existing remote jobs: `install`, `lint`, `unit`, `build`, `e2e` (`{shard}`, `{total}`), `e2eTouched` (`{files}`), optional `deploy` |
+| `ciCommands` | stack commands for the required checks and any other remote jobs: `install`, `lint`, `unit`, `build`, `e2e` (`{shard}`, `{total}`), `e2eTouched` (`{files}`), optional `deploy` |
 | `sdlcVersion` | the sdlc-run version the repo was last adopted or upgraded with; the skill warns when the kit is newer (`adopt --upgrade`) |
 | `protected` | paths refused after approval |
 | `verify`, `verifyStop` | full command before PR; fast Stop hook command (skipped inside a `/goal` and when nothing changed since its last pass) |
@@ -87,12 +87,13 @@ from the change folder's files.
 | Event | Script | Does |
 | --- | --- | --- |
 | `SessionStart` | `session-check.sh` | reports missing plannotator setup |
+| `UserPromptSubmit` | `turn-start.sh` | snapshots the source diff hash when a prompt is sent |
 | `PermissionRequest ExitPlanMode` | `plan-gate.sh` | opens the plan gate when needed |
 | `PreToolUse Bash` | `gate-bash.sh` | blocks commands named in `blocked[]` |
 | `PreToolUse Bash` | `pr-gate.sh` | one PR per milestone: refuses a PR or push that is not a milestone close with `VERIFY PASS milestone` on its head, a PR into `project/*` from anything but a milestone, and any other PR or push inside `/goal` |
 | `PreToolUse Edit\|Write` | `chain-gate.sh` | the chain's gates; refuses source edits outside an active `/goal` and protected paths after approval |
 | `PostToolUse Edit\|Write` | `lint-on-edit.sh` | runs matching file-scoped lint/format command |
-| `Stop` | `verify-on-stop.sh` | runs `python3 -m unittest discover -s tests` when dirty, falling back to `verify` when unset |
+| `Stop` | `verify-on-stop.sh` | runs `python3 -m unittest discover -s tests` (falling back to `verify`) only when the turn changed source and that state was not verified before |
 
 ## Build and test
 
@@ -162,7 +163,7 @@ Full example for a Repair change (illustrative evidence, not claims to copy). Om
 ## Proof
 
 - **Migration tests:** 12 passed, including reading the old format.
-- **Local gate:** `scripts/ci-local --check` passed on the proposed head.
+- **Checks:** The repo's verify command passed on the proposed head.
 
 ## Before merge
 
