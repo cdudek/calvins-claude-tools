@@ -129,8 +129,8 @@ const prsSegment = (p: NonNullable<BandData['prs']>): Segment => {
   return { id: 'prs', chunks: [{ text: `${SPACES}PRs ${parts.length > 0 ? parts.join(' ') : p.open}` }] }
 }
 
-// The session waiting longest: "· fix-login waits 4m", or "this session" when it is this one.
-const tailSegment = (l: Line): Segment => ({ id: 'tail', chunks: [{ text: `${SPACES}· ${l.self ? THIS_SESSION : l.title} waits${wait(l.ms)}` }] })
+// The session waiting longest: "· fix-login waits 4m", or "this session" when it is this one; "waiting" alone when the start is unknown.
+const tailSegment = (l: Line): Segment => ({ id: 'tail', chunks: [{ text: `${SPACES}· ${l.self ? THIS_SESSION : l.title} ${l.ms === null ? 'waiting' : `waits${wait(l.ms)}`}` }] })
 
 const build = (d: BandData, step: number, stale: string | null): Segment[] => {
   if (d.loading) return [{ id: 'loading', chunks: [{ text: LOADING, tone: 'dim' }] }]
@@ -174,6 +174,7 @@ export type Details = {
 const JOIN = ' · '
 // The columns of the mockup: 21 cells each, packed from the left, never stretched to the terminal.
 export const COLUMN_CELLS = 21
+const GUTTER = 2 // a column's text leaves 2 cells before the next column
 
 // "/goal running 42m · 2 subagents · 1 background session · ● 2 need you elsewhere · 6 live": each part only when there is one.
 const runsParts = (w: Work | null, d: BandData) =>
@@ -240,10 +241,10 @@ export const detailsLayout = (d: BandData, columns: number): Details => {
   const cols: Column[] = d.loading
     ? []
     : [
-        column('needs', 'needs you', String(d.needs.length), need ? needLine(need, colWidth - 1) : ''),
-        column('running', 'running', String(d.running.length), lines && run ? runLine(run, colWidth - 1) : '', 'dim'),
+        column('needs', 'needs you', String(d.needs.length), need ? needLine(need, colWidth - GUTTER) : ''),
+        column('running', 'running', String(d.running.length), lines && run ? runLine(run, colWidth - GUTTER) : '', 'dim'),
         ...prs,
-      ].map(c => ({ ...c, line: cut(c.line, colWidth - 1), ...(d.stale ? { tone: 'dim' as const } : {}) })) // a stale list dims the last counts
+      ].map(c => ({ ...c, line: cut(c.line, colWidth - GUTTER), ...(d.stale ? { tone: 'dim' as const } : {}) })) // a stale list dims the last counts
   const rows = fold ? [cols.slice(0, 2), cols.slice(2)].filter(r => r.length > 0) : cols.length > 0 ? [cols] : []
   return { header: headerLines(d, columns), note, rows, colWidth }
 }

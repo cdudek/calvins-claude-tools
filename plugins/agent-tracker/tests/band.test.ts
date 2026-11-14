@@ -72,6 +72,14 @@ describe('compact band, the model', () => {
     expect(text(compact([inState('x', 'running', 1, 'api', 'job')].map(r => ({ ...r, sessionId: 'other' })), 200))).toBe('○ all clear  ◐1')
   })
 
+  test(`${TAG} a wait with no known start reads "waiting", with a start "waits 6m"`, () => {
+    // An unknown wait sorts after every known one, so it is the oldest only when it is the only one.
+    const unknown = town().filter(r => r.sessionId !== 'docs-1').map(r => (r.sessionId === 'web-1' ? { ...r, engine: { since: null } } : r))
+    expect(seg(compact(unknown, 200), 'tail')).toBe('  · fix login waiting')
+    expect(seg(compact(town(), 200), 'tail')).toBe('  · fix login waits 6m')
+    expect(col(details(unknown, 200), 'needs').line).toBe('fix login · waiting') // the reason stays, the age goes
+  })
+
   test(`@F26 ${TAG} the waiting session is named, "this session" when it is this one`, () => {
     expect(seg(compact(townSelfWaiting(), 200), 'tail')).toBe('  · fix login waits 6m') // web-app waits longer than this session
     const mine = town().map(r => (r.sessionId === SELF ? { ...r, state: 'needs-you' as const, engine: { since: NOW - MIN } } : r)).filter(r => r.sessionId === SELF || r.state !== 'needs-you')
@@ -284,8 +292,8 @@ describe('details view, the model', () => {
     // A column with 0 shows the count and no line.
     const none = town().filter(r => r.state !== 'running')
     expect(col(details(none, 115), 'running')).toMatchObject({ count: '0', line: '' })
-    // Every line fits its column with a cell to spare.
-    for (const c of d.rows.flat()) expect([...c.line].length).toBeLessThanOrEqual(d.colWidth - 1)
+    // Every line fits its column with a 2-cell gutter: 19 of the 21.
+    for (const c of d.rows.flat()) expect([...c.line].length).toBeLessThanOrEqual(d.colWidth - 2)
     // Below 80 the lines drop except needs you.
     const narrow = details(town(), 79)
     expect(narrow.rows[0]!.map(c => c.line !== '')).toEqual([true, false, false])
@@ -308,7 +316,7 @@ describe('details view, the model', () => {
     expect(col(details(long, 115), 'needs').line).toContain('…')
     // "this session" when it is this one.
     const mine = town().map(r => (r.sessionId === SELF ? { ...r, state: 'needs-you' as const, reason: 'question' as const, engine: { since: NOW - 10 * MIN } } : r))
-    expect(col(details(mine, 115), 'needs').line).toMatch(/^this.*· question 10m$/)
+    expect(col(details(mine, 115), 'needs').line).toMatch(/^thi.*· question 10m$/)
   })
 
   test(`@F82 ${TAG} PRs count and line`, () => {
@@ -554,7 +562,7 @@ describe('the band on screen', () => {
     await run($, 'details')
     await ui.redraw()
     const all = await texts(ui)
-    for (const word of ['needs you', 'running', 'PRs', '2', '3', '4 open', 'fix lo… · waiting 6m', 'migrate users 22m', '1 ✗ · 2 mergeable']) expect(all).toContain(word)
+    for (const word of ['needs you', 'running', 'PRs', '2', '3', '4 open', 'fix l… · waiting 6m', 'migrate users 22m', '1 ✗ · 2 mergeable']) expect(all).toContain(word)
     expect(all).not.toContain('done') // no done column
     expect(all).toContain('/goal running 14m · ● 2 need you elsewhere · 7 live') // the second header line
     expect(all.some(t => /^─+$/.test(t) && t.length === 115)).toBe(true) // the rule across bodyColumns
@@ -571,7 +579,7 @@ describe('the band on screen', () => {
     const svg = (await ui.find({ type: 'Svg' }))!
     expect(svg).toBeDefined()
     const alt = String(svg.props.alt)
-    for (const part of ['needs you 2: fix lo… · waiting 6m', 'running 3: migrate users 22m', 'PRs 4 open: 1 ✗ · 2 mergeable']) expect(alt).toContain(part)
+    for (const part of ['needs you 2: fix l… · waiting 6m', 'running 3: migrate users 22m', 'PRs 4 open: 1 ✗ · 2 mergeable']) expect(alt).toContain(part)
     expect(alt).not.toContain('done')
     // The terminal draws Text instead; the desktop draws no rule.
     expect(await ui.find({ type: 'Text', text: /^─+$/ })).toBeUndefined()
