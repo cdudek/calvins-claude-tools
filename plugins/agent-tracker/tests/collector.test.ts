@@ -350,7 +350,7 @@ describe('a session with no process is ended', () => {
     expect(stateOf(list, PID.exited)).toBe('ended') // `done` ends it as before, not by the pid rule
   })
 
-  test(`@F72 ${CHANGE} this session's own id is never ended by the pid rule; a background done row stays ended`, () => {
+  test(`@F72 ${CHANGE} this session's own id is never ended; a background \`done\` row stays ended`, () => {
     // This session's row lost its pid: it keeps its state while the others still read ended.
     const ownNoPid = pidRows.map(r => (r.sessionId === PID.self ? { ...r, pid: undefined } : r))
     const list = merged(ownNoPid)
