@@ -265,7 +265,7 @@ data), `lock.json` (their hash at approval, written by `verify_gate.py approve`)
 
 `Done` states how `/goal` knows to stop. `How to run` is the build's process. `Goal handover` is
 committed, not spoken: a kickoff prompt, and the `/goal` line, which holds only the end state
-(`python3 scripts/sdlc_status.py goal <ID>` printed `GOAL <ID> DONE` or `BLOCKED`) because a small
+(`python3 <STATUS> goal <ID>` printed `GOAL <ID> DONE` or `BLOCKED`) because a small
 model judges the condition from the transcript and cannot read files or GitHub.
 
 **Risk:** `goal_active()` in `chain-gate.sh`, `pr-gate.sh` and `verify-on-stop.sh` reads the last

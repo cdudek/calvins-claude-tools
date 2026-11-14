@@ -11,7 +11,7 @@ from pathlib import Path
 
 import pytest
 
-SCRIPT = Path(__file__).resolve().parents[1] / "templates" / "scripts" / "sdlc_status.py"
+SCRIPT = Path(__file__).resolve().parent / "sdlc_status.py"
 ID = "2026-10-09-redesign-r2"
 ROWS = "\n".join(
     f"| {n} | {ID} | feature {n} | url | {'merged' if n < 3 else 'building' if n == 3 else 'todo'} |"

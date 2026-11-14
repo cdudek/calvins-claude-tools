@@ -71,8 +71,8 @@ none.
 
 ## Where a change stands
 
-`python3 scripts/sdlc_status.py map` shows every milestone, the features of the current one and
-the stage, all read from the change folder's files.
+`/sdlc-run status` shows every milestone, the features of the current one and the stage, all read
+from the change folder's files.
 
 ## Hooks
 
