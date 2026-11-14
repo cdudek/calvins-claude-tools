@@ -1,7 +1,9 @@
 // The band as plain data: what the snapshot says (bandData), and how the compact row fits a width (compactLayout).
 // Widths are terminal cells. spec/screens.md gives the measured sizes; the tests hold this to them.
 import type { Pr, SessionRecord, Snapshot } from '../types'
-import { duration, plural } from './format'
+import { cells, cut, duration, plural } from './format'
+import { DOT, cutSpans, dim, dimmed, join, sp, spanCells } from './paint'
+import type { Span, Spans, Tone } from './paint'
 import { repoPrs } from './git'
 import { completeCount, isComplete } from './milestone'
 import type { Line } from './rank'
@@ -35,7 +37,7 @@ export type BandData = {
 
 // Open PRs of every repo with a session in 7 days, each from its latest stored scan (F78). A repo whose gh failed
 // adds nothing; with none left the PR segment is dropped.
-const prsOf = (sessions: SessionRecord[], now: number): Pick<BandData, 'prs' | 'partial'> => {
+export const prsOf = (sessions: SessionRecord[], now: number): Pick<BandData, 'prs' | 'partial'> => {
   const repos = new Map<string, string>()
   for (const r of sessions) if (r.repo) repos.set(r.repo.path, r.repo.name)
   const rows: PrRow[] = []
@@ -85,12 +87,11 @@ export const bandData = (snap: Snapshot, selfId: string, now: number): BandData 
   }
 }
 
-export type Tone = 'warning' | 'dim' | 'error'
-export type Chunk = { text: string; tone?: Tone }
-export type Segment = { id: 'loading' | 'work' | 'needs' | 'run' | 'prs' | 'tail' | 'stale'; chunks: Chunk[] }
+// A segment of the compact row. `id` says what it is; each segment carries the gap before it.
+export type Chunk = Span
+export type Segment = { id: 'label' | 'loading' | 'work' | 'needs' | 'run' | 'prs' | 'tail' | 'stale'; chunks: Chunk[] }
 
-export const cells = (text: string) => [...text].length
-const segmentCells = (s: Segment) => s.chunks.reduce((n, c) => n + cells(c.text), 0)
+const segmentCells = (s: Segment) => spanCells(s.chunks)
 
 // A plain Button draws its label alone. The buttons sit 2 cells apart and 2 cells after the text. Compact has Pane and
 // Details: 4 + 7 + 2 + 2 = 15 cells.
@@ -103,46 +104,57 @@ export const BUTTONS_DETAILS = buttonCells(['Copy', 'Pane', 'Compact'])
 // Each segment carries the spaces before it, so the row's width is the cells of its text and the buttons.
 const rowWidth = (segments: Segment[], buttons: number) => segments.reduce((n, s) => n + segmentCells(s), 0) + buttons
 
-// The owner's mockup (2026-11-14), work first: "agent-tracker-1 3/7 goal 42m · ● 2 need you  ◐3  PRs 1✗ 1↓  · fix-login waits 4m".
+// The owner's mockup (2026-11-14): "agent tracker  M1 3/7 goal 42m · ● 2 need you  ◐3  PRs 1✗ 1↓  · fix-login waits 4m".
 // The drop order, one step at a time: 1 the waiting session, 2 PRs, 3 the goal age, 4 the work shortened, 5 the work,
-// 6 the running count. The need-you count and the buttons never drop. Below 40 columns: step 6 at once.
-const LAST_STEP = 6
+// 6 the label, 7 the running count. The need-you count and the buttons never drop. Below 40 columns: step 7 at once.
+const LAST_STEP = 7
 const SPACES = '  '
+export const LABEL = 'agent tracker'
 
 // A wait as it follows a name: " 6m", nothing when it is unknown.
 const wait = (ms: number | null) => (ms === null ? '' : ` ${duration(ms)}`)
 
+const labelSegment: Segment = { id: 'label', chunks: [sp(LABEL, 'label', { bold: true })] }
+
 const workSegment = (w: Work, step: number): Segment => {
   const m = w.milestone
-  const name = step < 4 ? (m ? `${m.slug} ${m.done}/${m.total}` : `${w.repo} · ${w.title ?? UNTITLED}`) : m ? `${m.done}/${m.total}` : w.repo
-  return { id: 'work', chunks: [{ text: w.goalMs !== null && step < 3 ? `${name} goal ${duration(w.goalMs)}` : name }] }
+  const goal = w.goalMs !== null && step < 3 ? [sp(` goal ${duration(w.goalMs)}`, 'cyan')] : []
+  const name = m ? [sp(step < 4 ? `${m.slug} ${m.done}/${m.total}` : `${m.done}/${m.total}`, 'yellow')] : [sp(step < 4 ? `${w.repo} · ${w.title ?? UNTITLED}` : w.repo)]
+  return { id: 'work', chunks: [...name, ...goal] }
 }
 
-const needsSegment = (d: BandData, afterWork: boolean): Segment => {
-  const lead: Chunk[] = afterWork ? [{ text: ' · ' }] : []
+const needsSegment = (d: BandData): Segment => {
   const n = d.needs.length
-  return { id: 'needs', chunks: [...lead, n === 0 ? { text: '○ all clear', tone: 'dim' } : { text: `● ${n} ${n === 1 ? 'needs' : 'need'} you`, tone: 'warning' }] }
+  return { id: 'needs', chunks: [n === 0 ? sp('○ all clear', 'dim') : sp(`● ${n} ${n === 1 ? 'needs' : 'need'} you`, 'red')] }
 }
 
 const prsSegment = (p: NonNullable<BandData['prs']>): Segment => {
-  const parts = [p.failing > 0 ? `${p.failing}✗` : '', p.mergeable > 0 ? `${p.mergeable}↓` : ''].filter(Boolean)
-  return { id: 'prs', chunks: [{ text: `${SPACES}PRs ${parts.length > 0 ? parts.join(' ') : p.open}` }] }
+  const parts = [p.failing > 0 ? sp(`${p.failing}✗`, 'red') : null, p.mergeable > 0 ? sp(`${p.mergeable}↓`, 'green') : null].filter((x): x is Span => x !== null)
+  return { id: 'prs', chunks: [dim('PRs '), ...(parts.length > 0 ? parts.flatMap((x, i) => (i === 0 ? [x] : [sp(' '), x])) : [sp(String(p.open))])] }
 }
 
 // The session waiting longest: "· fix-login waits 4m", or "this session" when it is this one; "waiting" alone when the start is unknown.
-const tailSegment = (l: Line): Segment => ({ id: 'tail', chunks: [{ text: `${SPACES}· ${l.self ? THIS_SESSION : l.title} ${l.ms === null ? 'waiting' : `waits${wait(l.ms)}`}` }] })
+const tailSegment = (l: Line): Segment => ({ id: 'tail', chunks: [dim(`· ${l.self ? THIS_SESSION : l.title} ${l.ms === null ? 'waiting' : `waits${wait(l.ms)}`}`)] })
+
+// The gap before a segment: " · " between the work and the need-you count, two spaces elsewhere, none at the start.
+const lead = (s: Segment, prev: Segment | undefined): Chunk[] => (prev === undefined ? [] : s.id === 'needs' && prev.id === 'work' ? [DOT] : [sp(SPACES)])
 
 const build = (d: BandData, step: number, stale: string | null): Segment[] => {
-  if (d.loading) return [{ id: 'loading', chunks: [{ text: LOADING, tone: 'dim' }] }]
-  // A stale list gives its own words the place of the work.
-  const work = d.work && stale === null && step < 5 ? workSegment(d.work, step) : null
-  const segments: Segment[] = [...(work ? [work] : []), needsSegment(d, work !== null)]
-  if (step < 6) segments.push({ id: 'run', chunks: [{ text: `${SPACES}◐${d.running.length}` }] })
-  if (d.prs && step < 2) segments.push(prsSegment(d.prs))
-  if (d.needs.length > 0 && step < 1) segments.push(tailSegment(d.needs[0]!))
-  if (stale !== null) segments.push({ id: 'stale', chunks: [{ text: `${SPACES}${stale}` }] })
+  const body: Segment[] = []
+  if (d.loading) body.push({ id: 'loading', chunks: [dim(LOADING)] })
+  else {
+    // A stale list gives its own words the place of the work.
+    const work = d.work && stale === null && step < 5 ? workSegment(d.work, step) : null
+    if (work) body.push(work)
+    body.push(needsSegment(d))
+    if (step < 7) body.push({ id: 'run', chunks: [sp(`◐${d.running.length}`, 'yellow')] })
+    if (d.prs && step < 2) body.push(prsSegment(d.prs))
+    if (d.needs.length > 0 && step < 1) body.push(tailSegment(d.needs[0]!))
+  }
   // A stale list dims the counts it last read; its own words stay.
-  return d.stale ? segments.map(s => (s.id === 'stale' ? s : { ...s, chunks: s.chunks.map(c => ({ ...c, tone: 'dim' as const })) })) : segments
+  const read = d.stale ? body.map(s => ({ ...s, chunks: dimmed(s.chunks) })) : body
+  const all = [...(step < 6 ? [labelSegment] : []), ...read, ...(stale !== null ? [{ id: 'stale' as const, chunks: [sp(stale, 'yellow')] }] : [])]
+  return all.map((s, i) => ({ ...s, chunks: [...lead(s, all[i - 1]), ...s.chunks] }))
 }
 
 export type CompactLayout = { segments: Segment[]; width: number }
@@ -163,9 +175,9 @@ export const compactLayout = (d: BandData, columns: number): CompactLayout => {
 
 // ---- The details view: two header lines, a rule, and the columns.
 
-export type Column = { key: 'needs' | 'running' | 'prs'; label: string; count: string; line: string; tone?: Tone }
+export type Column = { key: 'needs' | 'running' | 'prs'; label: string; count: string; line: string; lineSpans: Spans; tone?: 'dim'; countTone?: Tone }
 export type Details = {
-  header: string[] // the first line sits beside the buttons; the second holds what runs and the other sessions
+  header: Spans[] // the first line sits beside the buttons; the second holds what runs and the other sessions
   note: string | null // Loading, Stale or Partial, in one line under the header (F87)
   rows: Column[][] // three columns in a row; below 60 columns two and one
   colWidth: number // the cells of a column, its 1 cell of space included
@@ -177,58 +189,70 @@ export const COLUMN_CELLS = 21
 const GUTTER = 2 // a column's text leaves 2 cells before the next column
 
 // "/goal running 42m · 2 subagents · 1 background session · ● 2 need you elsewhere · 6 live": each part only when there is one.
-const runsParts = (w: Work | null, d: BandData) =>
-  [
-    w === null || w.goalMs === null ? '' : `/goal running ${duration(w.goalMs)}`,
-    w !== null && w.subagents > 0 ? plural(w.subagents, 'subagent', 'subagents') : '',
-    w !== null && w.background > 0 ? plural(w.background, 'background session', 'background sessions') : '',
-    d.needs.some(l => !l.self) ? `● ${d.needs.filter(l => !l.self).length} need you elsewhere` : '',
-    d.live > 0 ? `${d.live} live` : '',
-  ].filter(Boolean)
-
-// The first line's cut ladder: 0 all, 1 no current feature, 2 no milestone name; without sdlc-run 1 no branch, 2 no title (F84).
-const headerAt = (w: Work, level: number) => {
-  const m = w.milestone
-  const parts = [w.repo]
-  if (m) {
-    if (level < 2) parts.push(m.slug)
-    const progress = `◐ ${m.done}/${m.total}`
-    parts.push(level < 1 && w.feature !== null ? `${w.feature} ${progress}` : progress)
-  } else {
-    if (level < 2) parts.push(w.title ?? UNTITLED)
-    const branch = w.branch ?? (w.hasRepo ? DETACHED : null)
-    if (level < 1 && branch !== null) parts.push(branch)
-  }
-  return parts.join(JOIN)
+const runsParts = (w: Work | null, d: BandData): Spans[] => {
+  const elsewhere = d.needs.filter(l => !l.self).length
+  return [
+    w === null || w.goalMs === null ? [] : [sp(`/goal running ${duration(w.goalMs)}`, 'cyan')],
+    w !== null && w.subagents > 0 ? [dim(plural(w.subagents, 'subagent', 'subagents'))] : [],
+    w !== null && w.background > 0 ? [dim(plural(w.background, 'background session', 'background sessions'))] : [],
+    elsewhere > 0 ? [sp(`● ${elsewhere} need you`, 'red'), dim(' elsewhere')] : [],
+    d.live > 0 ? [dim(`${d.live} live`)] : [],
+  ].filter(p => p.length > 0)
 }
 
-const headerLines = (d: BandData, columns: number): string[] => {
+// The first line's cut ladder: 0 all, 1 no current feature, 2 no milestone name; without sdlc-run 1 no branch, 2 no title (F84).
+// Repo in bold, the progress in yellow, as the mockup draws them.
+const headerAt = (w: Work, level: number): Spans => {
+  const m = w.milestone
+  const parts: Spans[] = [[sp(w.repo, undefined, { bold: true })]]
+  if (m) {
+    if (level < 2) parts.push([sp(m.slug)])
+    const progress = sp(`◐ ${m.done}/${m.total}`, 'yellow')
+    parts.push(level < 1 && w.feature !== null ? [sp(`${w.feature} `), progress] : [progress])
+  } else {
+    if (level < 2) parts.push([sp(w.title ?? UNTITLED)])
+    const branch = w.branch ?? (w.hasRepo ? DETACHED : null)
+    if (level < 1 && branch !== null) parts.push([sp(branch)])
+  }
+  return join(parts)
+}
+
+const LABEL_LEAD: Spans = [sp('tracker', 'label', { bold: true }), DOT]
+
+const headerLines = (d: BandData, columns: number): Spans[] => {
   const w = d.work
   const parts = runsParts(w, d)
   // The second line gives up its last parts before it wraps.
-  while (parts.length > 1 && cells(parts.join(JOIN)) > columns) parts.pop()
-  const second = parts.length > 0 ? [parts.join(JOIN)] : []
-  if (w === null) return ['', ...second]
-  const room = columns - BUTTONS_DETAILS
+  while (parts.length > 1 && spanCells(join(parts)) > columns) parts.pop()
+  const second = parts.length > 0 ? [join(parts)] : []
+  if (w === null) return [LABEL_LEAD.slice(0, 1), ...second]
+  const room = columns - BUTTONS_DETAILS - spanCells(LABEL_LEAD)
   let line = headerAt(w, 2)
   for (let level = 0; level <= 2; level++) {
-    if (cells(headerAt(w, level)) <= room) {
+    if (spanCells(headerAt(w, level)) <= room) {
       line = headerAt(w, level)
       break
     }
   }
-  return [line, ...second]
+  return [[...LABEL_LEAD, ...line], ...second]
 }
 
-const column = (key: Column['key'], label: string, count: string, line: string, tone?: Tone): Column => ({ key, label, count, line, ...(tone ? { tone } : {}) })
-const cut = (s: string, max: number) => (cells(s) > max ? `${[...s].slice(0, Math.max(1, max - 1)).join('')}…` : s)
-
+const column = (key: Column['key'], label: string, count: string, line: string, lineSpans: Spans, o: { tone?: 'dim'; countTone?: Tone } = {}): Column => ({ key, label, count, line, lineSpans, ...o })
 // A name and what follows it: the name gives way to "…" first, so the wait or the progress stays whole.
 const named = (name: string, tail: string, max: number) => `${cut(name, Math.max(1, max - cells(tail)))}${tail}`
 // "fix-login · perm 4m" for the session waiting longest, "this session · perm 4m" when it is this one.
 const needLine = (l: Line, max: number) => named(l.self ? THIS_SESSION : l.title, ` · ${SHORT_REASON[l.reason ?? 'waiting']}${wait(l.ms)}`, max)
 // "tracker 3/7 · 43%" for the session running longest, else its name and how long it has run.
 const runLine = (l: Line, max: number) => named(l.title, l.progress && l.progress.total > 0 ? ` ${l.progress.done}/${l.progress.total} · ${Math.round((100 * l.progress.done) / l.progress.total)}%` : wait(l.ms), max)
+
+// The PR column's line: "1 ✗ · 1 mergeable", the failing count in red, the mergeable count in green.
+const prLine = (p: NonNullable<BandData['prs']>, max: number): { line: string; spans: Spans } => {
+  const failing = p.failing > 0 ? `${p.failing} ✗` : ''
+  const mergeable = p.mergeable > 0 ? `${p.mergeable} mergeable` : ''
+  const line = cut([failing, mergeable].filter(Boolean).join(JOIN), max)
+  const spans = [failing === '' ? [] : [sp(failing, 'red')], mergeable === '' ? [] : [sp(mergeable, 'green')]].filter(x => x.length > 0)
+  return { line, spans: cutSpans(join(spans), max) }
+}
 
 export const detailsLayout = (d: BandData, columns: number): Details => {
   const age = d.stale === null || d.stale.ageMs === null ? null : duration(d.stale.ageMs)
@@ -237,14 +261,16 @@ export const detailsLayout = (d: BandData, columns: number): Details => {
   const [need, run] = [d.needs[0], d.running[0]]
   const fold = columns < 60
   const colWidth = Math.min(COLUMN_CELLS, Math.floor(columns / (fold ? 2 : 3)))
-  const prs = d.prs ? [column('prs', 'PRs', `${d.prs.open} open`, lines ? [d.prs.failing > 0 ? `${d.prs.failing} ✗` : '', d.prs.mergeable > 0 ? `${d.prs.mergeable} mergeable` : ''].filter(Boolean).join(JOIN) : '', 'dim')] : []
+  const max = colWidth - GUTTER
+  const text = (line: string, tone?: Tone) => ({ line: cut(line, max), lineSpans: line === '' ? [] : [sp(cut(line, max), tone)] })
+  const pr = d.prs && lines ? prLine(d.prs, max) : { line: '', spans: [] as Spans }
   const cols: Column[] = d.loading
     ? []
     : [
-        column('needs', 'needs you', String(d.needs.length), need ? needLine(need, colWidth - GUTTER) : ''),
-        column('running', 'running', String(d.running.length), lines && run ? runLine(run, colWidth - GUTTER) : '', 'dim'),
-        ...prs,
-      ].map(c => ({ ...c, line: cut(c.line, colWidth - GUTTER), ...(d.stale ? { tone: 'dim' as const } : {}) })) // a stale list dims the last counts
+        { ...column('needs', 'needs you', String(d.needs.length), '', [], { countTone: d.needs.length > 0 ? 'red' : undefined }), ...text(need ? needLine(need, max) : '', 'dim') },
+        { ...column('running', 'running', String(d.running.length), '', [], { tone: 'dim' }), ...text(lines && run ? runLine(run, max) : '', 'dim') },
+        ...(d.prs ? [column('prs', 'PRs', `${d.prs.open} open`, pr.line, pr.spans, { tone: 'dim' })] : []),
+      ].map(c => (d.stale ? { ...c, tone: 'dim' as const, lineSpans: dimmed(c.lineSpans), countTone: undefined } : c)) // a stale list dims the last counts
   const rows = fold ? [cols.slice(0, 2), cols.slice(2)].filter(r => r.length > 0) : cols.length > 0 ? [cols] : []
   return { header: headerLines(d, columns), note, rows, colWidth }
 }

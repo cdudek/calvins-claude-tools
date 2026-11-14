@@ -4,7 +4,7 @@
 import type { EngineInterface } from 'claude-code'
 
 import { COMMAND_DESCRIPTION, COMMAND_HINT, PANE_ID, PANE_TITLE, REDRAW_MS, askStatuses, emptyRecord, gitArgv, parseMilestone, repoFromCommonDir } from './core'
-import type { Frozen, Page } from './core'
+import type { Change, Frozen, Page } from './core'
 import type { AgentsFile, Lease, SessionRecord, Settings } from './types'
 
 type Engine = EngineInterface
@@ -38,6 +38,7 @@ export type State = {
   settings: Settings // the last good read of settings.json
   hasBand: boolean // the band or the pane started: its command is registered and the one-minute redraw runs (F126)
   pane: PaneState
+  changes: Map<string, { at: number; changes: Change[] }> // a repo's change folders as last read, by repo path
 }
 
 export const newState = (): State => ({
@@ -61,6 +62,7 @@ export const newState = (): State => ({
   settings: { v: 1, view: 'compact', bandHidden: false },
   hasBand: false,
   pane: newPane(),
+  changes: new Map(),
 })
 
 export async function claudeDir($: Engine) {

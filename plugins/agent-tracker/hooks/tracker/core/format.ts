@@ -12,7 +12,16 @@ export const duration = (ms: number) => {
 // an ask keeps its lines (F70) and neither moves the cursor.
 export const clean = (value: unknown, max: number): string => String(value ?? '').replace(/[\x00-\x08\x0b-\x1f\x7f-\x9f]/g, '').slice(0, max)
 
-export const plural = (n: number, one: string, many: string) => `${n} ${n === 1 ? one : many}`
+// Widths are terminal cells: one per character, as every glyph the tracker draws is one cell wide.
+export const cells = (text: string) => [...text].length
+export const pad = (s: string, n: number) => s + ' '.repeat(Math.max(0, n - cells(s)))
+// The cut text: "…" in place of the last cell.
+export const cut = (text: string, max: number) => {
+  const chars = [...text]
+  return chars.length <= max ? text : max <= 1 ? '…' : `${chars.slice(0, max - 1).join('')}…`
+}
+
+export const plural =(n: number, one: string, many: string) => `${n} ${n === 1 ? one : many}`
 
 // Tokens as the pane writes them: "950", "12k", "41k", "1.2M".
 export const tokens = (n: number) => (n < 1000 ? String(n) : n < 1_000_000 ? `${Math.round(n / 1000)}k` : `${(n / 1_000_000).toFixed(1).replace(/\.0$/, '')}M`)

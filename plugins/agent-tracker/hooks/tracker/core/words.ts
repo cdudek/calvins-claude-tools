@@ -22,9 +22,12 @@ export const staleWords = (age: string | null, columns: number): string[] => {
 // The pane's words, from spec/screens.md "Pane, Home", "Pane, Session" and "Pane, Repo".
 export const PANE_TITLE = 'Tracker'
 export const NOTHING_NEEDS = 'Nothing needs you.'
-export const ONLY_THIS = 'Only this session is running. Sessions in other terminals show up here when they start.'
+export const ONLY_THIS = 'Only this session is running.'
 export const NO_REPOS = 'No repos yet.'
-export const HEADINGS = { needs: 'Needs you', running: 'Running', done: 'Done', ended: 'Ended today' } as const
+// Section headings in capitals, as the mockups draw them.
+export const HEADINGS = { needs: 'NEEDS YOU', running: 'RUNNING', milestones: 'MILESTONES', asks: 'YOUR ASKS HERE', worktrees: 'WORKTREES', otherPrs: 'OTHER PRs', stage: 'STAGE', features: 'FEATURES', facts: 'FACTS', questions: 'QUESTIONS', findings: 'FINDINGS', sessions: 'SESSIONS', tests: 'TESTS', builder: 'BUILDER' } as const
+// Plain words, no keys bound: the rows are Buttons.
+export const KEY_HINTS = '↑↓ move  ⏎ open'
 export const PANE_BUTTONS = { close: 'Close', back: 'Back', home: 'Home', resume: 'Copy resume command' } as const
 export const NEW_MARK = 'new'
 export const moreLine = (n: number) => `and ${n} more on the Repo pages`
@@ -32,10 +35,7 @@ export const updatedWords = (age: string) => (age === '<1m' ? 'updated just now'
 // The session list failed twice (F123). `age` is "2m", or null when no read ever worked.
 export const staleTop = (age: string | null) =>
   `Session list unavailable. ${age === null ? '' : `Showing what was read ${age} ago. `}Retrying every 5 seconds; if it keeps failing, update Claude Code.`
-export const withoutTracker = (n: number) =>
-  n === 1
-    ? '1 session runs without the tracker. Questions it asks in text are not detected.'
-    : `${n} sessions run without the tracker. Questions they ask in text are not detected.`
+export const withoutTracker = (n: number) => (n === 1 ? '1 session runs without the tracker' : `${n} sessions run without the tracker`)
 export const RESUME_COPIED = 'Resume command copied'
 export const resumeFailed = (reason: string) => `Copy failed: ${reason}. Press Copy resume command again.`
 export const NO_ASKS = 'No asks yet.'

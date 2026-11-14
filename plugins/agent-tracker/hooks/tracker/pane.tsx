@@ -1,16 +1,16 @@
-// The pane: Home, Session and Repo pages, and the /tracker words that open them. It only reads the snapshot and the
-// clock; the one thing it writes is the clipboard. `$` is passed only to plain top-level functions.
+// The pane: Home, Repo, Milestone, Feature and Session pages, and the /tracker words that open them. It only reads the
+// snapshot, the clock and the change folders; the one thing it writes is the clipboard. `$` is passed only to plain
+// top-level functions.
 import { atom, read } from 'claude-code'
 import type { EngineInterface, On } from 'claude-code'
 
-import { COMMAND_HELP, PANE_ID, PANE_OPENED, RESUME_COPIED, homeModel, matchRepo, matchSession, repoModel, repoNotFound, resumeFailed, sessionModel, sessionNotFound } from './core'
-import type { Page } from './core'
-import type { Actions } from './pane/chrome'
-import { homeView } from './pane/home'
-import { missingView, repoView } from './pane/repo'
-import { sessionView } from './pane/session'
+import { COMMAND_HELP, PANE_ID, PANE_OPENED, RESUME_COPIED, featureModel, homeModel, matchRepo, matchSession, milestoneModel, milestoneNotFound, missingModel, repoModel, repoNotFound, resumeCommand, resumeFailed, sessionModel, sessionNotFound } from './core'
+import type { Local, Page, PaneModel } from './core'
+import type { Actions } from './pane/view'
+import { paneView } from './pane/view'
+import { changesOf } from './changes'
 import { ensureCollector } from './collector'
-import { newPane, openPane, startUi } from './store'
+import { openPane, startUi } from './store'
 import type { State } from './store'
 import type { Snapshot } from './types'
 
@@ -18,28 +18,25 @@ type Engine = EngineInterface
 // The collector writes it; the band and the pane read it. The same literal, declared where it is read.
 const snapshot = atom({ plugin: 'agent-tracker', key: 'snapshot' } as const, { at: 0, agentsOk: true, okAt: 0, failedReads: 0, sessions: [] } as Snapshot)
 
+const DAYS = ['Sun', 'Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat']
+
 // The local day and clock face: core reads no time zone, so they come from here.
-function localDay(now: number) {
+function localDay(now: number): Local {
   const day = new Date(now)
   day.setHours(0, 0, 0, 0)
   const two = (n: number) => String(n).padStart(2, '0')
-  return { midnight: day.getTime(), clock: (ms: number) => `${two(new Date(ms).getHours())}:${two(new Date(ms).getMinutes())}` }
+  return { midnight: day.getTime(), clock: ms => `${two(new Date(ms).getHours())}:${two(new Date(ms).getMinutes())}`, day: ms => DAYS[new Date(ms).getDay()] ?? '' }
 }
 
-// Go to a page: Back returns to this one with the same row holding the ring (F89).
+// Go to a page: the row that opened it keeps the ring for when the person comes back (F89).
 function go($: Engine, s: State, page: Page, from: string | null) {
   s.pane = { ...s.pane, history: [...s.pane.history, { page: s.pane.page, focus: from }], page, focus: null }
   $.ui.invalidate('ui.render')
 }
 
-function back($: Engine, s: State) {
-  const last = s.pane.history.at(-1)
-  s.pane = last === undefined ? newPane() : { ...s.pane, history: s.pane.history.slice(0, -1), page: last.page, focus: last.focus }
-  $.ui.invalidate('ui.render')
-}
-
-function home($: Engine, s: State) {
-  s.pane = newPane()
+// A crumb: straight to an upper page, the pages above it become the way back.
+function jump($: Engine, s: State, page: Page) {
+  s.pane = { ...s.pane, history: [], page, focus: null }
   $.ui.invalidate('ui.render')
 }
 
@@ -66,6 +63,30 @@ async function close($: Engine) {
   await $.ui.close({ id: PANE_ID }).catch(() => undefined)
 }
 
+// The model of the page the pane is on. The Repo, Milestone and Feature pages read the repo's change folders.
+async function modelOf($: Engine, s: State, snap: Snapshot, now: number, selfId: string, columns: number): Promise<PaneModel> {
+  const local = localDay(now)
+  const page = s.pane.page
+  switch (page.kind) {
+    case 'session':
+      return sessionModel(snap, page.id, now, local, columns) ?? missingModel(sessionNotFound(page.id))
+    case 'missing':
+      return missingModel(page.what === 'session' ? sessionNotFound(page.text) : repoNotFound(page.text))
+    case 'repo':
+      return repoModel(snap, page.path, await changesOf($, s, snap, page.path, now), now, local, columns) ?? missingModel(repoNotFound(page.path))
+    case 'milestone': {
+      const c = (await changesOf($, s, snap, page.repo, now)).find(x => x.dir === page.change)
+      return (c && milestoneModel(snap, page.repo, c, now, columns)) ?? missingModel(milestoneNotFound(page.change))
+    }
+    case 'feature': {
+      const c = (await changesOf($, s, snap, page.repo, now)).find(x => x.dir === page.change)
+      return (c && featureModel(snap, page.repo, c, page.n, now, columns)) ?? missingModel(milestoneNotFound(page.change))
+    }
+    default:
+      return homeModel(snap, selfId, now, local, null, columns)
+  }
+}
+
 export const registerPane = (on: On, s: State) => {
   // The pane's words: none (Home), `session <text>`, `repo <text>`, and a hint for any other. The band's words go on.
   on('command.run', { command: 'tracker' }, async ($, e, next) => {
@@ -81,7 +102,7 @@ export const registerPane = (on: On, s: State) => {
     return { text: PANE_OPENED }
   })
 
-  // The ring moves by Tab, the arrows or a click: remember where, so a redraw and Back keep it (Q27).
+  // The ring moves by Tab, the arrows or a click: remember where, so a redraw and a return keep it (Q27).
   on('ui.focus', async ($, e, next) => {
     if (e.requestId === PANE_ID && e.element !== undefined) s.pane.focus = e.element
     return next(e)
@@ -94,28 +115,23 @@ export const registerPane = (on: On, s: State) => {
     const now = await $.clock.now()
     const selfId = await $.session.id()
     const ui = $.ui.resolve(e)
-    const columns = e.props.bodyColumns
-    const local = localDay(now)
+    const columns = Math.max(20, e.props.bodyColumns - 1) // one cell of margin on the left
     const page = s.pane.page
-    const session = page.kind === 'session' ? sessionModel(snap, page.id, now, local) : null
+    // Home keeps its order while the pane has the keyboard, and sorts again when the keyboard leaves (F43).
+    let model: PaneModel
+    if (page.kind === 'home') {
+      const home = homeModel(snap, selfId, now, localDay(now), e.props.isFocused ? s.pane.frozen : null, columns)
+      s.pane.frozen = e.props.isFocused ? home.frozen : null
+      model = home
+    } else model = await modelOf($, s, snap, now, selfId, columns)
+    const session = page.kind === 'session' ? snap.sessions.find(r => r.sessionId === page.id) : undefined
     const actions: Actions = {
       open: (key, to) => go($, s, to, key),
-      back: () => back($, s),
-      home: () => home($, s),
+      jump: to => jump($, s, to),
       close: () => void close($),
-      resume: () => void copyResume($, session?.resume ?? '', e.surface),
+      resume: () => void copyResume($, session === undefined ? '' : resumeCommand(session), e.surface),
       ring: s.pane.focus,
     }
-    if (session !== null) return sessionView(ui, session, actions, columns)
-    if (page.kind === 'session') return missingView(ui, sessionNotFound(page.id), actions)
-    if (page.kind === 'missing') return missingView(ui, page.what === 'session' ? sessionNotFound(page.text) : repoNotFound(page.text), actions)
-    if (page.kind === 'repo') {
-      const repo = repoModel(snap, page.path, now, selfId)
-      return repo === null ? missingView(ui, repoNotFound(page.path), actions) : repoView(ui, repo, actions, columns)
-    }
-    // Home keeps its order while the pane has the keyboard, and sorts again when the keyboard leaves (F43).
-    const model = homeModel(snap, selfId, now, local, e.props.isFocused ? s.pane.frozen : null)
-    s.pane.frozen = e.props.isFocused ? model.frozen : null
-    return homeView(ui, model, actions, columns)
+    return paneView(ui, model, actions, columns)
   })
 }

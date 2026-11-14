@@ -4,8 +4,8 @@
 import { atom, read } from 'claude-code'
 import type { EngineInterface, On } from 'claude-code'
 
-import { BAND_REPLY, BUTTON_LABELS, COPIED, bandData, columnsAlt, columnsSvg, compactLayout, copyFailed, detailsLayout, stateMarkdown } from './core'
-import type { Chunk, Column } from './core'
+import { BAND_REPLY, BUTTON_LABELS, COPIED, bandData, columnsAlt, columnsSvg, compactLayout, copyFailed, detailsLayout, paint, rule, stateMarkdown } from './core'
+import type { Column, Spans } from './core'
 import { ensureCollector } from './collector'
 import { openPane, readSettings, startUi, writeSettings } from './store'
 import type { State } from './store'
@@ -65,21 +65,28 @@ export const registerBand = (on: On, s: State) => {
     // bodyColumns counts terminal cells; a graphical surface draws Buttons wider than their cells, so a row sized to it wraps there.
     const isTerminal = e.surface === 'terminal'
     const width = isTerminal ? columns : undefined
-    const stack = (mine: NonNullable<typeof below>) => (below ? <Box flexDirection="column">{mine}{below}</Box> : mine)
+    // One blank line above our row, and a rule between it and the next mod's row, so the mods do not run together.
+    const stack = (mine: NonNullable<typeof below>) => (
+      <Box flexDirection="column" marginTop={1}>
+        {mine}
+        {below && isTerminal && (
+          <Text key="below-rule" dimColor>
+            {rule(columns).text}
+          </Text>
+        )}
+        {below}
+      </Box>
+    )
+    const run = (spans: Spans, key: string) => spans.map((x, i) => <Text key={`${key}${i}`} {...paint(x)}>{x.text}</Text>)
     const view = () => toggleView($, s)
     const pane = <Button key="pane" plain label={BUTTON_LABELS.pane} onPress={() => openPane($, s)} />
 
     if (settings.view !== 'details') {
-      const chunk = (c: Chunk, i: number) => (
-        <Text key={`c${i}`} color={c.tone === 'warning' || c.tone === 'error' ? c.tone : undefined} dimColor={c.tone === 'dim'}>
-          {c.text}
-        </Text>
-      )
       return stack(
         <Box flexDirection="row" alignItems="center" width={width}>
           {compactLayout(data, columns).segments.map(seg => (
             <Box key={seg.id} flexDirection="row">
-              {seg.chunks.map(chunk)}
+              {run(seg.chunks, seg.id)}
             </Box>
           ))}
           <Box flexGrow={1} width={2} />
@@ -96,14 +103,10 @@ export const registerBand = (on: On, s: State) => {
     const cell = (c: Column) => (
       <Box key={c.key} flexDirection="column" width={d.colWidth}>
         <Text dimColor>{c.label}</Text>
-        <Text bold dimColor={c.tone === 'dim' && data.stale !== null}>
+        <Text bold dimColor={data.stale !== null} color={c.countTone === 'red' ? paint({ text: '', tone: 'red' }).color : undefined}>
           {c.count}
         </Text>
-        {c.line !== '' && (
-          <Text dimColor={c.tone === 'dim'} wrap="truncate-end">
-            {c.line}
-          </Text>
-        )}
+        {c.line !== '' && <Text wrap="truncate-end">{run(c.lineSpans, `${c.key}-line`)}</Text>}
       </Box>
     )
     let table = (
@@ -130,7 +133,7 @@ export const registerBand = (on: On, s: State) => {
       // The desktop's SVG draws its own line at the top, which would touch the buttons without the gap.
       <Box flexDirection="column" width={width} gap={e.surface === 'desktop' ? 1 : 0}>
         <Box flexDirection="row" alignItems="center">
-          <Text wrap="truncate-end">{d.header[0]}</Text>
+          <Text wrap="truncate-end">{run(d.header[0] ?? [], 'h0')}</Text>
           <Box flexGrow={1} width={2} />
           <Box flexDirection="row" gap={2}>
             <Button key="copy" plain label={BUTTON_LABELS.copy} onPress={() => void copyState($, e.surface)} />
@@ -138,7 +141,7 @@ export const registerBand = (on: On, s: State) => {
             <Button key="details" plain label={BUTTON_LABELS.compact} onPress={view} />
           </Box>
         </Box>
-        {d.header[1] !== undefined && <Text wrap="truncate-end">{d.header[1]}</Text>}
+        {d.header[1] !== undefined && <Text wrap="truncate-end">{run(d.header[1], 'h1')}</Text>}
         {d.note !== null && <Text dimColor>{d.note}</Text>}
         {cols.length > 0 && table}
       </Box>,
