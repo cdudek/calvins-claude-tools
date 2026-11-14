@@ -20,13 +20,19 @@ type Engine = EngineInterface
 const snapshot = atom({ plugin: 'agent-tracker', key: 'snapshot' } as const, { at: 0, agentsOk: true, okAt: 0, failedReads: 0, sessions: [] } as Snapshot)
 
 const DAYS = ['Sun', 'Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat']
+const MONTHS = ['Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun', 'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec']
 
 // The local day and clock face: core reads no time zone, so they come from here.
 function localDay(now: number): Local {
   const day = new Date(now)
   day.setHours(0, 0, 0, 0)
   const two = (n: number) => String(n).padStart(2, '0')
-  return { midnight: day.getTime(), clock: ms => `${two(new Date(ms).getHours())}:${two(new Date(ms).getMinutes())}`, day: ms => DAYS[new Date(ms).getDay()] ?? '' }
+  return {
+    midnight: day.getTime(),
+    clock: ms => `${two(new Date(ms).getHours())}:${two(new Date(ms).getMinutes())}`,
+    day: ms => DAYS[new Date(ms).getDay()] ?? '',
+    date: (ms, withYear) => `${new Date(ms).getDate()} ${MONTHS[new Date(ms).getMonth()] ?? ''}${withYear ? ` ${new Date(ms).getFullYear()}` : ''}`,
+  }
 }
 
 // Go to a page: the row that opened it keeps the ring for when the person comes back (F89).

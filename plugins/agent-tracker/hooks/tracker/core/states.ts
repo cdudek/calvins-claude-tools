@@ -29,6 +29,8 @@ export const parseAgents = (json: string): AgentRow[] | null => {
       status: text(a.status),
       state: text(a.state),
       waitingFor: text(a.waitingFor) ?? null,
+      ...(typeof a.pid === 'number' ? { pid: a.pid } : {}),
+      ...(text(a.id) !== undefined ? { id: text(a.id) } : {}),
     })
   }
   return out
@@ -59,10 +61,11 @@ export const deriveState = (e: Engine, flagged: boolean, permission: string | nu
 // The session's state from its record and the list. Absent from a good list is ended (F6). A failed read keeps the
 // last state of the session this mod runs in (it is live by definition), of a session the last good read showed
 // (`seen`) and of a done one (it claims nothing live); a running or waiting state in a file, from a session no good
-// read showed, is a crash's leftover and is ended (R11). `seen` undefined: no limit.
-export const resolveState = (r: SessionRecord, agent: AgentRow | undefined, agentsOk: boolean, isSelf: boolean, seen?: ReadonlySet<string>): Derived => {
+// read showed, is a crash's leftover and is ended (R11). `seen` undefined: no limit. A row with no `pid` has no process and
+// is ended whatever its state says (F1), except this session's own (F72); `pidKnown`: the read shows `pid` at all (F4).
+export const resolveState = (r: SessionRecord, agent: AgentRow | undefined, agentsOk: boolean, isSelf: boolean, seen?: ReadonlySet<string>, pidKnown = false): Derived => {
   if (r.endedAt !== null) return { state: 'ended', ...none }
-  if (agent) return deriveState(agent, r.questionFlag !== null)
+  if (agent) return pidKnown && agent.pid === undefined && !isSelf ? { state: 'ended', ...none } : deriveState(agent, r.questionFlag !== null)
   if (!isSelf && (agentsOk || (r.state !== 'done' && seen?.has(r.sessionId) === false))) return { state: 'ended', ...none }
   return { state: r.state, reason: r.reason, unknownValue: r.unknownValue }
 }

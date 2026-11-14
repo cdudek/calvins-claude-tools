@@ -170,6 +170,13 @@ export function world(on: On, o: { id?: string; cwd?: string; now?: number; pane
       const found = text.match(new RegExp(argv[argv.length - 2]!, 'g')) ?? []
       return { value: { exitCode: found.length ? 0 : 1, stdout: found.length ? `${found.join('\n')}\n` : '', ...RUN } }
     }
+    // tail -c <bytes> <file>: the end of the file, as `tail` prints it.
+    if (argv[0] === 'tail' && argv[1] === '-c') {
+      const path = argv[argv.length - 1]!
+      const text = w.files.get(path)
+      if (text === undefined || w.unreadable.has(path)) return { value: { exitCode: 1, stdout: '', ...RUN, stderr: 'No such file' } }
+      return { value: { exitCode: 0, stdout: text.slice(-Number(argv[2])), ...RUN } }
+    }
     if (argv[0] === 'git') {
       const sub = argv.slice(1).filter((a, i, all) => a !== '-c' && all[i - 1] !== '-c') // the leading `-c key=value` pairs are not the subcommand
       if (sub[0] === 'remote') {

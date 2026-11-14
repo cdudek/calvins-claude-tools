@@ -25,8 +25,9 @@ export type Page =
   | { kind: 'note'; key: string }
   | { kind: 'missing'; what: 'session' | 'repo'; text: string }
 
-// The day and the clock face are the I/O layer's: core never reads a time zone. `day` is the weekday of an older ask.
-export type Local = { midnight: number; clock: (ms: number) => string; day: (ms: number) => string }
+// The day and the clock face are the I/O layer's: core never reads a time zone. `day` is the weekday of an older ask;
+// `date` is "12 Sep", or "12 Sep 2025" with the year.
+export type Local = { midnight: number; clock: (ms: number) => string; day: (ms: number) => string; date: (ms: number, withYear: boolean) => string }
 
 // A Button that does something other than open a page: mark notes seen, copy the reply to overrule one, copy a resume command,
 // keep or close a task (`keys` are the task keys).

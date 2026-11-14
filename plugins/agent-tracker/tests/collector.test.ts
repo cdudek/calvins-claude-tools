@@ -8,19 +8,22 @@ import {
   isLive,
   isComplete,
   labelRepos,
+  lastActivity,
   leaseState,
   mergeSessions,
   needsLines,
   parseAgents,
   parseMilestone,
   repoFromCommonDir,
+  sessionModel,
 } from '../hooks/tracker/core'
 import type { AgentRow, AgentsFile, Lease, SessionRecord, Snapshot } from '../hooks/tracker/types'
-import { AGENTS, AGENTS_JSON, ID, T0 } from './fixtures/agents'
+import { AGENTS, AGENTS_JSON, ID, PID, PID_JSON, PID_ROWS, T0 } from './fixtures/agents'
 import { MILESTONE_MD } from './fixtures/milestone'
 import { DIR, start, world } from './fixtures/world'
 
 const TAG = '@2026-11-13-agent-tracker'
+const CHANGE = '@2026-11-14-tracker-session-cleanup'
 const NOW = T0 + 3_600_000
 const rows = parseAgents(AGENTS_JSON) as AgentRow[]
 const row = (id: string) => rows.find(r => r.sessionId === id)!
@@ -230,7 +233,7 @@ describe('collector and states', () => {
     expect(by('t').state).toBe('running')
     expect(by('t').engine.since).toBeNull() // no mod file saw it change: its age is not a wait
     expect(isLive(by('gone'))).toBe(false)
-    const home = homeModel({ at: NOW, agentsOk: true, okAt: NOW, failedReads: 0, sessions }, 'me', NOW, { midnight: 0, clock: () => '', day: () => '' }, null, 80)
+    const home = homeModel({ at: NOW, agentsOk: true, okAt: NOW, failedReads: 0, sessions }, 'me', NOW, { midnight: 0, clock: () => '', day: () => '', date: () => '' }, null, 80)
     const row = home.blocks.find(x => x.kind === 'row' && x.key === 'session:e')
     expect(row?.kind === 'row' && row.lines[0]!.map(x => x.text).join('')).not.toMatch(/\d+m|<1m/) // the row shows no wait
   })
@@ -298,5 +301,96 @@ describe('collector and states', () => {
     expect(snap.agentsOk).toBe(false)
     expect(snap.sessions.find(s => s.sessionId === 'old')?.state).toBe('done') // not "ended"
     expect(w.procs.filter(p => p.argv[0] === 'claude').length).toBe(0)
+  })
+})
+
+// A row with no `pid` has no process: the session is ended, whatever its state says (change 2026-11-14-tracker-session-cleanup).
+const pidRows = parseAgents(PID_JSON) as AgentRow[]
+const withoutPid = parseAgents(JSON.stringify(PID_ROWS.map(({ pid: _pid, ...r }: Record<string, unknown>) => r))) as AgentRow[]
+const merged = (agents: AgentRow[], extra: Partial<Parameters<typeof mergeSessions>[0]> = {}) =>
+  mergeSessions({ files: [], transcripts: [], agents, now: NOW, selfId: PID.self, ...extra })
+const stateOf = (list: SessionRecord[], id: string) => list.find(r => r.sessionId === id)?.state
+const factsLine = (r: SessionRecord) => {
+  const local = { midnight: NOW - 3_600_000, clock: () => '10:00', day: () => 'Mon', date: () => '14 Nov' }
+  const model = sessionModel({ at: NOW, agentsOk: true, okAt: NOW, failedReads: 0, sessions: [r] }, r.sessionId, NOW, local, 80)!
+  const facts = model.blocks.find(b => b.kind === 'lines' && b.key === 'facts')
+  return facts?.kind === 'lines' ? facts.lines[0]!.map(s => s.text).join('') : ''
+}
+
+describe('a session with no process is ended', () => {
+  test(`@F1 ${CHANGE} a row with no pid is ended, whatever its state`, async ($, on) => {
+    const list = merged(pidRows)
+    expect(pidRows.find(r => r.sessionId === PID.closedWaiting)).toMatchObject({ kind: 'interactive', status: 'waiting' })
+    expect(pidRows.find(r => r.sessionId === PID.closedWaiting)!.pid).toBeUndefined()
+    for (const id of [PID.exited, PID.deadBlocked, PID.closedWaiting, PID.closedIdle]) expect(stateOf(list, id)).toBe('ended') // background and interactive, blocked, waiting, idle, done
+    expect(stateOf(list, PID.live)).toBe('running')
+    // The same through the poller: this session's own row has a pid, so the rule holds for the others.
+    const w = world(on, { now: NOW, id: PID.self, cwd: '/work/pid-1' })
+    w.agents.json = PID_JSON
+    await start($, w)
+    await w.clock.advance(5000)
+    expect(stateOf(w.snapshot().sessions, PID.deadBlocked)).toBe('ended')
+    expect(stateOf(w.snapshot().sessions, PID.closedWaiting)).toBe('ended')
+    expect(stateOf(w.snapshot().sessions, PID.liveWaiting)).toBe('needs-you')
+  })
+
+  test(`@F2 ${CHANGE} a row with a pid that is blocked or waiting needs you`, () => {
+    const list = merged(pidRows)
+    expect(stateOf(list, PID.liveBlocked)).toBe('needs-you') // a background row
+    expect(stateOf(list, PID.liveWaiting)).toBe('needs-you') // an interactive row
+    expect(isLive(list.find(r => r.sessionId === PID.liveBlocked)!)).toBe(true)
+  })
+
+  test(`@F4 ${CHANGE} a read where no row has a pid keeps the old rule and marks nothing ended`, () => {
+    const list = merged(withoutPid)
+    expect(stateOf(list, PID.deadBlocked)).toBe('needs-you') // the old rule: blocked waits
+    expect(stateOf(list, PID.closedWaiting)).toBe('needs-you')
+    expect(stateOf(list, PID.closedIdle)).toBe('done')
+    expect(stateOf(list, PID.live)).toBe('running')
+    expect(stateOf(list, PID.exited)).toBe('ended') // `done` ends it as before, not by the pid rule
+  })
+
+  test(`@F72 ${CHANGE} this session's own id is never ended; a background \`done\` row stays ended`, () => {
+    // This session's row lost its pid: it keeps its state while the others still read ended.
+    const ownNoPid = pidRows.map(r => (r.sessionId === PID.self ? { ...r, pid: undefined } : r))
+    const list = merged(ownNoPid)
+    expect(stateOf(list, PID.self)).toBe('running')
+    expect(stateOf(list, PID.closedIdle)).toBe('ended')
+    // A background row that reports done is ended with or without a pid.
+    const done = (pid: number | undefined) => merged([...pidRows, { ...pidRows.find(r => r.sessionId === PID.exited)!, sessionId: 'done-pid', pid }])
+    expect(stateOf(done(4242), 'done-pid')).toBe('ended')
+    expect(stateOf(done(undefined), 'done-pid')).toBe('ended')
+    // A read that has no row for this session marks nothing ended: the list is not trusted, the next read corrects it.
+    const noSelf = merged(pidRows.filter(r => r.sessionId !== PID.self))
+    expect(stateOf(noSelf, PID.closedWaiting)).toBe('needs-you')
+    expect(stateOf(noSelf, PID.closedIdle)).toBe('done')
+  })
+
+  test(`@F71 ${CHANGE} last activity is the newest of prompt, turn end and transcript; unknown reads "last activity unknown"`, async ($, on) => {
+    const stamp = (ms: number) => JSON.stringify({ type: 'assistant', timestamp: new Date(ms).toISOString() })
+    const base = record('x', { startedAt: T0, lastActivityAt: T0, asks: [] }) // lastActivityAt is the start: not an activity
+    expect(lastActivity(base)).toBeNull()
+    expect(lastActivity({ ...base, asks: [{ n: 1, text: 'a', kind: 'task', status: 'replied', at: T0 + 100 }] })).toBe(T0 + 100) // a prompt
+    expect(lastActivity({ ...base, lastActivityAt: T0 + 500 })).toBe(T0 + 500) // a turn end
+    expect(lastActivity({ ...base, lastActivityAt: T0 + 500, asks: [{ n: 1, text: 'a', kind: 'task', status: 'replied', at: T0 + 900 }] }, T0 + 700)).toBe(T0 + 900)
+    expect(lastActivity({ ...base, lastActivityAt: T0 + 500 }, T0 + 700)).toBe(T0 + 700) // the transcript's last line
+    // A closed terminal that the list alone knows: its last line time is the activity; with none the page says so.
+    const id = PID.closedIdle
+    const known = merged(pidRows, { lastLines: { [id]: T0 + 600_000 } }).find(r => r.sessionId === id)!
+    expect(known.lastActivityAt).toBe(T0 + 600_000)
+    expect(factsLine(known)).toContain('last activity')
+    expect(factsLine(known)).not.toContain('unknown')
+    const unknown = merged(pidRows).find(r => r.sessionId === id)!
+    expect(factsLine(unknown)).toContain('last activity unknown')
+    // The poller reads the transcript's tail with `tail`: the time of the last line that has one (the lines before it hold the rest).
+    const w = world(on, { now: NOW, id: PID.self, cwd: '/work/pid-1' })
+    w.agents.json = PID_JSON
+    w.put(`/u/.claude/projects/-work-pid-8/${id}.jsonl`, [stamp(T0 + 100_000), stamp(T0 + 900_000), JSON.stringify({ type: 'cost-state', totalCostUSD: 1 })].join('\n') + '\n')
+    await start($, w)
+    await w.clock.advance(5000)
+    const tail = w.procs.find(p => p.argv[0] === 'tail')
+    expect(tail?.argv.slice(0, 2)).toEqual(['tail', '-c'])
+    expect(w.snapshot().sessions.find(r => r.sessionId === id)?.lastActivityAt).toBe(T0 + 900_000)
+    expect(factsLine(w.snapshot().sessions.find(r => r.sessionId === PID.closedWaiting)!)).toContain('last activity unknown') // no transcript
   })
 })

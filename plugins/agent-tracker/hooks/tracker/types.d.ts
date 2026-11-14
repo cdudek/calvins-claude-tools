@@ -79,6 +79,8 @@ export type AgentRow = {
   status?: string
   state?: string
   waitingFor?: string | null
+  pid?: number // absent: no process, so the session is ended
+  id?: string // the job id of a background row; an interactive row has none
 }
 
 // Beside the session files, for what one session reads of another's: the entrypoint of each transcript of the week (`cli`,

@@ -3,6 +3,7 @@ import { atom, read, update } from 'claude-code'
 import type { EngineInterface, On } from 'claude-code'
 
 import { startBackfill } from './backfill'
+import { lastLines } from './lastline'
 import { LEASE_GEN, POLL_MS, agentsFresh, clean, deriveState, leaseState, mergeSessions, noteTool, parseAgents } from './core'
 import { startScan } from './scan'
 import type { AgentRow, Lease, SessionRecord, Snapshot } from './types'
@@ -69,7 +70,10 @@ async function tick($: Engine, s: State) {
     if (own === null) return
     const files = (await readFolder($, s, `${base}/sessions`)).filter(f => f.sessionId !== own.sessionId)
     const transcripts = await readFolder($, s, `${base}/transcripts`)
-    const sessions = mergeSessions({ files: [...files, own], transcripts, agents, now, selfId: own.sessionId, seen: s.seen, entrypoints: (await readEntrypoints($, base)).by, late: (await readLateChecks($, base)).by })
+    // A session with no file of its own has no last activity but its transcript's last line (F71).
+    const known = new Set([...files, ...transcripts, own].map(r => r.sessionId))
+    const times = agents === null ? {} : await lastLines($, s, agents, known, now).catch(() => ({}))
+    const sessions = mergeSessions({ files: [...files, own], transcripts, agents, now, selfId: own.sessionId, seen: s.seen, entrypoints: (await readEntrypoints($, base)).by, late: (await readLateChecks($, base)).by, lastLines: times })
     s.failedReads = agents !== null ? 0 : s.failedReads + 1
     if (agents !== null) {
       s.okAt = now

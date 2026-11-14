@@ -42,6 +42,9 @@ export const REPLY_COPIED = 'Reply copied: paste it into that session'
 export const replyFailed = (reason: string) => `Copy failed: ${reason}. Press Copy overrule again.`
 export const resumeFailed = (reason: string) => `Copy failed: ${reason}. Press Copy resume command again.`
 export const NO_ASKS = 'No asks yet.'
+// The Session page: "○ ended 63d ago", "○ ended" when no time is known; the facts line says so when no activity is known.
+export const endedWords = (age: string | null) => (age === null ? '○ ended' : `○ ended ${age} ago`)
+export const UNKNOWN_ACTIVITY = 'last activity unknown'
 export const FROM_TRANSCRIPT = 'Not classified: this session ran without the tracker.'
 export const SECTION_WORDS = { running: 'Running now', usage: 'Usage', milestone: 'Milestone', asks: 'Asks' } as const
 export const ASK_KIND = { task: 'task', question: 'question', 'not-classified': 'not classified' } as const

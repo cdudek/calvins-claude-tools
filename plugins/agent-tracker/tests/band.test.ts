@@ -16,16 +16,20 @@ import {
   detailsLayout,
   duration,
   mergeSessions,
+  needsLines,
+  parseAgents,
   stateMarkdown,
+  taskItems,
 } from '../hooks/tracker/core'
 import type { CompactLayout, Details, NoteItem } from '../hooks/tracker/core'
 import type { SessionRecord, Settings, Snapshot } from '../hooks/tracker/types'
-import { AGENTS_JSON, ID, T0 } from './fixtures/agents'
+import { AGENTS_JSON, ID, PID, PID_JSON, T0 } from './fixtures/agents'
 import { MIN, MILESTONE, NOW, PRS, SELF, inState, pr, rec, scan, snap, town, townSelfWaiting } from './fixtures/band'
 import { DIR, settle, start, world } from './fixtures/world'
 import type { World } from './fixtures/world'
 
 const TAG = '@2026-11-13-agent-tracker'
+const CHANGE = '@2026-11-14-tracker-session-cleanup'
 
 // A note item as the pane and the band read it.
 const note = (kind: NoteItem['kind'], text: string, extra: Partial<NoteItem> = {}): NoteItem => ({ key: `${kind}:${text}`, kind, text, at: NOW, dayOnly: false, seen: false, repo: 'api', label: 'api/retry-bug', session: 'retry-bug', sessionId: 'api-1', source: null, ref: null, question: null, ...extra })
@@ -64,6 +68,17 @@ describe('compact band, the model', () => {
     expect(l.segments.find(s => s.id === 'needs')!.chunks).toEqual([{ text: ' · ', tone: 'dim' }, { text: '● 2 need you', tone: 'red' }])
     expect(l.segments.find(s => s.id === 'label')!.chunks).toEqual([{ text: 'agent tracker', tone: 'label', bold: true }]) // the label in its own colour
     expect(seg(l, 'tail')).toBe('  · fix login waits 6m') // the oldest wait
+  })
+
+  test(`@F3 ${CHANGE} needs-you count, oldest-waiting line and needs-you tasks skip pid-less rows`, () => {
+    // Four rows would wait under the old rule; the two with no pid are ended, so only the two with a process count.
+    const list = mergeSessions({ files: [], transcripts: [], agents: parseAgents(PID_JSON), now: NOW, selfId: PID.self })
+    expect(needsLines(list, PID.self, NOW).map(l => l.id)).toEqual([PID.liveBlocked, PID.liveWaiting])
+    const l = compact(list, 200)
+    expect(seg(l, 'needs')).toContain('● 2 need you')
+    expect(seg(l, 'tail')).toContain('live job') // the oldest wait is one with a process
+    expect(seg(l, 'tail')).not.toMatch(/dead job|closed terminal/)
+    expect(taskItems(snap(list), NOW).filter(t => t.status === 'needs-you').map(t => t.sessionId).sort()).toEqual([PID.liveBlocked, PID.liveWaiting])
   })
 
   test(`@F76 ${TAG} one needs you`, () => {
@@ -205,7 +220,7 @@ describe('compact band, the model', () => {
   test(`@F54 ${TAG} a repo that is not on GitHub is not a gh failure: no PR segment, no gh line, on the band and in Home (R9)`, () => {
     const elsewhere = town().map(r => (r.scan ? { ...r, scan: { ...r.scan, ghOk: false, github: false as const, prs: [] } } : r))
     expect(bandData(snap(elsewhere), SELF, NOW)).toMatchObject({ prs: null, partial: false })
-    const local = { midnight: 0, clock: () => '', day: () => '' }
+    const local = { midnight: 0, clock: () => '', day: () => '', date: () => '' }
     expect(homeModel(snap(elsewhere), SELF, NOW, local, null, 60).blocks.some(b => b.kind === 'lines' && b.key === 'partial')).toBe(false)
     const missing = town().map(r => (r.scan ? { ...r, scan: { ...r.scan, ghOk: false } } : r)) // gh itself failed: the line stays
     expect(homeModel(snap(missing), SELF, NOW, local, null, 60).blocks.some(b => b.kind === 'lines' && b.key === 'partial')).toBe(true)
