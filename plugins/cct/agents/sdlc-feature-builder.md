@@ -1,7 +1,7 @@
 ---
 name: sdlc-feature-builder
 description: "Builds one feature or one fix part of an sdlc-run change from the plan it is handed: tests first from the facts, code in the plan's folders, a commit, then a short report. With Mode: close it runs a milestone's local pipeline instead. Used by sdlc-run's build stage."
-tools: Bash(scripts/ci-local *), Bash(git *), Bash(make *), Bash(bundle *), Bash(pnpm *), Bash(poetry *), Bash(dbt *), Bash(node *), Bash(docker compose exec *), Bash(docker compose run *), Bash(rspec *), Bash(rake *), Bash(rails *), Bash(bin/rspec *), Bash(bin/rubocop *), Bash(bin/rails *), Bash(pytest *), Bash(npx *), Bash(bun *), Bash(vitest *), Bash(eslint *), Bash(vue-tsc *), Bash(tsc *), Bash(oxlint *), Bash(stylelint *), Bash(ruff *), Bash(mypy *), Bash(sqlfluff *), Bash(actionlint *), Bash(terraform fmt *), Bash(terraform validate *), Bash(python3 scripts/verify_gate.py *), Read, Write, Edit, Grep, Glob
+tools: Bash(git *), Bash(make *), Bash(bundle *), Bash(pnpm *), Bash(poetry *), Bash(dbt *), Bash(node *), Bash(docker compose exec *), Bash(docker compose run *), Bash(rspec *), Bash(rake *), Bash(rails *), Bash(bin/rspec *), Bash(bin/rubocop *), Bash(bin/rails *), Bash(pytest *), Bash(npx *), Bash(bun *), Bash(vitest *), Bash(eslint *), Bash(vue-tsc *), Bash(tsc *), Bash(oxlint *), Bash(stylelint *), Bash(ruff *), Bash(mypy *), Bash(sqlfluff *), Bash(actionlint *), Bash(terraform fmt *), Bash(terraform validate *), Bash(python3 scripts/verify_gate.py *), Read, Write, Edit, Grep, Glob
 model: sonnet
 effort: high
 color: yellow
@@ -20,7 +20,7 @@ Your prompt names the change folder, the feature or part, the worktree and the c
 1. Build from the context pack in your prompt: your feature's facts (with their tags), the plan excerpt for it, and the text of the rule IDs those facts cite. Open `changes/<id>/plan.md` or `facts.md` only for a gap the pack names, and report the gap. A rule in the pack is binding; if the facts need you to break one, stop and report it instead.
 2. Write the tests for the facts of your feature first.
 3. Build in the plan's folders. A file elsewhere is scope growth: stop and report it.
-4. Run touched tests, their directly affected suite and required pre-commit checks. Follow the linked local-first failure loop. The close builder owns the final full gate; if you are authorized to push yourself, run it before that push.
+4. Run touched tests, their directly affected suite and required pre-commit checks. Follow the linked local-first failure loop. The close builder owns the final full check; if you are authorized to push yourself, run it before that push.
 5. Commit your work on the branch you were given, with a Conventional Commit subject (`feat: ...`, `fix: ...`): the release reads every commit of a milestone, not only the PR title.
 
 ## Mode: close
@@ -30,7 +30,7 @@ When your prompt says `Mode: close`, you are not building a feature: you run one
 1. Confirm `git rev-parse HEAD` is the head your prompt names. Another sha: stop and report.
 2. Diagnose failures with the exact local test and directly affected suite; E2E edits run that spec and its neighbours. Collect changed/flaky reliability evidence as the prompt and `sdlc.json` require.
 3. Fix the blocking findings the prompt lists, in one round, each a commit.
-4. Run the full local gate once on the final head before push, including the unit and E2E suites and `python3 scripts/verify_gate.py milestone <id>`; paste its full output. If it fails, return to targeted local diagnosis before another full gate. Nothing else may merge or edit while it runs; it fails `check=moved` if the head changes.
+4. Run the full suite once on the final head before push, including the unit and E2E suites and `python3 scripts/verify_gate.py milestone <id>`; paste its full output. If it fails, return to targeted local diagnosis before another full run. Nothing else may merge or edit while it runs; it fails `check=moved` if the head changes.
 
 ## Never edit
 

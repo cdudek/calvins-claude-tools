@@ -16,7 +16,8 @@ every stage:
   `GOAL <ID> DONE` or `GOAL <ID> BLOCKED`. The process the run follows is the plan's
   `## How to run`, started by the kickoff prompt in `## Goal handover`.
   Features are commits; **run touched tests and required pre-commit checks**. The full
-  local gate runs once on the final head before every push (see [local-first](local-first.md)). One PR and one release
+  suite runs once on the final head before every push; GitHub's required checks are the merge
+  gate (see [local-first](local-first.md)). One PR and one release
   per milestone. `delivery: "feature-prs"` keeps the older per-feature PRs (Stage 5, second
   half) for repos where several people build one milestone at once.
 - **Questions never block.** When the build meets a question only the engineer can answer, it
@@ -261,7 +262,7 @@ a change small enough for one milestone has one.
    tests for its facts (`cct:test-e2e-coverage-run`, tagged `@F<n>`;
    bugs: `test-behavior-writer`, then `review-fix-implementer`), build in the plan's folders, commit,
    set the row in `milestone.md` to `done <sha>`, start the next feature at once. **Run touched tests and required pre-commit checks between features**; do not
-   repeat the full suite while diagnosing one failure. Before pushing, use the full local gate.
+   repeat the full suite while diagnosing one failure. Before pushing, run the full suite once.
 3. Features that edit different files may build in parallel (Wall clock below): the supervisor
    commits its records, then dispatches each builder with a `Base: <milestone head sha>` line,
    and merges the builders' branches into the milestone branch locally, one at a time. Commits
@@ -325,7 +326,7 @@ a change small enough for one milestone has one.
      Supplied marks and reference images still require comparison, even when the UX skill is skipped.
   8. Arm auto-merge and start the next independent feature at once (Records, gates and
      waiting, below). Local checks run lint, types, unit tests and the specs this PR changed; the
-     full E2E suite runs in the local gate before push (`local-first.md`). This PR is
+     full E2E suite runs in the PR's required GitHub checks (`ci-blueprint.md`). This PR is
      **interior** — its base is `milestone/<slug>`, not the default branch — so Ship/Show/Ask
      does not run on it, and no human is asked to approve it. The workflow skips itself on the
      base ref (`references/tiers.md`). The code is reviewed once, locally, at the milestone
@@ -372,7 +373,7 @@ while a dependency PR's CI ran. Four rules, for every stack.
   branch, then go back. Independent rows build in parallel builders, at most 4 (Wall clock).
 - **Agents run what they touched.** A builder runs only the tests or specs its change touched
   (the command per stack: `../../test-e2e-policy/references/suite-speed-and-reliability.md`
-  section K, column "Touched tests"). The full local gate runs once on the final head before each push. Existing remote CI only confirms it; see [local-first](local-first.md).
+  section K, column "Touched tests"). The full suite runs once on the final head before each push; the required GitHub checks are the merge gate, see [local-first](local-first.md).
 
 ## Wall clock: one worktree per builder
 

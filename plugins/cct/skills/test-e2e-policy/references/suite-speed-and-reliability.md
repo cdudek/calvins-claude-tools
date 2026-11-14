@@ -156,8 +156,8 @@ The rules are language-neutral; this table is where the commands live. `sdlc-run
 The commands below serve local checks; `ciPaths` still helps select targeted diagnosis and existing remote confirmation jobs.
 
 - **Touched tests**: local diagnosis runs the changed spec and its neighbours, plus the
-  directly affected suite, until green. The full local gate runs once on the final head
-  before pushing. Existing remote jobs confirm it; they are not a retry loop.
+  directly affected suite, until green. The full suite runs once on the final head
+  before pushing. The required GitHub checks are the merge gate; they are not a retry loop.
 - **Production target**: what system and E2E tests start. Never a server that compiles or
   reloads on demand: it times differently and hides build-only failures.
 - **Shard**: one job per slice, each with its own database service (section H). A suite on

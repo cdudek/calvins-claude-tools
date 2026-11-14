@@ -169,26 +169,21 @@ def test_requests_for_other_skills_hit_none(request_text: str) -> None:
 
 
 # Guard: verification entry points must share the owner contract, not a remote retry loop.
-def test_local_first_contract_covers_failure_loop_and_exact_sha_gate() -> None:
+def test_local_first_contract_covers_failure_loop_and_names_no_local_gate() -> None:
     text = (SKILL / "references/local-first.md").read_text()
     for phrase in (
         'Never push to "see what CI says"',
         "Reproduce that test locally",
         "directly affected suite",
         "spec and its neighbours",
-        "full local gate once",
+        "full suite once",
         "Never rerun a whole pipeline",
         "speculative",
-        "confirmation, not a debugger",
-        "scripts/ci-local",
-        "pre-push hook",
-        "local-ci",
-        "Never post it by hand",
-        "exact SHA",
-        "dirty or moved head",
-        "failed status publication",
+        "required GitHub checks",
     ):
         assert phrase in text, phrase
+    for gone in ("scripts/ci-local", "pre-push hook", "local-ci", "exact SHA", "Publication hook"):
+        assert gone not in text, gone
 
 
 @pytest.mark.parametrize(

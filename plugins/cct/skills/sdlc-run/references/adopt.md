@@ -96,13 +96,10 @@ table, which is what makes `F1` traceable from `facts.md` through the test to th
    `tiers: false`, arm auto-merge on it like on any other PR.
 7. The CLAUDE.md section it appended states the process and `/goal`; if the repo's
    CLAUDE.md said "ask before merging", change it to "the tier decides".
-8. **Local CI gate.** `adopt` preserves existing CI and does not install the legacy full
-   remote workflow for a repository without CI. Implement and audit `scripts/ci-local`
-   and its pre-push hook using the [local-first contract](local-first.md).
-   Require `local-ci` on default and protected interior branches; never post
-   it by hand. Verify the script, hook and applied rulesets before retiring any existing
-   required checks. Keep GitHub for cloud/GitHub work and scheduled jobs; `ci-blueprint.md`
-   describes setup and the legacy template's migration role.
+8. **Required checks.** `adopt` preserves existing CI and does not install a workflow for a
+   repository without CI. GitHub Actions required checks are the merge gate: set them up per
+   `ci-blueprint.md` (its example workflow is a starting point) and require them in the
+   ruleset on the default and protected interior branches. Nothing local gates a push.
 9. **Version.** adopt stamps `sdlcVersion` in `sdlc.json`. `adopt --upgrade` on a repo with an
    older stamp (or none) is the safe path: it adds the missing `sdlc.json` keys with the stack's
    defaults, never overwriting a value, stamps the version, and writes nothing else and moves no
@@ -126,7 +123,7 @@ and walk that tool's setup guide before the first change.
 ## Decision4 installation
 
 Decision4 is advisory: nothing checks it and it never blocks a merge. `adopt` installs three
-things, each only when missing, and never a workflow or a `ci-local` step: a starter
+things, each only when missing, and never a workflow: a starter
 `boundary-map.yaml` (the lowest undo level per path, for the repo to edit), the AGENTS.md
 section "Decision4: how hard is this change to undo?" (with `@AGENTS.md` imported by CLAUDE.md
 when that exists), and the PR-template section with its Decision record. Existing files and

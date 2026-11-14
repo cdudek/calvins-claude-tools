@@ -100,7 +100,7 @@ bd close <id>         # Complete work
 **MANDATORY WORKFLOW:**
 
 1. **File issues for remaining work** - Create issues for anything that needs follow-up
-2. **Run the full local gate before every push** - Follow the linked targeted failure loop first; batch fixes, then run the suite once on the final head.
+2. **Run the full suite before every push** - Follow the linked targeted failure loop first; batch fixes, then run the suite once on the final head.
 3. **Update issue status** - Close finished work, update in-progress items
 4. **PUSH TO REMOTE** - This is MANDATORY:
    ```bash

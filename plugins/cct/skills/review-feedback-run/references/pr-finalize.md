@@ -36,9 +36,7 @@ gh pr edit {number} --body-file "${TMPDIR:-/tmp}/pr-body.md"
 
 ### Push
 
-Run the full local gate on the final head after merging the base and batching all fixes.
-`scripts/ci-local` owns push and status publication when installed; the raw push below is
-only for repositories still using a full local suite without that script.
+Run the full suite on the final head after merging the base and batching all fixes, then push.
 
 ```bash
 git push
