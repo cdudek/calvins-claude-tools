@@ -181,11 +181,11 @@ and `python3 -m unittest discover -s tests`, then commits with a Conventional Co
 - [ ] 9. Feature 3, the offer, Remove, Keep, the result states and the focus rule. Proof: F39, F40, F42 to F45, F47 and F73 pass.
 - [ ] 10. Feature 3, the post-`claude rm` re-check and the offer-only Clear. Proof: F21 and F46 pass in `clear.test.ts` against the git fixtures.
 - [ ] 11. Feature 3, the render check at 120, 80, 54 and 40 columns and a 24-column dock, rows counted. Proof: N1 holds, with a terminal screenshot kept under `changes/2026-11-14-tracker-session-cleanup/verify/shots/`.
-- [ ] 12. Feature 4, tests first in `tests/test_git_cleanup_run.py`, then `cleanup.py` `list`: collection, checks, verdicts, the no-pid rule, no job id. Proof: F48, F49, F74, F75, F79 and F80 pass.
-- [ ] 13. Feature 4, `cleanup.py` `act`: explicit ids, re-check per id, refusals, the result JSON. Proof: F59, F61, F62 and F81 pass.
-- [ ] 14. Feature 4, `SKILL.md`: the conversation, the haiku subagents, `allowed-tools`, `user_invocable: true`. Proof: F58, F60, F77 and F78 pass, and `claude plugin validate --strict plugins/agent-tracker` exits 0.
-- [ ] 15. Feature 4, the safety tests and the layout test change. Proof: F64 to F69, F76 and F82 pass, and `python3 -m unittest discover -s tests` exits 0.
-- [ ] 16. Feature 4, one owner-run pass of `/git-cleanup-run` is left to the owner at the render check. The build only proves the script and the text. Proof: the note is in `questions.md`.
+- [x] 12. Feature 4, tests first in `tests/test_git_cleanup_run.py`, then `cleanup.py` `list`: collection, checks, verdicts, the no-pid rule, no job id. Proof: F48, F49, F74, F75, F79 and F80 pass.
+- [x] 13. Feature 4, `cleanup.py` `act`: explicit ids, re-check per id, refusals, the result JSON. Proof: F59, F61, F62 and F81 pass.
+- [x] 14. Feature 4, `SKILL.md`: the conversation, the haiku subagents, `allowed-tools`, `user_invocable: true`. Proof: F58, F60, F77 and F78 pass, and `claude plugin validate --strict plugins/agent-tracker` exits 0.
+- [x] 15. Feature 4, the safety tests and the layout test change. Proof: F64 to F69, F76 and F82 pass, and `python3 -m unittest discover -s tests` exits 0.
+- [x] 16. Feature 4, one owner-run pass of `/git-cleanup-run` is left to the owner at the render check. The build only proves the script and the text. Proof: the note is in `questions.md`.
 - [ ] 17. Feature 5, design edits, the ADR, `setup.md`, the guidelines, the glossary, the README, the plugin description and the version. Proof: `python3 scripts/design_index.py write` leaves `git diff --stat docs/designs/INDEX.md` showing only the new ADR line.
 - [ ] 18. Sync again, then hand the close to one `Mode: close` builder. Proof: `python3 scripts/verify_gate.py milestone 2026-11-14-tracker-session-cleanup` ends `VERIFY PASS milestone`.
 
