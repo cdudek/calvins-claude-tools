@@ -16,7 +16,7 @@ Text-only spec loop, three rounds (the cap). Round 1: three independent reviewer
 
 ready
 
-No severity 3 or 4 finding is open and no severity 3 or 4 contradiction between spec files remains. Items that are the owner's decision are under Decisions Needed with a recommended answer; the loop could not ask the owner, so none was answered. Medium and Low findings go to `plan.md` as Risk rows or are deferred (listed below).
+No severity 3 or 4 finding is open and no severity 3 or 4 contradiction between spec files remains. Items that are the owner's decision are under Decisions Needed with a recommended answer; the loop could not ask the owner, so none was answered. Four were answered afterwards, on 2026-11-14, and are under Decided; the spec changed to match (a Confirming state before every Clear), and the three reviewers have not seen that change. Medium and Low findings go to `plan.md` as Risk rows or are deferred (listed below).
 
 ## Definition Of Ready
 
@@ -26,7 +26,7 @@ No severity 3 or 4 finding is open and no severity 3 or 4 contradiction between 
 | Asks | pass | every ask A1 to A6 maps to a job story, a screen and a state below; the fact column fills in Stage 3 |
 | Findings | pass | round 1: 0 Critical; severity 3 findings (13 distinct, listed below) all fixed or listed for the owner; round 2 added one High (N1), fixed; round 3: no High or Critical |
 | Laws of UX | pass | 30 rows and the B rows below, from reviewer 2 (round 1); fixes since are in Findings |
-| Concerns | pass | conformance C1 to C15 fixed or listed; C1, C2 and C5 are owner decisions |
+| Concerns | pass | conformance C1 to C15 fixed or listed; C1 and C5 are owner decisions; C2 was decided on 2026-11-14 |
 | Questions | pass | every question has a recommended answer; none could be asked in this loop |
 | Prototype | not yet: prototype follows only if the plan marks the UI risky | |
 
@@ -49,7 +49,7 @@ No severity 3 or 4 finding is open and no severity 3 or 4 contradiction between 
 
 ## Laws Of UX Coverage
 
-Reviewer 2's table, as returned in round 1. Several failed rows were fixed afterwards (R2-02 re-check at the press, R2-04 arrows, R2-13 every item listed, R2-16 matrix, R2-22 weights, R2-29 contradictions and others in the Findings table); the round 2 and 3 re-checks confirm them.
+Reviewer 2's table, as returned in round 1, before the owner's decision of 2026-11-14 that Clear always asks a confirm: where a row says Clear has no confirm or no undo (L8.5, B5, B7, B11), the spec now confirms; see Decided. Several failed rows were fixed afterwards (R2-02 re-check at the press, R2-04 arrows, R2-13 every item listed, R2-16 matrix, R2-22 weights, R2-29 contradictions and others in the Findings table); the round 2 and 3 re-checks confirm them.
 
 | # | Law | Verdict | Failed checks | Evidence |
 |---|---|---|---|---|
@@ -60,7 +60,7 @@ Reviewer 2's table, as returned in round 1. Several failed rows were fixed after
 | L5 | Cognitive Load | fail | L5.1 | L5.3 pass (ages computed: "63d ago", "idle 41d"). L5.5 pass (owner's words: Clear, Tidy, idle; no internal codes). L5.7 pass (zero dominant controls). L5.1: the background reason line "This one is still running" repeats the state in the header on the most-viewed state (R2-19). L5.2, L5.4, L5.6 n/a |
 | L6 | Doherty Threshold | n/a | none | n/a: no build yet. Stated behaviour: "Clearing…" and "Removing worktree…" replace the button and a second press is ignored (L6.3 half). No duration is stated. Tidy's Checking phase has no per-item progress (B10, R2-15). L6.6 n/a: no code to search, and the spec states no delay or timer. L6.7 n/a: terminal |
 | L7 | Fitts's Law | fail | L7.7 | L7.4 pass (offer buttons directly under their two lines; Tidy under its count). L7.6 pass on the letter: Clear sits in the same row as Copy resume command with `gap={2}` (`pane/view.tsx:96`), the spacing exception; the risk is carried by R2-03, not by distance. L7.8 pass (no drag, `interaction.md` Elements). L7.7: the spec fixes the layout under the pointer for Clear's own result but not for the live to ended change, where Clear appears where the reason line was (R2-09). L7.1-L7.3, L7.5 n/a: no build, no popover |
-| L8 | Flow | fail | L8.4 | L8.1 pass, L8.2 pass (feedback on the page, next to the tasks), L8.3 pass (`/tracker session <text>`, `/tracker tidy`; no hotkeys by owner decision), L8.5 pass (Clear acts with no confirm), L8.6 pass (no focus move without a press). L8.4: after Clear the focused Home row (the session's task row) no longer exists, and Back's restore is unstated (R2-20). L8.7 n/a |
+| L8 | Flow | fail | L8.4 | L8.1 pass, L8.2 pass (feedback on the page, next to the tasks), L8.3 pass (`/tracker session <text>`, `/tracker tidy`; no hotkeys by owner decision), L8.5 pass (when checked, Clear acted with no confirm; it now asks one every time), L8.6 pass (no focus move without a press). L8.4: after Clear the focused Home row (the session's task row) no longer exists, and Back's restore is unstated (R2-20). L8.7 n/a |
 | L9 | Goal-Gradient Effect | fail | L9.1 | L9.6 pass ("Tidy done."). L9.3 pass (counts are computed). L9.1: the tidy pass can ask up to two questions and the owner is never told how many (R2-21). L9.2, L9.4, L9.5 n/a: no checklist, nothing to keep |
 | L10 | Hick's Law | pass | none | L10.1 counts above. L10.2 pass: every added list states a sort (Tasks newest first; tidy items oldest first; Result in step order). L10.3 pass. L10.5 pass (the monthly job sits last on Home). L10.4, L10.6 n/a: flat, no long list |
 | L11 | Jakob's Law | fail | L11.2 | L11.2: `interaction.md` line 5 says "Tab and the arrows move the ring", the Elements rows say "arrows scroll", and `screens.md` says the pane "does not scroll" (R2-04). L11.4 pass (glyph beside words). L11.6 pass (Buttons reused; same verb "Clear" in the page and the tidy question; Close and Clear apart on purpose, `conformance.md` Deliberate inconsistencies). L11.7 pass. L11.5 n/a: the pane's one link is a PR number that opens GitHub, and this change adds none. L11.3, L11.8 n/a: no URL; the removal of Copy resume command from live sessions is a restored rule (F005) |
@@ -104,12 +104,12 @@ Reviewer 2's table, as returned in round 1. Several failed rows were fixed after
 |---|---|---|---|
 | `setup.md` "Observe only" and the Safety limits (C1) | Clear, Remove worktree, tidy | The owner asked (A3, A4, A6); acts only on a press or a typed command | Yes. Accept the replacement rule; then edit `docs/ux/setup.md` and the guidelines (outside this folder). |
 | Milestone 1 no-go N6 and the owner's 2026-11-13 words "ok never mind lets remove this intervention rules" | the same | The tracker now acts, never on its own | Yes, with C1. |
-| Confirm before what cannot be undone (`intent.md`) | Clear has no confirm; Remove worktree has one; tidy asks once per batch | Conversation kept; Reopen tasks undoes the closing; a line before the press stands in for the confirm | Yes (Decisions Needed 1 and 2). |
-| `claude rm` removes a worktree the session made without the offer's confirm | Clear | Claude Code's own "if safe" test; named before and after the press | Yes (Decisions Needed 2). |
+| Confirm before what cannot be undone (`intent.md`) | Clear asks one confirm every time; Remove worktree asks its own; tidy asks once per batch | none now: the spec follows the intent | Decided: owner, dialog, 2026-11-14, "Always confirm". |
+| `claude rm` removes a worktree the session made without the offer's confirm | Clear | Claude Code's own "if safe" test; named in Clear's confirm and in the result | Decided: owner, dialog, 2026-11-14, "Allow, name it (Recommended)". |
 | A button that leaves the pane | Home: Tidy closes the pane | Tidy runs in the owner's session | Yes, once Stage 3 shows the hand-off works. |
 | "Every model call pins haiku" (`setup.md`) | tidy supervisor | The rule was written for the mod's own calls | Yes: reword to "every model call the mod makes". |
 | Copy resume command on every session (built) against ended only (milestone 1, F005) | Session page | Resuming a live session starts a second process | Accept (recommended). |
-| Close and Clear | Clear acts on a session; Close ends a pane or one task | The owner's word is "Clear" (A6) | Accept or choose another word. |
+| Close and Clear | Clear acts on a session; Close ends a pane or one task | The owner's word is "Clear" (A6) | Decided: owner, dialog, 2026-11-14, "Keep "Clear" (Recommended)". |
 | Clear has no `/tracker` command of its own | Session | The act is taken with its tasks and worktree in view | Accept or add one. |
 | No hotkeys shown, so no key per control | all new controls: "Tab to it, Enter" | Owner, 2026-11-14 | none (decided) |
 
@@ -119,9 +119,9 @@ Round 1 had 0 Critical. Status after the three rounds:
 
 | Severity | Location | Finding | Status |
 |---|---|---|---|
-| 3 | R1-01, R2-03: Clear without confirm or undo | A line before the press says what it does; Reopen tasks undoes the closing; the confirm itself is the owner's decision | fixed in the spec; confirm listed for the owner |
-| 3 | R1-02, R3-13: `claude rm` removes a worktree silently | Named before and after the press; the result line says Claude Code removed it | fixed; the missing confirm is listed for the owner |
-| 3 | R1-03: ignored files (such as `.env`) deleted with a worktree | Named in the offer and in the tidy question | fixed (round 2, N1) |
+| 3 | R1-01, R2-03: Clear without confirm or undo | A line before the press says what it does; Reopen tasks undoes the closing; the confirm itself is the owner's decision | fixed in the spec; the owner decided on 2026-11-14: "Always confirm" |
+| 3 | R1-02, R3-13: `claude rm` removes a worktree silently | Named before and after the press; the result line says Claude Code removed it | fixed; Clear's confirm and the worktree are decided ("Always confirm"; "Allow, name it (Recommended)", owner, dialog, 2026-11-14) |
+| 3 | R1-03: ignored files (such as `.env`) deleted with a worktree | Named in the offer and in the tidy question | fixed (round 2, N1); the offer now lists the files ("List them in the offer (Recommended)", owner, dialog, 2026-11-14) |
 | 3 | R1-04, R2-02, R3-03: no process re-check at the press | Clear re-reads the list first; Refused state and words | fixed |
 | 3 | R1-05, R2-13, R3-12: batch answered with items not listed | Every item listed; batches of 25 | fixed |
 | 3 | R2-01, R3-24: the no-pid rule fails open | Limited to blocked and done rows; "Pid not reported" state; self never ended; the Stage 3 fixture of a live background row is a gate | fixed, one residual risk named |
@@ -135,18 +135,26 @@ Round 1 had 0 Critical. Status after the three rounds:
 | 2 | R1 and R3 mediums, R2-05 to R2-12, R2-14 (Skip is not remembered), R2-15 to R2-28 | Deferred to `plan.md` as Risk rows; none is a contradiction | deferred |
 | 2 | Round 3 M2 to M5 (focus after Clear, Reopened offers no Clear, tidy "never removed" against `claude rm` on a session batch) | M2 and M3 fixed after the round; M4 and M5 deferred | partly fixed |
 
+## Decided
+
+Answered by the owner in a dialog on 2026-11-14; each answer is quoted as selected. The numbers keep the ones the questions had under Decisions Needed.
+
+| Question | Owner's answer | Source | What the spec does |
+|---|---|---|---|
+| 1. Should Clear ask for a confirm? | "Always confirm" | owner, dialog, 2026-11-14 | Clear opens one confirm every time it would write; focus lands on Cancel; "Clear session" runs it. |
+| 2. Is `claude rm`'s own removal of a worktree it made allowed inside Clear? | "Allow, name it (Recommended)" | owner, dialog, 2026-11-14 | The confirm names it before the press, the result after. |
+| 8. Ignored files (such as `.env`) are deleted with a worktree. | "List them in the offer (Recommended)" | owner, dialog, 2026-11-14 | The offer lists up to 3 names and "and N more". |
+| The button word | "Keep "Clear" (Recommended)" | owner, dialog, 2026-11-14 | The button stays "Clear". |
+
 ## Decisions Needed
 
 | Question | Recommended answer | Why it matters |
 |---|---|---|
-| 1. Should Clear ask for a confirm? | No: one press, a line before it, Reopen tasks after it. Only the worktree removal asks. | `intent.md` says "a confirm before anything that cannot be undone"; the list row does not come back. |
-| 2. Is `claude rm`'s own removal of a worktree it made inside Clear's one press? | Yes, named before and after. | It is a removal without the offer's confirm. |
 | 3. Replace the hard rule "observe only" (and the Safety list) in `docs/ux/setup.md` and the guidelines. | Yes: acts only on the owner's press or typed command; never stops a running session; never forces; never deletes a branch. | The tracker now writes outside its folder. |
 | 4. Does "every model call pins haiku" cover tidy's supervisor? | No: it covers the mod's own calls; recommend haiku for the describing subagents. | The rule says "every". |
 | 5. Where does tidy run, and how does a mod command start it? | In the session where it is typed; Stage 3 verifies the hand-off, the fallback is a plugin skill. | Unverified mechanism. |
 | 6. Do Clear, the offer and the Tidy line fit the owner's mockups of 2026-11-14? | Show the owner `screens.md`; the mockups were local files and are not in the repo. | Approved mockups win; nothing here could be compared with them. |
 | 7. Should "Skip these N" and "Keep worktree" be remembered? | No for now: the Tidy line counts only what passes every check, so it shrinks as the owner clears. | A5's "breathing" complaint; a stored mark adds a field the spec set aside. |
-| 8. Ignored files (such as `.env`) are deleted with a worktree: name them in the offer, or refuse? | Name them in the offer. | Build output is ignored almost everywhere. |
 | 9. After a worktree is removed, resuming needs it made again from the branch. Acceptable? | Yes; Stage 3 confirms resuming works that way. | The brief calls the conversation resumable. |
 | 10. Should a forgotten task of an ended session age out sooner than 7 days? | No; Clear is the answer. | The state fix alone removes the 63-day rows. |
 
@@ -154,6 +162,7 @@ Round 1 had 0 Critical. Status after the three rounds:
 
 | Check | Reason |
 |---|---|
+| The three reviewers on the Confirming state and the longer offer | Added after the loop for the owner's answers of 2026-11-14; they need a re-check before build |
 | Prototype images and the visual pass | Not drawn: the plan decides whether the UI is risky; the loop is text-only |
 | A real terminal render at 120, 80 and 40 columns | Nothing is built; cell counts are arithmetic on the strings |
 | Laws checks with S, I, T or M evidence only (L1.2, L1.4, L1.7, L7.1 to L7.3, L12, L13, L6, B1, L20.1 and more) | No build, no pixels, no timings (reviewer 2's Did not run list) |

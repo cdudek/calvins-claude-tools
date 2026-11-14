@@ -55,7 +55,7 @@ None. The tracker sends no mail. The only link out is a PR number, which opens G
 
 | # | Item | Group | Badge | Why here |
 |---|---|---|---|---|
-| 1 | Clear (button on `session/<sessionId>`, ended sessions with something left) | page action | none | J3, A3, A4 |
+| 1 | Clear, then Clear session and Cancel in its confirm (buttons on `session/<sessionId>`, ended sessions with something left) | page action | none | J3, A3, A4 |
 | 2 | Remove worktree, Keep worktree (offer on `session/<sessionId>`, after Clear); Reopen tasks (after Clear, while on the page) | page action | none | J4, A4 |
 | 3 | Tidy (button, last line of `home`, only when something is idle 30 days or more) | pane | none | J5, A1, A4 |
 | 4 | `/tracker tidy` (prompt command) | prompt | none | J5, A6 |
@@ -84,14 +84,14 @@ None. No page holds a setting. A closed task is kept in `settings.json` as befor
 **States to capture (the delta):**
 
 - **`home`:** Tidy line absent; Tidy line with sessions; with worktrees; with both; narrow (a dock below 70 columns).
-- **`session/<sessionId>`:** live interactive; live background; ended with something to clear; confirm-free Clear result (cleared; partly cleared; failed); worktree offer; worktree stays (each reason); nothing to clear; session list unreadable (Clear withheld).
+- **`session/<sessionId>`:** live interactive; live background; ended with something to clear; Clear confirm; Clear result (cleared; partly cleared; failed); worktree offer; worktree stays (each reason); nothing to clear; session list unreadable (Clear withheld).
 
 ### Pages whose content changes
 
 | Page | Change | Why |
 |---|---|---|
 | `home` | NEEDS YOU, the band count and the needs-you task rows stop counting a session with no `pid`. One dim Tidy line at the bottom. | J1, J5 |
-| `session/<sessionId>` | First line reads "started <when> · last activity <ago>" (was "since <clock>"). Actions: Clear added; Copy resume command shown for ended sessions only. Worktree line, result lines, worktree offer added. | J2, J3, J4, J6 |
+| `session/<sessionId>` | First line reads "started <when> · last activity <ago>" (was "since <clock>"). Actions: Clear added (it opens a confirm with Clear session and Cancel); Copy resume command shown for ended sessions only. Worktree line, result lines, worktree offer added. | J2, J3, J4, J6 |
 
 ## Changes from as built
 

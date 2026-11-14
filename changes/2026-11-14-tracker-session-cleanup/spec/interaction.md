@@ -2,7 +2,7 @@
 
 Every guideline in `docs/ux/interaction-guidelines.md` is still `unresolved`. Each row cites the rule area it proposes a default for (`IG: <area>`); the owner accepts or changes them at the gate. Milestone 1's [interaction.md](../../2026-11-13-agent-tracker/spec/interaction.md) holds for everything not named here.
 
-What the pane can do, as built (`pane/view.tsx`, `pane.tsx`): every move is a Button; Tab and the arrows move the ring (the footer says "↑↓ move"); no page scrolls, so a page taller than the window is a risk the render check must name by row count, Enter presses; rows and actions are Buttons in blocks; no modal dialog exists in the code, so the one confirm of this change is an inline offer on the page. **No hotkey is shown or bound** (owner, 2026-11-14, and `docs/ux/setup.md` for the band). The key route of every control is therefore "Tab to it, Enter". The menu route is a `/tracker` word, or none where the spec says why.
+What the pane can do, as built (`pane/view.tsx`, `pane.tsx`): every move is a Button; Tab and the arrows move the ring (the footer says "↑↓ move"); no page scrolls, so a page taller than the window is a risk the render check must name by row count, Enter presses; rows and actions are Buttons in blocks; no modal dialog exists in the code, so the confirms of this change (Clear's, and the worktree offer) are inline blocks on the page. **No hotkey is shown or bound** (owner, 2026-11-14, and `docs/ux/setup.md` for the band). The key route of every control is therefore "Tab to it, Enter". The menu route is a `/tracker` word, or none where the spec says why.
 
 New command words: `tidy`. The help and hint strings name it (screens.md, Words).
 
@@ -29,15 +29,17 @@ Session facts the controls depend on (verified by the owner on 2026-11-14, see t
 | From control | Action | To screen or state | Notes |
 |---|---|---|---|
 | Home: task row of an ended session | Enter | Session page, ended, something to clear | The tasks line shows what Clear will close. |
-| Session page: Clear | Enter | Session page, Clearing, then Cleared (or Failed, or PartlyCleared) | One press, no confirm: the conversation stays resumable. Result lines say what happened. |
+| Session page: Clear | Enter | Session page, Confirming | Writes nothing yet. The confirm says what will happen; focus lands on Cancel (owner, dialog, 2026-11-14: "Always confirm"). When Clear would write nothing (only a removable worktree is left) it opens the offer instead. |
+| Confirm: Clear session | Enter | Clearing, then Cleared (or Failed, PartlyCleared or Refused) | The process fact is re-checked now. The conversation stays resumable. Result lines say what happened. |
+| Confirm: Cancel | Enter | Session page, ended | Nothing changed; focus returns to Clear. |
 | Prompt: `/tracker session <text>` | Enter | the same Session page | The keyboard route into the same flow. |
 
 ### J4 Remove the merged worktree
 
 | From control | Action | To screen or state | Notes |
 |---|---|---|---|
-| Session page: Clear | Enter | Cleared, then the worktree offer | Shown only when all five conditions hold. Focus goes to Keep worktree. |
-| Offer: Remove worktree | Enter | Removing, then Done (or OfferFailed) | The one confirm. Re-checks the five conditions first. The branch stays. |
+| Confirm: Clear session | Enter | Cleared, then the worktree offer | Shown only when all five conditions hold. Focus goes to Keep worktree. |
+| Offer: Remove worktree | Enter | Removing, then Done (or OfferFailed) | The second confirm (Clear's was the first). Re-checks the five conditions and the ignored files first. The branch stays. |
 | Offer: Keep worktree | Enter | Done | The offer goes away for this visit. |
 
 ### J5 Tidy many
@@ -65,15 +67,16 @@ Words: `screens.md`, Pane, Session.
 |---|---|---|---|---|---|
 | Live, interactive | the row has a `pid` and `kind` interactive | the page as before; the first line reads started and last activity; no Clear, no Copy resume command; one line | Reason, interactive | Tab, Enter on the crumbs, Back, Close | the process exits |
 | Live, background | the row has a `pid` and `kind` background (working or blocked) | the same; the line says it is still running | Reason, background | as above | the process exits |
-| Ended, something to clear | no process, and at least one of: still in Claude Code's list; an open task; a worktree that passes the five conditions | state "○ ended 63d ago"; the tasks line (only the tasks Home lists, with their Home glyph and word); the worktree line; above the actions, one line saying what Clear will do (it names the count of tasks, and that Claude Code also removes a worktree it made for the session when that is safe); actions "Copy resume command" then "Clear" | Actions; Before Clear | Tab, Enter: Clear, Copy resume command | Clearing |
-| Clearing | Clear pressed | the session list is re-read first; the actions row is replaced by a dim line "Clearing…"; no button | Clearing | none (the ring rests on the first crumb; a second press lands on nothing) | Cleared, Failed, PartlyCleared, Refused |
+| Ended, something to clear | no process, and at least one of: still in Claude Code's list; an open task; a worktree that passes the five conditions | state "○ ended 63d ago"; the tasks line (only the tasks Home lists, with their Home glyph and word); the worktree line; actions "Copy resume command" then "Clear"; when only a removable worktree is left, one line above them says Clear offers to remove it | Actions; Clear, only a worktree left | Tab, Enter: Clear, Copy resume command | Confirming (Offer when only a worktree is left) |
+| Confirming | Clear pressed, when Clear would write something (the session is still listed, or it has an open task) | the actions row is replaced by the confirm block: a question, the lines saying what will happen (the count of tasks it closes, the list entry, a worktree Claude Code would remove, what is kept), and two buttons "Clear session" and "Cancel". Focus is on Cancel. Nothing is written and the list is not re-read yet. | Clear confirm | Tab, Enter: Clear session, Cancel | Clearing (Clear session); Ended (Cancel, focus on Clear); Live (a read shows a `pid`: the confirm goes away); leaving the page cancels it (nothing is stored) |
+| Clearing | Clear session pressed | the session list is re-read first; the actions row is replaced by a dim line "Clearing…"; no button | Clearing | none (the ring rests on the first crumb; a second press lands on nothing) | Cleared, Failed, PartlyCleared, Refused |
 | Refused, unreadable | the re-read at the press fails | one line: "Clear waits: Claude Code's session list could not be read. Nothing was changed." | List unreadable | none | the next read works |
 | Refused | the re-read shows the row has a `pid` again | one line: "This session is running again. Nothing was changed."; the page redraws as Live | Refused | none | Live |
 | Cleared | every step that had work succeeded | result lines (one per step that ran), under the offer when there is one; the actions row returns with "Copy resume command" (only while the worktree folder exists) and "Reopen tasks" (when tasks were closed). The lines are page-local: they stay until the owner leaves the page and survive the 5-second re-read (a build test); a fresh visit shows "Nothing to clear" instead. Focus goes to Keep worktree when there is an offer, else to Copy resume command when it is drawn, else to the Home crumb; never to Reopen tasks. | Result | Tab, Enter: Copy resume command, Reopen tasks | Offer, Done |
 | Reopened | Reopen tasks pressed | the closed tasks are open again (their `closed` marks removed from the tracker's settings); one line "✓ 2 tasks reopened."; the session stays out of Claude Code's list | Result | Tab, Enter: Copy resume command | Done |
-| Failed | `claude rm` failed | one error line (event, consequence, action); Clear is back; nothing else changed | Error, rm | Tab, Enter: Clear again | Clearing |
-| PartlyCleared | `claude rm` worked, saving the closed tasks failed | the session left the list; one error line; Clear is back and does the rest | Error, save | Tab, Enter: Clear again | Clearing |
-| Offer | a worktree passes all five conditions after the steps | directly under the actions row, three lines naming the worktree by its folder and branch, and why it is safe; buttons "Remove worktree", "Keep worktree"; focus on Keep worktree | Offer | Tab, Enter on either | Removing, Done |
+| Failed | `claude rm` failed | one error line (event, consequence, action); Clear is back (pressing it asks the confirm again); nothing else changed | Error, rm | Tab, Enter: Clear again | Clearing |
+| PartlyCleared | `claude rm` worked, saving the closed tasks failed | the session left the list; one error line; Clear is back (it asks the confirm again) and does the rest | Error, save | Tab, Enter: Clear again | Clearing |
+| Offer | a worktree passes all five conditions after the steps | directly under the actions row, two or three lines naming the worktree by its folder and branch, why it is safe, and the ignored files that would be deleted (a line only when there are any); buttons "Remove worktree", "Keep worktree"; focus on Keep worktree | Offer | Tab, Enter on either | Removing, Done |
 | Removing | Remove worktree pressed | the offer is replaced by "Removing worktree…" | Removing | none | Done, OfferFailed |
 | OfferFailed | a condition changed since the offer, or git refused | one error line; nothing removed | Error, worktree | Tab, Enter: Copy resume command | Done |
 | Worktree stays | the session's `cwd` is a linked worktree and a condition fails | one line naming the first failed condition | Stays | none | the condition changes |
@@ -81,7 +84,7 @@ Words: `screens.md`, Pane, Session.
 | Pid not reported | no row in a good read carries a `pid` | Clear is not drawn; one line | Pid not reported | none | a read with a `pid` |
 | List unreadable | the session list failed twice (snapshot stale) | Clear is not drawn; one line | Unreadable | none | the next read works |
 | Partial | `gh` missing, so condition 4 cannot use the PR | the worktree line uses the branch's merged state only; if that is not merged: "Worktree stays: its branch is not merged." | Stays | none | gh works |
-| From transcript | a session without the mod (the page is built from its transcript) | as Ended; tasks are "not classified", so the confirm-free Clear closes none | Result | as Ended | |
+| From transcript | a session without the mod (the page is built from its transcript) | as Ended; tasks are "not classified", so Clear closes none | Result | as Ended | |
 
 ### Home (the delta)
 
@@ -130,7 +133,9 @@ stateDiagram
 | Screen | Element | Click | Double-click | Drag | Drop onto | Hover | Right-click / More | Keys | Selection | Rules |
 |---|---|---|---|---|---|---|---|---|---|---|
 | Session | Reopen tasks button (after Clear) | reopens the tasks once | the second press is ignored | nothing | nothing | nothing | nothing | Tab to it, Enter | nothing | IG: confirmation and undo |
-| Session | Clear button | runs the steps once | the second press is ignored while "Clearing…" shows, and the button is gone after it | nothing | nothing | nothing | nothing | Tab to it, Enter | nothing | IG: confirmation and undo; progress and long operations |
+| Session | Clear button | opens the confirm | the button is gone after the first press, so the second lands on nothing | nothing | nothing | nothing | nothing | Tab to it, Enter | nothing | IG: confirmation and undo |
+| Session | Clear session button (confirm) | re-checks, then runs the steps once | the second press is ignored while "Clearing…" shows | nothing | nothing | nothing | nothing | Tab to it, Enter | nothing | IG: confirmation and undo; progress and long operations |
+| Session | Cancel button (confirm) | closes the confirm | closes once | nothing | nothing | nothing | nothing | Tab to it, Enter | nothing | IG: confirmation and undo |
 | Session | Copy resume command button (ended sessions only) | copies, toast | copies twice | nothing | nothing | nothing | nothing | Tab to it, Enter | nothing | IG: copy and paste |
 | Session | Remove worktree button (offer) | re-checks, then removes once | the second press is ignored while "Removing worktree…" shows | nothing | nothing | nothing | nothing | Tab to it, Enter | nothing | IG: confirmation and undo |
 | Session | Keep worktree button (offer) | closes the offer | closes once | nothing | nothing | nothing | nothing | Tab to it, Enter | nothing | IG: confirmation and undo |
@@ -141,15 +146,16 @@ stateDiagram
 | Home | task row, session row (unchanged) | opens the Session page | opens once | nothing | nothing | nothing | nothing | Tab, Enter | one focused row | IG: lists and selection |
 | Transcript | batch question | the owner answers by choosing an option or typing under Other | n/a | nothing | nothing | nothing | nothing | the host's own keys | single choice | IG: dialogs, menus and popovers |
 
-**Layout under the pointer.** Clear removes itself; the worktree offer appears directly under the actions row, above the result lines (so it is on screen without scrolling), three rows below where Clear was. Remove worktree is never first in the ring. Focus goes to Keep worktree when the offer appears. Build check: a second click at the pointer's old position lands on nothing, and no button the layout shifts under it runs Remove worktree.
+**Layout under the pointer.** Clear removes itself and the confirm block takes its place: its buttons sit below the question and the lines, three to five rows below where Clear was, and Clear session is the first of the two but never gets focus. A second click at Clear's old position lands on a text line. The worktree offer appears directly under the actions row, above the result lines (so it is on screen without scrolling), three rows below where Clear was. Remove worktree is never first in the ring. Focus goes to Cancel when the confirm appears and to Keep worktree when the offer appears. Build check: a second click at the pointer's old position lands on nothing, and no button the layout shifts under it runs Clear session or Remove worktree.
 
 ## Action Behaviour
 
 | Action | Pointer route | Keyboard route | Menu route | Save | Leave | Undo | Guideline |
 |---|---|---|---|---|---|---|---|
-| Clear an ended session | click Clear | Tab to Clear, Enter | `/tracker session <text>`, then Tab, Enter (no one-shot command, on purpose) | the session list is re-read first; then Claude Code's list changes (`claude rm`, only if still listed) and the open tasks are closed at once, as the task Close does | steps in flight finish; on return the page shows what is left | "Reopen tasks" while the owner is on the page (it removes the `closed` marks); the conversation stays resumable while its folder exists (Copy resume command); the list row does not come back | IG: confirmation and undo (no confirm; a line before the press says what it does, and the undo is one press) |
+| Clear an ended session | click Clear, then click Clear session | Tab to Clear, Enter; focus lands on Cancel, so Tab to Clear session, Enter | `/tracker session <text>`, then the same keys (no one-shot command, on purpose) | when Clear session is pressed the session list is re-read first; then Claude Code's list changes (`claude rm`, only if still listed) and the open tasks are closed at once, as the task Close does | steps in flight finish; on return the page shows what is left | "Reopen tasks" while the owner is on the page (it removes the `closed` marks); the conversation stays resumable while its folder exists (Copy resume command); the list row does not come back | IG: confirmation and undo (always one confirm that says what happens and what does not come back; the undo is one press) |
+| Cancel the clear | click Cancel | Tab to Cancel, Enter (the focus is already there) | none | nothing | the confirm closes; the page is as before | not needed | IG: confirmation and undo |
 | Reopen the tasks | click Reopen tasks (after Clear, while on the page) | Tab to it, Enter | none | removes the `closed` marks Clear wrote, in the tracker's settings file (a new write beside the existing Close) | leaving: the button is gone; the tasks stay as they are | Clear again | IG: confirmation and undo |
-| Remove the worktree | click Remove worktree | Tab to it, Enter | none | `git worktree remove`, never forced; ignored files go with it; the branch stays | leaving while it runs: it finishes | recreate it from the branch (`git worktree add`); ignored files do not come back | IG: confirmation and undo (one confirm: this offer) |
+| Remove the worktree | click Remove worktree | Tab to it, Enter | none | `git worktree remove`, never forced; the ignored files listed in the offer go with it; the branch stays | leaving while it runs: it finishes | recreate it from the branch (`git worktree add`); ignored files do not come back | IG: confirmation and undo (a confirm of its own: this offer) |
 | Keep the worktree | click Keep worktree | Tab to it, Enter | none | nothing | nothing | the offer returns when Clear is pressed again | IG: confirmation and undo |
 | Start a tidy pass | click Tidy on Home | Tab to Tidy, Enter | `/tracker tidy` | nothing until the owner answers a batch | the pass runs in the transcript; typing a new prompt waits as for any turn | each removal inside it is undone as above; a "Skip" answer changes nothing | IG: local work and external writes |
 | Copy resume command | click it | Tab to it, Enter | none | clipboard | nothing | not needed | IG: copy and paste (unchanged) |
@@ -158,9 +164,10 @@ stateDiagram
 
 | Action | Feedback | Reason | Where shown |
 |---|---|---|---|
-| Clear | visible: "Clearing…", then result lines on the page | the owner needs to see which of the steps ran, next to the tasks they closed; a toast would vanish | Session page, under the actions |
+| Clear | visible: the confirm, then "Clearing…", then result lines on the page | the owner needs to see which of the steps ran, next to the tasks they closed; a toast would vanish | Session page, under the actions |
 | Remove worktree | visible: "Removing worktree…", then one result line | it is the irreversible-looking act; the line stays | Session page |
 | Reopen tasks | visible: "✓ 2 tasks reopened." | the owner needs to see it worked | Session page |
+| Cancel (confirm) | silent: the confirm closes | the change is the feedback | Session page |
 | Keep worktree | silent: the offer closes | the change is the feedback | Session page |
 | Tidy start | visible: the command's answer line, then Claude's own turn | the owner started it; the transcript is the log | transcript |
 | Tidy batch | ask first: one question per batch | each yes removes things | transcript |
@@ -190,4 +197,4 @@ Every error reads event, consequence, action; the exact strings are in `screens.
 |---|---|---|
 | Should "Remove worktree" be unreachable by mouse for the first second after it is drawn? | No: it is never first in the ring and sits three rows below where Clear was. Check the layout at build. | A double-click must not turn Clear's result into a confirmed removal. |
 | Should the result lines be kept after the owner leaves the page? | No: the page shows what is left ("Nothing to clear"), which is the same fact. They do stay while the page is open. | The tracker stores no "cleared" mark. |
-| Should Escape cancel the offer? | Escape only returns the keys to the prompt (milestone 1); the offer stays and does nothing until a button is pressed. Keep worktree is the cancel. | Consistent with the pane's existing Escape rule. |
+| Should Escape cancel the Clear confirm or the offer? | Escape only returns the keys to the prompt (milestone 1); the confirm or offer stays and does nothing until a button is pressed. Cancel and Keep worktree are the cancels. | Consistent with the pane's existing Escape rule. |
