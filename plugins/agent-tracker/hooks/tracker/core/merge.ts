@@ -12,6 +12,23 @@ type In = {
   seen?: ReadonlySet<string> // the sessions the last good list read showed; a failed read restores only these
 }
 
+// The engine refuses a state value over 4 MiB, and the snapshot is one: with thousands of transcripts in a week the
+// write failed and the band stayed on "Reading sessions…" for good. This session first, then sessions the mod or the list
+// knows, then the latest history, until 3 million characters.
+export const SNAPSHOT_MAX_CHARS = 3_000_000
+const fitSnapshot = (sessions: SessionRecord[], selfId: string) => {
+  const first = (r: SessionRecord) => Number(r.sessionId === selfId) * 2 + Number(r.source !== 'transcript')
+  const ranked = [...sessions].sort((a, b) => first(b) - first(a) || b.lastActivityAt - a.lastActivityAt)
+  const keep = new Set<SessionRecord>()
+  let size = 0
+  for (const r of ranked) {
+    size += JSON.stringify(r).length + 1
+    if (size > SNAPSHOT_MAX_CHARS && keep.size > 0) break
+    keep.add(r)
+  }
+  return sessions.filter(r => keep.has(r))
+}
+
 // Every record merged into one list (F68). A sessions/ file wins over a transcripts/ file; a session the list
 // shows and no file has appears from the list alone (source 'engine'); only the last 7 days show.
 export const mergeSessions = ({ files, transcripts, agents, now, selfId, seen }: In): SessionRecord[] => {
@@ -33,5 +50,5 @@ export const mergeSessions = ({ files, transcripts, agents, now, selfId, seen }:
       ...d,
     }
   })
-  return labelRepos(merged.filter(r => r.state !== 'ended' || now - r.lastActivityAt <= WEEK_MS))
+  return fitSnapshot(labelRepos(merged.filter(r => r.state !== 'ended' || now - r.lastActivityAt <= WEEK_MS)), selfId)
 }

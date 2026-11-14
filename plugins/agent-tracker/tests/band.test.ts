@@ -170,6 +170,16 @@ describe('compact band, the model', () => {
     expect(seg(compact(town().map(r => (r.scan ? { ...r, scan: scan([pr(1, { mergeable: 'mergeable' })]) } : r)), 200), 'prs')).toBe('  PRs 1↓') // only the parts above 0
   })
 
+  test(`${TAG} thousands of transcripts in a week still fit the 4 MiB state value, and this session and the mod's sessions stay`, () => {
+    const history = Array.from({ length: 3000 }, (_, i) => rec(`t${i}`, { source: 'transcript', state: 'done', title: 'x'.repeat(2000), lastActivityAt: NOW - i * 1000, engine: { since: null, status: 'idle' } }))
+    const files = [rec(SELF, { title: 'mine' }), rec('other-mod', { title: 'theirs' })]
+    const merged = mergeSessions({ files, transcripts: history, agents: null, now: NOW, selfId: SELF })
+    expect(JSON.stringify(merged).length).toBeLessThan(4 * 1024 * 1024)
+    expect(merged.map(r => r.sessionId)).toEqual(expect.arrayContaining([SELF, 'other-mod', 't0']))
+    expect(merged.some(r => r.sessionId === 't2999')).toBe(false) // the oldest history goes first
+    expect(merged.length).toBeLessThan(3002)
+  })
+
   test(`@F54 ${TAG} a repo that is not on GitHub is not a gh failure: no PR segment, no gh line, on the band and in Home (R9)`, () => {
     const elsewhere = town().map(r => (r.scan ? { ...r, scan: { ...r.scan, ghOk: false, github: false as const, prs: [] } } : r))
     expect(bandData(snap(elsewhere), SELF, NOW)).toMatchObject({ prs: null, partial: false })
