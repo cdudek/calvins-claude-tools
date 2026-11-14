@@ -9,7 +9,7 @@ import type { Snapshot } from '../../hooks/tracker/types'
 export const HOME = '/u'
 export const DIR = `${HOME}/.claude/agent-tracker`
 
-type Git = { commonDir: string | null; branch: string | null }
+type Git = { commonDir: string | null; branch: string | null; remote?: string | null } // remote: `git remote get-url origin`; default GitHub, null: no origin
 
 export type World = {
   clock: MockClock
@@ -167,7 +167,12 @@ export function world(on: On, o: { id?: string; cwd?: string; now?: number; pane
       return { value: { exitCode: found.length ? 0 : 1, stdout: found.length ? `${found.join('\n')}\n` : '', ...RUN } }
     }
     if (argv[0] === 'git') {
-      if (argv[1] === 'worktree') {
+      const sub = argv.slice(1).filter((a, i, all) => a !== '-c' && all[i - 1] !== '-c') // the leading `-c key=value` pairs are not the subcommand
+      if (sub[0] === 'remote') {
+        const remote = w.git[init?.cwd ?? w.cwd]?.remote
+        return remote === null ? { value: { exitCode: 2, stdout: '', ...RUN, stderr: 'no such remote' } } : { value: { exitCode: 0, stdout: `${remote ?? 'https://github.com/acme/repo.git'}\n`, ...RUN } }
+      }
+      if (sub[0] === 'worktree') {
         const list = w.worktrees[init?.cwd ?? w.cwd]
         return list === undefined ? { value: { exitCode: 128, stdout: '', ...RUN, stderr: 'not a git repository' } } : { value: { exitCode: 0, stdout: list, ...RUN } }
       }

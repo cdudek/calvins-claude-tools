@@ -1,6 +1,6 @@
 import { describe, expect, test } from 'claude-code/testing'
 
-import { parsePrs, parseWorktrees, prsLine, repoPrs } from '../hooks/tracker/core'
+import { clean, foldTranscript, fragments, isGithubRemote, parsePrs, parseWorktrees, prsLine, repoPrs } from '../hooks/tracker/core'
 import type { SessionRecord } from '../hooks/tracker/types'
 import { EXPECTED_PRS, EXPECTED_WORKTREES, GH_JSON, GH_PRS, WORKTREES_PORCELAIN } from './fixtures/scans'
 import { DIR, start, world } from './fixtures/world'
@@ -13,7 +13,7 @@ const HOUR = 60 * MINUTE
 
 const own = (w: World) => w.json(`${DIR}/sessions/${w.id}.json`) as SessionRecord
 const ghCalls = (w: World) => w.procs.filter(p => p.argv[0] === 'gh')
-const wtCalls = (w: World) => w.procs.filter(p => p.argv[0] === 'git' && p.argv[1] === 'worktree')
+const wtCalls = (w: World) => w.procs.filter(p => p.argv[0] === 'git' && p.argv.includes('worktree'))
 const scripted = (w: World) => {
   w.worktrees[w.cwd] = WORKTREES_PORCELAIN
   w.gh.json = GH_JSON
@@ -42,7 +42,7 @@ describe('git and gh scans', () => {
     await w.clock.advance(1000)
     const wt = wtCalls(w)
     expect(wt.length).toBe(1)
-    expect(wt[0]!.argv.join(' ')).toBe('git worktree list --porcelain')
+    expect(wt[0]!.argv.join(' ')).toBe('git -c core.fsmonitor=false -c core.hooksPath=/dev/null worktree list --porcelain')
     expect(wt[0]!.cwd).toBe(w.cwd)
     const gh = ghCalls(w)
     expect(gh.length).toBe(1)
@@ -110,6 +110,44 @@ describe('git and gh scans', () => {
     w.gh.json = GH_JSON
     await w.clock.advance(2 * MINUTE)
     expect(own(w).scan).toMatchObject({ ghOk: true, prs: EXPECTED_PRS })
+  })
+
+  test(`@F54 ${TAG} a remote that is not GitHub: gh never runs and the no-gh line shows (S2)`, async ($, on) => {
+    const w = world(on, { now: NOW })
+    scripted(w)
+    w.git[w.cwd] = { commonDir: `${w.cwd}/.git`, branch: 'main', remote: 'https://gitlab.example.test/acme/repo.git' }
+    await start($, w)
+    await w.clock.advance(1000)
+    expect(ghCalls(w).length).toBe(0)
+    expect(own(w).scan).toEqual({ at: NOW, ghOk: false, worktrees: EXPECTED_WORKTREES, prs: [] })
+    // Every git call carries the guard; a remote that names github.com in its path only is not GitHub.
+    expect(w.procs.filter(p => p.argv[0] === 'git').every(p => p.argv.slice(1, 5).join(' ') === '-c core.fsmonitor=false -c core.hooksPath=/dev/null')).toBe(true)
+    for (const url of ['https://github.com/a/b', 'git@github.com:a/b.git', 'ssh://git@github.com/a/b']) expect(isGithubRemote(url)).toBe(true)
+    for (const url of ['', 'https://gitlab.test/github.com/b', 'git@evilgithub.com:a/b', 'https://github.com.evil.test/a/b']) expect(isGithubRemote(url)).toBe(false)
+  })
+
+  test(`@F54 ${TAG} control characters in a PR title and an ask never reach the record; only https links stay (S1)`, async ($, on) => {
+    const w = world(on, { now: NOW })
+    w.worktrees[w.cwd] = WORKTREES_PORCELAIN
+    w.gh.json = JSON.stringify([
+      { ...GH_PRS[0], title: 'Fix\u001b[2J\u001b]0;pwned\u0007 login\u009b', url: 'javascript:alert(1)', headRefName: 'feat/\u001bx' },
+      { ...GH_PRS[1], title: 'x'.repeat(5000) },
+      GH_PRS[2],
+    ])
+    await start($, w)
+    await w.clock.advance(1000)
+    const [a, b, c] = own(w).scan!.prs
+    expect(a).toMatchObject({ title: 'Fix[2J]0;pwned login', url: '', branch: 'feat/x' })
+    expect(b!.title.length).toBe(200)
+    expect(c!.url).toBe('https://example.test/pr/103')
+    expect(clean('a\u001b[31mb\u009b\u007f\r\nc', 50)).toBe('a[31mb\nc') // newline stays, carriage return goes
+    // A transcript's ask text and title go through the same filter.
+    const lines = [
+      JSON.stringify({ isSidechain: false, type: 'user', message: { role: 'user', content: 'run \u001b[2Jthis' }, timestamp: '2026-11-10T08:00:00Z', aiTitle: 'T\u001b[1mitle' }),
+    ].join('\n')
+    const f = foldTranscript(fragments(lines))
+    expect(f.asks.map(x => x.text)).toEqual(['run [2Jthis'])
+    expect(f.title).toBe('T[1mitle')
   })
 
   test(`@F54 ${TAG} gh missing from the first scan: no PRs`, async ($, on) => {

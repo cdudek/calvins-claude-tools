@@ -1,8 +1,8 @@
-// The repo scan: this session's own repo, every 2 minutes, by `git worktree list` and `gh pr list`. Both only read.
+// The repo scan: this session's own repo, every 2 minutes, by `git worktree list` and, for a GitHub remote, `gh pr list`. Both only read.
 // The result goes into this session's own file as its `scan` block; the pane takes the latest one per repo.
 import type { EngineInterface } from 'claude-code'
 
-import { GH_FIELDS, parsePrs, parseWorktrees } from './core'
+import { GH_FIELDS, gitArgv, isGithubRemote, parsePrs, parseWorktrees } from './core'
 import { saveOwn } from './store'
 import type { State } from './store'
 import type { SessionRecord } from './types'
@@ -24,8 +24,10 @@ export async function scanPass($: Engine, s: State) {
   s.isScanning = true
   try {
     const now = await $.clock.now()
-    const worktrees = parseWorktrees((await out($, ['git', 'worktree', 'list', '--porcelain'], r.cwd)) ?? '')
-    const prs = parsePrs((await out($, ['gh', 'pr', 'list', '--state', 'open', '--limit', '100', '--json', GH_FIELDS], r.cwd)) ?? '')
+    const worktrees = parseWorktrees((await out($, gitArgv('worktree', 'list', '--porcelain'), r.cwd)) ?? '')
+    // gh only for a github.com origin; any other remote, or none, shows the no-gh line (S2).
+    const isGithub = isGithubRemote((await out($, gitArgv('remote', 'get-url', 'origin'), r.cwd)) ?? '')
+    const prs = isGithub ? parsePrs((await out($, ['gh', 'pr', 'list', '--state', 'open', '--limit', '100', '--json', GH_FIELDS], r.cwd)) ?? '') : null
     const before = r.scan
     // gh missing or signed out: keep the last PRs and their time, so the pane can show their age (F54, F69).
     const scan: Scan =

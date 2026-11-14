@@ -1,4 +1,5 @@
 import type { Ask, SessionRecord } from '../types'
+import { clean } from './format'
 import { ASKS_MAX, ASK_TEXT_MAX } from './types'
 import { addTokens } from './usage'
 
@@ -51,7 +52,7 @@ export const foldTranscript = (frags: string[]): TranscriptFields => {
   let n = 0
   const flush = () => {
     if (pending && !isSide && !pending.isMeta && !pending.isSystem && pending.text.trim() !== '' && !NOT_AN_ASK.test(pending.text)) {
-      asks.push({ n: ++n, text: pending.text.slice(0, ASK_TEXT_MAX), kind: 'not-classified', status: 'replied', at: pending.at })
+      asks.push({ n: ++n, text: clean(pending.text, ASK_TEXT_MAX), kind: 'not-classified', status: 'replied', at: pending.at })
     }
     pending = null
   }
@@ -88,8 +89,8 @@ export const foldTranscript = (frags: string[]): TranscriptFields => {
           if (pending) pending.at = t // a line's own time comes after its message
         }
       } else if (key === 'cwd') cwd = value!
-      else if (key === 'gitBranch') branch = value === 'HEAD' || value === '' ? null : value! // HEAD: detached
-      else if (key === 'aiTitle') title = value || title
+      else if (key === 'gitBranch') branch = value === 'HEAD' || value === '' ? null : clean(value, 200) // HEAD: detached
+      else if (key === 'aiTitle') title = clean(value, 200) || title
       else if (key === 'promptSource' && pending && value === 'system') pending.isSystem = true
     }
   }

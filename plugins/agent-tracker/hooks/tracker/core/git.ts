@@ -1,5 +1,5 @@
 import type { Pr, SessionRecord } from '../types'
-import { duration } from './format'
+import { clean, duration } from './format'
 
 type Scan = NonNullable<SessionRecord['scan']>
 
@@ -14,6 +14,15 @@ export const parseWorktrees = (text: string): Scan['worktrees'] =>
       path: lines.find(l => l.startsWith('worktree '))!.slice('worktree '.length),
       branch: lines.find(l => l.startsWith('branch '))?.slice('branch '.length).replace(/^refs\/heads\//, '') ?? null,
     }))
+
+const TITLE_MAX = 200
+const URL_MAX = 500
+
+// Every git call the mod makes: a repo's own config cannot start a program (fsmonitor, hooks) (S2).
+export const gitArgv = (...args: string[]): string[] => ['git', '-c', 'core.fsmonitor=false', '-c', 'core.hooksPath=/dev/null', ...args]
+
+// gh runs only for a remote on github.com: `https://github.com/o/r`, `git@github.com:o/r`, `ssh://git@github.com/o/r` (S2).
+export const isGithubRemote = (url: string): boolean => /^(?:(?:https?|ssh|git):\/\/)?(?:[^/@:]+@)?github\.com[/:]/.test(url.trim())
 
 type Check = { status?: string; conclusion?: string; state?: string }
 const FAILED = new Set(['FAILURE', 'ERROR', 'TIMED_OUT', 'CANCELLED', 'STARTUP_FAILURE', 'ACTION_REQUIRED'])
@@ -41,9 +50,9 @@ export const parsePrs = (json: string): Pr[] | null => {
     .filter(p => typeof p?.number === 'number')
     .map(p => ({
       number: p.number as number,
-      title: String(p.title ?? ''),
-      url: String(p.url ?? ''),
-      branch: String(p.headRefName ?? ''),
+      title: clean(p.title, TITLE_MAX),
+      url: String(p.url ?? '').startsWith('https://') ? clean(p.url, URL_MAX) : '', // anything else is not a link
+      branch: clean(p.headRefName, TITLE_MAX),
       createdAt: String(p.createdAt ?? ''),
       checks: checksOf(Array.isArray(p.statusCheckRollup) ? (p.statusCheckRollup as Check[]) : []),
       review: REVIEW[String(p.reviewDecision ?? '')] ?? 'none',

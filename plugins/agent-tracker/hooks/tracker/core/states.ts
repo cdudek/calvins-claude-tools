@@ -1,4 +1,5 @@
 import type { AgentRow, Ask, Lease, Reason, SessionRecord, SessionState } from '../types'
+import { clean } from './format'
 import { LEASE_FRESH_MS, PERMISSION_WAITING_FOR } from './types'
 
 type Engine = Pick<AgentRow, 'kind' | 'status' | 'state' | 'waitingFor'>
@@ -22,7 +23,7 @@ export const parseAgents = (json: string): AgentRow[] | null => {
     out.push({
       sessionId,
       cwd: text(a.cwd) ?? '',
-      name: text(a.name) ?? '',
+      name: clean(a.name, 200),
       startedAt: typeof a.startedAt === 'number' ? a.startedAt : 0,
       kind: a.kind === 'background' ? 'background' : 'interactive',
       status: text(a.status),

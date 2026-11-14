@@ -3,7 +3,7 @@
 // `$` is passed only to plain top-level functions: the engine's source scan reads no other spelling.
 import type { EngineInterface } from 'claude-code'
 
-import { COMMAND_DESCRIPTION, COMMAND_HINT, PANE_ID, PANE_TITLE, REDRAW_MS, askStatuses, emptyRecord, parseMilestone, repoFromCommonDir } from './core'
+import { COMMAND_DESCRIPTION, COMMAND_HINT, PANE_ID, PANE_TITLE, REDRAW_MS, askStatuses, emptyRecord, gitArgv, parseMilestone, repoFromCommonDir } from './core'
 import type { Frozen, Page } from './core'
 import type { AgentsFile, Lease, SessionRecord, Settings } from './types'
 
@@ -160,7 +160,7 @@ export function saveOwn($: Engine, s: State, change?: (r: SessionRecord) => Sess
 }
 
 async function git($: Engine, cwd: string, args: string[]) {
-  const r = await $.process.run(['git', ...args], { cwd }).catch(() => null)
+  const r = await $.process.run(gitArgv(...args), { cwd }).catch(() => null)
   return r !== null && r.exitCode === 0 ? r.stdout.trim() : null
 }
 

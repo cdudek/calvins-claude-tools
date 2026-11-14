@@ -7,6 +7,11 @@ export const duration = (ms: number) => {
   return `${Math.floor(m / (24 * 60))}d`
 }
 
+// Text from outside the mod (gh, transcripts, `claude agents`) reaches the screen only through this: C0 and C1
+// control characters removed (an escape sequence cannot rewrite the terminal), length clamped (S1). Tab and newline stay:
+// an ask keeps its lines (F70) and neither moves the cursor.
+export const clean = (value: unknown, max: number): string => String(value ?? '').replace(/[\x00-\x08\x0b-\x1f\x7f-\x9f]/g, '').slice(0, max)
+
 export const plural = (n: number, one: string, many: string) => `${n} ${n === 1 ? one : many}`
 
 // Tokens as the pane writes them: "950", "12k", "41k", "1.2M".

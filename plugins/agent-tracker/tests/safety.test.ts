@@ -17,11 +17,14 @@ const esc = (s: string) => s.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')
 // Reads only: git to read a repo, gh to read PRs, `claude agents --json`, grep to search a transcript.
 const GIT_READS = ['rev-parse', 'worktree', 'status', 'log', 'diff', 'show', 'ls-files']
 export const isRead = (argv: readonly string[]) => {
-  const [cmd, sub, ...rest] = argv
+  const [cmd, ...args] = argv
+  while (args[0] === '-c') args.splice(0, 2) // git's leading `-c key=value` pairs
+  const [sub, ...rest] = args
   if (cmd === 'claude') return sub === 'agents' && rest.join(' ') === '--json'
   if (cmd === 'gh') return sub === 'pr' && (rest[0] === 'list' || rest[0] === 'view')
   if (cmd === 'grep') return true
   if (cmd !== 'git') return false
+  if (sub === 'remote') return rest.join(' ') === 'get-url origin'
   if (sub === 'branch') return rest.join(' ') === '--show-current'
   return GIT_READS.includes(sub ?? '') && !(sub === 'worktree' && rest[0] !== 'list')
 }
@@ -93,6 +96,7 @@ describe('safety', () => {
     expect(isRead(['git', 'push'])).toBe(false)
     expect(isRead(['git', 'worktree', 'remove', 'x'])).toBe(false)
     expect(isRead(['git', 'remote', 'add', 'x', 'y'])).toBe(false)
+    expect(isRead(['git', '-c', 'core.hooksPath=/dev/null', 'remote', 'get-url', 'origin'])).toBe(true)
     expect(isRead(['gh', 'pr', 'merge'])).toBe(false)
     expect(isRead(['bd', 'close', 'x'])).toBe(false)
   })
