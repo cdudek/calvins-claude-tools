@@ -511,7 +511,7 @@ describe('the band on screen', () => {
     const buttons = await ui.findAll({ type: 'Button' })
     expect(buttons.map(b => [b.props.key, b.props.label, b.props.hotkey, b.props.plain])).toEqual([['pane', 'Pane', undefined, true], ['board', 'Board', undefined, true], ['details', 'Details', undefined, true], ['hide', '[–]', undefined, true]])
     // The row is as wide as the terminal and is drawn from the layout.
-    expect(await row(ui)).toContain('agent tracker  agent-tracker-1 2/4 goal 14m · ● 2 need you  ◐3  PRs 1✗ 2↓  · fix login waits 6m')
+    expect(await row(ui)).toContain('agent tracker  agent-tracker-1 2/4 goal 14m · ● 2 need you  2 not done  ◐3  PRs 1✗ 2↓') // the waiting session's tail gives way to the not-done count at 115 cells
     await ui.unmount()
   })
 
@@ -646,7 +646,7 @@ describe('the band on screen', () => {
     const all = await texts(ui)
     for (const word of ['needs you', 'running', 'you should know', 'decided without you', 'PRs', '2', '3', '0 new', '4 open', 'fix l… · waiting 6m', 'migrate users 22m', '1 ✗ · 2 behind']) expect(all).toContain(word)
     expect(all).not.toContain('done') // no done column
-    expect(all).toContain('/goal running 14m · ● 2 need you elsewhere · 7 live') // the second header line
+    expect(all).toContain('2 not done · /goal running 14m · ● 2 need you elsewhere · 7 live') // the second header line
     expect(all.some(t => /^─+$/.test(t) && t.length === 115)).toBe(true) // the rule across bodyColumns
     // Five columns of 21 cells, packed from the left: no stretching to the 115 columns.
     expect((await ui.findAll({ type: 'Box' })).filter(b => b.props.width === 21).length).toBe(5)

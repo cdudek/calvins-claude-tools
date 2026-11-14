@@ -175,7 +175,7 @@ describe('the web page: your tasks not done', () => {
   test(`web page ${TAG} the page draws the top bar, the one list and seven collapsed sections; Keep and Close are shown, not wired`, () => {
     const html = boardHtml(data(taskTown()))
     const script = scriptOf(html)
-    for (const words of ['Agent tracker', "' of your tasks '", "' not done · '", ' you now', 'Your tasks not done yet', 'Everything else', 'Open session', 'Updated ', 'Every task you gave is done']) expect(script).toContain(words)
+    for (const words of ['Agent tracker', "' of your tasks '", "' not done'", 'No open task found', ' not checked', ' you now', 'Your tasks not done yet', 'Everything else', 'Open session', 'Updated ', 'Every task you gave is done']) expect(script).toContain(words)
     for (const name of SIX) expect(script).toContain(`'${name}'`)
     expect(script).toContain('Keep and Close are chosen in the terminal pane.')
     expect(script).toContain("['Keep','Close']")
@@ -203,7 +203,9 @@ describe('the web page: your tasks not done', () => {
   test(`web page ${TAG} Keep, Close and a merged change take tasks away; the owner's seen marks reach the notes`, () => {
     const keys = (d: ReturnType<typeof data>) => d.tasks.map(t => `${t.key}:${t.status}`)
     expect(keys(data(taskTown(), { seen: new Set(), kept: new Set(['sup-1:1']), closed: new Set(['need-1:1']) }))).toEqual(expect.arrayContaining(['sup-1:1:in-progress']))
-    expect(keys(data(taskTown(), { seen: new Set(), kept: new Set(), closed: new Set(['need-1:1']) }))).not.toContain('need-1:1:needs-you')
+    expect(keys(data(taskTown(), { seen: new Set(), kept: new Set(), closed: new Set(['sup-1:1']) }))).not.toContain('sup-1:1:superseded')
+    // A session that waits for you stays on the list, however its task was marked.
+    expect(keys(data(taskTown(), { seen: new Set(), kept: new Set(), closed: new Set(['need-1:1']) }))).toContain('need-1:1:needs-you')
     const merged = { ...CHANGE, repoPath: '/work/web-app', milestone: MILESTONE_MD.replace('status: building', 'status: merged').replace('milestone/demo-1', 'milestone/agent-tracker-1') }
     expect(boardData(snapAt(taskTown()), [merged], NOON).tasks.some(t => t.key === 'prog-1:1')).toBe(false) // its branch is a merged change
     expect(boardData(snapAt(taskTown()), [], NOON).tasks.some(t => t.key === 'prog-1:1')).toBe(true)
@@ -216,8 +218,8 @@ describe('the web page: your tasks not done', () => {
     const d = data(paneTown())
     expect(d.sessions.filter(s => s.live && s.state === 'running').length).toBe(3)
     expect(d.repos.find(r => r.label === 'web-app')!.prs!.list.filter(p => p.checks === 'failing').length).toBe(2)
-    expect(d.tasks).toEqual([]) // no ask, no task
-    expect(d.counts).toEqual({ notDone: 0, needsYou: 0, alarm: false })
+    expect(d.tasks.map(t => [t.sessionId, t.status])).toEqual([['docs-1', 'needs-you'], ['web-1', 'needs-you']]) // no ask, no task: only the two sessions that wait
+    expect(d.counts).toEqual({ notDone: 2, needsYou: 2, alarm: true })
   })
 })
 

@@ -4,11 +4,12 @@ import type { Ask, SessionRecord, Snapshot } from '../types'
 import { clean, duration } from './format'
 import { repoPrs } from './git'
 import { completeCount } from './milestone'
-import { repoLabel } from './rank'
+import { isNeedsYou, repoLabel } from './rank'
 import { WEEK_MS } from './types'
 
 export const IDLE_MS = 30 * 60_000 // the owner chose 30: a session quiet for longer than this, with a task not done, is forgotten
 export const TASK_TEXT_MAX = 600
+export const NO_ASK_TEXT = 'No ask is recorded for this session.'
 
 export type TaskStatus = 'needs-you' | 'forgotten' | 'superseded' | 'in-progress'
 export const TASK_ORDER: TaskStatus[] = ['needs-you', 'forgotten', 'superseded', 'in-progress']
@@ -40,6 +41,10 @@ export const firstWords = (text: string, words = 5) => {
   return all.length > words ? `${all.slice(0, words).join(' ')}…` : all.join(' ')
 }
 
+// Why a session waits, and for how long: "asks permission for 4m", "waiting for your answer for 4m".
+const WAIT = { permission: 'asks permission', unknown: 'state unknown' } as const
+export const waitWords = (r: SessionRecord, now: number) => `${(r.reason === 'permission' || r.reason === 'unknown' ? WAIT[r.reason] : 'waiting for your answer')}${r.engine.since === null ? '' : ` for ${duration(now - r.engine.since)}`}`
+
 // One task ask's status, first match wins; null: done (not on the list). `hasPr`: an open PR is on the session's branch.
 // `unchecked`: no verdict was ever given and the session is over or idle, so nothing says it is not done. It is not on the list.
 export const taskStatus = (r: SessionRecord, a: Ask, now: number, marks: TaskMarks, hasPr: boolean): (Omit<Pick<TaskItem, 'status' | 'detail' | 'later' | 'progress'>, 'status'> & { status: TaskStatus | 'unchecked' }) | null => {
@@ -47,8 +52,8 @@ export const taskStatus = (r: SessionRecord, a: Ask, now: number, marks: TaskMar
   const isMerged = r.repo !== null && r.branch !== null && marks.merged.has(mergedKey(r.repo.path, r.branch))
   if (a.verdict === 'done' || isMerged || marks.closed.has(key)) return null
   const none = { later: null, progress: null }
-  if (r.state === 'needs-you' && a.n === r.asks[r.asks.length - 1]?.n) {
-    return { status: 'needs-you', detail: `waiting for your answer${r.engine.since === null ? '' : ` for ${duration(now - r.engine.since)}`}`, ...none }
+  if (isNeedsYou(r) && a.n === r.asks[r.asks.length - 1]?.n) {
+    return { status: 'needs-you', detail: waitWords(r, now), ...none }
   }
   const ended = r.state === 'ended'
   // A running session is working, whatever its last prompt or turn says: only a quiet one is idle.
@@ -87,6 +92,13 @@ export const taskLists = (snap: Snapshot, now: number, marks: TaskMarks = noMark
       if (s.status === 'unchecked') unchecked.push(base)
       else tasks.push({ ...base, ...s, status: s.status })
     }
+  }
+  // Every person's session that waits shows at the top, whatever its last ask was (a question, none recorded): the same
+  // set the band, the pane and the Board count with `isNeedsYou`.
+  for (const r of snap.sessions.filter(isNeedsYou)) {
+    if (tasks.some(t => t.sessionId === r.sessionId && t.status === 'needs-you')) continue
+    const last = r.asks[r.asks.length - 1]
+    tasks.push({ key: taskKey(r.sessionId, last?.n ?? 0), sessionId: r.sessionId, n: last?.n ?? 0, text: last ? clean(last.text, TASK_TEXT_MAX).replace(/\s+/g, ' ').trim() : NO_ASK_TEXT, repo: repoLabel(r), at: last?.at ?? r.lastActivityAt, status: 'needs-you', detail: waitWords(r, now), later: null, progress: null })
   }
   const newest = (a: { at: number; key: string }, b: { at: number; key: string }) => b.at - a.at || a.key.localeCompare(b.key)
   return { tasks: tasks.sort((a, b) => TASK_ORDER.indexOf(a.status) - TASK_ORDER.indexOf(b.status) || newest(a, b)), unchecked: unchecked.sort(newest) }

@@ -87,7 +87,7 @@ const putChange = (w: World) => {
 }
 
 describe('Home leads with your tasks not done', () => {
-  const TASKED = [...paneTown(), ...taskTown()]
+  const TASKED = [...aloneTown(), ...taskTown()]
   const ROWS = ['task:need-1:1', 'task:lost-2:1', 'task:lost-1:1', 'task:sup-1:1', 'task:sup-1:2', 'task:prog-1:1', 'task:prog-2:1']
 
   test(`${TAG} the heading and the count come first, then the rows: needs you, forgotten, superseded, in progress, newest first`, async ($, on) => {
@@ -164,7 +164,7 @@ describe('Home leads with your tasks not done', () => {
     const ui = await mount($)
     expect(await keys(ui, 'task:')).toHaveLength(8)
     expect((await texts(ui)).some(t => t === 'and 2 more, all on the Board (/tracker web)')).toBe(true)
-    box.value = snapAt(paneTown())
+    box.value = snapAt(aloneTown())
     await ui.redraw()
     expect((await texts(ui)).some(t => t === 'Every task you gave is done.')).toBe(true)
     await ui.unmount()
@@ -178,9 +178,11 @@ describe('Home, the triage queue', () => {
     expect(w.opens).toEqual([{ id: 'tracker', title: 'Tracker', focus: true }])
     const ui = await mount($, 70, true)
     expect((await texts(ui))[0]).toBe('Agent tracker')
-    const first = (await buttons(ui, 'session:'))[0]!
-    expect(first.props.key).toBe('session:web-1')
+    // Home leads with the tasks, and a session that waits is one of them: the ring starts on the first.
+    const first = (await buttons(ui, 'task:'))[0]!
+    expect(first.props.key).toBe('task:docs-1:0')
     expect(first.props.autoFocus).toBe(true)
+    expect((await keys(ui, 'session:')).slice(0, 2)).toEqual(['session:web-1', 'session:docs-1'])
     expect((await ui.find({ key: 'close' }))?.props.autoFocus).not.toBe(true)
     await ui.unmount()
   })

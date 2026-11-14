@@ -4,7 +4,7 @@
 import type { SessionRecord, Snapshot } from '../types'
 import { clean, resumeCommand } from './format'
 import { repoPrs } from './git'
-import { isLive, repoLabel } from './rank'
+import { isLive, isNeedsYou, repoLabel } from './rank'
 import { mergedKey, taskCounts, taskLists } from './tasks'
 import { turnKey } from './notes'
 import { ASK_KIND, ASK_STATUS, CHECKS_WORDS, DETACHED, MERGE_WORDS, REASON_WORDS, REVIEW_WORDS, UNTITLED } from './words'
@@ -177,7 +177,7 @@ export const boardData = (snap: Snapshot, changes: ChangeFiles[], now: number, m
     sessions: recent.map(r => sessionOf(r, snap, now, marks.seen)),
     tasks,
     unchecked,
-    counts: taskCounts(tasks),
+    counts: { ...taskCounts(tasks), needsYou: snap.sessions.filter(isNeedsYou).length }, // one definition of needs you, with the band and the pane
     repos,
     milestones: changes.flatMap(c => {
       const m = paths.includes(c.repoPath) ? milestoneOf(c) : null
@@ -188,7 +188,7 @@ export const boardData = (snap: Snapshot, changes: ChangeFiles[], now: number, m
 }
 
 // The count in the tab title: sessions that need you now.
-export const needsCount = (d: BoardData) => d.sessions.filter(s => s.live && s.state === 'needs-you').length
+export const needsCount = (d: BoardData) => d.counts.needsYou
 export const titleOf = (n: number) => (n > 0 ? `(${n}) Agent tracker - your tasks not done yet` : 'Agent tracker - your tasks not done yet')
 
 // A JSON block inside a <script>: nothing in it can close the tag or start a comment.

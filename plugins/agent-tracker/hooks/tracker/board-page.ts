@@ -161,9 +161,9 @@ function li2(main,mut){var l=el('li');l.appendChild(document.createTextNode(main
 function noteLi(x){var l=el('li');if(!x.n.seen)l.appendChild(el('b',null,'New'));l.appendChild(document.createTextNode((x.n.seen?'':' · ')+x.s.repo+' '));l.appendChild(el('span','mut',hm(x.n.at)));l.appendChild(el('br'));l.appendChild(document.createTextNode(x.n.text));return l}
 function home(){
   document.body.setAttribute('data-look','web');app.textContent='';
-  var live=sessions(function(s){return s.live}),need=live.filter(function(s){return s.state==='needs-you'}).length,tasks=D.tasks,n=tasks.length;
+  var live=sessions(function(s){return s.live}),need=D.counts.needsYou,tasks=D.tasks,n=tasks.length;
   var top=el('header','top');
-  add(top,el('h1',null,'Agent tracker'),el('p',null,n?n+' of your tasks '+(n===1?'is':'are')+' not done · '+need+(need===1?' needs':' need')+' you now':'Every task you gave is done · '+need+(need===1?' needs':' need')+' you now'));
+  add(top,el('h1',null,'Agent tracker'),el('p',null,(n?n+' of your tasks '+(n===1?'is':'are')+' not done':D.unchecked.length?'No open task found · '+D.unchecked.length+' not checked':'Every task you gave is done')+' · '+need+(need===1?' needs':' need')+' you now'));
   var fresh=el('span','fresh','Updated '+sec(Date.now()-NOW)+' ago');fresh.setAttribute('role','status');top.appendChild(fresh);app.appendChild(top);
   var old=Date.now()-NOW;
   if(D.loading)app.appendChild(el('p','stale','Reading sessions…'));
@@ -171,7 +171,7 @@ function home(){
   else if(old>STALE)app.appendChild(el('p','stale','No session has updated this page for '+dur(old)+'. What you see is from '+hm(NOW)+'.'));
   var main=el('main');
   var h=el('h2',null,'Your tasks not done yet');main.appendChild(h);
-  if(!n)main.appendChild(el('p','empty','Nothing is waiting for you.'));
+  if(!n)main.appendChild(el('p','empty',D.unchecked.length?'No open task was found. '+D.unchecked.length+' older '+(D.unchecked.length===1?'ask has':'asks have')+' no verdict yet: see Not checked below.':'Nothing is waiting for you.'));
   else{var ol=el('ol','tasks');tasks.forEach(function(t){ol.appendChild(taskRow(t))});main.appendChild(ol)}
   main.appendChild(el('h2',null,'Everything else'));
   var sec2=el('section');sec2.setAttribute('aria-label','Everything else');
