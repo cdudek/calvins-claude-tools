@@ -2,7 +2,7 @@
 // line each for the branch, the tokens, the struggles, what runs, the milestone, the asks and the PR. A line with no data
 // behind it is not drawn (no model, context or cost: the collector does not have them).
 import type { SessionRecord, Snapshot } from '../types'
-import { duration, plural, tokens } from './format'
+import { duration, plural, resumeCommand, tokens } from './format'
 import { repoPrs } from './git'
 import { featureKind } from './change'
 import { completeCount } from './milestone'
@@ -15,9 +15,6 @@ import { askLine, checksGlyph } from './repo-model'
 import { CHECKS_WORDS, DETACHED, FROM_TRANSCRIPT, MERGE_WORDS, NO_ASKS, PANE_BUTTONS, REVIEW_WORDS, UNTITLED } from './words'
 
 export const SESSION_ASKS_SHOWN = 6
-
-// The command that resumes an ended session, the folder single-quoted (an embedded quote closes, escapes and reopens).
-export const resumeCommand = (r: SessionRecord) => `cd '${r.cwd.replace(/'/g, "'\\''")}' && claude --resume ${r.sessionId}`
 
 
 // "● permission 4m", "◐ running 3m", "✓ done 3m ago", "○ ended 2h ago", in the state's colour.
@@ -96,7 +93,7 @@ export const sessionModel = (snap: Snapshot, id: string, now: number, local: Loc
       ],
     })
 
-  if (r.state === 'ended') blocks.push({ kind: 'copy', key: 'resume', label: PANE_BUTTONS.resume })
+  if (r.state === 'ended' && resumeCommand(r.cwd, r.sessionId) !== null) blocks.push({ kind: 'copy', key: 'resume', label: PANE_BUTTONS.resume })
   const crumbs = [{ text: 'Home', to: { kind: 'home' } as const }, ...(r.repo ? [{ text: repoLabel(r), to: { kind: 'repo', path: r.repo.path } as const }] : []), { text: title, to: null, bold: true }]
   return { crumbs, right: stateSpans(r, now), blocks: tidy(blocks), footer: hint(), first: firstKey(blocks) }
 }

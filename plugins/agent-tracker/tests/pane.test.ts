@@ -2,7 +2,7 @@ import { describe, expect, test } from 'claude-code/testing'
 import type { On } from 'claude-code'
 import type { Engine } from 'claude-code/testing'
 
-import { ONLY_THIS, PRS_NOT_SHOWN, cells, staleTop } from '../hooks/tracker/core'
+import { ONLY_THIS, PRS_NOT_SHOWN, cells, resumeCommand, staleTop } from '../hooks/tracker/core'
 import type { SessionRecord, Snapshot } from '../hooks/tracker/types'
 import { MIN, NOON, SELF, aloneTown, at, paneTown, rec, sess, snapAt, use } from './fixtures/pane'
 import type { Ask } from '../hooks/tracker/types'
@@ -650,6 +650,19 @@ describe('the Session page', () => {
     box.value = snapAt([sess('gone-1', 'running', 1, 'web-app', 'old job')])
     await ui.redraw()
     expect(await ui.find({ key: 'resume' })).toBeUndefined()
+    await ui.unmount()
+  })
+
+  test(`@F49 ${TAG} an id with shell characters is never a command: no helper result, no button`, async ($, on) => {
+    expect(resumeCommand('/work/web-app', 'x; rm -rf ~')).toBeNull()
+    expect(resumeCommand('/work/web-app', '$(touch pwned)')).toBeNull()
+    expect(resumeCommand('/work/web-app', '')).toBeNull()
+    expect(resumeCommand('/work/web-app', 'a'.repeat(65))).toBeNull()
+    expect(resumeCommand("/work/it's", 'Ab_9-z')).toBe("cd '/work/it'\\''s' && claude --resume Ab_9-z")
+    const ended = sess('x; rm -rf ~', 'ended', 90, 'web-app', 'old job', { endedAt: at(90) })
+    const { ui, w } = await sessionPage($, on, [sess(SELF, 'running', 1, 'web-app', 'me'), ended], 'x; rm -rf ~')
+    expect(await ui.find({ key: 'resume' })).toBeUndefined()
+    expect(w.copies).toEqual([])
     await ui.unmount()
   })
 

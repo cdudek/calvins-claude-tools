@@ -129,7 +129,10 @@ export const registerPane = (on: On, s: State) => {
       open: (key, to) => go($, s, to, key),
       jump: to => jump($, s, to),
       close: () => void close($),
-      resume: () => void copyResume($, session === undefined ? '' : resumeCommand(session), e.surface),
+      resume: () => {
+        const text = session === undefined ? null : resumeCommand(session.cwd, session.sessionId)
+        if (text !== null) void copyResume($, text, e.surface)
+      },
       ring: s.pane.focus,
     }
     return paneView(ui, model, actions, columns)
