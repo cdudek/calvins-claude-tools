@@ -37,7 +37,7 @@ describe('Home, the shell', () => {
   test(`@F38 ${TAG} Pane button and /tracker open Home with focus on the first row`, async ($, on) => {
     const { w } = withSnap(on, paneTown())
     await run($, '')
-    expect(w.opens).toEqual([{ id: 'tracker', title: 'Tracker', focus: true, closeOnEscape: true }])
+    expect(w.opens).toEqual([{ id: 'tracker', title: 'Tracker', focus: true }])
     const ui = await mount($, 115, true)
     expect((await texts(ui))[0]).toBe('Tracker') // the title, first line of the page
     const first = (await buttons(ui, 'session:'))[0]!
@@ -52,7 +52,7 @@ describe('Home, the shell', () => {
     const band = await $.ui.mount({ plugin: 'agent-tracker', surface: 'terminal', component: 'AbovePrompt', props: { hasSurvey: false, isWorking: false, maxRows: 12, bodyColumns: 115, scroll: { offset: 0, bodyRows: 12 }, view: {} } } as never)
     await band.press({ key: 'pane' })
     expect(w.opens.map(o => o.id)).toEqual(['tracker'])
-    expect([w.opens[0]!.focus, w.opens[0]!.closeOnEscape]).toEqual([true, true])
+    expect([w.opens[0]!.focus, w.opens[0]!.closeOnEscape]).toEqual([true, undefined])
     await band.unmount()
   })
 
@@ -66,11 +66,16 @@ describe('Home, the shell', () => {
     }
   })
 
-  test(`@F92 ${TAG} two-step Escape: the pane opens with focus and closeOnEscape (the engine's Escape then closes at an idle prompt; a first Escape that only hands the keys back is not built, questions.md Q26)`, async ($, on) => {
+  test(`@F92 ${TAG} Escape only hands the keys back: the pane opens with focus and without closeOnEscape, and Close closes it`, async ($, on) => {
     const { w } = withSnap(on, paneTown())
     await run($, '')
-    expect(w.opens[0]!.closeOnEscape).toBe(true)
     expect(w.opens[0]!.focus).toBe(true)
+    expect(w.opens[0]!.closeOnEscape).toBeUndefined() // no Escape-close path: the engine closes on Escape only when asked to
+    const ui = await mount($, 115, true)
+    expect(w.closes).toEqual([]) // nothing closed it
+    await ui.press({ key: 'close' })
+    expect(w.closes).toEqual(['tracker'])
+    await ui.unmount()
   })
 
   test(`@F91 ${TAG} Close closes the pane, and nothing here refuses the person's own close (ctrl+x x, Escape)`, async ($, on) => {

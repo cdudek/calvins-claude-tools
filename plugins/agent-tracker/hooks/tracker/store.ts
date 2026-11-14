@@ -101,11 +101,11 @@ export async function startUi($: Engine, s: State) {
   await $.command.register({ name: 'tracker', description: COMMAND_DESCRIPTION, argumentHint: COMMAND_HINT, immediate: true }).catch(() => undefined)
 }
 
-// Open the pane on a page, with the keys. Escape hands them back and, at an idle empty prompt, closes it (F92).
+// Open the pane on a page, with the keys. No closeOnEscape: Escape only hands the keys back; Close and `ctrl+x x` close it (F92).
 export async function openPane($: Engine, s: State, page: Page = { kind: 'home' }) {
   s.pane = newPane(page)
   $.ui.invalidate('ui.render')
-  await $.ui.open({ id: PANE_ID, title: PANE_TITLE, focus: true, closeOnEscape: true }).catch(() => undefined)
+  await $.ui.open({ id: PANE_ID, title: PANE_TITLE, focus: true }).catch(() => undefined)
 }
 
 export async function readLease($: Engine, base: string): Promise<Lease | null> {
