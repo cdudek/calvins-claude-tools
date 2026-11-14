@@ -24,17 +24,19 @@ Tests are `*.test.ts` files in `plugins/agent-tracker/tests/`, run by `claude pl
 
 ### State and age
 
-- [ ] **F1** (A5, A6) While a session's row in `claude agents --json` has no `pid`, the collector shall mark the session ended. This holds whatever its `state` or `status`. Screen/state: Home NEEDS YOU; Session header "○ ended 63d ago". Tag: `@F1`.
+- [ ] **F1** (A5, A6) While a session's row in `claude agents --json` has no `pid`, the collector shall mark it ended, except this session's own (F72). This holds for interactive and background rows alike. It holds whatever the row's `state` or `status`. Screen/state: Home NEEDS YOU; Session header "○ ended 63d ago". Tag: `@F1`.
 - [ ] **F2** (A5, A6) While a session's row has a `pid` and reports `blocked` or `waiting`, the collector shall mark it needs you as before. Screen/state: Home NEEDS YOU. Tag: `@F2`.
 - [ ] **F3** (A5, A6) The needs-you count, the band's oldest-waiting line and the needs-you task rows shall exclude every session ended by F1. Screen/state: Home header "5 live · 2 need you"; band. Tag: `@F3`.
 - [ ] **F4** (A5, A6) If no row in a good read carries a `pid`, then the collector shall keep the old state rule for that read. It shall not mark rows ended by F1. Screen/state: Home; Session "Pid not reported". Tag: `@F4`.
 - [ ] **F5** (A5) When the Session page opens, it shall show "branch main  started 12 Sep 16:13  last activity 63d ago" and never "since". Screen/state: Session, Facts line 1. Tag: `@F5`.
 - [ ] **F6** (A5) The Session page shall write the start date in local time as `16:13` today and `Tue 16:13` for 1 to 6 days back. Older dates read `12 Sep 16:13`, and over a year `12 Sep 2025 16:13`. Screen/state: Session, Facts line 1. Tag: `@F6`.
 - [ ] **F7** (A5) While a session is ended, the Session header shall read "○ ended 63d ago" with the days since last activity. It reads "○ ended" when no time is known. Screen/state: Session header. Tag: `@F7`.
+- [ ] **F71** (A5) The mod shall take a session's last activity as the newest of three times. They are its last prompt, its last turn end and the last line of its transcript. If none is known, the Session page shall read "last activity unknown". The idle time is then unknown (F48). Screen/state: Session, Facts line 1. Tag: `@F71`.
+- [ ] **F72** (A5, A6) The collector shall never mark this session's own id ended by F1. A background row that reports `done` stays ended, with or without a `pid`, as before. Screen/state: Home NEEDS YOU; Session header. Tag: `@F72`.
 
 ### Clear: when it is offered
 
-- [ ] **F8** (A3, A4; rules ACT-1) While a session is ended and has work left, the Session page shall draw "Clear". Work left is a listing, an open task or a removable worktree (F35). Screen/state: Session, Ended something to clear. Tag: `@F8`.
+- [ ] **F8** (A3, A4; rules ACT-1) While a session is ended and has work left, the Session page shall draw "Clear". Work left is a listing, an open task or a removable worktree (F35). An open task is a task that Home lists for the session (F15). Screen/state: Session, Ended something to clear. Tag: `@F8`.
 - [ ] **F9** (A4; rules ACT-1) While a session has a process, the Session page shall draw no Clear and no "Copy resume command". It shall draw one line instead: "Clear is for ended sessions. Close its terminal first." Background sessions read "Clear is for ended sessions. This one is still running. Resume comes back when it ends." Screen/state: Session, Live. Tag: `@F9`.
 - [ ] **F10** (A3, A4) While an ended session is not listed and has no open task or removable worktree, the Session page shall draw no Clear. It shall draw "Nothing to clear: it is not in Claude Code's list and has no open tasks." Screen/state: Session, Nothing to clear. Tag: `@F10`.
 - [ ] **F11** (A4) If no row in a good read carries a `pid` (F4), then the Session page shall draw no Clear. It shall show "Clear waits: Claude Code did not say which sessions have a process." Screen/state: Session, Pid not reported. Tag: `@F11`.
@@ -51,6 +53,7 @@ Tests are `*.test.ts` files in `plugins/agent-tracker/tests/`, run by `claude pl
 - [ ] **F19** (A3, A4) The confirm shall build its what-happens lines only from the parts that apply. The parts are "It leaves Claude Code's list", "and closes the 2 tasks above" ("1 task") and "The conversation is kept. The list entry does not come back." A listed session in a linked worktree adds this line. "If it made the worktree login, Claude Code also removes it, when that is safe." Screen/state: Session, Confirming. Tag: `@F19`.
 - [ ] **F20** (A4) When the owner presses "Cancel" or leaves the page, the Session page shall remove the confirm and change nothing. The focus returns to "Clear". Screen/state: Session, Confirming to Ended. Tag: `@F20`.
 - [ ] **F21** (A4; rules ACT-1) When the owner presses "Clear" and only a removable worktree is left, the Session page shall open the offer. It asks no confirm first. Screen/state: Session, Clear only a worktree left. Tag: `@F21`.
+- [ ] **F73** (A3, A4) When a Clear has run, the focus shall go to "Keep worktree" when there is an offer. Else it goes to "Copy resume command" when that is drawn, else to the Home crumb. It shall never go to "Reopen tasks". Screen/state: Session, Cleared. Tag: `@F73`.
 - [ ] **F22** (A3, A4, A6; rules ACT-1) When the owner presses "Clear session", the mod shall re-read `claude agents --json` before any write. It shall show "Clearing…". Screen/state: Session, Clearing. Tag: `@F22`.
 - [ ] **F23** (A4; rules ACT-1) If the re-read shows a `pid` for the session, then the mod shall change nothing. It shall show "This session is running again. Nothing was changed." Screen/state: Session, Refused. Tag: `@F23`.
 - [ ] **F24** (A4) If the re-read fails, then the mod shall change nothing. It shall show "Clear waits: Claude Code's session list could not be read. Nothing was changed." Screen/state: Session, Refused unreadable. Tag: `@F24`.
@@ -60,7 +63,7 @@ Tests are `*.test.ts` files in `plugins/agent-tracker/tests/`, run by `claude pl
 - [ ] **F28** (A3, A4) If `claude rm` fails otherwise, then the mod shall change nothing else and draw Clear again. It shall show "✗ Claude Code could not clear this session: <reason>. Nothing else was changed. Press Clear to try again." The reason is one line cut at 60 cells, dropped when unusable. Screen/state: Session, Failed. Tag: `@F28`.
 - [ ] **F29** (A3, A6) When Clear closes tasks, the mod shall mark each open task of the session closed in the tracker's settings. It shall show "✓ 2 tasks closed." ("1 task"). Screen/state: Session, Cleared; Home. Tag: `@F29`.
 - [ ] **F30** (A3) If saving the closed tasks fails after `claude rm` worked, then the mod shall draw Clear again. It shall show "✗ The tracker could not close the tasks: <reason>. The session left Claude Code's list. Press Clear to close them." Screen/state: Session, PartlyCleared. Tag: `@F30`.
-- [ ] **F31** (A3) When the owner presses "Reopen tasks", the mod shall remove the closed marks of the tasks that Clear closed. It shall show "✓ 2 tasks reopened." The button is drawn only while the owner stays on the page. Screen/state: Session, Reopened. Tag: `@F31`.
+- [ ] **F31** (A3) When the owner presses "Reopen tasks", the mod shall remove the closed marks of the tasks that Clear closed. It shall show "✓ 2 tasks reopened." The button is drawn only while the owner stays on the page. It does not survive a pane re-open. A tidy pass offers no reopen. Screen/state: Session, Reopened. Tag: `@F31`.
 - [ ] **F32** (A3, A5) When a session is cleared, Home shall stop listing its closed tasks. A task of an ended session older than 7 days still never lists. Screen/state: Home, YOUR TASKS NOT DONE. Tag: `@F32`.
 - [ ] **F33** (A4) The result lines of a Clear shall stay until the owner leaves the page and survive the 5-second re-read. A fresh visit shall show "Nothing to clear". Screen/state: Session, Result. Tag: `@F33`.
 - [ ] **F34** (A4) The mod shall add no command of its own for Clear. The keyboard route is `/tracker session <text>`, then Tab to Clear. Screen/state: Session. Tag: `@F34`.
@@ -83,20 +86,21 @@ Tests are `*.test.ts` files in `plugins/agent-tracker/tests/`, run by `claude pl
 
 ### Tidy
 
-- [ ] **F48** (A1, A4, A6) The mod shall collect for tidy ended sessions with work left for Clear, and linked worktrees. Each must be idle 30 days or more. A worktree's idle time is the newest of its branch's last commit, its folder's last change and its sessions' last activity. An unknown time is not collected. Screen/state: Home TIDY; tidy pass. Tag: `@F48`.
-- [ ] **F49** (A1, A4, A6; rules ACT-1) The mod shall count and list only items that pass every check. A session needs no process and no ask whose last verdict is "partly" or "not started". A worktree needs all of F35. Screen/state: Home TIDY; tidy questions. Tag: `@F49`.
+- [ ] **F48** (A1, A4, A6) The mod shall collect for tidy ended sessions with work left for Clear, and linked worktrees. Each must be idle 30 days or more. A session's idle time runs from its last activity (F71). A worktree's idle time is the newest of three times. They are its branch's last commit and its folder's own modified time. The third is the last activity of every session that used it, cleared or not. A cleared session's worktree has no second rule. An unknown time is not collected. Screen/state: Home TIDY; tidy pass. Tag: `@F48`.
+- [ ] **F49** (A1, A4, A6; rules ACT-1) The mod shall count and list only items that pass every check. A session needs no process and no ask whose last stored verdict in the tracker's ask record is "partly" or "not started". A worktree needs all of F35. Screen/state: Home TIDY; tidy questions. Tag: `@F49`.
 - [ ] **F50** (A1, A6) While an item passes F49, Home shall draw the TIDY block last, below REPOS and above the "without the tracker" line. It holds the heading "TIDY" and the button "Tidy". Between them is a dim count: "5 sessions and 3 worktrees idle for 30 days or more" ("1 session", "1 worktree"). Screen/state: Home, Tidy line. Tag: `@F50`.
 - [ ] **F51** (A1) While no item passes F49, Home shall draw no TIDY block. Screen/state: Home, No tidy line. Tag: `@F51`.
-- [ ] **F52** (A6) While Claude is replying in this session, Home shall replace the button with a line. The line reads "Tidy waits until Claude finishes replying in this session". While the list is unreadable, it reads "Tidy waits until Claude Code's session list can be read". Screen/state: Home, Tidy line waiting. Tag: `@F52`.
+- [ ] **F52** (A6) While Claude is replying in this session, Home shall replace the button with a line. The line reads "Tidy waits until Claude finishes replying in this session." When the list is unreadable, it says
+  "Tidy waits until Claude Code's session list can be read." Screen/state: Home, Tidy line waiting. Tag: `@F52`.
 - [ ] **F53** (A6; rules ACT-1) When the owner presses "Tidy" or types `/tracker tidy`, the mod shall hand the supervisor prompt to this session. It uses `$.prompt.submit({ text })` and answers "Tidy started: 5 sessions and 3 worktrees to check. Nothing that is running is touched." Screen/state: Home to the transcript. Tag: `@F53`.
 - [ ] **F54** (A1, A6) If no item passes F49, then `/tracker tidy` shall start no turn. It shall answer "Nothing to tidy. Nothing idle for 30 days is ready to clear." Screen/state: tidy, Nothing to tidy. Tag: `@F54`.
 - [ ] **F55** (A6) If Claude is replying in this session or the session list could not be read twice, then `/tracker tidy` shall start no turn. It answers "Tidy waits until Claude finishes replying in this session." or "Tidy waits: Claude Code's session list could not be read. Try again in a minute." Screen/state: tidy, busy and unreadable. Tag: `@F55`.
 - [ ] **F56** (A6) If `/tracker tidy` has any argument, then the mod shall start no turn. It shall answer "Tidy takes no number: it always uses 30 days." Screen/state: tidy. Tag: `@F56`.
-- [ ] **F57** (A4, A6; rules MODEL-1) The supervisor prompt shall hold a fixed list of the items that passed F49. The mod's code computes every safety check, subagents only gather and narrate, and a model never decides that something is safe. Screen/state: tidy, Started. Tag: `@F57`.
-- [ ] **F58** (A4, A6) The supervisor shall ask one question per batch, sessions first, then worktrees. Every item gets one line ("web-app · fix login · idle 41d"). A batch over 25 items splits into batches of 25. The options are "Clear all 5" or "Remove all 3" (recommended) and "Skip these 5". Screen/state: tidy, Asking. Tag: `@F58`.
-- [ ] **F59** (A4, A6; rules ACT-1) When the owner answers "Clear all N" or "Remove all N", the supervisor shall act item by item. It re-checks each item right before it acts, re-reading the session list for a session. It skips and names an item whose re-check or action fails. Screen/state: tidy, Acting. Tag: `@F59`.
+- [ ] **F57** (A4, A6; rules MODEL-1) The supervisor prompt shall hold a fixed list of the items that passed F49. The mod's code computes every safety check, subagents only gather and narrate, and a model never decides that something is safe. The gathering subagents use `haiku` and only read. The supervisor runs on the session's own model and changes nothing before the owner's batch answer. Screen/state: tidy, Started. Tag: `@F57`.
+- [ ] **F58** (A4, A6) The supervisor shall ask one question per batch, sessions first, then worktrees. Every item gets one line ("web-app · fix login · idle 41d"). A batch over 25 items splits into batches of 25. The options are "Clear all 5" or "Remove all 3" (recommended) and "Skip these 5", where the number is the size of that batch. Screen/state: tidy, Asking. Tag: `@F58`.
+- [ ] **F59** (A4, A6; rules ACT-1) When the owner answers "Clear all N" or "Remove all N", the supervisor shall act item by item. It acts only through the mod's checked functions, the ones the Session page uses. It never runs `claude rm` or git itself. It re-checks each item right before it acts, re-reading the session list for a session. It skips and names an item whose re-check or action fails. Screen/state: tidy, Acting. Tag: `@F59`.
 - [ ] **F60** (A4) If an exception typed under Other matches no item or several, then the supervisor shall pause the batch. It says "I could not tell which one you meant. Nothing was changed." Otherwise it shall show the final list ("Clearing 4, keeping 1: web-app · fix login") before it acts. Screen/state: tidy, Asking. Tag: `@F60`.
-- [ ] **F61** (A4, A6) When tidy ends, the supervisor shall write the report. The report reads "Cleared 5 sessions." and "Removed 3 worktrees. Branches kept." Failures read "Could not clear: web-app · fix login". It adds "Kept, needs a look: web-app/login (uncommitted changes)." and "Skipped: docs (a session is running in it)." It counts only what succeeded. Screen/state: tidy, Reported. Tag: `@F61`.
+- [ ] **F61** (A4, A6) When tidy ends, the supervisor shall write the report. The report reads "Cleared 5 sessions." and "Removed 3 worktrees. Branches kept." Failures read "Could not clear: web-app · fix login: <reason>", the reason cut at 60 cells like Clear's error lines. It adds "Kept, needs a look: web-app/login (uncommitted changes)." and "Skipped: docs (a session is running in it)." It counts only what succeeded. Screen/state: tidy, Reported. Tag: `@F61`.
 - [ ] **F62** (A1) The supervisor shall name a worktree with a live session in it as skipped and never ask about it. It shall name an item that failed a check as "needs a look" and never remove it, whatever the owner answers. Screen/state: tidy, Reported. Tag: `@F62`.
 - [ ] **F63** (A1, A6) The help line shall name tidy. It reads "Try /tracker, details, compact, copy, repo, session, tidy, web, band on, band off." The command hint shall include `tidy`. Screen/state: command help. Tag: `@F63`.
 
@@ -121,6 +125,9 @@ Tests are `*.test.ts` files in `plugins/agent-tracker/tests/`, run by `claude pl
 - F5 — tag `@F5`: `pane.test.ts` › Session first line reads started and last activity, never since
 - F6 — tag `@F6`: `pane.test.ts` › started date format for today, this week, older and over a year
 - F7 — tag `@F7`: `pane.test.ts` › ended header with and without a time
+- F71 — tag `@F71`: `collector.test.ts` › last activity is the newest of prompt, turn end and transcript; unknown reads "last activity unknown"
+- F72 — tag `@F72`: `collector.test.ts` › this session's own id is never ended; a background `done` row stays ended
+- F73 — tag `@F73`: `clear.test.ts` › focus after a Clear: offer, resume, Home crumb, never Reopen tasks
 - F8 — tag `@F8`: `clear.test.ts` › Clear is drawn for an ended session with something to clear
 - F9 — tag `@F9`: `clear.test.ts` › a session with a process gets the reason line and no Clear or resume
 - F10 — tag `@F10`: `clear.test.ts` › nothing to clear draws the line and no Clear
@@ -192,6 +199,19 @@ Tests are `*.test.ts` files in `plugins/agent-tracker/tests/`, run by `claude pl
 
 - **Automated:** `claude plugin test plugins/agent-tracker` and `python3 -m unittest discover -s tests` exit 0.
 - **Manual:** the render check of N1. Also a spot check of the band against `claude agents --json`: 0 needs-you rows with no `pid` in 5 of 5 checks by 2026-12-05.
+
+## Assumptions
+
+- **Clarify, decided by the agent on 2026-11-14** (technical calls, no owner question needed):
+  - **Rows with no `pid` (F1, F4, F72):** a row with no `pid` is ended, for interactive and background rows alike. Every live row checked on 2026-11-14 carried a `pid`. The F4 guard (no `pid` anywhere in a good read) stays, and so does the exception for this session's own id.
+  - **Idle time (F48, F71):** tidy measures a session's idle time from its last activity. A cleared session's worktree counts through the worktree age rule, with no second definition.
+  - **Reopen tasks (F31):** it lives only while the owner stays on the page. It does not survive a pane re-open.
+  - **Tidy report reasons (F61):** the report cuts each failed item's reason at 60 cells, like Clear's error lines.
+  - **Tidy models (F57):** the gathering subagents use `haiku` and only read. The supervisor is the session's own model and makes no change without the owner's batch answer. MODEL-1 covers the mod's own calls, not these.
+  - **Supervisor's actions (F59):** the supervisor reaches the mod's checked functions through the plan's mechanism (`plan.md` fixes it). It never runs `claude rm` or git itself.
+  - **Hand-off (F53):** `$.prompt.submit({ text })` starts a turn in the session where the owner typed the command. The build checks this against a fixture first. If the host refuses it, the fallback is a plugin skill, recorded in `plan.md`.
+  - **`claude rm` (F25, F43, F46):** it removes the session from Claude Code's list and keeps the conversation file. It also removes a worktree the session itself made, when that is safe (owner, dialog, 2026-11-14, "Allow, name it").
+  - **Default branch (F35):** the target of `refs/remotes/origin/HEAD`; with none, `main`, then `master`. With none of them, condition 4 relies on the PR alone (F38).
 
 ## Out of scope
 
