@@ -84,7 +84,7 @@ const milestoneRow = (c: Change, snap: Snapshot, repoPath: string, sessions: Ses
   const sw = clamp(columns - 2 - 1 - 13 - 1 - 6 - 1 - 7, 8, 18)
   const line: Spans = merged
     ? [glyph, sp(' '), dim(pad(cut(c.slug, sw), sw)), dim(' merged')]
-    : [glyph, sp(' '), sp(pad(cut(c.slug, sw), sw)), sp(' '), sp(pad(progress, 13)), ...bar(p.done, p.total, 6), sp(' '), ...prSpans]
+    : [glyph, sp(' '), sp(pad(cut(c.slug, sw), sw)), sp(' '), sp(pad(progress, 14)), ...bar(p.done, p.total, 6), sp(' '), ...prSpans]
   const second: Spans[] = c.project !== null || c.ticket !== null ? [[sp('  '), dim(`project: ${[c.project, c.ticket].filter(Boolean).join(' · ')}`)]] : []
   return { kind: 'row', key: `milestone:${c.dir}`, to: { kind: 'milestone', repo: repoPath, change: c.dir }, lines: [line, ...second] }
 }

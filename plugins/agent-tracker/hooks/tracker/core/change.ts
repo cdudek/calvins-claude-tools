@@ -84,7 +84,7 @@ export const parseQuestions = (text: string | null): Change['questions'] =>
       return [{ id: m[1]!, title: clean(m[2], MAX), fallback: clean(/\*\*Default taken:\*\*\s*([^*]*?)(?:\s*\*\*|$)/.exec(line)?.[1] ?? '', MAX) }]
     })
 
-// `- **2026-11-14, F92:** what changed, and why`: the line's date, noon local, and its text without the label.
+// `- **2026-11-14, F92:** what changed, and why`: the line's date at 12:00 UTC (no clock or zone is read here), and its text without the label.
 export const parseRevisions = (plan: string | null): { at: number; ref: string; text: string }[] => {
   if (plan === null) return []
   const at = plan.search(/^##\s+Revisions\s*$/m)
@@ -94,7 +94,7 @@ export const parseRevisions = (plan: string | null): { at: number; ref: string; 
   const out: { at: number; ref: string; text: string }[] = []
   for (const line of end < 0 ? body : body.slice(0, end)) {
     const m = /^- \*\*(\d{4})-(\d{2})-(\d{2})\s*(?:[,—-]\s*)?([^*]*?):?\*\*:?\s*(.+)$/.exec(line)
-    if (m) out.push({ at: new Date(Number(m[1]), Number(m[2]) - 1, Number(m[3]), 12).getTime(), ref: clean(m[4], 40).trim(), text: clean(m[5], 400).replace(/\s+/g, ' ').trim() })
+    if (m) out.push({ at: Date.UTC(Number(m[1]), Number(m[2]) - 1, Number(m[3]), 12), ref: clean(m[4], 40).trim(), text: clean(m[5], 400).replace(/\s+/g, ' ').trim() })
   }
   return out
 }

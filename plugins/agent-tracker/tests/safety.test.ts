@@ -10,6 +10,8 @@ import * as transcriptFixture from './fixtures/transcript'
 import { DIR, start, world } from './fixtures/world'
 import type { World } from './fixtures/world'
 
+declare function setTimeout(run: () => void, ms: number): unknown // the runtime has it; the plugin's type set does not
+
 const TAG = '@2026-11-13-agent-tracker'
 const NOW = 1_700_003_600_000
 const esc = (s: string) => s.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')
@@ -50,6 +52,12 @@ const runSession = async ($: Engine, w: World, isHolder: boolean) => {
   await prompt('second ask')
   w.messages = [{ role: 'assistant', text: 'All done.', toolUses: [] }]
   await turn()
+  // A turn whose last message is 200 characters or more: one more call, the notes read, pinned to the same model.
+  await prompt('third ask')
+  w.completeReply = () => JSON.stringify({ know: ['A step was skipped'], decided: ['A default was taken'] })
+  w.messages = [{ role: 'assistant', text: `Finished the work. ${'I skipped a step and took a default. '.repeat(8)}`, toolUses: [] }]
+  await turn()
+  await new Promise<void>(done => setTimeout(done, 0)) // the notes call runs after the turn went on
   w.tool = () => ({ result: {}, isError: true })
   await $.tool.call({ tool: 'Bash', command: 'make' })
   raised.tools += 1
@@ -69,7 +77,8 @@ describe('safety', () => {
     await runSession($, w, true)
     expect(MODEL).toBe('haiku')
     expect(w.models.length).toBeGreaterThan(0)
-    expect(w.models.every(m => m.op === 'classify' && m.model === MODEL)).toBe(true)
+    expect(w.models.every(m => (m.op === 'classify' || m.op === 'complete') && m.model === MODEL)).toBe(true) // classify and complete, never fork
+    expect(w.models.some(m => m.op === 'complete')).toBe(true) // the notes call is among them
   })
 
   test(`@F61 ${TAG} call counts for one ask and one turn, none for a turn without a question mark`, async ($, on) => {
@@ -77,7 +86,8 @@ describe('safety', () => {
     await runSession($, w, true)
     const asks = w.models.filter(m => m.labels?.includes('task'))
     const checks = w.models.filter(m => m.labels?.includes('asks-owner'))
-    expect(asks.map(m => m.text)).toEqual(['first ask', 'second ask']) // one classification per ask
+    expect(asks.map(m => m.text)).toEqual(['first ask', 'second ask', 'third ask']) // one classification per ask
+    expect(w.models.filter(m => m.op === 'complete').length).toBe(1) // one notes call, for the one turn of 200 characters or more
     expect(checks.length).toBe(1) // one check, for the turn whose final paragraph holds a "?"; none for the other
     expect(checks[0]!.text).toContain('Which branch should I use?')
   })
