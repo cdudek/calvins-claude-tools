@@ -100,7 +100,7 @@ export const noteItems = (snap: Snapshot, changes: ReadonlyMap<string, Change[]>
       const base = { repo: name, label: `${name}/${c.slug}`, session: session ? (session.title ?? session.branch) : null, sessionId: session?.sessionId ?? null }
       for (const q of c.questions) {
         const key = `q:${c.dir}:${q.id}`
-        out.push({ ...base, key, kind: 'decided', text: q.fallback !== '' ? `${sentence(q.fallback)} (default taken, ${q.id})` : `${q.title} (open, ${q.id})`, at: c.questionsAt, dayOnly: false, seen: seen.has(key), source: `changes/${c.dir}/questions.md`, ref: q.id, question: q.title })
+        out.push({ ...base, key, kind: 'decided', text: q.fallback !== '' ? `${sentence(q.fallback).replace(/\.+$/, '')} (default taken, ${q.id})` : `${q.title} (open, ${q.id})`, at: c.questionsAt, dayOnly: false, seen: seen.has(key), source: `changes/${c.dir}/questions.md`, ref: q.id, question: q.title })
       }
       for (const rev of c.revisions.filter(x => now - x.at <= WEEK_MS).slice(-FILE_REVISIONS)) {
         const key = `r:${c.dir}:${rev.at}:${rev.text.length}`

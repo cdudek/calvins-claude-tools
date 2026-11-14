@@ -181,7 +181,7 @@ const stageSpans = (c: Change): Spans =>
 const featureRow = (c: Change, f: ChangeFeature, repoPath: string, columns: number): Block => {
   const kind = featureKind(f.state)
   const glyph = kind === 'done' || kind === 'merged' ? sp('✓', 'green') : kind === 'building' ? sp('◐', 'yellow') : kind === 'blocked' ? sp('✗', 'red') : sp('○', 'dim')
-  const right: Span = kind === 'done' ? dim(featureSha(f) ?? '') : kind === 'merged' ? dim('merged') : kind === 'building' ? sp('building', 'yellow') : kind === 'blocked' ? sp(cut(`blocked: ${blockedReason(f)}`, 24), 'red') : sp('')
+  const right: Span = kind === 'done' ? dim(featureSha(f) ?? '') : kind === 'merged' ? dim('merged') : kind === 'building' ? sp('building', 'yellow') : kind === 'blocked' ? sp(cut(`blocked: ${blockedReason(f)}`, 34), 'red') : sp('')
   const room = Math.max(8, columns - 2 - 3 - right.text.length - 1)
   const name = `${f.n} ${cut(f.name, room - 2)}`
   const line: Spans = [glyph, sp(' '), kind === 'todo' ? dim(pad(name, room)) : sp(pad(name, room)), sp(' '), right]
