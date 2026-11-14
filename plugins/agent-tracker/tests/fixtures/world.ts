@@ -16,8 +16,11 @@ export type World = {
   files: Map<string, string>
   writes: string[]
   procs: { argv: readonly string[]; cwd?: string }[]
-  models: { op: 'classify' | 'complete'; text: string; labels?: readonly string[]; model?: string }[]
+  models: { op: 'classify' | 'complete' | 'fork'; text: string; labels?: readonly string[]; model?: string }[]
   net: string[]
+  origins: string[] // who raised each prompt that reached the engine
+  toolCalls: number
+  commandRuns: number
   statuses: (string | undefined)[]
   states: Map<string, unknown>
   snapshot: () => Snapshot
@@ -47,6 +50,9 @@ export function world(on: On, o: { id?: string; cwd?: string; now?: number } = {
     procs: [],
     models: [],
     net: [],
+    origins: [],
+    toolCalls: 0,
+    commandRuns: 0,
     statuses: [],
     states: new Map(),
     snapshot: () => w.states.get('agent-tracker/snapshot') as Snapshot,
@@ -75,10 +81,19 @@ export function world(on: On, o: { id?: string; cwd?: string; now?: number } = {
   on('session.messages', () => ({ value: w.messages }))
   on('agent.list', () => ({ value: w.subagents }))
   on('command.register', (_, e) => ({ value: { command: e.name } }))
-  on('prompt.submit', (_, e) => ({ text: e.text }))
+  on('prompt.submit', (_, e) => {
+    w.origins.push(e.origin.kind)
+    return { text: e.text }
+  })
   on('turn.complete', (_, e) => ({ text: e.answer }))
-  on('tool.call', (_, e) => w.tool(e) as never)
-  on('command.run', () => ({}))
+  on('tool.call', (_, e) => {
+    w.toolCalls += 1
+    return w.tool(e) as never
+  })
+  on('command.run', () => {
+    w.commandRuns += 1
+    return {}
+  })
 
   on('fs.read', (_, e) => (w.files.has(e.path) ? { value: w.files.get(e.path)! } : { deny: `ENOENT ${e.path}` }))
   on('fs.exists', (_, e) => ({ value: w.files.has(e.path) }))
@@ -146,6 +161,10 @@ export function world(on: On, o: { id?: string; cwd?: string; now?: number } = {
   on('model.complete', (_, e) => {
     w.models.push({ op: 'complete', text: JSON.stringify(e), model: (e as { model?: string }).model })
     return { deny: 'no complete in tests' }
+  })
+  on('model.fork', (_, e) => {
+    w.models.push({ op: 'fork', text: JSON.stringify(e), model: (e as { model?: string }).model })
+    return { deny: 'no fork in tests' }
   })
   return w
 }

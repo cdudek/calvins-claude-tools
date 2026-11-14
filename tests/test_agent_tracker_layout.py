@@ -34,6 +34,12 @@ class AgentTrackerLayout(unittest.TestCase):
                     bad.append(f"{f.name}:{n}: {line.strip()}")
         self.assertEqual(bad, [])
 
+    def test_the_mod_never_writes_to_a_session_or_opens_a_port(self):
+        # The mod only observes (F62, F65): no note, prompt, tool call, agent, command, request or spawned process of its own.
+        forbidden = r"\$\.(session\.(append|send)|prompt\.submit|tool\.call|command\.run|agent\.spawn|http\.|process\.spawn|mcp\.)"
+        bad = [f"{f.name}:{n}" for f in SOURCES for n, line in enumerate(f.read_text().splitlines(), 1) if re.search(forbidden, line)]
+        self.assertEqual(bad, [])
+
     def test_no_file_registers_a_classic_hook(self):
         bad = [f"{f.name}:{n}" for f in SOURCES for n, line in enumerate(f.read_text().splitlines(), 1) if "classic." in line]
         self.assertEqual(bad, [])
