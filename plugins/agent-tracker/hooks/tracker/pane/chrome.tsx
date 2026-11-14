@@ -12,7 +12,11 @@ export type Actions = {
   home: () => void
   close: () => void
   resume: () => void
+  ring: string | null // the element holding the focus ring, as `ui.focus` last said (null: none moved it yet)
 }
+
+// `autoFocus` follows the ring, so a redraw leaves it where the person put it, and Back returns it to its row.
+export const ringOn = (a: Actions, key: string) => (a.ring === key ? (true as const) : undefined)
 
 const partProps = (p: Part, dim: boolean) => ({ dimColor: dim || p.tone === 'dim', color: p.tone === 'error' ? ('error' as const) : undefined })
 
@@ -24,7 +28,7 @@ export function titleRow(ui: Ui, a: Actions, updated: string | null) {
       <Text bold>{PANE_TITLE}</Text>
       {updated !== null && <Text dimColor>{updated}</Text>}
       <Box flexGrow={1} />
-      <Button key="close" plain label={PANE_BUTTONS.close} hotkey="x" onPress={a.close} />
+      <Button key="close" plain label={PANE_BUTTONS.close} hotkey="x" autoFocus={ringOn(a, 'close')} onPress={a.close} />
     </Box>
   )
 }
@@ -34,9 +38,9 @@ export function navRow(ui: Ui, a: Actions, withBack = true) {
   const { Box, Button } = ui
   return (
     <Box key="nav" flexDirection="row" flexWrap="wrap" gap={2}>
-      {withBack && <Button key="back" plain label={PANE_BUTTONS.back} hotkey="b" onPress={a.back} />}
-      <Button key="home" plain label={PANE_BUTTONS.home} hotkey="h" onPress={a.home} />
-      <Button key="close" plain label={PANE_BUTTONS.close} hotkey="x" onPress={a.close} />
+      {withBack && <Button key="back" plain label={PANE_BUTTONS.back} hotkey="b" autoFocus={ringOn(a, 'back')} onPress={a.back} />}
+      <Button key="home" plain label={PANE_BUTTONS.home} hotkey="h" autoFocus={ringOn(a, 'home')} onPress={a.home} />
+      <Button key="close" plain label={PANE_BUTTONS.close} hotkey="x" autoFocus={ringOn(a, 'close')} onPress={a.close} />
     </Box>
   )
 }
@@ -61,12 +65,12 @@ export function sessionRow(ui: Ui, row: Row, columns: number, o: { key: string; 
 }
 
 // A repo heading: a button that opens the Repo page, its label cut and its counts whole.
-export function repoHeading(ui: Ui, g: Group, columns: number, o: { dim: boolean; onPress: () => void }) {
+export function repoHeading(ui: Ui, g: Group, columns: number, o: { dim: boolean; autoFocus: boolean; onPress: () => void }) {
   const { Text, Button } = ui
   const text = headingText(g, columns)
   if (g.path === null) return <Text key={`folder:${g.key}`} bold dimColor={o.dim}>{text}</Text>
   return (
-    <Button key={`repo:${g.path}`} plain onPress={o.onPress}>
+    <Button key={`repo:${g.path}`} plain autoFocus={o.autoFocus ? true : undefined} onPress={o.onPress}>
       <Text bold dimColor={o.dim}>{text}</Text>
     </Button>
   )

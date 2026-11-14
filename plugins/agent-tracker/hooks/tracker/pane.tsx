@@ -80,6 +80,12 @@ export const registerPane = (on: On, s: State) => {
     return { text: '' }
   })
 
+  // The ring moves by Tab, the arrows or a click: remember where, so a redraw and Back keep it (Q27).
+  on('ui.focus', async ($, e, next) => {
+    if (e.requestId === PANE_ID && e.element !== undefined) s.pane.focus = e.element
+    return next(e)
+  })
+
   on('ui.render', { component: 'Pane', requestId: 'tracker' }, async ($, e) => {
     await startUi($, s)
     const snap = await read($, snapshot)
@@ -96,6 +102,7 @@ export const registerPane = (on: On, s: State) => {
       home: () => home($, s),
       close: () => void close($),
       resume: () => void copyResume($, session?.resume ?? '', e.surface),
+      ring: s.pane.focus,
     }
     if (session !== null) return sessionView(ui, session, actions, columns)
     if (page.kind === 'session') return missingView(ui, sessionNotFound(page.id), actions)
@@ -107,6 +114,6 @@ export const registerPane = (on: On, s: State) => {
     // Home keeps its order while the pane has the keyboard, and sorts again when the keyboard leaves (F43).
     const model = homeModel(snap, selfId, now, local, e.props.isFocused ? s.pane.frozen : null)
     s.pane.frozen = e.props.isFocused ? model.frozen : null
-    return homeView(ui, model, actions, columns, s.pane.focus)
+    return homeView(ui, model, actions, columns)
   })
 }

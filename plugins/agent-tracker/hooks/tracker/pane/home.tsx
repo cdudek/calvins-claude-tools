@@ -7,7 +7,7 @@ import type { Actions, Ui } from './chrome'
 // The first session row is where the ring starts, unless the person already moved it (a Back returns to its row).
 const firstRow = (m: HomeModel) => [...m.needs, ...m.running.flatMap(g => g.rows), ...m.done.flatMap(g => g.rows), ...m.ended][0]?.id ?? null
 
-export function homeView(ui: Ui, m: HomeModel, a: Actions, columns: number, focus: string | null) {
+export function homeView(ui: Ui, m: HomeModel, a: Actions, columns: number) {
   const { Box, Text, Button } = ui
   if (m.loading)
     return (
@@ -19,11 +19,11 @@ export function homeView(ui: Ui, m: HomeModel, a: Actions, columns: number, focu
 
   const dim = m.stale !== null // the last good list, dimmed
   const first = firstRow(m)
-  const ring = focus ?? (first === null ? null : `session:${first}`)
+  const ring = a.ring ?? (first === null ? null : `session:${first}`)
   const row = (r: Row) => sessionRow(ui, r, columns, { key: `session:${r.id}`, dim, autoFocus: ring === `session:${r.id}`, onPress: () => a.open(`session:${r.id}`, { kind: 'session', id: r.id }) })
   const group = (g: Group) => (
     <Box key={g.key} flexDirection="column">
-      {repoHeading(ui, g, columns, { dim, onPress: () => a.open(`repo:${g.path}`, { kind: 'repo', path: g.path ?? '' }) })}
+      {repoHeading(ui, g, columns, { dim, autoFocus: ring === `repo:${g.path}`, onPress: () => a.open(`repo:${g.path}`, { kind: 'repo', path: g.path ?? '' }) })}
       {g.rows.map(row)}
     </Box>
   )
@@ -66,7 +66,7 @@ export function homeView(ui: Ui, m: HomeModel, a: Actions, columns: number, focu
           {m.repos.map((r, i) => (
             <Box key={r.path} flexDirection="row">
               <Text dimColor>{i === 0 ? ' ' : ' · '}</Text>
-              <Button key={`repos:${r.path}`} plain label={[r.label, ...r.counts].join(' ')} onPress={() => a.open(`repos:${r.path}`, { kind: 'repo', path: r.path })} />
+              <Button key={`repos:${r.path}`} plain autoFocus={ring === `repos:${r.path}` ? true : undefined} label={[r.label, ...r.counts].join(' ')} onPress={() => a.open(`repos:${r.path}`, { kind: 'repo', path: r.path })} />
             </Box>
           ))}
         </Box>

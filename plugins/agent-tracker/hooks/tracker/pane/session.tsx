@@ -1,7 +1,7 @@
 // The Session page: header, Running now, Usage, Milestone and Asks (spec/screens.md "Pane, Session").
 import { NO_ASKS, FROM_TRANSCRIPT, PANE_BUTTONS, SECTION_WORDS, askLines, kindWidth } from '../core'
 import type { SessionModel } from '../core'
-import { navRow } from './chrome'
+import { navRow, ringOn } from './chrome'
 import type { Actions, Ui } from './chrome'
 
 export function sessionView(ui: Ui, m: SessionModel, a: Actions, columns: number) {
@@ -14,14 +14,14 @@ export function sessionView(ui: Ui, m: SessionModel, a: Actions, columns: number
       <Text bold>{m.title}</Text>
       <Text>{m.state}</Text>
       <Box key="where" flexDirection="row" flexWrap="wrap">
-        {m.repo !== null && <Button key={`repo:${m.repo.path}`} plain label={m.repo.label} onPress={() => a.open(`repo:${m.repo?.path}`, { kind: 'repo', path: m.repo?.path ?? '' })} />}
+        {m.repo !== null && <Button key={`repo:${m.repo.path}`} plain autoFocus={ringOn(a, `repo:${m.repo.path}`)} label={m.repo.label} onPress={() => a.open(`repo:${m.repo?.path}`, { kind: 'repo', path: m.repo?.path ?? '' })} />}
         {m.branch !== null && <Text dimColor>{m.repo === null ? '' : ' · '}</Text>}
         {m.branch !== null && <Text>{m.branch}</Text>}
         {m.pr !== null && <Text dimColor> · PR </Text>}
         {m.pr !== null && <Link href={m.pr.url} label={`#${m.pr.number}`} />}
         {m.pr !== null && <Text> {m.pr.checks}</Text>}
       </Box>
-      {m.resume !== null && <Button key="resume" plain label={PANE_BUTTONS.resume} hotkey="r" onPress={a.resume} />}
+      {m.resume !== null && <Button key="resume" plain autoFocus={ringOn(a, 'resume')} label={PANE_BUTTONS.resume} hotkey="r" onPress={a.resume} />}
       {m.running.length > 0 && (
         <Box key="running" flexDirection="column">
           <Text bold>{SECTION_WORDS.running}</Text>

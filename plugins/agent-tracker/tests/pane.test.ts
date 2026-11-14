@@ -66,7 +66,7 @@ describe('Home, the shell', () => {
     }
   })
 
-  test(`@F92 ${TAG} two-step Escape: the pane opens with closeOnEscape, so Escape hands the keys back and a second one at an idle prompt closes`, async ($, on) => {
+  test(`@F92 ${TAG} two-step Escape: the pane opens with focus and closeOnEscape (the engine's Escape then closes at an idle prompt; a first Escape that only hands the keys back is not built, questions.md Q26)`, async ($, on) => {
     const { w } = withSnap(on, paneTown())
     await run($, '')
     expect(w.opens[0]!.closeOnEscape).toBe(true)
@@ -390,6 +390,23 @@ describe('Home, the lists', () => {
       expect(String(b.text)).toMatch(/\d+(m|h|d)\b|<1m/) // a count of time beside it
     }
     expect(await headings(ui)).toEqual(['Needs you', 'Running', 'Done', 'Ended today']) // the section names the state
+    await ui.unmount()
+  })
+})
+
+describe('the pane only observes', () => {
+  test(`${TAG} every page, press and /tracker word writes nothing, runs nothing and touches no session`, async ($, on) => {
+    const ended = sess('gone-9', 'ended', 90, 'web-app', 'old job', { endedAt: at(90) })
+    const { w } = withSnap(on, [...paneTown().map(r => (r.sessionId === 'web-1' ? { ...r, cwd: '/work/web-app/.worktrees/login' } : r)), ended])
+    const ui = await mount($, 115, true)
+    for (const key of ['session:web-1', 'repo:/work/web-app', 'back', 'home', 'repos:/work/api', 'home', 'session:web-3', 'resume', 'back', 'close']) {
+      await ui.press({ key }).catch(() => undefined) // a key the page does not draw is not pressed
+      await ui.redraw()
+    }
+    for (const args of ['', 'session login', 'repo web', 'session zzz', 'repo zzz', 'frobnicate']) await run($, args)
+    // No file, prompt, tool call, command, process, network or model call; the only copy is the resume command.
+    expect([w.writes.length, w.origins.length, w.toolCalls, w.commandRuns, w.procs.length, w.net.length, w.models.length]).toEqual([0, 0, 0, 0, 0, 0, 0])
+    expect(w.copies.map(c => c.text)).toEqual(["cd '/work/web-app' && claude --resume web-3"])
     await ui.unmount()
   })
 })

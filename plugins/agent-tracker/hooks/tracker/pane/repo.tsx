@@ -2,7 +2,7 @@
 // a `/tracker` word could not match.
 import { WIDE, prTitle } from '../core'
 import type { PrView, RepoModel } from '../core'
-import { navRow, sessionRow } from './chrome'
+import { navRow, ringOn, sessionRow } from './chrome'
 import type { Actions, Ui } from './chrome'
 
 const SEP = ' · '
@@ -12,7 +12,7 @@ const SEP = ' · '
 function prRow(ui: Ui, p: PrView, columns: number, a: Actions) {
   const { Box, Text, Button, Link } = ui
   const checks = <Text color={p.failing ? 'error' : undefined}>{p.checks}</Text>
-  const session = p.session && <Button key={`pr-session:${p.number}`} plain label={`session: ${p.session.title}`} onPress={() => a.open(`pr-session:${p.number}`, { kind: 'session', id: p.session?.id ?? '' })} />
+  const session = p.session && <Button key={`pr-session:${p.number}`} plain autoFocus={ringOn(a, `pr-session:${p.number}`)} label={`session: ${p.session.title}`} onPress={() => a.open(`pr-session:${p.number}`, { kind: 'session', id: p.session?.id ?? '' })} />
   const link = <Link href={p.url} label={`#${p.number}`} />
   const title = <Text>{` ${prTitle(p, columns)}`}</Text>
   if (columns >= WIDE)
@@ -46,7 +46,7 @@ function prRow(ui: Ui, p: PrView, columns: number, a: Actions) {
 
 export function repoView(ui: Ui, m: RepoModel, a: Actions, columns: number) {
   const { Box, Text } = ui
-  const row = (r: RepoModel['ended'][number]) => sessionRow(ui, r, columns, { key: `session:${r.id}`, dim: false, autoFocus: false, onPress: () => a.open(`session:${r.id}`, { kind: 'session', id: r.id }) })
+  const row = (r: RepoModel['ended'][number]) => sessionRow(ui, r, columns, { key: `session:${r.id}`, dim: false, autoFocus: a.ring === `session:${r.id}`, onPress: () => a.open(`session:${r.id}`, { kind: 'session', id: r.id }) })
   return (
     <Box flexDirection="column">
       {navRow(ui, a)}
