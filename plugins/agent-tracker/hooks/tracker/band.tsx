@@ -4,7 +4,7 @@
 import { atom, read } from 'claude-code'
 import type { EngineInterface, On } from 'claude-code'
 
-import { BAND_REPLY, BUTTON_LABELS, COPIED, SEP, bandData, columnsAlt, columnsSvg, compactLayout, copyFailed, detailsLayout, stateMarkdown } from './core'
+import { BAND_REPLY, BUTTON_LABELS, COPIED, bandData, columnsAlt, columnsSvg, compactLayout, copyFailed, detailsLayout, stateMarkdown } from './core'
 import type { Chunk, Column } from './core'
 import { ensureCollector } from './collector'
 import { openPane, readSettings, startUi, writeSettings } from './store'
@@ -77,9 +77,8 @@ export const registerBand = (on: On, s: State) => {
       )
       return stack(
         <Box flexDirection="row" alignItems="center" width={width}>
-          {compactLayout(data, columns).segments.map((seg, i) => (
+          {compactLayout(data, columns).segments.map(seg => (
             <Box key={seg.id} flexDirection="row">
-              {i > 0 && <Text dimColor>{SEP}</Text>}
               {seg.chunks.map(chunk)}
             </Box>
           ))}
@@ -95,7 +94,7 @@ export const registerBand = (on: On, s: State) => {
     const d = detailsLayout(data, columns)
     const cols = d.rows.flat()
     const cell = (c: Column) => (
-      <Box key={c.key} flexDirection="column" {...(isTerminal ? { width: d.colWidth } : { flexGrow: 1 })}>
+      <Box key={c.key} flexDirection="column" width={d.colWidth}>
         <Text dimColor>{c.label}</Text>
         <Text bold dimColor={c.tone === 'dim' && data.stale !== null}>
           {c.count}
@@ -115,7 +114,7 @@ export const registerBand = (on: On, s: State) => {
           </Text>
         )}
         {d.rows.map((r, i) => (
-          <Box key={`row-${i}`} flexDirection="row" gap={2}>
+          <Box key={`row-${i}`} flexDirection="row">
             {r.map(cell)}
           </Box>
         ))}
@@ -139,7 +138,7 @@ export const registerBand = (on: On, s: State) => {
             <Button key="details" plain label={BUTTON_LABELS.compact} onPress={view} />
           </Box>
         </Box>
-        {d.header[1] !== undefined && <Text>{d.header[1]}</Text>}
+        {d.header[1] !== undefined && <Text wrap="truncate-end">{d.header[1]}</Text>}
         {d.note !== null && <Text dimColor>{d.note}</Text>}
         {cols.length > 0 && table}
       </Box>,

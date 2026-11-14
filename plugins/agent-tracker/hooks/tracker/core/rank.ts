@@ -1,4 +1,5 @@
 import type { SessionRecord } from '../types'
+import { completeCount } from './milestone'
 import { UNTITLED } from './words'
 
 const folder = (path: string) => path.replace(/\/+$/, '').split('/').pop() || path
@@ -10,12 +11,12 @@ export const repoLabel = (r: SessionRecord) => r.repo?.name ?? folder(r.cwd)
 // the list's status or state onto a record the list holds, and onto no other.
 export const isLive = (r: SessionRecord) => r.state !== 'ended' && (r.source !== 'transcript' || r.engine.status !== undefined || r.engine.state !== undefined)
 
-export type Line = { id: string; repo: string; title: string; ms: number | null; self: boolean } // ms null: the wait is unknown
+export type Line = { id: string; repo: string; title: string; ms: number | null; self: boolean; reason: SessionRecord['reason']; progress: { done: number; total: number } | null } // ms null: the wait is unknown
 
 const lines = (sessions: SessionRecord[], state: SessionRecord['state'], selfId: string, now: number): Line[] =>
   sessions
     .filter(r => isLive(r) && r.state === state)
-    .map(r => ({ id: r.sessionId, repo: repoLabel(r), title: r.title ?? UNTITLED, ms: r.engine.since === null ? null : Math.max(0, now - r.engine.since), self: r.sessionId === selfId }))
+    .map(r => ({ id: r.sessionId, repo: repoLabel(r), title: r.title ?? UNTITLED, ms: r.engine.since === null ? null : Math.max(0, now - r.engine.since), self: r.sessionId === selfId, reason: r.reason, progress: r.milestone ? { done: completeCount(r.milestone.features), total: r.milestone.features.length } : null }))
 
 // An unknown wait sorts after every known one.
 const nullsLast = (a: Line, b: Line) => Number(a.ms === null) - Number(b.ms === null)
