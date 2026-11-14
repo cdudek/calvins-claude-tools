@@ -3,7 +3,7 @@
 import type { SessionRecord } from '../types'
 import { repoLabel } from './rank'
 
-const recent = (r: SessionRecord) => Math.max(r.lastActivityAt, r.engine.since)
+const recent = (r: SessionRecord) => Math.max(r.lastActivityAt, r.engine.since ?? 0)
 const newest = (list: SessionRecord[]) => list.reduce<SessionRecord | null>((best, r) => (best === null || recent(r) > recent(best) || (recent(r) === recent(best) && r.sessionId < best.sessionId) ? r : best), null)
 
 export const matchSession = (sessions: SessionRecord[], text: string): SessionRecord | null => {

@@ -4,10 +4,13 @@ import {
   PERMISSION_WAITING_FOR,
   completeCount,
   deriveState,
+  homeModel,
+  isLive,
   isComplete,
   labelRepos,
   leaseState,
   mergeSessions,
+  needsLines,
   parseAgents,
   parseMilestone,
   repoFromCommonDir,
@@ -211,6 +214,24 @@ describe('collector and states', () => {
     expect(sessions.map(s => s.sessionId).sort()).toEqual(['a', 'b', 'c', w.id].sort())
     expect(sessions.find(s => s.sessionId === 'a')?.source).toBe('mod')
     expect(sessions.find(s => s.sessionId === 'b')?.state).toBe('ended')
+  })
+
+  test(`@F68 ${TAG} a session only the list holds has no known wait; a transcript record the list holds is live, one it does not is not (R7, R10)`, () => {
+    const list = [
+      { sessionId: 'e', cwd: '/work/e', name: 'engine only', startedAt: T0, kind: 'interactive', status: 'waiting' },
+      { sessionId: 't', cwd: '/work/t', name: 'from transcript', startedAt: T0, kind: 'interactive', status: 'busy' },
+    ] as AgentRow[]
+    const history = ['t', 'gone'].map(id => record(id, { source: 'transcript', state: 'done' }))
+    const sessions = mergeSessions({ files: [], transcripts: history, agents: list, now: NOW, selfId: 'me' })
+    const by = (id: string) => sessions.find(r => r.sessionId === id)!
+    expect(by('e').engine.since).toBeNull()
+    expect(needsLines(sessions, 'me', NOW)).toMatchObject([{ id: 'e', ms: null }])
+    expect(isLive(by('t'))).toBe(true)
+    expect(by('t').state).toBe('running')
+    expect(by('t').engine.since).toBeNull() // no mod file saw it change: its age is not a wait
+    expect(isLive(by('gone'))).toBe(false)
+    const home = homeModel({ at: NOW, agentsOk: true, okAt: NOW, failedReads: 0, sessions }, 'me', NOW, { midnight: 0, clock: () => '' }, null)
+    expect(home.needs.map(r => r.parts.some(p => p.kind === 'time'))).toEqual([false])
   })
 
   test(`@F71 ${TAG} done and merged count as complete`, () => {

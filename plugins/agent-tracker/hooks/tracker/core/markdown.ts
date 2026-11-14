@@ -5,7 +5,7 @@ import { duration } from './format'
 import type { Line } from './rank'
 
 const one = (s: string) => s.replace(/\s+/g, ' ').trim()
-const session = (l: Line, verb: string) => `- ${one(l.repo)}: ${one(l.title)}, ${verb} ${duration(l.ms)}`
+const session = (l: Line, verb: string) => `- ${one(l.repo)}: ${one(l.title)}, ${verb}${l.ms === null ? '' : ` ${duration(l.ms)}`}`
 
 const REVIEW = { approved: 'approved', changes: 'changes requested', requested: 'review requested', none: 'no review' } as const
 const MERGE = { mergeable: 'mergeable', conflicts: 'conflicts', unknown: 'merge state unknown' } as const

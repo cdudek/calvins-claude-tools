@@ -49,9 +49,9 @@ const rowOf = (r: SessionRecord, section: Section, now: number, selfId: string, 
   const add = (kind: PartKind, text: string | null, tone: PartTone) => text !== null && text !== '' && parts.push({ kind, text, tone })
   if (section === 'needs') add('repo', repoLabel(r), 'dim')
   add('branch', r.branch ?? (r.repo ? DETACHED : null), 'dim')
-  if (section === 'needs') add('time', duration(now - r.engine.since), main)
-  if (section === 'running') add('time', duration(now - r.engine.since), main)
-  if (section === 'done') add('time', `${duration(now - r.engine.since)} ago`, main)
+  const waited = r.engine.since === null ? null : duration(now - r.engine.since) // null: unknown, no time shown
+  if (section === 'needs' || section === 'running') add('time', waited, main)
+  if (section === 'done') add('time', waited === null ? null : `${waited} ago`, main)
   if (section === 'ended') add('time', `ended ${duration(now - endedAt(r))} ago`, main)
   if (section === 'needs') add('reason', REASON_WORDS[r.reason ?? 'waiting'], main)
   if (section !== 'needs') add('tokens', r.usage.tokensIn + r.usage.tokensOut > 0 ? `${tokens(r.usage.tokensIn + r.usage.tokensOut)} tokens` : null, 'dim')
@@ -149,7 +149,9 @@ export const repoEntries = (sessions: SessionRecord[], now: number): RepoEntry[]
   return [...latest.entries()].sort((a, b) => b[1].at - a[1].at || a[0].localeCompare(b[0])).map(([path, v]) => ({ path, label: v.label, counts: prCounts(sessions, path, now).slice(0, 1) }))
 }
 
-const sinceThenId = (a: SessionRecord, b: SessionRecord) => a.engine.since - b.engine.since || a.sessionId.localeCompare(b.sessionId)
+// Oldest wait first (dir 1) or newest first (dir -1); a session whose wait is unknown comes last either way.
+const bySince = (dir: 1 | -1) => (a: SessionRecord, b: SessionRecord) =>
+  Number(a.engine.since === null) - Number(b.engine.since === null) || dir * ((a.engine.since ?? 0) - (b.engine.since ?? 0)) || dir * a.sessionId.localeCompare(b.sessionId)
 
 export const homeModel = (snap: Snapshot, selfId: string, now: number, local: Local, frozen: Frozen | null): HomeModel => {
   const sessions = snap.sessions
@@ -157,12 +159,12 @@ export const homeModel = (snap: Snapshot, selfId: string, now: number, local: Lo
   const of = (state: SessionRecord['state']) => live.filter(r => r.state === state)
   const alone = live.length === 1 && live[0]!.sessionId === selfId && live[0]!.state !== 'needs-you'
 
-  const needsList = inOrder(of('needs-you').sort(sinceThenId), frozen?.needs)
+  const needsList = inOrder(of('needs-you').sort(bySince(1)), frozen?.needs)
   const seen = frozen?.seenNeeds
   const needs = needsList.map(r => rowOf(r, 'needs', now, selfId, seen !== undefined && !seen.includes(r.sessionId)))
 
-  const runningList = alone ? [] : inOrder(of('running').sort(sinceThenId), frozen?.running)
-  const doneAll = alone ? [] : inOrder(of('done').sort((a, b) => sinceThenId(b, a)), frozen?.done)
+  const runningList = alone ? [] : inOrder(of('running').sort(bySince(1)), frozen?.running)
+  const doneAll = alone ? [] : inOrder(of('done').sort(bySince(-1)), frozen?.done)
   const doneList = doneAll.slice(0, DONE_MAX)
   const endedAll = inOrder(
     sessions.filter(r => r.state === 'ended' && endedAt(r) >= local.midnight).sort((a, b) => endedAt(b) - endedAt(a) || a.sessionId.localeCompare(b.sessionId)),
@@ -218,14 +220,15 @@ export type SessionModel = {
 }
 
 const stateLine = (r: SessionRecord, now: number) => {
-  const since = duration(now - r.engine.since)
+  const since = r.engine.since === null ? null : duration(now - r.engine.since)
+  const dot = (...parts: (string | null)[]) => parts.filter(p => p !== null).join(' · ')
   switch (r.state) {
     case 'needs-you':
-      return `● needs you · ${since} · ${r.reason === 'unknown' ? `${REASON_WORDS.unknown} (${r.unknownValue ?? ''})` : REASON_WORDS[r.reason ?? 'waiting']}`
+      return `● ${dot('needs you', since, r.reason === 'unknown' ? `${REASON_WORDS.unknown} (${r.unknownValue ?? ''})` : REASON_WORDS[r.reason ?? 'waiting'])}`
     case 'running':
-      return `◐ running · ${since}`
+      return `◐ ${dot('running', since)}`
     case 'done':
-      return `✓ done · ${since} ago`
+      return `✓ ${dot('done', since === null ? null : `${since} ago`)}`
     default:
       return `○ ended ${duration(now - endedAt(r))} ago`
   }

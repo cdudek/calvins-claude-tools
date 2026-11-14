@@ -4,7 +4,7 @@
 export type SessionState = 'running' | 'needs-you' | 'done' | 'ended'
 export type Reason = 'permission' | 'question' | 'waiting' | 'unknown'
 
-export type Engine = { status?: string; state?: string; waitingFor?: string | null; since: number }
+export type Engine = { status?: string; state?: string; waitingFor?: string | null; since: number | null } // since null: unknown (no mod file saw the session change)
 
 export type Ask = {
   n: number

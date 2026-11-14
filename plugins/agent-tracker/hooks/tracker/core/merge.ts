@@ -18,7 +18,7 @@ export const mergeSessions = ({ files, transcripts, agents, now, selfId }: In): 
   for (const r of [...transcripts, ...files]) byId.set(r.sessionId, r)
   for (const a of agents ?? []) {
     if (byId.has(a.sessionId)) continue
-    byId.set(a.sessionId, { ...emptyRecord(a.sessionId, a.cwd, a.startedAt), source: 'engine', kind: a.kind, title: a.name || null, engine: { since: a.startedAt } })
+    byId.set(a.sessionId, { ...emptyRecord(a.sessionId, a.cwd, a.startedAt), source: 'engine', kind: a.kind, title: a.name || null, engine: { since: null } })
   }
   const live = new Map((agents ?? []).map(a => [a.sessionId, a]))
   const merged = [...byId.values()].map(r => {
@@ -28,7 +28,7 @@ export const mergeSessions = ({ files, transcripts, agents, now, selfId }: In): 
       ...r,
       title: agent?.name || r.title,
       kind: agent?.kind ?? r.kind,
-      engine: agent ? { status: agent.status, state: agent.state, waitingFor: agent.waitingFor, since: r.engine.since } : r.engine,
+      engine: agent ? { status: agent.status, state: agent.state, waitingFor: agent.waitingFor, since: r.source === 'mod' ? r.engine.since : null } : r.engine,
       ...d,
     }
   })

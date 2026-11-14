@@ -103,6 +103,9 @@ const rowWidth = (segments: Segment[], buttons: number) => segments.reduce((n, s
 // line fits below 54 columns (questions.md Q16). Below 40 columns: step 7 at once.
 const LAST_STEP = 7
 
+// A wait as it follows a name: " 6m", nothing when it is unknown.
+const wait = (ms: number | null, tail = '') => (ms === null ? '' : ` ${duration(ms)}${tail}`)
+
 const needsSegment = (d: BandData, step: number): Segment => {
   const n = d.needs.length
   if (n === 0) return { id: 'needs', chunks: [{ text: '0 need you', tone: 'dim' }] }
@@ -110,12 +113,12 @@ const needsSegment = (d: BandData, step: number): Segment => {
   if (step < 7) {
     const me = d.needs.find(l => l.self)
     if (me) {
-      chunks.push({ text: ` · ${THIS_SESSION} ${duration(me.ms)}` })
+      chunks.push({ text: ` · ${THIS_SESSION}${wait(me.ms)}` })
       const other = d.needs.find(l => !l.self)
-      if (other) chunks.push({ text: ` · ${other.repo} ${duration(other.ms)}` })
+      if (other) chunks.push({ text: ` · ${other.repo}${wait(other.ms)}` })
     } else {
       const first = d.needs[0]!
-      chunks.push({ text: step < 5 ? ` · ${first.repo}: ${first.title} ${duration(first.ms)}` : ` · ${first.repo} ${duration(first.ms)}` })
+      chunks.push({ text: step < 5 ? ` · ${first.repo}: ${first.title}${wait(first.ms)}` : ` · ${first.repo}${wait(first.ms)}` })
     }
   }
   return { id: 'needs', chunks }
@@ -217,7 +220,7 @@ const headerLines = (w: Work | null, columns: number): string[] => {
 }
 
 const column = (key: Column['key'], label: string, count: string, line: string, tone?: Tone): Column => ({ key, label, count, line, ...(tone ? { tone } : {}) })
-const named = (l: Line) => `${l.repo}: ${l.title} ${duration(l.ms)}`
+const named = (l: Line, tail = '') => `${l.repo}: ${l.title}${wait(l.ms, tail)}`
 
 export const detailsLayout = (d: BandData, columns: number): Details => {
   const age = d.stale === null || d.stale.ageMs === null ? null : duration(d.stale.ageMs)
@@ -228,9 +231,9 @@ export const detailsLayout = (d: BandData, columns: number): Details => {
   const cols: Column[] = d.loading
     ? []
     : [
-        column('needs', 'needs you', String(d.needs.length), need ? (need.self ? `${THIS_SESSION} ${duration(need.ms)}` : named(need)) : ''),
+        column('needs', 'needs you', String(d.needs.length), need ? (need.self ? `${THIS_SESSION}${wait(need.ms)}` : named(need)) : ''),
         column('running', 'running', String(d.running.length), lines && run ? named(run) : '', 'dim'),
-        column('done', 'done', String(d.done.length), lines && fin ? `${named(fin)} ago` : '', 'dim'),
+        column('done', 'done', String(d.done.length), lines && fin ? named(fin, ' ago') : '', 'dim'),
         ...prs,
       ].map(c => (d.stale ? { ...c, tone: 'dim' as const } : c)) // a stale list dims the last counts
   const fold = columns < 60
