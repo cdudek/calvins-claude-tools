@@ -15,7 +15,7 @@ export const sessionLabel = (r: SessionRecord) => `${cut(repoLabel(r), 12)}/${r.
 
 // A session the band counts: live in the list. A transcript record is history unless the list shows it: merge copies
 // the list's status or state onto a record the list holds, and onto no other.
-export const isLive = (r: SessionRecord) => r.state !== 'ended' && (r.source !== 'transcript' || r.engine.status !== undefined || r.engine.state !== undefined)
+export const isLive = (r: SessionRecord) => r.headless !== true && r.state !== 'ended' && (r.source !== 'transcript' || r.engine.status !== undefined || r.engine.state !== undefined)
 
 export type Line = { id: string; repo: string; title: string; ms: number | null; self: boolean; reason: SessionRecord['reason']; progress: { done: number; total: number } | null } // ms null: the wait is unknown
 

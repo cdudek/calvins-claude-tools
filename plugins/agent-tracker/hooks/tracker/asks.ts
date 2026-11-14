@@ -33,6 +33,7 @@ export const registerAsks = (on: On, s: State) => {
     try {
       if ('drop' in r || e.command !== undefined || e.isMeta === true || !OWNER.has(e.origin.kind)) return r
       await initOwn($, s) // after a /clear no session.start fires: this starts the new record
+      const isHeadless = s.mine?.headless === true // a `-p` run costs no model call
       const now = await $.clock.now()
       const text = e.text.slice(0, ASK_TEXT_MAX)
       let n = 0
@@ -44,7 +45,7 @@ export const registerAsks = (on: On, s: State) => {
         return { ...m, asks, questionFlag: null, state: 'running', reason: null, unknownValue: null, lastActivityAt: now }
       })
       // One classification per ask, after the prompt went on; a failure keeps the ask as "not classified" (F57).
-      void $.model
+      if (!isHeadless) void $.model
         .classify(text, ['task', 'question'], { model: MODEL })
         .then(kind => (kind === 'task' || kind === 'question' ? saveOwn($, s, m => ({ ...m, asks: m.asks.map(a => (a.n === n ? { ...a, kind } : a)) })) : undefined))
         .catch(() => undefined)
@@ -63,7 +64,7 @@ export const registerAsks = (on: On, s: State) => {
       const now = await $.clock.now()
       s.turn.open = false
       let isFlagged = false
-      if (!e.isAborted) {
+      if (!e.isAborted && s.mine?.headless !== true) {
         // The last assistant message from the session's own transcript; never a classic hook, which managed machines skip.
         const rows = await $.session.messages().catch(() => [])
         const message = [...rows].reverse().find(m => m.role === 'assistant')?.text ?? e.answer

@@ -103,6 +103,7 @@ export async function ensureCollector($: Engine, s: State) {
 export const registerCollector = (on: On, s: State) => {
   on('session.start', async ($, e, next) => {
     const r = await next(e)
+    s.headless = e.isInteractive === false
     s.hasCollector = true
     void begin($, s).catch(() => undefined) // the first poll runs on; the session does not wait for `claude agents --json`
     return r

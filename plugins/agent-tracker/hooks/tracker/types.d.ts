@@ -54,6 +54,7 @@ export type SessionRecord = {
   unknownValue: string | null
   questionFlag: { at: number } | null
   usage: { tokensIn: number; tokensOut: number; toolErrors: number; retries: number }
+  headless?: boolean // a `claude -p` or SDK run: no model call, never on a list or in a count
   asks: Ask[]
   notes?: Note[] // at most 50, newest kept; absent in a record written before the field
   runs: {

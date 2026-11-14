@@ -28,6 +28,7 @@ export type State = {
   initializing: Promise<void> | null
   isTicking: boolean
   hasTimer: boolean
+  headless: boolean | null // session.start said so (`claude -p`, the SDK); null: not known yet, after a /clear the surfaces say
   hasCollector: boolean // the collector was started, by session.start or by the first draw of a mod loaded mid-session
   scannedAt: number
   isBackfilling: boolean // a backfill pass or a repo scan is running: the next timer fire skips
@@ -52,6 +53,7 @@ export const newState = (): State => ({
   initializing: null,
   isTicking: false,
   hasTimer: false,
+  headless: null,
   hasCollector: false,
   scannedAt: 0,
   isBackfilling: false,
@@ -214,7 +216,9 @@ export function initOwn($: Engine, s: State) {
     if (s.mine) return
     const now = await $.clock.now()
     const cwd = await $.session.cwd()
-    s.mine = { ...emptyRecord(await $.session.id(), cwd, now), ...(await where($, cwd)) }
+    // No session.start (a /clear): a session that draws nowhere is headless. An unreadable answer counts as interactive.
+    s.headless ??= ((await $.session.surfaces().catch(() => ['terminal'])) as readonly string[]).length === 0
+    s.mine = { ...emptyRecord(await $.session.id(), cwd, now), ...(s.headless ? { headless: true } : {}), ...(await where($, cwd)) }
     s.lastSaved = ''
     s.scannedAt = now
     await saveOwn($, s)
