@@ -21,6 +21,11 @@ export type World = {
   origins: string[] // who raised each prompt that reached the engine
   toolCalls: number
   commandRuns: number
+  invalidations: number // each $.ui.invalidate the mod raised
+  toasts: string[]
+  copies: { text: string; surface?: string }[]
+  failCopy: string | null // the reason $.ui.copy fails with, or null: it works
+  commands: string[] // each command the mod registered
   statuses: (string | undefined)[]
   states: Map<string, unknown>
   snapshot: () => Snapshot
@@ -58,6 +63,11 @@ export function world(on: On, o: { id?: string; cwd?: string; now?: number } = {
     origins: [],
     toolCalls: 0,
     commandRuns: 0,
+    invalidations: 0,
+    toasts: [],
+    copies: [],
+    failCopy: null,
+    commands: [],
     statuses: [],
     states: new Map(),
     snapshot: () => w.states.get('agent-tracker/snapshot') as Snapshot,
@@ -90,7 +100,10 @@ export function world(on: On, o: { id?: string; cwd?: string; now?: number } = {
   on('session.cwd', () => ({ value: w.cwd }))
   on('session.messages', () => ({ value: w.messages }))
   on('agent.list', () => ({ value: w.subagents }))
-  on('command.register', (_, e) => ({ value: { command: e.name } }))
+  on('command.register', (_, e) => {
+    w.commands.push(e.name)
+    return { value: { command: e.name } }
+  })
   on('prompt.submit', (_, e) => {
     w.origins.push(e.origin.kind)
     return { text: e.text }
@@ -181,8 +194,18 @@ export function world(on: On, o: { id?: string; cwd?: string; now?: number } = {
     return { value: undefined }
   })
   on('ui.log', () => ({ value: undefined }))
-  on('ui.toast', () => ({ value: undefined }))
-  on('ui.invalidate', () => ({ value: undefined }))
+  on('ui.toast', (_, e) => {
+    w.toasts.push(e.text)
+    return { value: undefined }
+  })
+  on('ui.invalidate', () => {
+    w.invalidations += 1
+    return { value: undefined }
+  })
+  on('ui.copy', (_, e) => {
+    w.copies.push({ text: e.text, surface: e.surface })
+    return { value: w.failCopy === null ? { isCopied: true as const } : { isCopied: false as const, reason: w.failCopy } } as never
+  })
 
   on('model.classify', (_, e) => {
     w.models.push({ op: 'classify', text: e.text, labels: e.labels, model: e.options?.model })

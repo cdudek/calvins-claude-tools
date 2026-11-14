@@ -4,7 +4,7 @@
 import type { EngineInterface } from 'claude-code'
 
 import { askStatuses, emptyRecord, parseMilestone, repoFromCommonDir } from './core'
-import type { AgentsFile, Lease, SessionRecord } from './types'
+import type { AgentsFile, Lease, SessionRecord, Settings } from './types'
 
 type Engine = EngineInterface
 
@@ -26,6 +26,10 @@ export type State = {
   scannedAt: number
   isBackfilling: boolean // a backfill pass or a repo scan is running: the next timer fire skips
   isScanning: boolean
+  okAt: number // time of the last good list read, and the failed reads since (F52)
+  failedReads: number
+  settings: Settings // the last good read of settings.json
+  hasBand: boolean // the band started: its command is registered and the one-minute redraw runs (F126)
 }
 
 export const newState = (): State => ({
@@ -42,6 +46,10 @@ export const newState = (): State => ({
   scannedAt: 0,
   isBackfilling: false,
   isScanning: false,
+  okAt: 0,
+  failedReads: 0,
+  settings: { v: 1, view: 'compact', bandHidden: false },
+  hasBand: false,
 })
 
 export async function claudeDir($: Engine) {
@@ -62,6 +70,20 @@ export async function readJson($: Engine, path: string): Promise<unknown> {
 
 export function writeJson($: Engine, path: string, value: unknown) {
   return $.fs.write(path, JSON.stringify(value))
+}
+
+// The view and the hidden flag, one file for every session (F22, F29). A torn or missing file keeps the last good copy.
+export async function readSettings($: Engine, s: State): Promise<Settings> {
+  const f = (await readJson($, `${await dir($)}/settings.json`)) as Partial<Settings> | undefined
+  if (f?.v === 1) s.settings = { v: 1, view: f.view === 'details' ? 'details' : 'compact', bandHidden: f.bandHidden === true }
+  return s.settings
+}
+
+export async function writeSettings($: Engine, s: State, change: Partial<Settings>) {
+  const next = { ...(await readSettings($, s)), ...change }
+  s.settings = next
+  await writeJson($, `${await dir($)}/settings.json`, next).catch(() => undefined) // not kept: the choice holds for this session
+  $.ui.invalidate('ui.render')
 }
 
 export async function readLease($: Engine, base: string): Promise<Lease | null> {

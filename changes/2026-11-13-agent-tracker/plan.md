@@ -240,8 +240,8 @@ and `python3 -m unittest discover -s tests`, then commits with a Conventional Co
 - [x] 6. Feature 1, `safety.test.ts` over the whole plugin. Proof: F60 to F63 and F130 pass in `safety.test.ts`. F64 and F65 pass when the extended `tests/test_no_claude_ai_publishing.py` and the fixture scan in `safety.test.ts` both pass.
 - [x] 7. Feature 2, tests first, then `core/transcript.ts` and `backfill.ts`. Proof: F12, F13, F55 and F70 pass in `backfill.test.ts`.
 - [x] 8. Feature 2, tests first, then `core/git.ts` and `scan.ts`. Proof: F14, F67 and F69 pass in `scans.test.ts`.
-- [ ] 9. Feature 3, compact band: `core/format.ts`, `words.ts`, `rank.ts`, `band-model.ts`, `band.tsx`. Proof: F22 to F32, F52, F76 to F78 and F125 pass in `band.test.ts`.
-- [ ] 10. Feature 3, details view, Copy, `/tracker` band commands. Proof: F33 to F37 and F79 to F87 pass.
+- [x] 9. Feature 3, compact band: `core/format.ts`, `words.ts`, `rank.ts`, `band-model.ts`, `band.tsx`. Proof: F22 to F32, F52, F76 to F78 and F125 pass in `band.test.ts`.
+- [x] 10. Feature 3, details view, Copy, `/tracker` band commands. Proof: F33 to F37 and F79 to F87 pass.
 - [ ] 11. Feature 4, pane shell and Home: `pane.tsx`, `pane/home.tsx`, `pane-model.ts`. Proof: F38 to F45, F53, F54, F88 to F102, F123, F124, F126 and F131 pass in `pane.test.ts`.
 - [ ] 12. Feature 4, Session page. Proof: F46 to F49 and F103 to F113 pass.
 - [ ] 13. Feature 4, Repo page and `/tracker repo`, `/tracker session`. Proof: F50, F51, F59 and F114 to F122 pass.

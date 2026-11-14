@@ -6,3 +6,5 @@ export const duration = (ms: number) => {
   if (m < 24 * 60) return m % 60 === 0 ? `${m / 60}h` : `${Math.floor(m / 60)}h ${m % 60}m`
   return `${Math.floor(m / (24 * 60))}d`
 }
+
+export const plural = (n: number, one: string, many: string) => `${n} ${n === 1 ? one : many}`

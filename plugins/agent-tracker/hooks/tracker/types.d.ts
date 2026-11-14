@@ -72,7 +72,9 @@ export type AgentsFile = { v: 1; readAt: number; agents: AgentRow[] }
 export type Settings = { v: 1; view: 'compact' | 'details'; bandHidden: boolean }
 
 // What the band and the pane read: every session merged, and whether the list read was good.
-export type Snapshot = { at: number; agentsOk: boolean; sessions: SessionRecord[] }
+// `okAt` is the time of the last good list read (0: none yet) and `failedReads` the failed reads in a row: two or
+// more is stale (F52, F123). `at` 0 is the untouched value: the first read is still pending (F53).
+export type Snapshot = { at: number; agentsOk: boolean; okAt: number; failedReads: number; sessions: SessionRecord[] }
 
 declare module 'claude-code' {
   interface PluginState {

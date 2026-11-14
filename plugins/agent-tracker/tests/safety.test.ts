@@ -3,6 +3,7 @@ import type { Engine } from 'claude-code/testing'
 
 import { MODEL } from '../hooks/tracker/core'
 import * as agentsFixture from './fixtures/agents'
+import * as bandFixture from './fixtures/band'
 import * as milestoneFixture from './fixtures/milestone'
 import * as scansFixture from './fixtures/scans'
 import * as transcriptFixture from './fixtures/transcript'
@@ -121,7 +122,7 @@ describe('safety', () => {
 
   test(`@F64 ${TAG} the committed fixtures hold no names, paths or addresses`, () => {
     const leak = /\/Users\/|\/home\/|[\w.+-]+@[\w-]+\.[\w.-]+/
-    for (const [name, fixture] of Object.entries({ agentsFixture, milestoneFixture, scansFixture, transcriptFixture })) expect([name, leak.test(JSON.stringify(fixture))]).toEqual([name, false])
+    for (const [name, fixture] of Object.entries({ agentsFixture, bandFixture, milestoneFixture, scansFixture, transcriptFixture })) expect([name, leak.test(JSON.stringify(fixture))]).toEqual([name, false])
     // The scan itself catches each kind.
     expect(['/Users/someone/repo', '/home/someone', 'someone@example.com'].every(s => leak.test(s))).toBe(true)
   })

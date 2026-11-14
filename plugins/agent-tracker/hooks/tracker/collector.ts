@@ -11,7 +11,7 @@ import type { State } from './store'
 
 type Engine = EngineInterface
 // What the band and the pane read. The engine's source scan wants this declared where it is updated.
-const snapshot = atom({ plugin: 'agent-tracker', key: 'snapshot' } as const, { at: 0, agentsOk: true, sessions: [] } as Snapshot)
+const snapshot = atom({ plugin: 'agent-tracker', key: 'snapshot' } as const, { at: 0, agentsOk: true, okAt: 0, failedReads: 0, sessions: [] } as Snapshot)
 const RESCAN_MS = 60_000 // branch and milestone are read again about once a minute
 const GOAL_END = /^(clear|off|stop|cancel)\b/i
 
@@ -70,7 +70,9 @@ const tick = async ($: Engine, s: State) => {
     const files = (await readFolder($, s, `${base}/sessions`)).filter(f => f.sessionId !== own.sessionId)
     const transcripts = await readFolder($, s, `${base}/transcripts`)
     const sessions = mergeSessions({ files: [...files, own], transcripts, agents, now, selfId: own.sessionId })
-    await update($, snapshot, () => ({ at: now, agentsOk: agents !== null, sessions }))
+    s.failedReads = agents !== null ? 0 : s.failedReads + 1
+    if (agents !== null) s.okAt = now
+    await update($, snapshot, () => ({ at: now, agentsOk: agents !== null, okAt: s.okAt, failedReads: s.failedReads, sessions }))
   } finally {
     s.isTicking = false
   }
