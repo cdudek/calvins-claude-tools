@@ -6,6 +6,8 @@ size: L
 created: 2026-11-14
 ---
 
+> **Revised 2026-11-14 (owner decision).** Tidy left the tracker and became the skill `git-cleanup-run`. The Home Tidy line, the Tidy button and `/tracker tidy` are gone. This record describes the earlier design on those points. `ia.md`, `interaction.md`, `screens.md`, `sitemap.md` and `../facts.md` govern.
+
 # Brief
 
 This change is milestone agent-tracker-4 of the agent tracker. It builds on milestone 1's spec, `changes/2026-11-13-agent-tracker/spec/`, and on what was built after it. It adds no page. It fixes how a session's state and age read, and it adds three things to the pane: a Clear button on the Session page, a worktree offer inside Clear, and `/tracker tidy` with a quiet entry line on Home.

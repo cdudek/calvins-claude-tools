@@ -1,19 +1,19 @@
 # Information Architecture
 
-This change adds no page and no address. It changes what a session is called when its process is gone, adds three controls to the Session page, adds one line to Home, and adds one command word. Milestone 1's [ia.md](../../2026-11-13-agent-tracker/spec/ia.md) stays the base: objects, alias table, navigation tree and move table are not repeated, only what this change adds or changes. The routes are in [sitemap.md](sitemap.md). Evidence for every as-built claim is the built code on `milestone/agent-tracker-4` at `935c8d6` (2026-11-14), under `plugins/agent-tracker/hooks/tracker/`, cited as `file:line`.
+This change adds no page and no address. It changes what a session is called when its process is gone and adds three controls to the Session page. Tidying many stale items is the skill `git-cleanup-run`, outside the pane (owner, dialog, 2026-11-14). Milestone 1's [ia.md](../../2026-11-13-agent-tracker/spec/ia.md) stays the base: objects, alias table, navigation tree and move table are not repeated, only what this change adds or changes. The routes are in [sitemap.md](sitemap.md). Evidence for every as-built claim is the built code on `milestone/agent-tracker-4` at `935c8d6` (2026-11-14), under `plugins/agent-tracker/hooks/tracker/`, cited as `file:line`.
 
 ## Objects
 
 | Object | Definition | Status | Need |
 |---|---|---|---|
 | Session | One Claude Code conversation. **Changed:** it now carries a "process" fact: whether `claude agents --json` gives its row a `pid`. A listed row with no `pid` is a session whose process is gone. | changed | J1, J6 |
-| Ended session | A session with no process: absent from Claude Code's list, listed with no `pid` (an exited background session keeps `state: blocked`), or a background row reported `done`. An interactive row that reports `idle` with a `pid` is not ended: it is done and has a terminal. Words on screen: "ended". The no-`pid` rule applies to every row, interactive or background (supervisor decision, 2026-11-14), and only when the same read shows `pid` on at least one row; with no `pid` anywhere in a good read the tracker says so and withholds Clear ("Pid not reported"). This session's own id is never ended by it. A live background row that lacks `pid` while others have one would still read as ended: Stage 3 records a fixture of a live background row, and it is the one residual risk. | changed (was: absent or `done` only; `core/states.ts:46`, `:63`) | J1 |
+| Ended session | A session with no process: absent from Claude Code's list, listed with no `pid` (an exited background session keeps `state: blocked`), or a background row reported `done`. An interactive row that reports `idle` with a `pid` is not ended: it is done and has a terminal. Words on screen: "ended". The no-`pid` rule applies to every row, interactive or background (supervisor decision, 2026-11-14). It is observed for background rows; for interactive rows without `pid` it is an assumption, with a fixture in the build. and only when the same read shows `pid` on at least one row; with no `pid` anywhere in a good read the tracker says so and withholds Clear ("Pid not reported"). This session's own id is never ended by it. A live background row that lacks `pid` while others have one would still read as ended: Stage 3 records a fixture of a live background row, and it is the one residual risk. | changed (was: absent or `done` only; `core/states.ts:46`, `:63`) | J1 |
 | Last activity | When the session last did anything: a prompt, a turn end, or the last line of its transcript. Replaces the clock time of the first sighting as the answer to "how old is this". | changed | J2 |
 | Task | An ask of kind task that nobody has finished, with one status (needs you, forgotten, superseded, in progress). Closed by the owner with Close, or now by Clear. | existing (`core/tasks.ts:81`) | J3 |
 | Clear | An act on one ended session, after one confirm that says what will happen (owner, dialog, 2026-11-14: "Always confirm"). When Clear session is pressed it re-reads `claude agents --json` and stops if the row now has a `pid`; it leaves Claude Code's list (`claude rm`, only when still listed; `claude rm` also deletes a worktree the session itself created, if safe); it closes the tasks Home lists for that session (the same set: forgotten, superseded, in progress; a task whose verdict is "done" is not listed, so not closed); a worktree offer follows. "Reopen tasks" undoes the closing while the owner is on the page. | new | J3, J4 |
 | Worktree (linked) | A checkout other than the repo's main one, where the session's `cwd` is. Safe to remove only when all five conditions in "Decisions Taken Here" hold. | existing, gains an action | J4, J6 |
-| Tidy pass | One run of `/tracker tidy`: the stale items, a check per item, batches, one question per batch, a report. It exists only in the transcript of the session that ran it. The tracker stores nothing of it. | new, transient | J5 |
-| Stale item | An ended session idle 30 days or more for which Clear would still do something; or a linked worktree whose idle time is 30 days or more, where idle time is the newest of its branch's last commit, the folder's last change and its sessions' last activity (unknown means not stale, so a worktree made today is never collected), with no live session in it, and that passes every check. Counted on Home only when tidy could act on it. Nothing stores it: it is derived on every read. | new, derived | J5 |
+| Cleanup pass | One run of the skill `git-cleanup-run`: its script lists the stale items with each check's result, subagents summarise them, Claude asks one question per batch, the script acts on the chosen ids and reports. It exists only in the transcript of the session that ran it. The tracker stores nothing of it. | new, transient, outside the pane | J5 |
+| Stale item | An ended session idle 30 days or more for which Clear would still do something; or a linked worktree whose idle time is 30 days or more, where idle time is the newest of its branch's last commit, the folder's last change and its sessions' last activity (unknown means not stale, so a worktree made today is never collected), with no live session in it, and that passes every check; an item that fails a check is listed as "needs a look" and never acted on. Listed by the script on every run. Nothing stores it. | new, derived | J5 |
 
 Set aside: "dead session" as a screen word (the alias table already rejects it for "ended"); "archive" (the intent keeps the conversation, nothing is archived); a stored "cleared" flag (a cleared session is recognised by having nothing left to clear, so no new field is kept).
 
@@ -26,7 +26,7 @@ Rows below add to milestone 1's alias table. The pane's existing words stay.
 | Clear (a session) | close, remove, delete, dismiss, archive, drop | The owner's own word: "Clear button" (A6). Close already has two meanings on the pane (the pane's Close button, and Close on one task); a third on sessions would blur them. |
 | close (a task) | clear, dismiss | Unchanged. The result line of Clear says "2 tasks closed", the same verb as the task's own Close button. |
 | Remove (a worktree) | delete, clean up, prune | `git worktree remove` is the operation; the branch stays, so it is not deleted. |
-| Tidy | sweep, clean up, prune, housekeeping | The owner's word: "/tracker tidy" (A6). Used for the command, its button and its report. |
+| Tidy | sweep, prune, housekeeping | The owner's word, now the skill `git-cleanup-run` (A6, owner 2026-11-14). The word "cleanup" names the skill; Home, the band and the pane have no Tidy. |
 | idle (for 30 days or more) | stale, old, abandoned, dead | "Stale" is the intent's word; the owner reads "idle" on the screen. "Stale" stays in the spec only. |
 | ended | dead, exited, stopped, closed | Unchanged (milestone 1). A session whose process is gone is "ended", however Claude Code lists it. |
 | terminal | process, pid, window | The owner closes a session in its terminal; "process" and "pid" are system words. |
@@ -42,7 +42,7 @@ Milestone 1's matrix holds. Additions:
 |---|---|---|---|---|
 | Session | Task | 0 to many | tasks | 1 (the list Clear closes) |
 | Session | Worktree (linked) | 0 to 1 (by `cwd`) | its worktree | 2 |
-| Tidy pass | Batch | 0 to 2 (sessions; worktrees). Items that failed a check are not a batch: they are named in the report. | batches | 1 |
+| Cleanup pass | Batch | 0 to 2 (sessions; worktrees). Items that failed a check are not a batch: they are named in the report. | batches | 1 |
 | Batch | Item | 1 to many | items | 1 |
 
 ## CTA Inventory
@@ -57,7 +57,6 @@ The tracker now acts, only on an explicit owner action. Every verb below is one 
 | Session (ended) | Copy its resume command | Session page button "Copy resume command" (now ended sessions only) | secondary | none |
 | Worktree (linked, after Clear) | Remove | button "Remove worktree" inside the offer | primary (of the offer) | "Keep worktree" |
 | Worktree (offer) | Keep | button "Keep worktree" | secondary | the offer returns the next time Clear is pressed |
-| Home | Start a tidy pass | Home button "Tidy" (shown only when something is idle 30 days or more); `/tracker tidy` | primary (of the Tidy line) | none: the pass asks before every removal and can be answered "Skip" |
 | Pane | Close | unchanged | primary | unchanged |
 
 ## Attribute Priority
@@ -69,7 +68,6 @@ The tracker now acts, only on an explicit owner action. Every verb below is one 
 | Session page | tasks, with their state glyphs | 3 | J3: the list Clear will close |
 | Session page | worktree line (label; why it stays) | 4 | J4 |
 | Session page | actions: Clear, Copy resume command | 5 | J3 |
-| Home | the Tidy line | last block, dim | J5; Home stays calm (N8) |
 
 ## State Diagrams
 
@@ -90,7 +88,7 @@ What it does to the lists, from `core/tasks.ts` and `core/rank.ts`:
 
 - The session leaves NEEDS YOU, the band count and the needs-you rows of "Your tasks not done" (`isNeedsYou` needs `isLive`, which needs a state other than ended).
 - Its task asks from the last 7 days become **Forgotten** (red, "session ended 2h ago, not done") when the last verdict is "partly" or "not started"; with no verdict they become unchecked and leave the list; a task with verdict "done" is not listed.
-- A task asked more than 7 days ago never lists, as before. So the state fix alone removes the 63-day and 88-day rows; Clear is for sessions that ended within the week and for the tidy pass.
+- A task asked more than 7 days ago never lists, as before. So the state fix alone removes the 63-day and 88-day rows; Clear is for sessions that ended within the week; the skill `git-cleanup-run` is for old ones.
 
 Clear, as states of one Session page:
 
@@ -128,10 +126,10 @@ Written into [sitemap.md](sitemap.md) and [sitemap.json](sitemap.json), scoped t
 
 | Screen | Route | Purpose | Job stories served | Arrive from | Go next to |
 |---|---|---|---|---|---|
-| Pane, Home (changed) | `home` | Open tasks lead; needs-you holds only live sessions; a last, dim Tidy line when something is idle 30 days or more. | J1, J5 | `/tracker`; band Pane; Back | Session; Repo; the tidy pass (closes the pane) |
+| Pane, Home (changed) | `home` | Open tasks lead; needs-you holds only live sessions. No Tidy block. | J1 | `/tracker`; band Pane; Back | Session; Repo |
 | Pane, Session (changed) | `session/<sessionId>` | One session: its real age, tasks, worktree, and for an ended one the Clear action. | J1, J2, J3, J4, J6 | Home row or task row; Repo row | Repo; Home (Back); the result lines on the same page |
 | Band, compact and details (unchanged) | `band/compact`, `band/details` | Counts. The needs-you count drops dead sessions; no cell is added. | J1 | every session | Pane |
-| Tidy pass, in the transcript | none (the owner's session transcript) | The supervisor's batch questions and its final report. | J5, J6 | `/tracker tidy`; Home's Tidy button | Home (the Tidy line is gone or shorter) |
+| Cleanup pass, in the transcript | none (the owner's session transcript) | The skill's batch questions and its final report. | J5, J6 | the skill `git-cleanup-run` | none |
 | Board, Session view (unchanged page) | `#/session/<id>` | Shows the same state; no actions (N9). | J1, J2 | the Board | the Board |
 
 ## Navigation Tree
@@ -140,7 +138,6 @@ Written into [sitemap.md](sitemap.md) and [sitemap.json](sitemap.json), scoped t
 Band (always above the prompt)                unchanged
 └── Pane
     └── Home
-        ├── Tidy (button, last line)  ──►  the owner's transcript: the tidy pass       new, forward and out
         ├── Repo <name>
         │   └── Session <title>
         └── Session <title>                   (a task row or a session row)
@@ -148,7 +145,7 @@ Band (always above the prompt)                unchanged
             └── Repo <name>                   lateral
 ```
 
-The prompt also reaches the same places: `/tracker tidy`, `/tracker session <text>`.
+The prompt also reaches `/tracker session <text>`. The skill `git-cleanup-run` is reached by its own name, not through the tracker.
 
 ## Journeys
 
@@ -158,7 +155,7 @@ The prompt also reaches the same places: `/tracker tidy`, `/tracker session <tex
 | J2 see an old session's real age | weekly | Band → Pane → Home row → Session | 2 | The same two moves as any session page (M1-J2). |
 | J3 clear a session and its tasks | weekly | Band → Pane → Home task row → Session → Clear → Clear session | 4, one confirm | Two moves to the page, two to act (Clear, then its confirm). The owner chose "Always confirm" (2026-11-14). From the prompt: `/tracker session <text>` → Clear → Clear session is 2. |
 | J4 remove the merged worktree | weekly | …→ Clear → Clear session → Remove worktree | 5, two confirms | After Clear; the second confirm is the offer itself. When nothing but the worktree is left, Clear opens the offer directly: 4, one confirm. |
-| J5 tidy many | monthly | Prompt → `/tracker tidy`, or Band → Pane → Tidy | 1 or 2, then one answer per batch | Rare, so it lives at the bottom of Home and in a command, not on the band. |
+| J5 clean up many | monthly | Prompt → `/git-cleanup-run` | 1, then one answer per batch | Rare, so it is a skill outside the pane, not a pane control. |
 | J6 leave running work alone | every Session page | Session page of a live session | 0 | No Clear is drawn; one line says why. |
 
 ## Move Table
@@ -172,8 +169,7 @@ Milestone 1's move table holds. Additions:
 | Pane Session (confirm) | Clear session | Pane Session (result lines; the offer above them when there is one) | in place | J3, A3, A4 | as above | focus on Keep worktree when the offer shows, else on the first action; the Back target's row may be gone (the cleared session's task row), so focus lands on the next row, else the first |
 | Pane Session (offer) | Remove worktree | Pane Session (result) | in place | J4, A4 | as above | focus on the first action |
 | Pane Session (offer) | Keep worktree | Pane Session | in place | J4 | as above | focus on the first action |
-| Pane Home | Tidy | the owner's transcript (the pane closes) | forward, out of the pane | J5, A1, A4 | `/tracker` reopens Home | prompt focus and draft |
-| Prompt | `/tracker tidy` | the owner's transcript | forward | J5 | none | prompt focus |
+| Prompt | `/git-cleanup-run` | the owner's transcript | forward | J5 | none | prompt focus |
 | Prompt | `/tracker session <text>` | Pane Session | forward | J3 (a keyboard route to Clear) | close the pane | prompt focus and draft |
 
 Clear never moves the owner to another page: its result stays on the page so the owner sees what changed next to the tasks it closed.
@@ -190,20 +186,18 @@ Clear never moves the owner to another page: its result stays on the page so the
 - **Re-check after `claude rm`, and before it.** When Clear session is pressed (not when Clear opens the confirm), Clear re-reads the session list immediately before `claude rm`; if the row now has a `pid` it does nothing and says so ("This session is running again. Nothing was changed."). After `claude rm`, the worktree is checked again, because Claude Code deletes a worktree the session itself created, if safe; the result then says "Claude Code also removed the worktree login." After any worktree is gone, the resume command points at a folder that no longer exists: the page draws no "Copy resume command" and says the conversation file is kept and that resuming needs the worktree made again from the branch (Stage 3 confirms it works).
 - **Live sessions get a line, not a disabled button.** The Session page has no inert controls, so a live session's page shows one line, in normal weight because it says what to do next: "Clear is for ended sessions. Close its terminal first." (interactive) or "Clear is for ended sessions. This one is still running. Resume comes back when it ends." (background).
 - **Clear has no command of its own.** The menu route is `/tracker session <text>`, then Tab to Clear and Enter. A one-shot `/tracker clear` would hide the session's tasks and worktree from the owner at the moment of the act.
-- **Tidy lives at the bottom of Home and in one command; the band gets nothing (N8).** Milestone 1 measured the compact band at 125 cells needed against 115 columns at 100 percent (Band compact, Layout) and it drops segments; the built band follows a later mockup, but a tidy button would still be one more cell, and the band is not the place for a monthly job. Home's Tidy line shows only when something is idle 30 days or more, last, dim, below REPOS.
-- **Tidy decides by code, not by a model, and counts only what it can act on.** Every condition of Clear and of the worktree offer is computed by the mod's code (the same functions the Session page uses); the supervisor gets a fixed list and acts through the same checked path, re-checking each item right before it acts. Subagents may only gather and narrate; a model never decides that something is safe. Home's Tidy count includes only items that pass those checks, so the line shrinks as the owner clears; items that need a look are named in the tidy report and stay out of the count until a condition changes (they are not hidden: their pages and the Repo page show them).
-- **Tidy runs in the session where it is typed**, because the supervisor asks the owner questions. The hand-off mechanism (how a mod command gives Claude the prompt) is not verified: a fact for Stage 3.
+- **Cleanup is a skill, not a pane control; the band and Home get nothing (N8).** Owner, dialog, 2026-11-14: "I think you are right it shouldnt be part of the tracker, but there should be another skill in the same plugin that I can trigger"; the skill is `git-cleanup-run` in the agent-tracker plugin. The tracker keeps Clear and the worktree offer for one session.
+- **Code acts, Claude reports.** Every check and every removal is the skill's script. Claude subagents (haiku, read only) only summarise what an item was doing, and Claude asks the owner. No model runs `claude rm` or `git worktree remove`. The script re-checks each chosen id right before it acts and acts only on those that still pass; items that need a look are named and never acted on.
+- **The skill runs in the session where it is invoked**, because Claude asks the owner questions. It needs no host hand-off and no tool the tracker registers.
 - **The Board gains no actions (N9).** It reads the same snapshot, so its session view shows "ended" and the same last activity without a change of its own.
-- **A worktree with no session has no page.** The Repo page's WORKTREES list gives its items no link (`core/repo-model.ts:111`), so a worktree no session ran in can only be removed by the tidy pass. Accepted for now; a Remove control on the Repo page is a later change.
+- **A worktree with no session has no page.** The Repo page's WORKTREES list gives its items no link (`core/repo-model.ts:111`), so a worktree no session ran in can only be removed by the skill `git-cleanup-run`. Accepted for now; a Remove control on the Repo page is a later change.
 - **Beads and links:** nothing from `bd` is involved.
 
 ## Open Questions
 
 | Question | Recommended answer | Why it matters |
 |---|---|---|
-| How does a mod command hand a prompt to Claude in the owner's session, so tidy can start a supervisor turn? | Stage 3 verifies it against the mod API types; the fallback is a plugin skill the command names. | The spec fixes what the owner sees, not the mechanism. |
 | Does `claude rm` on an ended interactive session (not in the list) succeed, fail, or say "No job matching"? | Stage 3 runs it on a fixture session; the spec assumes nothing to remove and skips it. | Clear's first step. |
 | Where does "last activity" come from for a session without the mod (transcript timestamp, or the file's modified time)? | Stage 3 decides; the spec needs a time that moves only when the session does something. | J2 is only as true as that source. |
 | Does a live background row always carry `pid`? | Stage 3 records a fixture of a live background row; the fixture is a gate: Clear on a background row is not built until it passes. | J1 and the safety of Clear. |
-| What does the Tidy count cost? It runs git per worktree. | Stage 3 caches the checks for a minute and never blocks the pane's draw. | Home must stay calm and quick. |
 | Which `cwd` fields say a worktree is "linked" and not the main checkout? | `git worktree list --porcelain` (the first entry is the main checkout); Stage 3 confirms. | Condition 1. |

@@ -4,7 +4,7 @@ Every guideline in `docs/ux/interaction-guidelines.md` is still `unresolved`. Ea
 
 What the pane can do, as built (`pane/view.tsx`, `pane.tsx`): every move is a Button; Tab and the arrows move the ring (the footer says "↑↓ move"); no page scrolls, so a page taller than the window is a risk the render check must name by row count, Enter presses; rows and actions are Buttons in blocks; no modal dialog exists in the code, so the confirms of this change (Clear's, and the worktree offer) are inline blocks on the page. **No hotkey is shown or bound** (owner, 2026-11-14, and `docs/ux/setup.md` for the band). The key route of every control is therefore "Tab to it, Enter". The menu route is a `/tracker` word, or none where the spec says why.
 
-New command words: `tidy`. The help and hint strings name it (screens.md, Words).
+No new command word. Cleanup of many stale items is the skill `git-cleanup-run`, outside the pane (screens.md, The skill's conversation).
 
 Session facts the controls depend on (verified by the owner on 2026-11-14, see the task brief and the handover): `claude agents --json` interactive rows carry `pid` and `status`; background rows carry `state`; an exited background row keeps `state: blocked` and has no `pid`; `claude stop <id>` fails for it ("No job matching"); `claude rm <id>` removes it ("removed <id>") and deletes only a worktree the session itself created, if safe. The tracker never calls `claude stop`.
 
@@ -42,20 +42,19 @@ Session facts the controls depend on (verified by the owner on 2026-11-14, see t
 | Offer: Remove worktree | Enter | Removing, then Done (or OfferFailed) | The second confirm (Clear's was the first). Re-checks the five conditions and the ignored files first. The branch stays. |
 | Offer: Keep worktree | Enter | Done | The offer goes away for this visit. |
 
-### J5 Tidy many
+### J5 Clean up many (the skill, outside the pane)
 
 | From control | Action | To screen or state | Notes |
 |---|---|---|---|
-| Home: Tidy (last line) | Enter | the pane closes; the tidy pass runs in this session's transcript | The same as typing `/tracker tidy`. |
-| Prompt: `/tracker tidy` | Enter | the tidy pass | |
-| Transcript: batch question | answer "Clear all N" or "Skip these N" (or type exceptions under Other) | the next batch, then the report | One question per batch. |
+| Prompt: `/git-cleanup-run` | Enter | Claude runs the script's list, summarises each item with a read-only subagent, then asks | The pane and the band are not involved. |
+| Transcript: batch question | answer "Clear all N", "Remove all N" or "Skip these N" (or type exceptions under Other) | the next batch, then the report | One question per batch. The script acts only on the ids chosen. |
 
 ### J6 Leave running work alone
 
 | From control | Action | To screen or state | Notes |
 |---|---|---|---|
 | Home: session row of a running or waiting session | Enter | Session page, live | No Clear is drawn. One line says what to do instead. Copy resume command is not drawn either. |
-| (none) | the tidy pass meets a session with a process | the report's "Skipped" line | Running sessions are never collected; a worktree with a live session in it is skipped and named. |
+| (none) | `git-cleanup-run` meets a session with a process | the report's "Skipped" line | Running sessions are never collected; a worktree with a live session in it is skipped and named. |
 
 ## State Tables
 
@@ -90,41 +89,11 @@ Words: `screens.md`, Pane, Session.
 
 | State | Entry or trigger | What the user sees | Words | Actions with key | Exit |
 |---|---|---|---|---|---|
-| No tidy line | nothing is idle 30 days or more | the page as before | none | none | something goes idle |
-| Tidy line | at least one stale item | last block, below REPOS and above the "without the tracker" line: heading TIDY, one dim count line, button "Tidy" | Tidy line | Tab, Enter: Tidy | pressed, or items cleared |
-| Tidy line, waiting | Claude is replying in this session, or the list is stale | the same line without the button; one dim reason | Tidy waits | none | the turn ends, the read works |
-| Narrow | pane below 70 columns (a dock) | the count line wraps (`wrap`); the button on its own line; the ring still starts on the first row, never on Tidy | as Tidy line | as above | wider |
-
-### The tidy pass (surface: the owner's transcript)
-
-| State | Entry or trigger | What the user sees | Words | Actions | Exit |
-|---|---|---|---|---|---|
-| Nothing to tidy | `/tracker tidy`, no item that is idle 30 days and passes every check | one answer line; no turn starts | Tidy answers | none | |
-| This session busy | Claude is replying in this session | one answer line; no turn starts | Tidy answers | none | |
-| List unreadable | the session list failed twice | one answer line; no turn starts | Tidy answers | none | |
-| Started | stale items exist | an answer line with the counts; then Claude's own turn begins; the supervisor names how many items it checks | Tidy answers; Supervisor lines | none | Asking, Reported |
-| Asking | a batch has items that passed every check | one question per batch (sessions first, then worktrees) with the items listed and two options | Batch question | answer; or type exceptions under Other | Acting, Skipped |
-| Acting | the owner said "Clear all N" | item by item, each re-checked right before; one line per item | Supervisor lines | none | Reported |
-| Skipped | the owner said "Skip these N" | one line | Supervisor lines | none | Reported |
-| Reported | all batches answered, or none to ask | the report: what was cleared and removed, what was kept and why, what was skipped | Report | none | |
 
 ## State Diagrams
 
-Clear, as states of the Session page, is in [ia.md](ia.md). The tidy pass:
+Clear, as states of the Session page, is in [ia.md](ia.md). The skill's conversation is a flat list of steps in [screens.md](screens.md), so it needs no diagram.
 
-```mermaid
-stateDiagram
-    [*] --> Answered: nothing to tidy, session busy, or list unreadable
-    [*] --> Started: stale items exist
-    Started --> Checking: the mod's checks per item (subagents only describe)
-    Checking --> Asking: items that passed every check, by batch
-    Checking --> Reported: nothing passed
-    Asking --> Acting: Clear all N (each item re-checked first)
-    Asking --> Reported: Skip these N
-    Acting --> Reported
-    Answered --> [*]
-    Reported --> [*]
-```
 
 ## Elements x Interactions
 
@@ -141,10 +110,7 @@ stateDiagram
 | Session | Keep worktree button (offer) | closes the offer | closes once | nothing | nothing | nothing | nothing | Tab to it, Enter | nothing | IG: confirmation and undo |
 | Session | tasks line, worktree line, reason line, result lines | nothing (text only) | nothing | nothing | nothing | nothing | nothing | ↑↓ move the ring; no scroll | nothing | IG: lists and selection |
 | Session | crumbs, Back, Close | as milestone 1 | as milestone 1 | nothing | nothing | nothing | nothing | Tab, Enter | nothing | IG: navigation and return |
-| Home | Tidy button | closes the pane and runs `/tracker tidy` | runs once (the pane is already closed) | nothing | nothing | nothing | nothing | Tab to it, Enter | nothing | IG: side panels and detail pages |
-| Home | Tidy count line | nothing (text only) | nothing | nothing | nothing | nothing | nothing | ↑↓ move the ring | nothing | IG: lists and selection |
 | Home | task row, session row (unchanged) | opens the Session page | opens once | nothing | nothing | nothing | nothing | Tab, Enter | one focused row | IG: lists and selection |
-| Transcript | batch question | the owner answers by choosing an option or typing under Other | n/a | nothing | nothing | nothing | nothing | the host's own keys | single choice | IG: dialogs, menus and popovers |
 
 **Layout under the pointer.** Clear removes itself and the confirm block takes its place: its buttons sit below the question and the lines, three to five rows below where Clear was, and Clear session is the first of the two but never gets focus. A second click at Clear's old position lands on a text line. The worktree offer appears directly under the actions row, above the result lines (so it is on screen without scrolling), three rows below where Clear was. Remove worktree is never first in the ring. Focus goes to Cancel when the confirm appears and to Keep worktree when the offer appears. Build check: a second click at the pointer's old position lands on nothing, and no button the layout shifts under it runs Clear session or Remove worktree.
 
@@ -157,7 +123,6 @@ stateDiagram
 | Reopen the tasks | click Reopen tasks (after Clear, while on the page) | Tab to it, Enter | none | removes the `closed` marks Clear wrote, in the tracker's settings file (a new write beside the existing Close) | leaving: the button is gone; the tasks stay as they are | Clear again | IG: confirmation and undo |
 | Remove the worktree | click Remove worktree | Tab to it, Enter | none | `git worktree remove`, never forced; the ignored files listed in the offer go with it; the branch stays | leaving while it runs: it finishes | recreate it from the branch (`git worktree add`); ignored files do not come back | IG: confirmation and undo (a confirm of its own: this offer) |
 | Keep the worktree | click Keep worktree | Tab to it, Enter | none | nothing | nothing | the offer returns when Clear is pressed again | IG: confirmation and undo |
-| Start a tidy pass | click Tidy on Home | Tab to Tidy, Enter | `/tracker tidy` | nothing until the owner answers a batch | the pass runs in the transcript; typing a new prompt waits as for any turn | each removal inside it is undone as above; a "Skip" answer changes nothing | IG: local work and external writes |
 | Copy resume command | click it | Tab to it, Enter | none | clipboard | nothing | not needed | IG: copy and paste (unchanged) |
 
 ## Feedback
@@ -169,9 +134,7 @@ stateDiagram
 | Reopen tasks | visible: "✓ 2 tasks reopened." | the owner needs to see it worked | Session page |
 | Cancel (confirm) | silent: the confirm closes | the change is the feedback | Session page |
 | Keep worktree | silent: the offer closes | the change is the feedback | Session page |
-| Tidy start | visible: the command's answer line, then Claude's own turn | the owner started it; the transcript is the log | transcript |
-| Tidy batch | ask first: one question per batch | each yes removes things | transcript |
-| Tidy end | visible: the report | the owner needs to know what was kept and why | transcript |
+| Cleanup (the skill) | ask first: one question per batch, then the report | each yes removes things | transcript |
 | Copy resume command | visible: toast (unchanged) | the clipboard shows nothing | toast |
 | A needs-you row disappears because its process is gone | silent | the list is the feedback; no notification | Home, band |
 
@@ -185,11 +148,10 @@ Every error reads event, consequence, action; the exact strings are in `screens.
 | The closed tasks could not be saved (the tracker's settings file is not writable). | The session left Claude Code's list; its tasks are still open. | Press Clear again once the tracker's folder in your Claude folder can be written. |
 | Git could not remove the worktree, or its state changed since the offer. | Nothing was removed; no work was lost. | Check it in a terminal, or press Clear again to see the conditions. |
 | The session showed a process again when Clear was pressed. | Nothing was changed. | None: it is running again; Clear returns when it ends. |
-| A tidy item passed its re-check and its action still failed (`claude rm` or git refused). | That item is not counted as cleared; the report names it with the reason. | Open its page and decide there. |
+| A cleanup item passed its check and its action still failed (`claude rm` or git refused). | That item is not counted as cleared; the report names it with the reason. | Open its page and decide there, or check it in a terminal. |
 | Claude Code's session list could not be read twice in a row. | Clear is withheld: whether the session still has a process is not known. | It retries every 5 seconds. |
 | `git` could not read the worktree (a folder that was deleted by hand, or not a repository). | No worktree line or offer is drawn for it. | Nothing to do; Clear still closes the tasks. |
-| `/tracker tidy` ran while Claude was replying in this session, or the list was unreadable. | No pass started; nothing changed. | Try again when Claude has finished replying, or in a minute. |
-| A tidy item failed its re-check just before acting (it changed since the check). | That item is skipped and named in the report; the rest go on. | Open its page and decide there. |
+| A cleanup item failed its re-check just before acting (it changed since the check). | The script skips and names it; the rest go on. | Decide it by hand. |
 
 ## Open Questions
 

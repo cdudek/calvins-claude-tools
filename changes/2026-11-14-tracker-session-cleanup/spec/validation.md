@@ -8,6 +8,8 @@ approved_at: null
 created: 2026-11-14
 ---
 
+> **Revised 2026-11-14 (owner decision).** Tidy left the tracker and became the skill `git-cleanup-run`. The Home Tidy line, the Tidy button and `/tracker tidy` are gone. This record describes the earlier design on those points. `ia.md`, `interaction.md`, `screens.md`, `sitemap.md` and `../facts.md` govern.
+
 # Validation
 
 Text-only spec loop, three rounds (the cap). Round 1: three independent reviewers, merged after all finished ([r1 heuristics](review/r1-heuristics.md), [r2 Laws of UX](review/r2-laws.md), [r3 screens](review/r3-screens.md)); the spec was fixed. Round 2 re-check: not ready, the new findings were fixed ([round 2](review/round2-recheck.md)). Round 3 re-check: ready, no new severity 3 or 4 ([round 3](review/round3-recheck.md)). No image was drawn.

@@ -1,5 +1,8 @@
 # Conformance
 
+> **Revised 2026-11-14 (owner decision).** Tidy left the tracker and became the skill `git-cleanup-run`. The Home Tidy line, the Tidy button and `/tracker tidy` are gone. This record describes the earlier design on those points. `ia.md`, `interaction.md`, `screens.md`, `sitemap.md` and `../facts.md` govern.
+
+
 Checked 2026-11-14 by `cct:ux-rules-validate spec`, against `brief.md`, `ia.md`, `interaction.md`, `screens.md` and `sitemap.md` in this folder, and the built code on `milestone/agent-tracker-4` (`plugins/agent-tracker/hooks/tracker/`). Result tags `C1` to `C15` mark the findings; the rest are passes.
 
 **Documents.**

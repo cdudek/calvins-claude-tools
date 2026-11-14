@@ -42,9 +42,10 @@ This change is milestone agent-tracker-4 of project agent-tracker (Beads cct-83h
 
 How we know after release that it worked. One number, where it is read, and the target.
 
-- **Measure:** needs-you rows with no running process — **read in:** spot checks — **target:** 0 in 5 of 5 by 2026-12-05.
-- **Spot check:** compare the band with `claude agents --json`.
-- **No running process means:** the session's row in `claude agents --json` has no `pid`.
+- **Measure:** needs-you rows the owner judges dead — **read in:** the owner's spot check — **target:** 0 in 5 of 5 by 2026-12-05.
+- **Dead means:** no live terminal, and not really waiting.
+- **Spot check:** the owner opens the band and judges each needs-you row. The check does not use the `pid` rule's own data.
+- **Revised 2026-11-14:** the first measure compared the band with `claude agents --json` `pid`, the rule's own input, so it could not fail.
 
 ## Problem
 
@@ -58,7 +59,7 @@ How we know after release that it worked. One number, where it is read, and the 
 - A session page shows how long the session has really been idle.
 - From a session page, the owner can clear an ended or dead session and its open asks.
 - When that session's worktree is clean and merged, the owner can remove it after one confirm.
-- One tidy command checks every stale session and worktree and asks the owner once per batch.
+- One tidy skill, `git-cleanup-run`, checks every stale session and worktree and asks the owner once per batch.
 - Nothing that is running, holds uncommitted work or holds unpushed commits is ever removed.
 
 ## Affected users and systems
@@ -66,7 +67,7 @@ How we know after release that it worked. One number, where it is read, and the 
 | Kind | Name | How |
 |------|------|-----|
 | users | the owner | trusts the needs-you list; clears dead sessions from the tracker |
-| service | `plugins/agent-tracker` | state rules, the session page, a new command |
+| service | `plugins/agent-tracker` | state rules, the session page, a new skill `git-cleanup-run` |
 | data | `~/.claude/agent-tracker/` session records and asks | asks can be dismissed; dead sessions stop counting |
 | system | Claude Code background session list | `claude rm` removes a dead session from it; the conversation is kept |
 | system | git worktrees in the owner's repos | a clean, merged worktree can be removed; its branch is kept |
