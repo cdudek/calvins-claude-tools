@@ -15,6 +15,7 @@ import {
   mkdirSync,
   readdirSync,
   readFileSync,
+  rmSync,
   writeFileSync,
 } from "node:fs";
 import { tmpdir } from "node:os";
@@ -388,6 +389,7 @@ describe("changes", () => {
 // sdlc.json blocks, chain-gate.sh for the chain's own gates -- and a record kept only one.
 const EXPECTED_HOOKS: [string, string][] = [
   ["SessionStart", "session-check.sh"],
+  ["UserPromptSubmit", "turn-start.sh"],
   ["PermissionRequest", "plan-gate.sh"],
   ["PreToolUse", "gate-bash.sh"],
   ["PreToolUse", "chain-gate.sh"],
@@ -599,6 +601,37 @@ describe("verify-on-stop", () => {
     runHook("verify-on-stop.sh", { stop_hook_active: false }, env);
     runHook("verify-on-stop.sh", { stop_hook_active: false }, env);
     expect(readFileSync(count, "utf8").split("ran").length - 1).toBe(1);
+  });
+  it("skips a turn that changed nothing, runs once after one that did", () => {
+    const dir = repo(0);
+    const count = join(dir, ".git", "count");
+    writeFileSync(
+      join(dir, "sdlc.json"),
+      JSON.stringify({ verify: `sh -c 'echo ran >> ${count}'`, verifyDirty: ["*.ts"] }),
+    );
+    const env = { CLAUDE_PROJECT_DIR: dir };
+    const stop = () => runHook("verify-on-stop.sh", { stop_hook_active: false }, env).status;
+    writeFileSync(join(dir, "x.ts"), "export const x = 1;\n"); // uncommitted before the prompt
+    runHook("turn-start.sh", {}, env);
+    expect(stop()).toBe(0);
+    expect(existsSync(count)).toBe(false);
+    runHook("turn-start.sh", {}, env);
+    writeFileSync(join(dir, "x.ts"), "export const x = 2;\n"); // this turn changed code
+    expect(stop()).toBe(0);
+    expect(stop()).toBe(0);
+    expect(readFileSync(count, "utf8").split("ran").length - 1).toBe(1);
+  });
+  it("does not re-run or re-block a failing state", () => {
+    const dir = repo(1);
+    const env = { CLAUDE_PROJECT_DIR: dir };
+    const stop = () => runHook("verify-on-stop.sh", { stop_hook_active: false }, env).status;
+    runHook("turn-start.sh", {}, env);
+    writeFileSync(join(dir, "x.ts"), "export const x = 1;\n");
+    expect(stop()).toBe(2);
+    runHook("turn-start.sh", {}, env);
+    expect(stop()).toBe(0);
+    rmSync(join(dir, ".git", "sdlc-turn-start.hash"));
+    expect(stop()).toBe(0);
   });
   it("never loops", () => {
     const dir = repo(1);

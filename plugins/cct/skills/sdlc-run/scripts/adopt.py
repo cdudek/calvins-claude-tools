@@ -1019,6 +1019,7 @@ def main() -> int:
     # kept only the last one.
     spec = [
         ("SessionStart", None, "session-check.sh", 5),
+        ("UserPromptSubmit", None, "turn-start.sh", 5),
         ("PermissionRequest", "ExitPlanMode", "plan-gate.sh", 345600),
         ("PreToolUse", "Bash", "gate-bash.sh", 5),
         ("PreToolUse", "Bash", "pr-gate.sh", 20),
