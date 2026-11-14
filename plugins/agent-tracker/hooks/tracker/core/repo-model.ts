@@ -8,7 +8,7 @@ import { prsLine, repoPrs } from './git'
 import { isLive, repoLabel } from './rank'
 import { DOT, bar, dim, sp } from './paint'
 import type { Span, Spans } from './paint'
-import { GLYPH, clamp, firstKey, heading, hint, tidy } from './pane-model'
+import { GLYPH, clamp, firstKey, heading, hint, tidy, when } from './pane-model'
 import type { Block, Item, Local, PaneModel, Page } from './pane-model'
 import { HEADINGS, NO_PRS, PRS_NOT_SHOWN, UNTITLED } from './words'
 
@@ -24,8 +24,6 @@ const SECTION_SPAN = (text: string) => sp(text, undefined, { bold: true })
 // A PR's checks as the mockups draw them: ✓ green, ✗ red, ◌ yellow.
 export const checksGlyph = (c: Pr['checks']): Span => (c === 'pass' ? sp('✓', 'green') : c === 'failing' ? sp('✗', 'red') : sp('◌', 'yellow'))
 
-// "13:40" for today, "Tue" before.
-const when = (at: number, local: Local) => (at >= local.midnight ? local.clock(at) : local.day(at))
 
 const oneLine = (text: string) => text.replace(/\s+/g, ' ').trim()
 
@@ -81,7 +79,7 @@ const milestoneRow = (c: Change, snap: Snapshot, repoPath: string, sessions: Ses
   const complete = p.total > 0 && p.done === p.total
   const glyph = merged ? sp('✓', 'dim') : needs ? sp('●', 'red') : complete ? sp('✓', 'green') : sp('◐', 'yellow')
   const pr = prOn(snap, repoPath, c.branch, now)
-  const prSpans: Spans = pr ? [sp('#' + pr.number, 'cyan'), sp(' '), checksGlyph(pr.checks), ...(pr.mergeable === 'mergeable' ? [sp(' ↓', 'green')] : [])] : []
+  const prSpans: Spans = pr ? [sp('#' + pr.number, 'cyan'), sp(' '), checksGlyph(pr.checks), ...(pr.behind === true ? [sp(' ↓', 'yellow')] : [])] : []
   const progress = `${p.done}/${p.total} ${p.unit === 'facts' ? 'facts' : 'features'}`
   const sw = clamp(columns - 2 - 1 - 13 - 1 - 6 - 1 - 7, 8, 18)
   const line: Spans = merged

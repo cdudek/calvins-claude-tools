@@ -1,8 +1,8 @@
 // The Session page, as the owner's "Session detail" mockup draws it (2026-11-14): the state at the top right, then one
 // line each for the branch, the tokens, the struggles, what runs, the milestone, the asks and the PR. A line with no data
 // behind it is not drawn (no model, context or cost: the collector does not have them).
-import type { SessionRecord, Snapshot } from '../types'
-import { duration, plural, resumeCommand, tokens } from './format'
+import type { Ask, SessionRecord, Snapshot } from '../types'
+import { cut, duration, plural, resumeCommand, tokens } from './format'
 import { repoPrs } from './git'
 import { featureKind } from './change'
 import { completeCount } from './milestone'
@@ -11,8 +11,8 @@ import { DOT, bar, dim, join, sp } from './paint'
 import type { Spans } from './paint'
 import { REASON, endedAt, firstKey, hint, tidy } from './pane-model'
 import type { Block, Local, PaneModel } from './pane-model'
-import { askLine, checksGlyph } from './repo-model'
-import { CHECKS_WORDS, DETACHED, FROM_TRANSCRIPT, MERGE_WORDS, NO_ASKS, PANE_BUTTONS, REVIEW_WORDS, UNTITLED } from './words'
+import { checksGlyph } from './repo-model'
+import { CHECKS_WORDS, DETACHED, FROM_TRANSCRIPT, MERGE_WORDS, PANE_BUTTONS, REVIEW_WORDS, UNTITLED } from './words'
 
 export const SESSION_ASKS_SHOWN = 6
 
@@ -68,15 +68,18 @@ export const sessionModel = (snap: Snapshot, id: string, now: number, local: Loc
     blocks.push({ kind: 'lines', key: 'milestone', wrap: true, lines: [line('milestone', sp(m.slug), sp(' '), ...bar(done, m.features.length, 6), sp(` ${done}/${m.features.length}`)), [sp('  '), ...marks]] })
   }
 
-  const asks = [...r.asks].sort((a, b) => b.at - a.at)
-  if (asks.length > 0 || r.source === 'transcript') {
+  // tasks: the session's task asks, newest first, each with its state; a question is not a task.
+  const tasks = [...r.asks].filter(x => x.kind === 'task').sort((x, y) => y.at - x.at)
+  if (tasks.length > 0 || r.source === 'transcript') {
+    const glyph = (st: Ask['status']) => (st === 'needs-you' ? sp('●', 'red') : st === 'in-progress' ? sp('◐', 'yellow') : sp('✓', 'green'))
     blocks.push({
       kind: 'lines',
       key: 'asks',
+      wrap: true,
       lines: [
         ...(r.source === 'transcript' ? [[dim(FROM_TRANSCRIPT)] as Spans] : []),
-        ...(asks.length === 0 ? [[dim(NO_ASKS)] as Spans] : asks.slice(0, SESSION_ASKS_SHOWN).map(a => askLine(a, r, local, columns, false))),
-        ...(asks.length > SESSION_ASKS_SHOWN ? [[dim(`and ${asks.length - SESSION_ASKS_SHOWN} more`)] as Spans] : []),
+        ...(tasks.length === 0 ? [] : [line('tasks', ...join(tasks.slice(0, SESSION_ASKS_SHOWN).map((t): Spans => [sp(cut(t.text.replace(/\s+/g, ' ').trim(), 40)), sp(' '), glyph(t.status)])))]),
+        ...(tasks.length > SESSION_ASKS_SHOWN ? [[dim(`and ${tasks.length - SESSION_ASKS_SHOWN} more`)] as Spans] : []),
       ],
     })
   }
@@ -89,11 +92,11 @@ export const sessionModel = (snap: Snapshot, id: string, now: number, local: Loc
       sep: null,
       items: [
         { key: 'pr:link', href: pr.url, spans: [sp(`#${pr.number}`, 'cyan')] },
-        { key: 'pr:words', joined: true, spans: [sp(' open · checks '), checksGlyph(pr.checks), dim(` ${CHECKS_WORDS[pr.checks].replace(/^[✓✗] /, '')} · ${REVIEW_WORDS[pr.review]} · `), pr.mergeable === 'conflicts' ? sp(MERGE_WORDS.conflicts, 'red') : pr.mergeable === 'mergeable' ? sp(MERGE_WORDS.mergeable, 'green') : dim(MERGE_WORDS.unknown)] },
+        { key: 'pr:words', joined: true, spans: [sp(' open · checks '), checksGlyph(pr.checks), dim(` ${CHECKS_WORDS[pr.checks].replace(/^[✓✗] /, '')} · ${REVIEW_WORDS[pr.review]} · `), pr.behind === true ? sp('BEHIND', 'yellow') : pr.mergeable === 'conflicts' ? sp(MERGE_WORDS.conflicts, 'red') : pr.mergeable === 'mergeable' ? sp(MERGE_WORDS.mergeable, 'green') : dim(MERGE_WORDS.unknown)] },
       ],
     })
 
-  if (r.state === 'ended' && resumeCommand(r.cwd, r.sessionId) !== null) blocks.push({ kind: 'copy', key: 'resume', label: PANE_BUTTONS.resume })
+  if (resumeCommand(r.cwd, r.sessionId) !== null) blocks.push({ kind: 'actions', key: 'session-actions', items: [{ key: 'resume', label: PANE_BUTTONS.resume, action: 'resume' }] })
   const crumbs = [{ text: 'Home', to: { kind: 'home' } as const }, ...(r.repo ? [{ text: repoLabel(r), to: { kind: 'repo', path: r.repo.path } as const }] : []), { text: title, to: null, bold: true }]
   return { crumbs, right: stateSpans(r, now), blocks: tidy(blocks), footer: hint(), first: firstKey(blocks) }
 }

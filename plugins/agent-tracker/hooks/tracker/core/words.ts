@@ -25,7 +25,7 @@ export const NOTHING_NEEDS = 'Nothing needs you.'
 export const ONLY_THIS = 'Only this session is running.'
 export const NO_REPOS = 'No repos yet.'
 // Section headings in capitals, as the mockups draw them.
-export const HEADINGS = { needs: 'NEEDS YOU', running: 'RUNNING', milestones: 'MILESTONES', asks: 'YOUR ASKS HERE', worktrees: 'WORKTREES', otherPrs: 'OTHER PRs', stage: 'STAGE', features: 'FEATURES', facts: 'FACTS', questions: 'QUESTIONS', findings: 'FINDINGS', sessions: 'SESSIONS', tests: 'TESTS', builder: 'BUILDER' } as const
+export const HEADINGS = { needs: 'NEEDS YOU', know: 'YOU SHOULD KNOW', decided: 'DECIDED WITHOUT YOU', running: 'RUNNING', milestones: 'MILESTONES', asks: 'YOUR ASKS HERE', worktrees: 'WORKTREES', otherPrs: 'OTHER PRs', stage: 'STAGE', features: 'FEATURES', facts: 'FACTS', questions: 'QUESTIONS', findings: 'FINDINGS', sessions: 'SESSIONS', tests: 'TESTS', builder: 'BUILDER' } as const
 // Plain words, no keys bound: the rows are Buttons.
 export const KEY_HINTS = '↑↓ move  ⏎ open'
 export const PANE_BUTTONS = { close: 'Close', back: 'Back', home: 'Home', resume: 'Copy resume command' } as const
@@ -37,6 +37,8 @@ export const staleTop = (age: string | null) =>
   `Session list unavailable. ${age === null ? '' : `Showing what was read ${age} ago. `}Retrying every 5 seconds; if it keeps failing, update Claude Code.`
 export const withoutTracker = (n: number) => (n === 1 ? '1 session runs without the tracker' : `${n} sessions run without the tracker`)
 export const RESUME_COPIED = 'Resume command copied'
+export const REPLY_COPIED = 'Reply copied: paste it into that session'
+export const replyFailed = (reason: string) => `Copy failed: ${reason}. Press Copy overrule again.`
 export const resumeFailed = (reason: string) => `Copy failed: ${reason}. Press Copy resume command again.`
 export const NO_ASKS = 'No asks yet.'
 export const FROM_TRANSCRIPT = 'Not classified: this session ran without the tracker.'
@@ -50,15 +52,19 @@ export const sessionNotFound = (text: string) => `No session matches "${text}". 
 export const NO_PRS = 'No open PRs.'
 export const NO_WORKTREES = 'No worktrees found.'
 export const repoNotFound = (text: string) => `No repo named "${text}" has had a session. Pick one on Home.`
-export const COMMAND_HELP = 'Try /tracker, details, compact, copy, repo, session, band on, band off.'
+export const COMMAND_HELP = 'Try /tracker, details, compact, copy, repo, session, web, band on, band off.'
 export const REASON_WORDS = { permission: 'asks permission', question: 'asks a question', waiting: 'waiting', unknown: 'state unknown' } as const
 
-export const BUTTON_LABELS = { pane: 'Pane', details: 'Details', copy: 'Copy', compact: 'Compact' } as const
+export const BUTTON_LABELS = { pane: 'Pane', board: 'Board', details: 'Details', copy: 'Copy', compact: 'Compact', hide: '[–]' } as const
 export const COMMAND_DESCRIPTION = "Show each session's repo, work and state"
-export const COMMAND_HINT = 'details | compact | copy | repo <name> | session <text> | band on | band off'
+export const COMMAND_HINT = 'details | compact | copy | web | repo <name> | session <text> | band on | band off'
 
 // What a /tracker command answers in the transcript, one short line each. A copy answers with its toast.
 export const BAND_REPLY = { details: 'Band switched to details.', compact: 'Band switched to compact.', hidden: 'Band hidden. /tracker band on shows it again.', shown: 'Band shown.' } as const
+// The divider that starts our band: "── tracker ─────…".
+export const DIVIDER_LEAD = '── '
+export const DIVIDER_LABEL = 'tracker'
+export const BOARD_FAILED = 'The Board is not available in this build.'
 export const PANE_OPENED = 'Tracker pane opened.'
 // A waiting session's reason in two or three words, for the band's column line.
 export const SHORT_REASON = { permission: 'perm', question: 'question', waiting: 'waiting', unknown: 'waiting' } as const

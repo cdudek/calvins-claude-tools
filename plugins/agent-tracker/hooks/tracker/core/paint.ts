@@ -12,8 +12,8 @@ export const plain = (spans: Spans) => spans.map(s => s.text).join('')
 export const dim = (text: string) => sp(text, 'dim')
 export const DOT: Span = dim(' · ')
 
-// Theme keys where one fits (red, yellow, green, cyan follow the person's theme); magenta has no key, so a raw hex.
-export const TONE_COLOR = { red: 'error', yellow: 'warning', green: 'success', cyan: 'suggestion', magenta: '#d2a8ff', label: 'claude' } as const
+// Theme keys where one fits (red, yellow, green, cyan follow the person's theme); magenta is the theme's purple (merged); no raw hex is needed.
+export const TONE_COLOR = { red: 'error', yellow: 'warning', green: 'success', cyan: 'suggestion', magenta: 'merged', label: 'claude' } as const
 export type Paint = { color?: string; dimColor?: boolean; bold?: boolean; strikethrough?: boolean }
 export const paint = (s: Span): Paint => ({
   ...(s.tone === undefined || s.tone === 'dim' ? {} : { color: TONE_COLOR[s.tone] }),

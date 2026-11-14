@@ -20,6 +20,8 @@ export type Change = {
   facts: ChangeFact[]
   verdicts: Record<string, Verdict>
   questions: { id: string; title: string; fallback: string }[]
+  questionsAt: number // when questions.md last changed (ms), 0 when unknown
+  revisions: { at: number; ref: string; text: string }[] // the plan's `## Revisions`, oldest first
   findings: { open: number; fixed: number } | null // null: no findings.md yet
   has: { intent: boolean; ux: boolean; facts: boolean; plan: boolean; locked: boolean }
 }
@@ -31,6 +33,8 @@ export type ChangeFiles = {
   done: string | null
   validation: string | null
   questions: string | null
+  questionsAt: number
+  plan: string | null
   findings: string | null
   decisions: string | null
   has: Change['has']
@@ -80,6 +84,21 @@ export const parseQuestions = (text: string | null): Change['questions'] =>
       return [{ id: m[1]!, title: clean(m[2], MAX), fallback: clean(/\*\*Default taken:\*\*\s*([^*]*?)(?:\s*\*\*|$)/.exec(line)?.[1] ?? '', MAX) }]
     })
 
+// `- **2026-11-14, F92:** what changed, and why`: the line's date, noon local, and its text without the label.
+export const parseRevisions = (plan: string | null): { at: number; ref: string; text: string }[] => {
+  if (plan === null) return []
+  const at = plan.search(/^##\s+Revisions\s*$/m)
+  if (at < 0) return []
+  const body = plan.slice(at).split('\n').slice(1)
+  const end = body.findIndex(l => /^##\s/.test(l))
+  const out: { at: number; ref: string; text: string }[] = []
+  for (const line of end < 0 ? body : body.slice(0, end)) {
+    const m = /^- \*\*(\d{4})-(\d{2})-(\d{2})\s*(?:[,—-]\s*)?([^*]*?):?\*\*:?\s*(.+)$/.exec(line)
+    if (m) out.push({ at: new Date(Number(m[1]), Number(m[2]) - 1, Number(m[3]), 12).getTime(), ref: clean(m[4], 40).trim(), text: clean(m[5], 400).replace(/\s+/g, ' ').trim() })
+  }
+  return out
+}
+
 // findings.md: the checkboxes outside "## Advisory": unchecked are open, checked are fixed.
 export const parseFindings = (text: string | null): Change['findings'] => {
   if (text === null) return null
@@ -119,6 +138,8 @@ export const parseChange = (f: ChangeFiles): Change | null => {
     facts,
     verdicts: parseVerdicts(f.validation),
     questions: parseQuestions(f.questions),
+    questionsAt: f.questionsAt,
+    revisions: parseRevisions(f.plan),
     findings: parseFindings(f.findings),
     has: f.has,
   }

@@ -3,14 +3,15 @@
 import type { EngineInterface } from 'claude-code'
 
 import { PANE_BUTTONS, paint, rule } from '../core'
-import type { Block, Item, PaneModel, Page, Spans } from '../core'
+import type { ActionItem, Block, Item, PaneModel, Page, Spans } from '../core'
 
 export type Ui = ReturnType<EngineInterface['ui']['resolve']>
 export type Actions = {
   open: (key: string, page: Page) => void
   jump: (page: Page) => void
   close: () => void
-  resume: () => void
+  act: (item: ActionItem) => void // a Button that is no page: mark seen, copy a reply, copy a resume command
+  back: (() => void) | null // null: there is no page to go back to
   ring: string | null // the element holding the focus ring, as `ui.focus` last said (null: none moved it yet)
 }
 
@@ -90,8 +91,14 @@ export function paneView(ui: Ui, m: PaneModel, a: Actions, columns: number) {
             {b.items.flatMap((it, j) => item(b, it, j))}
           </Box>
         )
-      case 'copy':
-        return <Button key={b.key} plain autoFocus={ringOn(ring, b.key)} label={b.label} onPress={a.resume} />
+      case 'actions':
+        return (
+          <Box key={b.key} flexDirection="row" gap={2}>
+            {b.items.map(it => (
+              <Button key={it.key} plain autoFocus={ringOn(ring, it.key)} label={it.label} onPress={() => a.act(it)} />
+            ))}
+          </Box>
+        )
     }
   }
 
@@ -106,6 +113,8 @@ export function paneView(ui: Ui, m: PaneModel, a: Actions, columns: number) {
       <Box key="footer" flexDirection="row">
         {m.footer !== null && <Text wrap="truncate-end">{spans(m.footer, 'footer')}</Text>}
         <Box flexGrow={1} width={2} />
+        {a.back !== null && <Button key="back" plain dimColor autoFocus={ringOn(ring, 'back')} label={PANE_BUTTONS.back} onPress={a.back} />}
+        {a.back !== null && <Box width={2} />}
         <Button key="close" plain dimColor autoFocus={ringOn(ring, 'close')} label={PANE_BUTTONS.close} onPress={a.close} />
       </Box>
     </Box>

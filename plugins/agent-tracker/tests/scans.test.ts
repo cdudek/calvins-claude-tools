@@ -48,7 +48,7 @@ describe('git and gh scans', () => {
     expect(gh.length).toBe(1)
     expect(gh[0]!.argv.slice(0, 3)).toEqual(['gh', 'pr', 'list'])
     const fields = gh[0]!.argv[gh[0]!.argv.indexOf('--json') + 1]!.split(',')
-    expect(fields).toEqual(expect.arrayContaining(['number', 'title', 'url', 'headRefName', 'createdAt', 'statusCheckRollup', 'reviewDecision', 'mergeable']))
+    expect(fields).toEqual(expect.arrayContaining(['number', 'title', 'url', 'headRefName', 'createdAt', 'statusCheckRollup', 'reviewDecision', 'mergeable', 'mergeStateStatus']))
     expect(own(w).scan).toEqual({ at: NOW, ghOk: true, worktrees: EXPECTED_WORKTREES, prs: EXPECTED_PRS })
     await w.clock.advance(5000) // the next poll merges it into the snapshot the band and the pane read
     expect(w.snapshot().sessions.find(s => s.sessionId === w.id)?.scan?.prs.length).toBe(4)

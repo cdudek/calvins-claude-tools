@@ -14,6 +14,11 @@ export type Ask = {
   at: number
 }
 
+// A line the agent's last message gave (haiku reads it at turn.complete): kind `know` is a side effect, a risk, an odd finding
+// or a skipped step; `decided` is a call the agent made without asking. `seen` stays false here: what the owner has seen
+// lives in settings.json, because a session writes only its own file.
+export type Note = { id: string; kind: 'know' | 'decided'; text: string; at: number; seen: boolean }
+
 export type Pr = {
   number: number
   title: string
@@ -23,6 +28,7 @@ export type Pr = {
   checks: 'pass' | 'failing' | 'running'
   review: 'approved' | 'changes' | 'requested' | 'none'
   mergeable: 'mergeable' | 'conflicts' | 'unknown'
+  behind?: boolean // gh's mergeStateStatus is BEHIND; absent in a PR stored before the field
 }
 
 export type SessionRecord = {
@@ -46,6 +52,7 @@ export type SessionRecord = {
   questionFlag: { at: number } | null
   usage: { tokensIn: number; tokensOut: number; toolErrors: number; retries: number }
   asks: Ask[]
+  notes?: Note[] // at most 50, newest kept; absent in a record written before the field
   runs: {
     goalSince: number | null
     subagents: { id: string; name: string; status: string }[]
@@ -70,7 +77,7 @@ export type AgentRow = {
 
 export type Lease = { v: 1; sessionId: string; heartbeat: number }
 export type AgentsFile = { v: 1; readAt: number; agents: AgentRow[] }
-export type Settings = { v: 1; view: 'compact' | 'details'; bandHidden: boolean }
+export type Settings = { v: 1; view: 'compact' | 'details'; bandHidden: boolean; seen: string[] } // seen: the notes the owner marked, `<session>:<note id>` or a file note's key, newest last
 
 // What the band and the pane read: every session merged, and whether the list read was good.
 // `okAt` is the time of the last good list read (0: none yet) and `failedReads` the failed reads in a row: two or

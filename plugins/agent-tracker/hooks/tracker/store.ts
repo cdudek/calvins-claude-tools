@@ -3,7 +3,7 @@
 // `$` is passed only to plain top-level functions: the engine's source scan reads no other spelling.
 import type { EngineInterface } from 'claude-code'
 
-import { COMMAND_DESCRIPTION, COMMAND_HINT, PANE_ID, PANE_TITLE, REDRAW_MS, askStatuses, emptyRecord, gitArgv, parseMilestone, repoFromCommonDir } from './core'
+import { COMMAND_DESCRIPTION, COMMAND_HINT, PANE_ID, PANE_TITLE, REDRAW_MS, SEEN_MAX, askStatuses, emptyRecord, gitArgv, parseMilestone, repoFromCommonDir } from './core'
 import type { Change, Frozen, Page } from './core'
 import type { AgentsFile, Lease, SessionRecord, Settings } from './types'
 
@@ -59,7 +59,7 @@ export const newState = (): State => ({
   seen: new Set(),
   okAt: 0,
   failedReads: 0,
-  settings: { v: 1, view: 'compact', bandHidden: false },
+  settings: { v: 1, view: 'compact', bandHidden: false, seen: [] },
   hasBand: false,
   pane: newPane(),
   changes: new Map(),
@@ -88,7 +88,7 @@ export function writeJson($: Engine, path: string, value: unknown) {
 // The view and the hidden flag, one file for every session (F22, F29). A torn or missing file keeps the last good copy.
 export async function readSettings($: Engine, s: State): Promise<Settings> {
   const f = (await readJson($, `${await dir($)}/settings.json`)) as Partial<Settings> | undefined
-  if (f?.v === 1) s.settings = { v: 1, view: f.view === 'details' ? 'details' : 'compact', bandHidden: f.bandHidden === true }
+  if (f?.v === 1) s.settings = { v: 1, view: f.view === 'details' ? 'details' : 'compact', bandHidden: f.bandHidden === true, seen: Array.isArray(f.seen) ? f.seen.filter((k): k is string => typeof k === 'string').slice(-SEEN_MAX) : [] }
   return s.settings
 }
 
@@ -97,6 +97,12 @@ export async function writeSettings($: Engine, s: State, change: Partial<Setting
   s.settings = next
   await writeJson($, `${await dir($)}/settings.json`, next).catch(() => undefined) // not kept: the choice holds for this session
   $.ui.invalidate('ui.render')
+}
+
+// Mark notes seen: the one thing the pane writes, and only to settings.json. A session's own file is not touched.
+export async function markSeen($: Engine, s: State, keys: string[]) {
+  const have = (await readSettings($, s)).seen
+  await writeSettings($, s, { seen: [...have, ...keys.filter(k => !have.includes(k))].slice(-SEEN_MAX) })
 }
 
 // Once per session, at the first draw of the band or the pane: the /tracker command and the one-minute redraw.

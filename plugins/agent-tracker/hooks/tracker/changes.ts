@@ -37,13 +37,14 @@ export async function readChanges($: Engine, roots: Root[]): Promise<Change[]> {
       .slice(0, CHANGES_MAX)
     for (const dir of dirs) {
       const milestone = await text($, `${root.path}/changes/${dir}/milestone.md`)
-      const c = milestone === null ? null : parseChange({ dir, root: root.path, milestone, done: null, validation: null, questions: null, findings: null, decisions: null, has: NONE })
+      const c = milestone === null ? null : parseChange({ dir, root: root.path, milestone, done: null, validation: null, questions: null, questionsAt: 0, plan: null, findings: null, decisions: null, has: NONE })
       if (c !== null) light.push(c)
     }
   }
   const out: Change[] = []
   for (const c of pickChanges(light, roots)) {
     const base = `${c.root}/changes/${c.dir}`
+    const files = await $.fs.list(base).catch(() => [])
     const full = parseChange({
       dir: c.dir,
       root: c.root,
@@ -51,6 +52,8 @@ export async function readChanges($: Engine, roots: Root[]): Promise<Change[]> {
       done: await text($, `${base}/done.json`),
       validation: await text($, `${base}/validation.md`),
       questions: await text($, `${base}/questions.md`),
+      questionsAt: files.find(e => e.name === 'questions.md')?.mtimeMs ?? 0,
+      plan: await text($, `${base}/plan.md`),
       findings: await text($, `${base}/findings.md`),
       decisions: await text($, `${base}/decisions.json`),
       has: {

@@ -21,6 +21,8 @@ Restart Claude Code afterwards so the mod loads.
 
 ## Things to know
 
-- **Model calls:** the mod makes two kinds, each pinned to the alias `haiku`: sorting an ask into task or question, and checking whether a turn's last message asks you a question. `haiku` is an alias, so it can move to a newer model.
+- **Model calls:** the mod makes three kinds, each pinned to the alias `haiku`: sorting an ask into task or question, checking whether a turn's last message asks you a question, and reading that message for "you should know" and "decided without you" lines. `haiku` is an alias, so it can move to a newer model.
 - **Question check:** it runs only in sessions that have the mod, and only when the last paragraph of the final message holds a question mark. A session without the mod stays done after a question.
-- **Hide the band:** `/tracker band off` hides it in every session. `/tracker band on` brings it back.
+- **Notes:** the lines read from a turn's last message (a message under 200 characters is skipped) are kept on that session's record, at most 50. In a repo that uses sdlc-run, open questions in `questions.md` and the plan's `## Revisions` are read as files. Marking a line seen is the only thing the pane writes, and it goes to `settings.json`.
+- **Hide the band:** `/tracker band off` hides it in every session. `/tracker band on` brings it back. The `[–]` button does the same.
+- **Board:** `/tracker web` opens `~/.claude/agent-tracker/board.html`. The Board button in the band runs it.

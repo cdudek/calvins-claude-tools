@@ -1,13 +1,24 @@
 // The asks and the question check: what the owner asked, in order, and whether a finished turn asks them back.
 // Every hook is an observer: it lets the event through first and never throws after that.
-import type { On } from 'claude-code'
+import type { EngineInterface, On } from 'claude-code'
 
-import { ASKS_MAX, ASK_TEXT_MAX, MODEL, addTokens, finalParagraphHasQuestion } from './core'
+import { ASKS_MAX, ASK_TEXT_MAX, MODEL, NOTES_MIN_CHARS, addNotes, addTokens, finalParagraphHasQuestion, notesPrompt, parseNotes } from './core'
 import { initOwn, saveOwn } from './store'
 import type { State } from './store'
 
 // The owner's own prompts: a terminal, the bridge and an SDK host. Notifications, triggers and peers are not asks.
 const OWNER = new Set(['composer', 'bridge', 'sdk'])
+type Engine = EngineInterface
+
+// You should know, Decided without you: one haiku call on the turn's last message, JSON back, nothing stored when it is not
+// JSON of the right shape. A short message is skipped without a call. Runs after the turn went on; it never fails it.
+async function readNotes($: Engine, s: State, message: string, at: number) {
+  if (message.length < NOTES_MIN_CHARS) return
+  const r = await $.model.complete({ model: MODEL, prompt: notesPrompt(message.slice(-ASK_TEXT_MAX)), maxTokens: 400, effort: 'low', timeoutMs: 30_000 })
+  const found = r.isAnswered ? parseNotes(r.text) : null
+  if (found !== null && found.know.length + found.decided.length > 0) await saveOwn($, s, m => ({ ...m, notes: addNotes(m.notes, found, at) }))
+}
+
 const CHECK_LABELS = ['asks-owner', 'does-not-ask'] as const
 
 export const registerAsks = (on: On, s: State) => {
@@ -54,6 +65,7 @@ export const registerAsks = (on: On, s: State) => {
           const verdict = await $.model.classify(message.slice(-ASK_TEXT_MAX), CHECK_LABELS, { model: MODEL }).catch(() => undefined)
           isFlagged = verdict === 'asks-owner'
         }
+        void readNotes($, s, message, now).catch(() => undefined)
       }
       const flag = isFlagged ? { questionFlag: { at: now }, state: 'needs-you' as const, reason: 'question' as const } : {}
       await saveOwn($, s, m => ({ ...m, lastActivityAt: now, ...flag }))

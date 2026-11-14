@@ -4,9 +4,10 @@
 import { atom, read } from 'claude-code'
 import type { EngineInterface, On } from 'claude-code'
 
-import { BAND_REPLY, BUTTON_LABELS, COPIED, bandData, columnsAlt, columnsSvg, compactLayout, copyFailed, detailsLayout, paint, rule, stateMarkdown } from './core'
+import { BAND_REPLY, BOARD_FAILED, DIVIDER_LABEL, DIVIDER_LEAD, TONE_COLOR, cells, BUTTON_LABELS, COPIED, bandData, columnsAlt, columnsSvg, compactLayout, copyFailed, detailsLayout, paint, rule, stateMarkdown } from './core'
 import type { Column, Spans } from './core'
 import { ensureCollector } from './collector'
+import { itemsOf } from './notes'
 import { openPane, readSettings, startUi, writeSettings } from './store'
 import type { State } from './store'
 import type { Snapshot } from './types'
@@ -16,16 +17,30 @@ type Surface = Parameters<Engine['ui']['copy']>[0]['surface']
 // The collector writes it; the band and the pane read it. The same literal, declared where it is read.
 const snapshot = atom({ plugin: 'agent-tracker', key: 'snapshot' } as const, { at: 0, agentsOk: true, okAt: 0, failedReads: 0, sessions: [] } as Snapshot)
 
-async function current($: Engine) {
-  return bandData(await read($, snapshot), await $.session.id(), await $.clock.now())
+async function current($: Engine, s: State) {
+  const snap = await read($, snapshot)
+  const now = await $.clock.now()
+  return bandData(snap, await $.session.id(), now, await itemsOf($, s, snap, now))
 }
 
 // Copy the state as Markdown. The toast says whether it worked (F36, F86).
-async function copyState($: Engine, surface: Surface) {
-  const done = await $.ui.copy({ text: stateMarkdown(await current($)), ...(surface === undefined ? {} : { surface }) })
+async function copyState($: Engine, s: State, surface: Surface) {
+  const done = await $.ui.copy({ text: stateMarkdown(await current($, s)), ...(surface === undefined ? {} : { surface }) })
   const said = done.isCopied ? COPIED : copyFailed(done.reason)
   $.ui.toast(said)
   return said
+}
+
+// Board: the web page, which the `/tracker web` command builds and opens. A command nothing answers says so, and the toast says it.
+async function openBoard($: Engine) {
+  const done = await $.command.run({ command: 'tracker', args: 'web' }).catch(() => null)
+  $.ui.toast(done?.text ? done.text : BOARD_FAILED)
+}
+
+// [–]: hide the band; /tracker band on brings it back.
+async function hideBand($: Engine, s: State) {
+  await writeSettings($, s, { bandHidden: true })
+  $.ui.toast(BAND_REPLY.hidden)
 }
 
 async function toggleView($: Engine, s: State) {
@@ -37,7 +52,7 @@ export async function bandCommand($: Engine, s: State, args: string): Promise<st
   const [first, second, ...rest] = args.trim().toLowerCase().split(/\s+/).filter(Boolean)
   if (rest.length > 0 || first === undefined) return null
   if (second === undefined && (first === 'details' || first === 'compact')) await writeSettings($, s, { view: first })
-  else if (second === undefined && first === 'copy') return copyState($, undefined)
+  else if (second === undefined && first === 'copy') return copyState($, s, undefined)
   else if (first === 'band' && (second === 'on' || second === 'off')) await writeSettings($, s, { bandHidden: second === 'off' })
   else return null
   return second === undefined ? BAND_REPLY[first as 'details' | 'compact'] : BAND_REPLY[second === 'off' ? 'hidden' : 'shown']
@@ -60,14 +75,25 @@ export const registerBand = (on: On, s: State) => {
     const below = await next(e).catch(() => undefined)
 
     const columns = e.props.bodyColumns
-    const data = await current($)
+    const data = await current($, s)
     const { Box, Text, Button } = $.ui.resolve(e)
     // bodyColumns counts terminal cells; a graphical surface draws Buttons wider than their cells, so a row sized to it wraps there.
     const isTerminal = e.surface === 'terminal'
     const width = isTerminal ? columns : undefined
-    // One blank line above our row, and a rule between it and the next mod's row, so the mods do not run together.
+    // Our row is set apart from the other mods': an empty line, then a dim rule that carries the label "tracker", then our row.
+    // A rule of box characters is for the terminal; a graphical surface gets the empty line alone.
     const stack = (mine: NonNullable<typeof below>) => (
-      <Box flexDirection="column" marginTop={1}>
+      <Box flexDirection="column">
+        <Text key="gap">{' '}</Text>
+        {isTerminal && (
+          <Text key="divider" wrap="truncate-end">
+            <Text dimColor>{DIVIDER_LEAD}</Text>
+            <Text bold color={TONE_COLOR.label}>
+              {DIVIDER_LABEL}
+            </Text>
+            <Text dimColor>{` ${'─'.repeat(Math.max(1, columns - cells(DIVIDER_LEAD) - cells(DIVIDER_LABEL) - 1))}`}</Text>
+          </Text>
+        )}
         {mine}
         {below && isTerminal && (
           <Text key="below-rule" dimColor>
@@ -80,6 +106,8 @@ export const registerBand = (on: On, s: State) => {
     const run = (spans: Spans, key: string) => spans.map((x, i) => <Text key={`${key}${i}`} {...paint(x)}>{x.text}</Text>)
     const view = () => toggleView($, s)
     const pane = <Button key="pane" plain label={BUTTON_LABELS.pane} onPress={() => openPane($, s)} />
+    const board = <Button key="board" plain label={BUTTON_LABELS.board} onPress={() => void openBoard($)} />
+    const hide = <Button key="hide" plain dimColor label={BUTTON_LABELS.hide} onPress={() => void hideBand($, s)} />
 
     if (settings.view !== 'details') {
       return stack(
@@ -92,7 +120,9 @@ export const registerBand = (on: On, s: State) => {
           <Box flexGrow={1} width={2} />
           <Box flexDirection="row" gap={2}>
             {pane}
+            {board}
             <Button key="details" plain label={BUTTON_LABELS.details} onPress={view} />
+            {hide}
           </Box>
         </Box>,
       )
@@ -103,7 +133,7 @@ export const registerBand = (on: On, s: State) => {
     const cell = (c: Column) => (
       <Box key={c.key} flexDirection="column" width={d.colWidth}>
         <Text dimColor>{c.label}</Text>
-        <Text bold dimColor={data.stale !== null} color={c.countTone === 'red' ? paint({ text: '', tone: 'red' }).color : undefined}>
+        <Text bold {...paint({ text: '', tone: c.countTone })} dimColor={data.stale !== null ? true : undefined}>
           {c.count}
         </Text>
         {c.line !== '' && <Text wrap="truncate-end">{run(c.lineSpans, `${c.key}-line`)}</Text>}
@@ -136,9 +166,11 @@ export const registerBand = (on: On, s: State) => {
           <Text wrap="truncate-end">{run(d.header[0] ?? [], 'h0')}</Text>
           <Box flexGrow={1} width={2} />
           <Box flexDirection="row" gap={2}>
-            <Button key="copy" plain label={BUTTON_LABELS.copy} onPress={() => void copyState($, e.surface)} />
+            <Button key="copy" plain label={BUTTON_LABELS.copy} onPress={() => void copyState($, s, e.surface)} />
             {pane}
+            {board}
             <Button key="details" plain label={BUTTON_LABELS.compact} onPress={view} />
+            {hide}
           </Box>
         </Box>
         {d.header[1] !== undefined && <Text wrap="truncate-end">{run(d.header[1], 'h1')}</Text>}

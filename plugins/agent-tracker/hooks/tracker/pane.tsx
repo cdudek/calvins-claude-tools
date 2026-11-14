@@ -4,13 +4,14 @@
 import { atom, read } from 'claude-code'
 import type { EngineInterface, On } from 'claude-code'
 
-import { COMMAND_HELP, PANE_ID, PANE_OPENED, RESUME_COPIED, featureModel, homeModel, matchRepo, matchSession, milestoneModel, milestoneNotFound, missingModel, repoModel, repoNotFound, resumeCommand, resumeFailed, sessionModel, sessionNotFound } from './core'
-import type { Local, Page, PaneModel } from './core'
+import { COMMAND_HELP, PANE_ID, noteModel, noteNotFound, overruleText, PANE_OPENED, REPLY_COPIED, RESUME_COPIED, replyFailed, featureModel, homeModel, matchRepo, matchSession, milestoneModel, milestoneNotFound, missingModel, repoModel, repoNotFound, resumeCommand, resumeFailed, sessionModel, sessionNotFound } from './core'
+import type { ActionItem, Local, NoteItem, Page, PaneModel } from './core'
 import type { Actions } from './pane/view'
 import { paneView } from './pane/view'
 import { changesOf } from './changes'
+import { itemsOf } from './notes'
 import { ensureCollector } from './collector'
-import { openPane, startUi } from './store'
+import { markSeen, openPane, startUi } from './store'
 import type { State } from './store'
 import type { Snapshot } from './types'
 
@@ -59,17 +60,38 @@ async function openFoundRepo($: Engine, s: State, text: string) {
   await openPane($, s, path === null ? { kind: 'missing', what: 'repo', text } : { kind: 'repo', path })
 }
 
+// Back: the page the person came from, with the ring on the row that opened this one.
+function back($: Engine, s: State) {
+  const last = s.pane.history[s.pane.history.length - 1]
+  if (last === undefined) return
+  s.pane = { ...s.pane, history: s.pane.history.slice(0, -1), page: last.page, focus: last.focus }
+  $.ui.invalidate('ui.render')
+}
+
+// An action Button: mark notes seen (the one write, to settings.json), copy the reply that overrules an item, copy a resume command.
+async function act($: Engine, s: State, it: ActionItem, item: NoteItem | undefined, resume: string | null, surface: Surface) {
+  if (it.action === 'seen') await markSeen($, s, it.keys ?? [])
+  else if (it.action === 'overrule' && item !== undefined) {
+    const done = await $.ui.copy({ text: overruleText(item), ...(surface === undefined ? {} : { surface }) })
+    $.ui.toast(done.isCopied ? REPLY_COPIED : replyFailed(done.reason))
+  } else if (it.action === 'resume' && resume !== null) await copyResume($, resume, surface)
+}
+
 async function close($: Engine) {
   await $.ui.close({ id: PANE_ID }).catch(() => undefined)
 }
 
 // The model of the page the pane is on. The Repo, Milestone and Feature pages read the repo's change folders.
-async function modelOf($: Engine, s: State, snap: Snapshot, now: number, selfId: string, columns: number): Promise<PaneModel> {
+async function modelOf($: Engine, s: State, snap: Snapshot, now: number, selfId: string, columns: number, items: NoteItem[]): Promise<PaneModel> {
   const local = localDay(now)
   const page = s.pane.page
   switch (page.kind) {
     case 'session':
       return sessionModel(snap, page.id, now, local, columns) ?? missingModel(sessionNotFound(page.id))
+    case 'note': {
+      const item = items.find(i => i.key === page.key)
+      return item === undefined ? missingModel(noteNotFound) : noteModel(item, snap, local, columns)
+    }
     case 'missing':
       return missingModel(page.what === 'session' ? sessionNotFound(page.text) : repoNotFound(page.text))
     case 'repo':
@@ -83,7 +105,7 @@ async function modelOf($: Engine, s: State, snap: Snapshot, now: number, selfId:
       return (c && featureModel(snap, page.repo, c, page.n, now, columns)) ?? missingModel(milestoneNotFound(page.change))
     }
     default:
-      return homeModel(snap, selfId, now, local, null, columns)
+      return homeModel(snap, selfId, now, local, null, columns, items)
   }
 }
 
@@ -91,7 +113,8 @@ export const registerPane = (on: On, s: State) => {
   // The pane's words: none (Home), `session <text>`, `repo <text>`, and a hint for any other. The band's words go on.
   on('command.run', { command: 'tracker' }, async ($, e, next) => {
     const args = e.args.trim()
-    if (/^(details|compact|copy|band\s+(on|off))$/i.test(args)) return next(e)
+    // `web` is the Board's: another hook answers it, so it goes on instead of getting the hint.
+    if (/^(details|compact|copy|web|band\s+(on|off))$/i.test(args)) return next(e)
     const [word = '', ...rest] = args.split(/\s+/)
     const text = rest.join(' ')
     const kind = word.toLowerCase()
@@ -117,22 +140,24 @@ export const registerPane = (on: On, s: State) => {
     const ui = $.ui.resolve(e)
     const columns = Math.max(20, e.props.bodyColumns - 1) // one cell of margin on the left
     const page = s.pane.page
+    const items = await itemsOf($, s, snap, now)
     // Home keeps its order while the pane has the keyboard, and sorts again when the keyboard leaves (F43).
     let model: PaneModel
     if (page.kind === 'home') {
-      const home = homeModel(snap, selfId, now, localDay(now), e.props.isFocused ? s.pane.frozen : null, columns)
+      const home = homeModel(snap, selfId, now, localDay(now), e.props.isFocused ? s.pane.frozen : null, columns, items)
       s.pane.frozen = e.props.isFocused ? home.frozen : null
       model = home
-    } else model = await modelOf($, s, snap, now, selfId, columns)
-    const session = page.kind === 'session' ? snap.sessions.find(r => r.sessionId === page.id) : undefined
+    } else model = await modelOf($, s, snap, now, selfId, columns, items)
+    const item = page.kind === 'note' ? items.find(x => x.key === page.key) : undefined
+    const sessionId = page.kind === 'session' ? page.id : item?.sessionId
+    const session = sessionId === undefined || sessionId === null ? undefined : snap.sessions.find(r => r.sessionId === sessionId)
+    const resume = session === undefined ? null : resumeCommand(session.cwd, session.sessionId)
     const actions: Actions = {
       open: (key, to) => go($, s, to, key),
       jump: to => jump($, s, to),
       close: () => void close($),
-      resume: () => {
-        const text = session === undefined ? null : resumeCommand(session.cwd, session.sessionId)
-        if (text !== null) void copyResume($, text, e.surface)
-      },
+      act: it => void act($, s, it, item, resume, e.surface),
+      back: s.pane.history.length > 0 ? () => back($, s) : null,
       ring: s.pane.focus,
     }
     return paneView(ui, model, actions, columns)

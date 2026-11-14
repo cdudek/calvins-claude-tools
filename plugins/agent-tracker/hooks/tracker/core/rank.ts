@@ -1,11 +1,17 @@
 import type { SessionRecord } from '../types'
 import { completeCount } from './milestone'
+import { cut } from './format'
 import { UNTITLED } from './words'
 
 const folder = (path: string) => path.replace(/\/+$/, '').split('/').pop() || path
 
+const nameOf = (r: SessionRecord) => r.repo?.name ?? folder(r.cwd)
+// A name of digits only (a scratch folder such as "5019") is no repo: it groups under "other".
+export const isNumbered = (r: SessionRecord) => /^\d+$/.test(nameOf(r))
 // The repo name, else the folder (a session in no repo is grouped by its folder).
-export const repoLabel = (r: SessionRecord) => r.repo?.name ?? folder(r.cwd)
+export const repoLabel = (r: SessionRecord) => (isNumbered(r) ? 'other' : nameOf(r))
+// "web-app/fix-login": the repo (cut to 12) and what the session is called.
+export const sessionLabel = (r: SessionRecord) => `${cut(repoLabel(r), 12)}/${r.title ?? r.branch ?? UNTITLED}`
 
 // A session the band counts: live in the list. A transcript record is history unless the list shows it: merge copies
 // the list's status or state onto a record the list holds, and onto no other.
