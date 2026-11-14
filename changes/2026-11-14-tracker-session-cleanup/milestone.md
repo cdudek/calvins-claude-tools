@@ -22,7 +22,11 @@ branch), `merged` (feature PRs) or `blocked: <reason>`.
 | # | Change | Feature | PR or commit | State |
 |---|---|---|---|---|
 | 0 | 2026-11-14-tracker-session-cleanup | sync: `git fetch origin && git merge origin/main`, locally; again after every earlier milestone merges | <commit> | todo |
-| 1 | 2026-11-14-tracker-session-cleanup | <feature rows come from plan.md> | <commit> | todo |
+| 1 | 2026-11-14-tracker-session-cleanup | State and age: a row with no `pid` is ended, the last-activity age line, this session never ended | <commit> | todo |
+| 2 | 2026-11-14-tracker-session-cleanup | Clear with confirm, Reopen tasks, task closing and its store write | <commit> | todo |
+| 3 | 2026-11-14-tracker-session-cleanup | Worktree offer: five checks, ignored-file list, never force, branch kept | <commit> | todo |
+| 4 | 2026-11-14-tracker-session-cleanup | Tidy: Home line, `/tracker tidy`, prompt hand-off, supervisor tools, safety guards | <commit> | todo |
+| 5 | 2026-11-14-tracker-session-cleanup | Docs and release: design edits, ADR, setup.md, version bump | <commit> | todo |
 
 ## Done
 

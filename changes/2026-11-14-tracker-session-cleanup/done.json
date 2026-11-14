@@ -1,0 +1,800 @@
+{
+  "_comment": "The approved criteria as data. Locked by verify_gate.py approve; checks read it. Tests are *.test.ts files run by claude plugin test; widths are terminal columns. N1 is a manual render check.",
+  "facts": [
+    {
+      "id": "F1",
+      "tag": "@F1",
+      "feature": 1,
+      "where": "Home NEEDS YOU; Session header \"○ ended 63d ago\"",
+      "screen": "Home NEEDS YOU; Session header \"○ ended 63d ago\"",
+      "states": [],
+      "check": "`collector.test.ts` › a row with no pid is ended, whatever its state"
+    },
+    {
+      "id": "F2",
+      "tag": "@F2",
+      "feature": 1,
+      "where": "Home NEEDS YOU",
+      "screen": "Home NEEDS YOU",
+      "states": [],
+      "check": "`collector.test.ts` › a row with a pid that is blocked or waiting needs you"
+    },
+    {
+      "id": "F3",
+      "tag": "@F3",
+      "feature": 1,
+      "where": "Home header \"5 live · 2 need you\"; band",
+      "screen": "Home header \"5 live · 2 need you\"; band",
+      "states": [],
+      "check": "`band.test.ts` › needs-you count, oldest-waiting line and needs-you tasks skip pid-less rows"
+    },
+    {
+      "id": "F4",
+      "tag": "@F4",
+      "feature": 1,
+      "where": "Home; Session \"Pid not reported\"",
+      "screen": "Home; Session \"Pid not reported\"",
+      "states": [],
+      "check": "`collector.test.ts` › a read where no row has a pid keeps the old rule and marks nothing ended"
+    },
+    {
+      "id": "F5",
+      "tag": "@F5",
+      "feature": 1,
+      "where": "Session, Facts line 1",
+      "screen": "Session",
+      "states": [
+        "Facts line 1"
+      ],
+      "check": "`pane.test.ts` › Session first line reads started and last activity, never since"
+    },
+    {
+      "id": "F6",
+      "tag": "@F6",
+      "feature": 1,
+      "where": "Session, Facts line 1",
+      "screen": "Session",
+      "states": [
+        "Facts line 1"
+      ],
+      "check": "`pane.test.ts` › started date format for today, this week, older and over a year"
+    },
+    {
+      "id": "F7",
+      "tag": "@F7",
+      "feature": 1,
+      "where": "Session header",
+      "screen": "Session header",
+      "states": [],
+      "check": "`pane.test.ts` › ended header with and without a time"
+    },
+    {
+      "id": "F8",
+      "tag": "@F8",
+      "feature": 2,
+      "where": "Session, Ended something to clear",
+      "screen": "Session",
+      "states": [
+        "Ended something to clear"
+      ],
+      "check": "`clear.test.ts` › Clear is drawn for an ended session with something to clear"
+    },
+    {
+      "id": "F9",
+      "tag": "@F9",
+      "feature": 2,
+      "where": "Session, Live",
+      "screen": "Session",
+      "states": [
+        "Live"
+      ],
+      "check": "`clear.test.ts` › a session with a process gets the reason line and no Clear or resume"
+    },
+    {
+      "id": "F10",
+      "tag": "@F10",
+      "feature": 2,
+      "where": "Session, Nothing to clear",
+      "screen": "Session",
+      "states": [
+        "Nothing to clear"
+      ],
+      "check": "`clear.test.ts` › nothing to clear draws the line and no Clear"
+    },
+    {
+      "id": "F11",
+      "tag": "@F11",
+      "feature": 2,
+      "where": "Session, Pid not reported",
+      "screen": "Session",
+      "states": [
+        "Pid not reported"
+      ],
+      "check": "`clear.test.ts` › pid not reported withholds Clear"
+    },
+    {
+      "id": "F12",
+      "tag": "@F12",
+      "feature": 2,
+      "where": "Session, List unreadable",
+      "screen": "Session",
+      "states": [
+        "List unreadable"
+      ],
+      "check": "`clear.test.ts` › unreadable list withholds Clear"
+    },
+    {
+      "id": "F13",
+      "tag": "@F13",
+      "feature": 2,
+      "where": "Session, Ended",
+      "screen": "Session",
+      "states": [
+        "Ended"
+      ],
+      "check": "`clear.test.ts` › the ring starts on Copy resume command or the Home crumb"
+    },
+    {
+      "id": "F14",
+      "tag": "@F14",
+      "feature": 2,
+      "where": "Session, Actions",
+      "screen": "Session",
+      "states": [
+        "Actions"
+      ],
+      "check": "`clear.test.ts` › no resume button when the worktree folder is gone"
+    },
+    {
+      "id": "F15",
+      "tag": "@F15",
+      "feature": 2,
+      "where": "Session, Tasks",
+      "screen": "Session",
+      "states": [
+        "Tasks"
+      ],
+      "check": "`pane.test.ts` › the ended session's Tasks line matches Home's list"
+    },
+    {
+      "id": "F16",
+      "tag": "@F16",
+      "feature": 2,
+      "where": "Session, From transcript",
+      "screen": "Session",
+      "states": [
+        "From transcript"
+      ],
+      "check": "`clear.test.ts` › a transcript-only session closes no task"
+    },
+    {
+      "id": "F17",
+      "tag": "@F17",
+      "feature": 2,
+      "where": "Session, Confirming",
+      "screen": "Session",
+      "states": [
+        "Confirming"
+      ],
+      "check": "`clear.test.ts` › pressing Clear opens the confirm and writes nothing"
+    },
+    {
+      "id": "F18",
+      "tag": "@F18",
+      "feature": 2,
+      "where": "Session, Confirming",
+      "screen": "Session",
+      "states": [
+        "Confirming"
+      ],
+      "check": "`clear.test.ts` › the confirm's focus is on Cancel"
+    },
+    {
+      "id": "F19",
+      "tag": "@F19",
+      "feature": 2,
+      "where": "Session, Confirming",
+      "screen": "Session",
+      "states": [
+        "Confirming"
+      ],
+      "check": "`clear.test.ts` › the confirm lines for each combination of parts"
+    },
+    {
+      "id": "F20",
+      "tag": "@F20",
+      "feature": 2,
+      "where": "Session, Confirming to Ended",
+      "screen": "Session",
+      "states": [
+        "Confirming to Ended"
+      ],
+      "check": "`clear.test.ts` › Cancel and leaving the page change nothing"
+    },
+    {
+      "id": "F21",
+      "tag": "@F21",
+      "feature": 3,
+      "where": "Session, Clear only a worktree left",
+      "screen": "Session",
+      "states": [
+        "Clear only a worktree left"
+      ],
+      "check": "`clear.test.ts` › only a worktree left opens the offer, no confirm"
+    },
+    {
+      "id": "F22",
+      "tag": "@F22",
+      "feature": 2,
+      "where": "Session, Clearing",
+      "screen": "Session",
+      "states": [
+        "Clearing"
+      ],
+      "check": "`clear.test.ts` › Clear session re-reads the list before any write"
+    },
+    {
+      "id": "F23",
+      "tag": "@F23",
+      "feature": 2,
+      "where": "Session, Refused",
+      "screen": "Session",
+      "states": [
+        "Refused"
+      ],
+      "check": "`clear.test.ts` › a pid at the press refuses and writes nothing"
+    },
+    {
+      "id": "F24",
+      "tag": "@F24",
+      "feature": 2,
+      "where": "Session, Refused unreadable",
+      "screen": "Session",
+      "states": [
+        "Refused unreadable"
+      ],
+      "check": "`clear.test.ts` › a failed re-read refuses and writes nothing"
+    },
+    {
+      "id": "F25",
+      "tag": "@F25",
+      "feature": 2,
+      "where": "Session, Cleared",
+      "screen": "Session",
+      "states": [
+        "Cleared"
+      ],
+      "check": "`clear.test.ts` › claude rm runs for a listed session with no pid"
+    },
+    {
+      "id": "F26",
+      "tag": "@F26",
+      "feature": 2,
+      "where": "Session, Cleared",
+      "screen": "Session",
+      "states": [
+        "Cleared"
+      ],
+      "check": "`clear.test.ts` › an unlisted session gets no claude rm and still closes tasks"
+    },
+    {
+      "id": "F27",
+      "tag": "@F27",
+      "feature": 2,
+      "where": "Session, Cleared",
+      "screen": "Session",
+      "states": [
+        "Cleared"
+      ],
+      "check": "`clear.test.ts` › \"No job matching\" is treated as not listed"
+    },
+    {
+      "id": "F28",
+      "tag": "@F28",
+      "feature": 2,
+      "where": "Session, Failed",
+      "screen": "Session",
+      "states": [
+        "Failed"
+      ],
+      "check": "`clear.test.ts` › claude rm failure shows the error line and Clear again"
+    },
+    {
+      "id": "F29",
+      "tag": "@F29",
+      "feature": 2,
+      "where": "Session, Cleared; Home",
+      "screen": "Session",
+      "states": [
+        "Cleared; Home"
+      ],
+      "check": "`tasks.test.ts` › Clear marks the session's open tasks closed"
+    },
+    {
+      "id": "F30",
+      "tag": "@F30",
+      "feature": 2,
+      "where": "Session, PartlyCleared",
+      "screen": "Session",
+      "states": [
+        "PartlyCleared"
+      ],
+      "check": "`clear.test.ts` › a failed save after claude rm shows the partly-cleared line"
+    },
+    {
+      "id": "F31",
+      "tag": "@F31",
+      "feature": 2,
+      "where": "Session, Reopened",
+      "screen": "Session",
+      "states": [
+        "Reopened"
+      ],
+      "check": "`tasks.test.ts` › Reopen tasks removes the closed marks"
+    },
+    {
+      "id": "F32",
+      "tag": "@F32",
+      "feature": 2,
+      "where": "Home, YOUR TASKS NOT DONE",
+      "screen": "Home",
+      "states": [
+        "YOUR TASKS NOT DONE"
+      ],
+      "check": "`tasks.test.ts` › closed tasks leave Home; tasks over 7 days never list"
+    },
+    {
+      "id": "F33",
+      "tag": "@F33",
+      "feature": 2,
+      "where": "Session, Result",
+      "screen": "Session",
+      "states": [
+        "Result"
+      ],
+      "check": "`clear.test.ts` › result lines survive the 5-second re-read and not a new visit"
+    },
+    {
+      "id": "F34",
+      "tag": "@F34",
+      "feature": 2,
+      "where": "Session",
+      "screen": "Session",
+      "states": [],
+      "check": "`pane.test.ts` › no clear command exists; session text opens the page"
+    },
+    {
+      "id": "F35",
+      "tag": "@F35",
+      "feature": 3,
+      "where": "Session, Worktree",
+      "screen": "Session",
+      "states": [
+        "Worktree"
+      ],
+      "check": "`worktree.test.ts` › each of the five conditions on git fixtures"
+    },
+    {
+      "id": "F36",
+      "tag": "@F36",
+      "feature": 3,
+      "where": "Session, Worktree",
+      "screen": "Session",
+      "states": [
+        "Worktree"
+      ],
+      "check": "`worktree.test.ts` › the worktree line shows label and branch, never a path"
+    },
+    {
+      "id": "F37",
+      "tag": "@F37",
+      "feature": 3,
+      "where": "Session, Worktree stays",
+      "screen": "Session",
+      "states": [
+        "Worktree stays"
+      ],
+      "check": "`worktree.test.ts` › the first failed condition is named"
+    },
+    {
+      "id": "F38",
+      "tag": "@F38",
+      "feature": 3,
+      "where": "Session, Partial",
+      "screen": "Session",
+      "states": [
+        "Partial"
+      ],
+      "check": "`worktree.test.ts` › no gh judges by the branch only"
+    },
+    {
+      "id": "F39",
+      "tag": "@F39",
+      "feature": 3,
+      "where": "Session, Offer",
+      "screen": "Session",
+      "states": [
+        "Offer"
+      ],
+      "check": "`worktree.test.ts` › the offer draws its lines and buttons"
+    },
+    {
+      "id": "F40",
+      "tag": "@F40",
+      "feature": 3,
+      "where": "Session, Offer",
+      "screen": "Session",
+      "states": [
+        "Offer"
+      ],
+      "check": "`worktree.test.ts` › the offer's focus is on Keep worktree"
+    },
+    {
+      "id": "F41",
+      "tag": "@F41",
+      "feature": 3,
+      "where": "Session, Offer",
+      "screen": "Session",
+      "states": [
+        "Offer"
+      ],
+      "check": "`worktree.test.ts` › ignored files: cap 3, order, cut names, \"and N more\""
+    },
+    {
+      "id": "F42",
+      "tag": "@F42",
+      "feature": 3,
+      "where": "Session, Removing",
+      "screen": "Session",
+      "states": [
+        "Removing"
+      ],
+      "check": "`worktree.test.ts` › Remove worktree re-checks then runs git worktree remove without force"
+    },
+    {
+      "id": "F43",
+      "tag": "@F43",
+      "feature": 3,
+      "where": "Session, Done",
+      "screen": "Session",
+      "states": [
+        "Done"
+      ],
+      "check": "`worktree.test.ts` › branch kept, result lines, no resume button after removal"
+    },
+    {
+      "id": "F44",
+      "tag": "@F44",
+      "feature": 3,
+      "where": "Session, OfferFailed",
+      "screen": "Session",
+      "states": [
+        "OfferFailed"
+      ],
+      "check": "`worktree.test.ts` › a changed condition or ignored list removes nothing"
+    },
+    {
+      "id": "F45",
+      "tag": "@F45",
+      "feature": 3,
+      "where": "Session, OfferFailed",
+      "screen": "Session",
+      "states": [
+        "OfferFailed"
+      ],
+      "check": "`worktree.test.ts` › a git refusal shows the error line"
+    },
+    {
+      "id": "F46",
+      "tag": "@F46",
+      "feature": 3,
+      "where": "Session, Result",
+      "screen": "Session",
+      "states": [
+        "Result"
+      ],
+      "check": "`clear.test.ts` › Claude Code removing its own worktree is named and no offer follows"
+    },
+    {
+      "id": "F47",
+      "tag": "@F47",
+      "feature": 3,
+      "where": "Session, Done",
+      "screen": "Session",
+      "states": [
+        "Done"
+      ],
+      "check": "`worktree.test.ts` › Keep worktree changes nothing"
+    },
+    {
+      "id": "F48",
+      "tag": "@F48",
+      "feature": 4,
+      "where": "Home TIDY; tidy pass",
+      "screen": "Home TIDY; tidy pass",
+      "states": [],
+      "check": "`tidy.test.ts` › collection by idle time, unknown time not collected"
+    },
+    {
+      "id": "F49",
+      "tag": "@F49",
+      "feature": 4,
+      "where": "Home TIDY; tidy questions",
+      "screen": "Home TIDY; tidy questions",
+      "states": [],
+      "check": "`tidy.test.ts` › only items passing every check are counted and listed"
+    },
+    {
+      "id": "F50",
+      "tag": "@F50",
+      "feature": 4,
+      "where": "Home, Tidy line",
+      "screen": "Home",
+      "states": [
+        "Tidy line"
+      ],
+      "check": "`pane.test.ts` › the TIDY block, its count words and its place on Home"
+    },
+    {
+      "id": "F51",
+      "tag": "@F51",
+      "feature": 4,
+      "where": "Home, No tidy line",
+      "screen": "Home",
+      "states": [
+        "No tidy line"
+      ],
+      "check": "`pane.test.ts` › no TIDY block when nothing passes"
+    },
+    {
+      "id": "F52",
+      "tag": "@F52",
+      "feature": 4,
+      "where": "all",
+      "screen": "all",
+      "states": [],
+      "check": "`pane.test.ts` › the waiting lines replace the Tidy button"
+    },
+    {
+      "id": "F53",
+      "tag": "@F53",
+      "feature": 4,
+      "where": "Home to the transcript",
+      "screen": "Home to the transcript",
+      "states": [],
+      "check": "`tidy.test.ts` › the command hands the prompt to prompt.submit and answers started"
+    },
+    {
+      "id": "F54",
+      "tag": "@F54",
+      "feature": 4,
+      "where": "tidy, Nothing to tidy",
+      "screen": "tidy",
+      "states": [
+        "Nothing to tidy"
+      ],
+      "check": "`tidy.test.ts` › nothing to tidy starts no turn"
+    },
+    {
+      "id": "F55",
+      "tag": "@F55",
+      "feature": 4,
+      "where": "tidy, busy and unreadable",
+      "screen": "tidy",
+      "states": [
+        "busy and unreadable"
+      ],
+      "check": "`tidy.test.ts` › busy and unreadable start no turn"
+    },
+    {
+      "id": "F56",
+      "tag": "@F56",
+      "feature": 4,
+      "where": "tidy",
+      "screen": "tidy",
+      "states": [],
+      "check": "`tidy.test.ts` › an argument gets the 30 days answer"
+    },
+    {
+      "id": "F57",
+      "tag": "@F57",
+      "feature": 4,
+      "where": "tidy, Started",
+      "screen": "tidy",
+      "states": [
+        "Started"
+      ],
+      "check": "`tidy.test.ts` › the prompt carries the fixed list and states that a model never decides safety"
+    },
+    {
+      "id": "F58",
+      "tag": "@F58",
+      "feature": 4,
+      "where": "tidy, Asking",
+      "screen": "tidy",
+      "states": [
+        "Asking"
+      ],
+      "check": "`tidy.test.ts` › one question per batch, batches of 25, listed items"
+    },
+    {
+      "id": "F59",
+      "tag": "@F59",
+      "feature": 4,
+      "where": "tidy, Acting",
+      "screen": "tidy",
+      "states": [
+        "Acting"
+      ],
+      "check": "`tidy.test.ts` › each item re-checked before acting; a failure skips and names it"
+    },
+    {
+      "id": "F60",
+      "tag": "@F60",
+      "feature": 4,
+      "where": "tidy, Asking",
+      "screen": "tidy",
+      "states": [
+        "Asking"
+      ],
+      "check": "`tidy.test.ts` › an unmatched or ambiguous exception pauses the batch"
+    },
+    {
+      "id": "F61",
+      "tag": "@F61",
+      "feature": 4,
+      "where": "tidy, Reported",
+      "screen": "tidy",
+      "states": [
+        "Reported"
+      ],
+      "check": "`tidy.test.ts` › the report lines count only successes"
+    },
+    {
+      "id": "F62",
+      "tag": "@F62",
+      "feature": 4,
+      "where": "tidy, Reported",
+      "screen": "tidy",
+      "states": [
+        "Reported"
+      ],
+      "check": "`tidy.test.ts` › running-session worktrees are skipped, failed items are never removed"
+    },
+    {
+      "id": "F63",
+      "tag": "@F63",
+      "feature": 4,
+      "where": "command help",
+      "screen": "command help",
+      "states": [],
+      "check": "`pane.test.ts` › help and hint name tidy"
+    },
+    {
+      "id": "F64",
+      "tag": "@F64",
+      "feature": 4,
+      "where": "all",
+      "screen": "all",
+      "states": [],
+      "check": "`safety.test.ts` › no --force, -f or branch -D in any argument list the plugin builds"
+    },
+    {
+      "id": "F65",
+      "tag": "@F65",
+      "feature": 4,
+      "where": "all",
+      "screen": "all",
+      "states": [],
+      "check": "`safety.test.ts` › no claude stop; no rm or removal with a pid or a live session"
+    },
+    {
+      "id": "F66",
+      "tag": "@F66",
+      "feature": 4,
+      "where": "all",
+      "screen": "all",
+      "states": [],
+      "check": "`safety.test.ts` › every write follows an owner press or answer"
+    },
+    {
+      "id": "F67",
+      "tag": "@F67",
+      "feature": 4,
+      "where": "all",
+      "screen": "all",
+      "states": [],
+      "check": "`safety.test.ts` › no branch deletion; commands run by $.process.run without a shell"
+    },
+    {
+      "id": "F68",
+      "tag": "@F68",
+      "feature": 4,
+      "where": "all",
+      "screen": "all",
+      "states": [],
+      "check": "`safety.test.ts` › new words hold no path, internal name or URL (also `tests/test_plugin.py` grep)"
+    },
+    {
+      "id": "F69",
+      "tag": "@F69",
+      "feature": 4,
+      "where": "tidy",
+      "screen": "tidy",
+      "states": [],
+      "check": "`safety.test.ts` › no publishing site; data sources are the allowed list"
+    },
+    {
+      "id": "F70",
+      "tag": "@F70",
+      "feature": 2,
+      "where": "band; Board",
+      "screen": "band; Board",
+      "states": [],
+      "check": "`band.test.ts` › the band's cells, buttons and words are unchanged"
+    },
+    {
+      "id": "F71",
+      "tag": "@F71",
+      "feature": 1,
+      "where": "Session, Facts line 1",
+      "screen": "Session",
+      "states": [
+        "Facts line 1"
+      ],
+      "check": "`collector.test.ts` › last activity is the newest of prompt, turn end and transcript; unknown reads \"last activity unknown\""
+    },
+    {
+      "id": "F72",
+      "tag": "@F72",
+      "feature": 1,
+      "where": "Home NEEDS YOU; Session header",
+      "screen": "Home NEEDS YOU; Session header",
+      "states": [],
+      "check": "`collector.test.ts` › this session's own id is never ended; a background `done` row stays ended"
+    },
+    {
+      "id": "F73",
+      "tag": "@F73",
+      "feature": 3,
+      "where": "Session, Cleared",
+      "screen": "Session",
+      "states": [
+        "Cleared"
+      ],
+      "check": "`clear.test.ts` › focus after a Clear: offer, resume, Home crumb, never Reopen tasks"
+    },
+    {
+      "id": "N1",
+      "tag": null,
+      "feature": 4,
+      "where": "Session, all",
+      "screen": "Session",
+      "states": [
+        "all"
+      ],
+      "check": "the build agent reads the render check, counting rows as well as columns. It covers the Session page, its confirm, its offer and Home with the Tidy line, at 120, 80 and 40 columns, with a terminal screenshot.",
+      "manual": true
+    }
+  ],
+  "pages": [
+    "home",
+    "session/<sessionId>",
+    "transcript (tidy pass)"
+  ],
+  "widths": {
+    "feature": [
+      24,
+      40,
+      54,
+      80,
+      120
+    ],
+    "milestone": "responsiveTier",
+    "unit": "terminal columns"
+  },
+  "turns": {
+    "feature": 40,
+    "milestone": 30
+  }
+}
