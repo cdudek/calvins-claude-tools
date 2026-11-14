@@ -11,7 +11,7 @@
     {
       "name": "agent-tracker",
       "source": "./plugins/agent-tracker",
-      "description": "A Claude Code mod: a band above every prompt and a /tracker pane that show each session's repo, work and state, and which sessions need you. Early access: Claude Code 2.1.323."
+      "description": "A Claude Code mod: a band above every prompt and a /tracker pane that show each session's repo, work and state, and which sessions need you. It acts only on your press: `claude rm` for an ended session and `git worktree remove` for a merged worktree (never forced, branch kept), also in bulk through the skill git-cleanup-run. Early access: Claude Code 2.1.323."
     }
   ]
 }
