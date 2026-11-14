@@ -35,8 +35,9 @@ class AgentTrackerLayout(unittest.TestCase):
         self.assertEqual(bad, [])
 
     def test_the_mod_never_writes_to_a_session_or_opens_a_port(self):
-        # The mod only observes (F62, F65): no note, prompt, tool call, agent, command, request or spawned process of its own.
-        forbidden = r"\$\.(session\.(append|send)|prompt\.submit|tool\.call|command\.run|agent\.spawn|http\.|process\.spawn|mcp\.)"
+        # The mod starts nothing of its own: no note, prompt, tool call or registered tool, agent, command, request or MCP call, and nothing is armed (F76).
+        # Its two writes run through `$.process.run` after the owner's press, and the cleanup skill's script acts only on the owner's answer (F66).
+        forbidden = r"\$\.(session\.(append|send)|prompt\.submit|tool\.(call|register)|command\.run|agent\.spawn|http\.|process\.spawn|mcp\.)"
         # One exception, the owner's (2026-11-14): the band's Board button runs the mod's own `/tracker web` command.
         own = "$.command.run({ command: 'tracker', args: 'web' })"
         bad = [f"{f.name}:{n}" for f in SOURCES for n, line in enumerate(f.read_text().splitlines(), 1) if re.search(forbidden, line) and own not in line]
