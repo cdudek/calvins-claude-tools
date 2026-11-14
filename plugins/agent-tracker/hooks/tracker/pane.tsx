@@ -3,10 +3,11 @@
 import { atom, read } from 'claude-code'
 import type { EngineInterface, On } from 'claude-code'
 
-import { PANE_ID, RESUME_COPIED, homeModel, resumeFailed, sessionModel } from './core'
+import { COMMAND_HELP, PANE_ID, RESUME_COPIED, homeModel, matchRepo, matchSession, repoModel, repoNotFound, resumeFailed, sessionModel, sessionNotFound } from './core'
 import type { Page } from './core'
 import type { Actions } from './pane/chrome'
 import { homeView } from './pane/home'
+import { missingView, repoView } from './pane/repo'
 import { sessionView } from './pane/session'
 import { newPane, openPane, startUi } from './store'
 import type { State } from './store'
@@ -49,14 +50,33 @@ async function copyResume($: Engine, text: string, surface: Surface) {
   $.ui.toast(done.isCopied ? RESUME_COPIED : resumeFailed(done.reason))
 }
 
+// `/tracker session <text>` and `/tracker repo <text>`: the page of the match, else the not-found line (F59, F121, F122).
+async function openFound($: Engine, s: State, text: string) {
+  const found = matchSession((await read($, snapshot)).sessions, text)
+  await openPane($, s, found === null ? { kind: 'missing', what: 'session', text } : { kind: 'session', id: found.sessionId })
+}
+
+async function openFoundRepo($: Engine, s: State, text: string) {
+  const path = matchRepo((await read($, snapshot)).sessions, text)
+  await openPane($, s, path === null ? { kind: 'missing', what: 'repo', text } : { kind: 'repo', path })
+}
+
 async function close($: Engine) {
   await $.ui.close({ id: PANE_ID }).catch(() => undefined)
 }
 
 export const registerPane = (on: On, s: State) => {
+  // The pane's words: none (Home), `session <text>`, `repo <text>`, and a hint for any other. The band's words go on.
   on('command.run', { command: 'tracker' }, async ($, e, next) => {
-    if (e.args.trim() !== '') return next(e)
-    await openPane($, s)
+    const args = e.args.trim()
+    if (/^(details|compact|copy|band\s+(on|off))$/i.test(args)) return next(e)
+    const [word = '', ...rest] = args.split(/\s+/)
+    const text = rest.join(' ')
+    const kind = word.toLowerCase()
+    if (word === '' || ((kind === 'session' || kind === 'repo') && text === '')) await openPane($, s)
+    else if (kind === 'session') await openFound($, s, text)
+    else if (kind === 'repo') await openFoundRepo($, s, text)
+    else return { text: COMMAND_HELP }
     return { text: '' }
   })
 
@@ -78,6 +98,12 @@ export const registerPane = (on: On, s: State) => {
       resume: () => void copyResume($, session?.resume ?? '', e.surface),
     }
     if (session !== null) return sessionView(ui, session, actions, columns)
+    if (page.kind === 'session') return missingView(ui, sessionNotFound(page.id), actions)
+    if (page.kind === 'missing') return missingView(ui, page.what === 'session' ? sessionNotFound(page.text) : repoNotFound(page.text), actions)
+    if (page.kind === 'repo') {
+      const repo = repoModel(snap, page.path, now, selfId)
+      return repo === null ? missingView(ui, repoNotFound(page.path), actions) : repoView(ui, repo, actions, columns)
+    }
     // Home keeps its order while the pane has the keyboard, and sorts again when the keyboard leaves (F43).
     const model = homeModel(snap, selfId, now, local, e.props.isFocused ? s.pane.frozen : null)
     s.pane.frozen = e.props.isFocused ? model.frozen : null

@@ -2,12 +2,12 @@
 // Widths are terminal cells. Time and the local day are parameters: nothing here reads a clock.
 import type { SessionRecord, Snapshot } from '../types'
 import { duration, plural, tokens } from './format'
-import { repoPrs } from './git'
+import { prsLine, repoPrs } from './git'
 import type { RepoPrs } from './git'
 import { cells } from './band-model'
 import { isLive, repoLabel } from './rank'
 import { isComplete } from './milestone'
-import { ASK_KIND, ASK_STATUS, CHECKS_WORDS, DETACHED, NEW_MARK, REASON_WORDS, THIS_SESSION, UNTITLED, moreLine, staleTop, updatedWords, withoutTracker } from './words'
+import { ASK_KIND, ASK_STATUS, CHECKS_WORDS, DETACHED, MERGE_WORDS, NEW_MARK, NO_PRS, NO_WORKTREES, PRS_NOT_SHOWN, REASON_WORDS, REVIEW_WORDS, THIS_SESSION, UNTITLED, moreLine, staleTop, updatedWords, withoutTracker } from './words'
 
 export const WIDE = 70 // a row takes one line from here, two below
 export const NARROW = 40 // below this the second line drops tokens, then the branch
@@ -319,3 +319,69 @@ export const askLines = (a: AskView, columns: number, kinds: number): string[] =
   if (body.length > ASK_LINES_MAX) kept[ASK_LINES_MAX - 1] = cut(`${kept[ASK_LINES_MAX - 1]}…`, width)
   return [`${a.n}  ${a.kind}  ${a.status}  ${a.time}`, ...kept.map(l => `   ${l}`)]
 }
+
+// ---- the Repo page ----
+
+export type PrView = { number: number; title: string; url: string; failing: boolean; checks: string; review: string; mergeable: string; session: { id: string; title: string } | null }
+export type WorktreeView = { label: string; branch: string; rows: Row[] }
+export type RepoModel = {
+  path: string
+  label: string
+  crumbs: string
+  stored: string | null // "PRs as of 2h ago: ..." above the list while no session of the tracker runs here
+  prs: PrView[]
+  prsNote: string | null // the line that stands in for the list: No open PRs, or gh gave nothing
+  worktrees: WorktreeView[]
+  worktreesNote: string | null
+  ended: Row[]
+}
+
+const SECTION_OF = { 'needs-you': 'needs', running: 'running', done: 'done', ended: 'ended' } as const
+
+export const repoModel = (snap: Snapshot, path: string, now: number, selfId: string): RepoModel | null => {
+  const inRepo = snap.sessions.filter(r => r.repo?.path === path)
+  if (inRepo.length === 0) return null
+  const label = repoLabel(inRepo[0]!)
+  const found = repoPrs(snap.sessions, path, now)
+  const ghOk = found !== null && found.ghOk
+
+  const sessionOn = (branch: string) => {
+    const r = inRepo.filter(x => x.branch === branch).sort((a, b) => b.lastActivityAt - a.lastActivityAt)[0]
+    return r === undefined ? null : { id: r.sessionId, title: r.title ?? UNTITLED }
+  }
+  // Failing first, then the newest by creation time.
+  const prs = found === null || !ghOk
+    ? []
+    : [...found.prs]
+        .sort((a, b) => Number(b.checks === 'failing') - Number(a.checks === 'failing') || b.createdAt.localeCompare(a.createdAt) || b.number - a.number)
+        .map(p => ({ number: p.number, title: p.title, url: p.url, failing: p.checks === 'failing', checks: CHECKS_WORDS[p.checks], review: REVIEW_WORDS[p.review], mergeable: MERGE_WORDS[p.mergeable], session: sessionOn(p.branch) }))
+
+  // The scan with the latest time holds the worktrees, as it holds the PRs.
+  const scans = inRepo.flatMap(r => (r.scan ? [r.scan] : []))
+  const trees = scans.reduce<NonNullable<SessionRecord['scan']> | null>((best, s) => (best === null || s.at > best.at ? s : best), null)?.worktrees ?? []
+  const treeOf = (cwd: string) => trees.filter(w => cwd === w.path || cwd.startsWith(`${w.path}/`)).sort((a, b) => b.path.length - a.path.length)[0]
+  const worktrees = trees
+    .map(w => {
+      const mine = inRepo.filter(r => r.state !== 'ended' && treeOf(r.cwd)?.path === w.path)
+      const where = w.path === path ? 'main checkout' : w.path.startsWith(`${path}/`) ? w.path.slice(path.length + 1) : (w.path.split('/').pop() ?? w.path)
+      return { w, mine, label: where, at: Math.max(0, ...mine.map(r => r.lastActivityAt)) }
+    })
+    .sort((a, b) => Number(b.w.path === path) - Number(a.w.path === path) || b.at - a.at || a.w.path.localeCompare(b.w.path))
+    .map(({ w, mine, label: where }) => ({ label: where, branch: w.branch ?? DETACHED, rows: mine.sort((a, b) => b.lastActivityAt - a.lastActivityAt).map(r => rowOf(r, SECTION_OF[r.state], now, selfId, false)) }))
+
+  return {
+    path,
+    label,
+    crumbs: `Home › ${label}`,
+    stored: found === null ? null : prsLine(found),
+    prs,
+    prsNote: !ghOk && found !== null ? PRS_NOT_SHOWN : prs.length === 0 ? NO_PRS : null,
+    worktrees,
+    worktreesNote: worktrees.length === 0 ? NO_WORKTREES : null,
+    ended: inRepo.filter(r => r.state === 'ended').sort((a, b) => endedAt(b) - endedAt(a) || a.sessionId.localeCompare(b.sessionId)).map(r => rowOf(r, 'ended', now, selfId, false)),
+  }
+}
+
+// How the PR row cuts its title: up to 30 cells inline, else to what the first line leaves.
+export const PR_TITLE_MAX = 30
+export const prTitle = (p: PrView, columns: number) => cut(p.title, columns >= WIDE ? PR_TITLE_MAX : Math.max(1, columns - cells(`#${p.number} `) - cells(` ${p.checks}`)))

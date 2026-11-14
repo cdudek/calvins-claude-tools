@@ -56,6 +56,16 @@ describe('Home, the shell', () => {
     await band.unmount()
   })
 
+  test(`@F38 ${TAG} Home draws on every surface`, async ($, on) => {
+    withSnap(on, paneTown())
+    for (const surface of ['terminal', 'desktop', 'vscode', 'mobile'] as const) {
+      const ui = await $.ui.mount({ plugin: 'agent-tracker', surface, ...PANE(54, false) } as never)
+      expect((await ui.find({ type: 'Text', text: 'Needs you' }))?.text).toBe('Needs you')
+      expect((await ui.findAll({ type: 'Button' })).length).toBeGreaterThan(5)
+      await ui.unmount()
+    }
+  })
+
   test(`@F92 ${TAG} two-step Escape: the pane opens with closeOnEscape, so Escape hands the keys back and a second one at an idle prompt closes`, async ($, on) => {
     const { w } = withSnap(on, paneTown())
     await run($, '')
@@ -663,5 +673,270 @@ describe('the Session page', () => {
       if (t.includes('✗')) expect(t).toMatch(/✗ checks failing/)
     }
     await ui.unmount()
+  })
+})
+
+// Repo page. web-app has four PRs (two failing), a main checkout and a worktree with a live session each.
+const webTown = (): SessionRecord[] =>
+  paneTown().map(r => (r.sessionId === 'web-1' ? { ...r, cwd: '/work/web-app/.worktrees/login' } : r))
+const repoPage = async ($: Engine, on: On, sessions: SessionRecord[] = webTown(), columns = 115) => {
+  const h = withSnap(on, sessions)
+  const ui = await mount($, columns)
+  await ui.press({ key: 'repo:/work/web-app' })
+  await ui.redraw()
+  return { ...h, ui }
+}
+const prBox = async (ui: Ui, n: number) => (await ui.find({ key: `pr:${n}` }))!
+const prKeys = async (ui: Ui) => (await ui.findAll({ type: 'Box' })).map(b => String(b.props.key ?? '')).filter(k => k.startsWith('pr:'))
+
+describe('the Repo page', () => {
+  test(`@F50 ${TAG} Repo section order: Open PRs, Worktrees, Ended; opened from a repo heading`, async ($, on) => {
+    const { ui } = await repoPage($, on)
+    const all = await texts(ui)
+    const order = ['Open PRs', 'Worktrees', 'Ended'].map(s => all.indexOf(s))
+    expect(order.every(i => i >= 0)).toBe(true)
+    expect(order).toEqual([...order].sort((a, b) => a - b))
+    expect(all).toContain('web-app') // the title
+    // The Repos line on Home opens it too.
+    await ui.press({ key: 'home' })
+    await ui.redraw()
+    await ui.press({ key: 'repos:/work/web-app' })
+    await ui.redraw()
+    expect(await texts(ui)).toContain('Open PRs')
+    await ui.unmount()
+  })
+
+  test(`@F51 ${TAG} PRs: failing first, then newest by creation time; a session button only where a session ran on the branch`, async ($, on) => {
+    const { ui } = await repoPage($, on)
+    expect(await prKeys(ui)).toEqual(['pr:44', 'pr:42', 'pr:43', 'pr:41']) // 44 and 42 fail (newest first), then 43 and 41
+    const sessionButtons = (await buttons(ui, 'pr-session:')).map(b => [b.props.key, b.text])
+    // web-1 ran on feat/login (PR 42) and web-2 on feat/dark (PR 43); nothing ran on the other two.
+    expect(sessionButtons).toEqual([['pr-session:42', 'session: fix login redirect'], ['pr-session:43', 'session: dark mode']])
+    await ui.unmount()
+  })
+
+  test(`@F114 ${TAG} PR row words, the number is a link that opens the PR`, async ($, on) => {
+    const { ui } = await repoPage($, on)
+    expect((await prBox(ui, 42)).text).toBe('#42 fix login redirect · ✗ checks failing · review requested · conflicts · session: fix login redirect')
+    const link = (await ui.findAll({ type: 'Link' }))[0]!
+    expect([link.text, typeof link.props.href]).toEqual(['#44', 'string'])
+    expect((await ui.findAll({ type: 'Link' })).map(l => [l.text, l.props.href])).toContainEqual(['#42', 'https://example.test/pr/42'])
+    await ui.unmount()
+  })
+
+  test(`@F115 ${TAG} PR states: checks, review and mergeable words`, async ($, on) => {
+    const { ui } = await repoPage($, on)
+    expect((await prBox(ui, 41)).text).toBe('#41 old cleanup · ✓ checks pass · approved · ↓ mergeable')
+    expect((await prBox(ui, 43)).text).toBe('#43 dark mode · checks running · changes requested · mergeable unknown · session: dark mode')
+    expect((await prBox(ui, 44)).text).toBe('#44 newest broken · ✗ checks failing · no review · ↓ mergeable')
+    await ui.unmount()
+  })
+
+  test(`@F116 ${TAG} a PR row at 54 columns takes two lines; failing checks in the error colour, never dim`, async ($, on) => {
+    const { ui } = await repoPage($, on, webTown(), 54)
+    // A line is a Box of a Link (its label), Texts and a Button (its label).
+    type Node = { type: string; props?: { label?: string }; children?: (Node | string)[] }
+    const flat = (n: Node | string): string => (typeof n === 'string' ? n : n.type === 'Link' || n.type === 'Button' ? (n.props?.label ?? '') : (n.children ?? []).map(flat).join(''))
+    const lines = async (n: number) => (await prBox(ui, n)).children!.map(c => flat(c as Node))
+    const failing = await prBox(ui, 42)
+    expect(failing.children!.length).toBe(2)
+    expect(await lines(42)).toEqual(['#42 fix login redirect ✗ checks failing', 'review requested · conflicts · session: fix login redirect'])
+    const checks = (await ui.find({ type: 'Text', text: '✗ checks failing' }))!
+    expect(checks.props.color).toBe('error')
+    expect(checks.props.dimColor).not.toBe(true)
+    await ui.unmount()
+  })
+
+  test(`@F116 ${TAG} from 70 columns a PR row takes one line`, async ($, on) => {
+    const { ui } = await repoPage($, on, webTown(), 70)
+    expect((await prBox(ui, 41)).children!.length).toBeGreaterThan(2) // one Box of Link, title and words, not two lines
+    expect((await prBox(ui, 41)).children!.every(c => (c as { type: string }).type !== 'Box')).toBe(true)
+    await ui.unmount()
+  })
+
+  test(`@F117 ${TAG} Worktrees: the main checkout first, then by most recent session, with the live sessions as rows`, async ($, on) => {
+    const { ui } = await repoPage($, on)
+    const all = await texts(ui)
+    expect(all.indexOf('main checkout · main')).toBeGreaterThan(all.indexOf('Worktrees'))
+    expect(all.indexOf('main checkout · main')).toBeLessThan(all.indexOf('.worktrees/login · feat/login'))
+    const sessionKeys = await keys(ui, 'session:')
+    // web-2 (done) is in the main checkout; web-1 (waiting) in the login worktree.
+    expect(sessionKeys.indexOf('session:web-2')).toBeLessThan(sessionKeys.indexOf('session:web-1'))
+    expect(await rowText(ui, 'session:web-1')).toContain('6m · asks permission')
+    await ui.unmount()
+  })
+
+  test(`@F117 ${TAG} worktrees after the main checkout go by most recent session`, async ($, on) => {
+    const extra = { at: at(1), ghOk: true, prs: [], worktrees: [{ path: '/work/web-app', branch: 'main' }, { path: '/work/web-app/.worktrees/old', branch: 'feat/old' }, { path: '/work/web-app/.worktrees/login', branch: 'feat/login' }] }
+    const sessions = [sess('w1', 'running', 30, 'web-app', 'older', { cwd: '/work/web-app/.worktrees/old', scan: extra }), sess('w2', 'running', 3, 'web-app', 'newer', { cwd: '/work/web-app/.worktrees/login' }), sess(SELF, 'running', 1, 'web-app', 'me', { cwd: '/work/web-app' })]
+    const { ui } = await repoPage($, on, sessions)
+    const all = await texts(ui)
+    expect([all.indexOf('main checkout · main'), all.indexOf('.worktrees/login · feat/login'), all.indexOf('.worktrees/old · feat/old')].every(i => i >= 0)).toBe(true)
+    expect(all.indexOf('main checkout · main')).toBeLessThan(all.indexOf('.worktrees/login · feat/login'))
+    expect(all.indexOf('.worktrees/login · feat/login')).toBeLessThan(all.indexOf('.worktrees/old · feat/old'))
+    await ui.unmount()
+  })
+
+  test(`@F118 ${TAG} no worktrees to list`, async ($, on) => {
+    const noTrees = webTown().map(r => (r.scan ? { ...r, scan: { ...r.scan, worktrees: [] } } : r))
+    const { ui } = await repoPage($, on, noTrees)
+    expect(await texts(ui)).toContain('No worktrees found.')
+    await ui.unmount()
+  })
+
+  test(`@F119 ${TAG} gh works and no PR is open`, async ($, on) => {
+    const none = webTown().map(r => (r.scan ? { ...r, scan: { ...r.scan, prs: [] } } : r))
+    const { ui } = await repoPage($, on, none)
+    expect(await texts(ui)).toContain('No open PRs.')
+    expect(await prKeys(ui)).toEqual([])
+    await ui.unmount()
+  })
+
+  test(`@F54 ${TAG} Repo, no gh: the PRs not shown line`, async ($, on) => {
+    const noGh = webTown().map(r => (r.scan ? { ...r, scan: { ...r.scan, ghOk: false } } : r))
+    const { ui } = await repoPage($, on, noGh)
+    const all = await texts(ui)
+    expect(all).toContain(PRS_NOT_SHOWN)
+    expect(all.indexOf(PRS_NOT_SHOWN)).toBeGreaterThan(all.indexOf('Open PRs'))
+    expect(all).not.toContain('No open PRs.')
+    await ui.unmount()
+  })
+
+  test(`@F69 ${TAG} stored PRs say how old they are while no session of the tracker runs in the repo`, async ($, on) => {
+    const stored = webTown().map(r => (r.repo?.name === 'web-app' ? { ...r, source: 'transcript' as const, scan: r.scan ? { ...r.scan, at: at(120) } : null } : r))
+    withSnap(on, [...stored, sess('x', 'running', 1, 'api', 'elsewhere')])
+    await run($, 'repo web-app')
+    const ui = await mount($)
+    expect(await texts(ui)).toContain('PRs as of 2h ago: no live session in this repo')
+    await ui.unmount()
+  })
+
+  test(`@F69 ${TAG} no stored-state line while a session of the tracker runs there`, async ($, on) => {
+    const live = await repoPage($, on)
+    expect((await texts(live.ui)).some(t => t.startsWith('PRs as of'))).toBe(false)
+    await live.ui.unmount()
+  })
+
+  test(`@F120 ${TAG} Ended rows from the last 7 days, newest first, hidden when none`, async ($, on) => {
+    const week = [...webTown(), sess('web-5', 'ended', 2 * 24 * 60, 'web-app', 'rename skills', { branch: 'main', usage: use(10000, 2000), endedAt: at(2 * 24 * 60) })]
+    const { ui, box } = await repoPage($, on, week)
+    expect(await rowText(ui, 'session:web-5')).toBe('○ rename skills   main · ended 2d ago · 12k tokens')
+    const ended = (await keys(ui, 'session:')).filter(k => ['session:web-3', 'session:web-4', 'session:web-5'].includes(k))
+    expect(ended).toEqual(['session:web-3', 'session:web-4', 'session:web-5']) // 2h, 13h, 2d
+    box.value = snapAt(webTown().filter(r => r.state !== 'ended'))
+    await ui.redraw()
+    expect(await texts(ui)).not.toContain('Ended')
+    await ui.unmount()
+  })
+
+  test(`@F113 ${TAG} the Repo breadcrumb`, async ($, on) => {
+    const { ui } = await repoPage($, on)
+    expect(await texts(ui)).toContain('Home › web-app')
+    await ui.unmount()
+  })
+
+  test(`@F88 ${TAG} Back, Home and Close on the Repo page, and Back returns to the same row`, async ($, on) => {
+    const { ui } = await repoPage($, on)
+    const nav = await Promise.all(['back', 'home', 'close'].map(async k => (await ui.find({ key: k }))!.props))
+    expect(nav.map(p => [p.label, p.hotkey, p.plain])).toEqual([['Back', 'b', true], ['Home', 'h', true], ['Close', 'x', true]])
+    await ui.press({ key: 'session:web-1' })
+    await ui.redraw()
+    await ui.press({ key: 'repo:/work/web-app' }) // the header button of the Session page
+    await ui.redraw()
+    expect(await texts(ui)).toContain('Open PRs')
+    await ui.press({ key: 'back' })
+    await ui.redraw()
+    expect(await texts(ui)).toContain('Home › web-app › fix login redirect')
+    await ui.unmount()
+  })
+
+  test(`@F124 ${TAG} the Repo page puts a word beside every glyph`, async ($, on) => {
+    const { ui } = await repoPage($, on)
+    for (const t of await texts(ui)) {
+      if (t.includes('✗')) expect(t).toMatch(/✗ checks failing/)
+      if (t.includes('✓') && !/^[●◐✓○]/.test(t)) expect(t).toMatch(/✓ checks pass/)
+      if (t.includes('↓')) expect(t).toMatch(/↓ mergeable/)
+    }
+    await ui.unmount()
+  })
+})
+
+describe('/tracker page words', () => {
+  const opened = async ($: Engine, on: On, args: string, sessions = paneTown()) => {
+    const h = withSnap(on, sessions)
+    await run($, args)
+    const ui = await mount($, 115, true)
+    return { ...h, ui }
+  }
+
+  test(`@F122 ${TAG} /tracker session matches the title by substring, case-insensitive, else the id by prefix`, async ($, on) => {
+    const { ui, w } = await opened($, on, 'session LOGIN')
+    expect(w.opens.length).toBe(1)
+    expect(await texts(ui)).toContain('fix login redirect')
+    expect(await ui.find({ key: 'back' })).toBeDefined() // a Session page
+    await ui.unmount()
+  })
+
+  const two = [sess('abcd-1111', 'running', 30, 'web-app', 'alpha job'), sess('abcd-2222', 'running', 3, 'web-app', 'beta job'), sess(SELF, 'running', 1, 'api', 'me')]
+
+  test(`@F122 ${TAG} the id by prefix`, async ($, on) => {
+    const { ui } = await opened($, on, 'session abcd-1', two)
+    expect(await texts(ui)).toContain('alpha job')
+    await ui.unmount()
+  })
+
+  test(`@F122 ${TAG} several matches open the most recent`, async ($, on) => {
+    const { ui } = await opened($, on, 'session abcd', two)
+    expect(await texts(ui)).toContain('beta job') // 3m ago beats 30m ago
+    await ui.unmount()
+  })
+
+  test(`@F122 ${TAG} a title match wins over an id match`, async ($, on) => {
+    const { ui } = await opened($, on, 'session job', [...two, sess('job-9999', 'running', 1, 'web-app', 'gamma', { lastActivityAt: at(0) })])
+    expect(await texts(ui)).toContain('beta job')
+    await ui.unmount()
+  })
+
+  test(`@F122 ${TAG} /tracker repo uses the same rule on repo names`, async ($, on) => {
+    const { ui } = await opened($, on, 'repo WEB')
+    expect(await texts(ui)).toContain('Home › web-app')
+    await ui.unmount()
+  })
+
+  test(`@F122 ${TAG} /tracker repo, several matches open the most recent`, async ($, on) => {
+    const { ui } = await opened($, on, 'repo e', [sess('a', 'running', 30, 'web-app', 'x'), sess('b', 'running', 3, 'api-gateway', 'y'), sess(SELF, 'running', 1, 'docs', 'me')])
+    expect(await texts(ui)).toContain('Home › api-gateway')
+    await ui.unmount()
+  })
+
+  test(`@F59 ${TAG} session not found line`, async ($, on) => {
+    const { ui } = await opened($, on, 'session nothing-like-it')
+    expect(await texts(ui)).toContain('No session matches "nothing-like-it". Pick one on Home.')
+    expect((await ui.find({ key: 'home' }))?.props.hotkey).toBe('h')
+    expect((await ui.find({ key: 'close' }))?.props.hotkey).toBe('x')
+    await ui.press({ key: 'home' })
+    await ui.redraw()
+    expect(await headings(ui)).toContain('Needs you')
+    await ui.unmount()
+  })
+
+  test(`@F121 ${TAG} repo not found line`, async ($, on) => {
+    const { ui } = await opened($, on, 'repo Nope')
+    expect(await texts(ui)).toContain('No repo named "Nope" has had a session. Pick one on Home.')
+    expect(await ui.find({ key: 'home' })).toBeDefined()
+    await ui.unmount()
+  })
+
+  test(`${TAG} /tracker with no word opens Home; an unknown word shows the one-line hint; the band's words pass`, async ($, on) => {
+    const h = withSnap(on, paneTown())
+    expect((await run($, '')) as unknown).toMatchObject({ text: '' })
+    expect(h.w.opens.length).toBe(1)
+    expect((await run($, 'frobnicate')) as unknown).toMatchObject({ text: 'Try /tracker, details, compact, copy, repo, session, band on, band off.' })
+    expect(h.w.opens.length).toBe(1) // nothing opened
+    // The band's words are not the pane's: they are answered by the band, and open nothing.
+    await run($, 'details')
+    await run($, 'band off')
+    expect(h.w.opens.length).toBe(1)
+    expect(h.w.writes.length).toBeGreaterThan(0)
   })
 })

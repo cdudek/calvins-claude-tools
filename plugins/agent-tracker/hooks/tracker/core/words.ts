@@ -47,6 +47,10 @@ export const CHECKS_WORDS = { pass: '✓ checks pass', failing: '✗ checks fail
 export const REVIEW_WORDS = { approved: 'approved', changes: 'changes requested', requested: 'review requested', none: 'no review' } as const
 export const MERGE_WORDS = { mergeable: '↓ mergeable', conflicts: 'conflicts', unknown: 'mergeable unknown' } as const
 export const sessionNotFound = (text: string) => `No session matches "${text}". Pick one on Home.`
+export const NO_PRS = 'No open PRs.'
+export const NO_WORKTREES = 'No worktrees found.'
+export const repoNotFound = (text: string) => `No repo named "${text}" has had a session. Pick one on Home.`
+export const COMMAND_HELP = 'Try /tracker, details, compact, copy, repo, session, band on, band off.'
 export const REASON_WORDS = { permission: 'asks permission', question: 'asks a question', waiting: 'waiting', unknown: 'state unknown' } as const
 
 export const BUTTON_LABELS = { pane: 'Pane', details: 'Details', copy: 'Copy', compact: 'Compact' } as const

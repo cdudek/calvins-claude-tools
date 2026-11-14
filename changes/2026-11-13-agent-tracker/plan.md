@@ -244,7 +244,7 @@ and `python3 -m unittest discover -s tests`, then commits with a Conventional Co
 - [x] 10. Feature 3, details view, Copy, `/tracker` band commands. Proof: F33 to F37 and F79 to F87 pass.
 - [x] 11. Feature 4, pane shell and Home: `pane.tsx`, `pane/home.tsx`, `pane-model.ts`. Proof: F38 to F45, F53, F54, F88 to F102, F123, F124, F126 and F131 pass in `pane.test.ts`.
 - [x] 12. Feature 4, Session page. Proof: F46 to F49 and F103 to F113 pass.
-- [ ] 13. Feature 4, Repo page and `/tracker repo`, `/tracker session`. Proof: F50, F51, F59 and F114 to F122 pass.
+- [x] 13. Feature 4, Repo page and `/tracker repo`, `/tracker session`. Proof: F50, F51, F59 and F114 to F122 pass.
 - [ ] 14. Sync again, then hand the close to one `Mode: close` builder. Proof: `python3 scripts/verify_gate.py milestone 2026-11-13-agent-tracker` ends `VERIFY PASS milestone`.
 
 ## Milestones
