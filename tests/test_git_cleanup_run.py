@@ -366,6 +366,17 @@ class FiveConditions(Base):
         self.assertEqual((r.out["skipped"][0]["kind"], r.out["skipped"][0]["reason"]), ("running", "a session is running in it"))
         self.assertTrue(wt.exists())
 
+    def test_F65_with_no_pid_in_the_read_a_row_in_the_worktree_counts_as_live(self):
+        """@F65 @2026-11-14-tracker-session-cleanup with no pid in any row, a row at the worktree counts as a live session and act removes nothing."""
+        fx = self.fx
+        root, wt = self.wt()
+        fx.agents(row("old00001", cwd=wt, days=90))
+        i = fx.item(str(wt))
+        self.assertEqual((i["verdict"], i["failed"]), ("needs-look", "unused"))
+        r = fx.run("act", str(wt))
+        self.assertEqual((r.out["removed"], [s["kind"] for s in r.out["skipped"]]), ([], ["running"]))
+        self.assertTrue(wt.exists())
+
     def test_F35_the_first_failed_condition_is_named(self):
         """@F35 @2026-11-14-tracker-session-cleanup the first failed condition, in order linked, clean, pushed, merged, unused, is the one named."""
         fx = self.fx

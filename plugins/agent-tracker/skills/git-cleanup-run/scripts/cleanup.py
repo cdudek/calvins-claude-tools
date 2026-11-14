@@ -81,8 +81,7 @@ class World:
 
     def __init__(self):
         self.now = time.time()
-        self.rows = read_rows()
-        self.pid_seen = any(r.get("pid") for r in self.rows)
+        self.refresh()
         claude = Path.home() / ".claude"
         self.records, self.torn = {}, set()
         for folder in ("sessions", "transcripts"):  # the mod's own file wins over a backfilled one
@@ -114,8 +113,15 @@ class World:
                 self.last[sid] = max(known + [self.last.get(sid, 0)])
             self.cwd.setdefault(sid, (row or rec or {}).get("cwd"))
             self.title.setdefault(sid, (row or {}).get("name") or (rec or {}).get("title"))
+        self.rcwd = {sid: real(c) for sid, c in self.cwd.items() if isinstance(c, str)}
         self.repos = self.find_repos()
-        self.live = [real(r["cwd"]) for r in self.rows if r.get("pid") and isinstance(r.get("cwd"), str)]
+
+    def refresh(self):
+        """Read the session list again. Records, transcripts and repos stay as read: they only feed idle time and asks."""
+        self.rows = read_rows()
+        self.pid_seen = any(r.get("pid") for r in self.rows)
+        # With no pid in the read nothing can be told apart from a live session, so every row's folder counts as in use.
+        self.live = [real(r["cwd"]) for r in self.rows if (r.get("pid") or not self.pid_seen) and isinstance(r.get("cwd"), str)]
 
     def find_repos(self):
         """main checkout -> its worktree blocks, from the repos the tracker and the rows know. Nothing else is crawled."""
@@ -202,7 +208,8 @@ def worktree_item(w, main, block):
     branch = (block.get("branch") or "").removeprefix("refs/heads/") or None
     rc, out, _ = run(["git", "-C", path, "log", "-1", "--format=%ct%n%s", "HEAD"])
     commit, _, subject = out.partition("\n") if rc == 0 else ("", "", "")
-    used = [t for sid, t in w.last.items() if isinstance(w.cwd.get(sid), str) and under(real(w.cwd[sid]), real(path))]
+    where = real(path)
+    used = [t for sid, t in w.last.items() if sid in w.rcwd and under(w.rcwd[sid], where)]
     times = [t for t in (float(commit) if commit.strip().isdigit() else None, os.stat(path).st_mtime, *used) if t is not None]
     if not times or w.now - max(times) < DAYS * DAY:
         return None
@@ -216,7 +223,7 @@ def worktree_item(w, main, block):
     if not merged and branch:
         merged = pr_settled(main, branch) is True  # no gh: the branch alone decided above (F38)
     checks = {"linked": real(path) != real(main), "clean": clean, "pushed": unpushed == 0, "merged": merged,
-              "unused": not any(under(c, real(path)) for c in w.live)}
+              "unused": not any(under(c, where) for c in w.live)}
     verdict, failed = first_failed(checks)
     reason = WHY[failed] if failed else None
     if failed == "pushed" and unpushed:
@@ -225,13 +232,12 @@ def worktree_item(w, main, block):
     return {"type": "worktree", "id": path, "main": main, "label": f"{repo} · {folder} · idle {days}d", "short": f"{repo}/{folder}",
             "repo": repo, "branch": branch, "idle_days": days, "last_commit": subject.strip(), "checks": checks,
             "ignored": ignored_names([line[3:].strip('"') for line in lines if line.startswith("!! ")]),
-            "sessions": sorted({w.title[s] for s in w.last if w.title.get(s) and isinstance(w.cwd.get(s), str) and under(real(w.cwd[s]), real(path))}),
+            "sessions": sorted({w.title[s] for s in w.last if w.title.get(s) and s in w.rcwd and under(w.rcwd[s], where)}),
             "verdict": verdict, "failed": failed, "reason": reason}
 
 
-def build(only=None):
+def build(w, only=None):
     """Every candidate with its checks. `only`: ids to look at; anything else is skipped before its git calls."""
-    w = World()
     items = []
     for row in w.rows:
         if only is None or row.get("id") in only or row.get("sessionId") in only:
@@ -244,19 +250,19 @@ def build(only=None):
                 item = worktree_item(w, main, block)
                 if item:
                     items.append(item)
-    return w, items
+    return items
 
 
 def cmd_list():
-    w, items = build()
-    print(json.dumps({"days": DAYS, "no_pid_reported": not w.pid_seen, "items": items}, indent=1))
+    w = World()
+    print(json.dumps({"days": DAYS, "no_pid_reported": not w.pid_seen, "items": build(w)}, indent=1))
 
 
 def cmd_act(ids):
     out = {"cleared": [], "removed": [], "skipped": [], "failed": []}
     unique = list(dict.fromkeys(ids))
-    _, fresh = build(set(unique))
-    known = {i["id"]: i for i in fresh}
+    w = World()  # the fresh list; each id below gets its own fresh read of the session list
+    known = {i["id"]: i for i in build(w, set(unique))}
 
     def skip(ident, item, why=None):
         kind = "unknown" if item is None else "running" if item["failed"] == "unused" else "needs-look"
@@ -268,13 +274,14 @@ def cmd_act(ids):
         if item is None or item["verdict"] != "removable":
             skip(ident, item)
             continue
-        _, again = build({ident})  # the re-check, with a fresh read of the session list
+        w.refresh()
+        again = build(w, {ident})  # the re-check right before the action
         item = next((i for i in again if i["id"] == ident), None)
         if item is None or item["verdict"] != "removable":
             skip(ident, item, None if item else "it changed since the list")
             continue
         if item["type"] == "session":
-            rc, o, e = run(["claude", "rm", ident], timeout=60)
+            rc, o, e = run(["claude", "rm", ident], timeout=15)
             done, bucket = rc == 0, "cleared"
         else:
             rc, o, e = run(["git", "worktree", "remove", ident], cwd=item["main"])

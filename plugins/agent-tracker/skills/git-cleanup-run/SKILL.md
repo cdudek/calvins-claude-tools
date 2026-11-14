@@ -46,7 +46,7 @@ The owner may type items to keep under Other. Match each typed item to exactly o
 
 ## 4. Act
 
-After a batch is answered, and only for "Clear all" or "Remove all", run `python3 ${CLAUDE_SKILL_DIR}/scripts/cleanup.py act <id> <id> ...` with the `id` of each item left in that batch, copied from the list and from nowhere else. The script checks each id again right before it acts and prints JSON: `cleared`, `removed`, `skipped` and `failed`. "Skip these N" runs nothing.
+After a batch is answered, and only for "Clear all" or "Remove all", run `python3 ${CLAUDE_SKILL_DIR}/scripts/cleanup.py act '<id>' '<id>' ...` with the `id` of each item left in that batch in single quotes, copied from the list and from nowhere else. The script checks each id again right before it acts and prints JSON: `cleared`, `removed`, `skipped` and `failed`. "Skip these N" runs nothing.
 
 ## 5. Report
 
