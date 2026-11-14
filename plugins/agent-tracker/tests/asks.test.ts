@@ -95,7 +95,7 @@ describe('asks and the question check', () => {
     expect(other).toMatchObject({ state: 'done', source: 'engine', questionFlag: null })
   })
 
-  test(`${TAG} the question check is not run for a subagent's turn or an aborted turn`, async ($, on) => {
+  test(`@F61 ${TAG} the question check is not run for a subagent's turn or an aborted turn`, async ($, on) => {
     const w = world(on, { now: NOW })
     model(w)
     await start($, w)

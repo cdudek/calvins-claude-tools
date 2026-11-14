@@ -12,7 +12,7 @@ const NOW = 1_700_003_600_000
 const esc = (s: string) => s.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')
 
 // Reads only: git to read a repo, gh to read PRs, `claude agents --json`, grep to search a transcript.
-const GIT_READS = ['rev-parse', 'worktree', 'status', 'log', 'diff', 'show', 'ls-files', 'remote']
+const GIT_READS = ['rev-parse', 'worktree', 'status', 'log', 'diff', 'show', 'ls-files']
 export const isRead = (argv: readonly string[]) => {
   const [cmd, sub, ...rest] = argv
   if (cmd === 'claude') return sub === 'agents' && rest.join(' ') === '--json'
@@ -89,6 +89,7 @@ describe('safety', () => {
     expect(w.procs.some(p => p.argv[0] === 'bd')).toBe(false)
     expect(isRead(['git', 'push'])).toBe(false)
     expect(isRead(['git', 'worktree', 'remove', 'x'])).toBe(false)
+    expect(isRead(['git', 'remote', 'add', 'x', 'y'])).toBe(false)
     expect(isRead(['gh', 'pr', 'merge'])).toBe(false)
     expect(isRead(['bd', 'close', 'x'])).toBe(false)
   })
