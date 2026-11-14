@@ -69,9 +69,12 @@ const tick = async ($: Engine, s: State) => {
     if (own === null) return
     const files = (await readFolder($, s, `${base}/sessions`)).filter(f => f.sessionId !== own.sessionId)
     const transcripts = await readFolder($, s, `${base}/transcripts`)
-    const sessions = mergeSessions({ files: [...files, own], transcripts, agents, now, selfId: own.sessionId })
+    const sessions = mergeSessions({ files: [...files, own], transcripts, agents, now, selfId: own.sessionId, seen: s.seen })
     s.failedReads = agents !== null ? 0 : s.failedReads + 1
-    if (agents !== null) s.okAt = now
+    if (agents !== null) {
+      s.okAt = now
+      s.seen = new Set(agents.map(a => a.sessionId))
+    }
     await update($, snapshot, () => ({ at: now, agentsOk: agents !== null, okAt: s.okAt, failedReads: s.failedReads, sessions }))
   } finally {
     s.isTicking = false

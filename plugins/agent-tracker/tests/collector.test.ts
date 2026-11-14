@@ -234,6 +234,12 @@ describe('collector and states', () => {
     expect(home.needs.map(r => r.parts.some(p => p.kind === 'time'))).toEqual([false])
   })
 
+  test(`@F6 ${TAG} a failed list read restores only the sessions the last good read showed (R11)`, () => {
+    const files = [record('seen', { state: 'running' }), record('crashed', { state: 'running' }), record('finished', { state: 'done' })]
+    const merged = mergeSessions({ files, transcripts: [], agents: null, now: NOW, selfId: 'me', seen: new Set(['seen']) })
+    expect(merged.map(r => [r.sessionId, r.state])).toEqual([['seen', 'running'], ['crashed', 'ended'], ['finished', 'done']])
+  })
+
   test(`@F71 ${TAG} done and merged count as complete`, () => {
     const features = parseMilestone(MILESTONE_MD)!.features
     expect(['done abc1234', 'done', 'merged', 'building', 'todo', 'blocked: x'].map(isComplete)).toEqual([true, true, true, false, false, false])

@@ -31,6 +31,7 @@ export type State = {
   scannedAt: number
   isBackfilling: boolean // a backfill pass or a repo scan is running: the next timer fire skips
   isScanning: boolean
+  seen: Set<string> // the sessions the last good list read showed (R11)
   okAt: number // time of the last good list read, and the failed reads since (F52)
   failedReads: number
   settings: Settings // the last good read of settings.json
@@ -52,6 +53,7 @@ export const newState = (): State => ({
   scannedAt: 0,
   isBackfilling: false,
   isScanning: false,
+  seen: new Set(),
   okAt: 0,
   failedReads: 0,
   settings: { v: 1, view: 'compact', bandHidden: false },

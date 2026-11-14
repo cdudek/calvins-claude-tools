@@ -9,11 +9,12 @@ type In = {
   agents: AgentRow[] | null // null: the list read failed or is old
   now: number
   selfId: string
+  seen?: ReadonlySet<string> // the sessions the last good list read showed; a failed read restores only these
 }
 
 // Every record merged into one list (F68). A sessions/ file wins over a transcripts/ file; a session the list
 // shows and no file has appears from the list alone (source 'engine'); only the last 7 days show.
-export const mergeSessions = ({ files, transcripts, agents, now, selfId }: In): SessionRecord[] => {
+export const mergeSessions = ({ files, transcripts, agents, now, selfId, seen }: In): SessionRecord[] => {
   const byId = new Map<string, SessionRecord>()
   for (const r of [...transcripts, ...files]) byId.set(r.sessionId, r)
   for (const a of agents ?? []) {
@@ -23,7 +24,7 @@ export const mergeSessions = ({ files, transcripts, agents, now, selfId }: In): 
   const live = new Map((agents ?? []).map(a => [a.sessionId, a]))
   const merged = [...byId.values()].map(r => {
     const agent = live.get(r.sessionId)
-    const d = resolveState(r, agent, agents !== null, r.sessionId === selfId)
+    const d = resolveState(r, agent, agents !== null, r.sessionId === selfId, seen)
     return {
       ...r,
       title: agent?.name || r.title,

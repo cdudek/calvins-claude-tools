@@ -56,12 +56,14 @@ export const deriveState = (e: Engine, flagged: boolean, permission: string | nu
   return unknown(e.status)
 }
 
-// The session's state from its record and the list. Absent from a good list is ended (F6); a failed read, or the
-// session this mod runs in (it is live by definition), keeps the last state.
-export const resolveState = (r: SessionRecord, agent: AgentRow | undefined, agentsOk: boolean, isSelf: boolean): Derived => {
+// The session's state from its record and the list. Absent from a good list is ended (F6). A failed read keeps the
+// last state of the session this mod runs in (it is live by definition), of a session the last good read showed
+// (`seen`) and of a done one (it claims nothing live); a running or waiting state in a file, from a session no good
+// read showed, is a crash's leftover and is ended (R11). `seen` undefined: no limit.
+export const resolveState = (r: SessionRecord, agent: AgentRow | undefined, agentsOk: boolean, isSelf: boolean, seen?: ReadonlySet<string>): Derived => {
   if (r.endedAt !== null) return { state: 'ended', ...none }
   if (agent) return deriveState(agent, r.questionFlag !== null)
-  if (agentsOk && !isSelf) return { state: 'ended', ...none }
+  if (!isSelf && (agentsOk || (r.state !== 'done' && seen?.has(r.sessionId) === false))) return { state: 'ended', ...none }
   return { state: r.state, reason: r.reason, unknownValue: r.unknownValue }
 }
 
