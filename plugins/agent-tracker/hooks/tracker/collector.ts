@@ -6,7 +6,7 @@ import { startBackfill } from './backfill'
 import { POLL_MS, agentsFresh, clean, deriveState, leaseState, mergeSessions, noteTool, parseAgents } from './core'
 import { startScan } from './scan'
 import type { AgentRow, Lease, SessionRecord, Snapshot } from './types'
-import { dir, initOwn, readAgentsFile, readFolder, readLease, saveOwn, where, writeJson } from './store'
+import { dir, initOwn, readAgentsFile, readEntrypoints, readFolder, readLateChecks, readLease, saveOwn, where, writeJson } from './store'
 import type { State } from './store'
 
 type Engine = EngineInterface
@@ -69,7 +69,7 @@ async function tick($: Engine, s: State) {
     if (own === null) return
     const files = (await readFolder($, s, `${base}/sessions`)).filter(f => f.sessionId !== own.sessionId)
     const transcripts = await readFolder($, s, `${base}/transcripts`)
-    const sessions = mergeSessions({ files: [...files, own], transcripts, agents, now, selfId: own.sessionId, seen: s.seen })
+    const sessions = mergeSessions({ files: [...files, own], transcripts, agents, now, selfId: own.sessionId, seen: s.seen, entrypoints: (await readEntrypoints($, base)).by, late: (await readLateChecks($, base)).by })
     s.failedReads = agents !== null ? 0 : s.failedReads + 1
     if (agents !== null) {
       s.okAt = now

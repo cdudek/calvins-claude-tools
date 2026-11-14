@@ -32,3 +32,6 @@ const longest = (a: Line, b: Line) => nullsLast(a, b) || (b.ms ?? 0) - (a.ms ?? 
 export const needsLines = (sessions: SessionRecord[], selfId: string, now: number) => lines(sessions, 'needs-you', selfId, now).sort(longest)
 export const runningLines = (sessions: SessionRecord[], selfId: string, now: number) => lines(sessions, 'running', selfId, now).sort(longest)
 export const doneLines = (sessions: SessionRecord[], selfId: string, now: number) => lines(sessions, 'done', selfId, now).sort((a, b) => nullsLast(a, b) || (a.ms ?? 0) - (b.ms ?? 0) || b.id.localeCompare(a.id))
+
+// Needs you, the one definition: a person's live session that waits. The band, the pane, the Board and the task list all count with it.
+export const isNeedsYou = (r: SessionRecord) => isLive(r) && r.state === 'needs-you'

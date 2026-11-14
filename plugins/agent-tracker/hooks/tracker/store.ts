@@ -5,7 +5,7 @@ import type { EngineInterface } from 'claude-code'
 
 import { COMMAND_DESCRIPTION, COMMAND_HINT, PANE_ID, PANE_TITLE, REDRAW_MS, SEEN_MAX, askStatuses, emptyRecord, gitArgv, parseMilestone, repoFromCommonDir } from './core'
 import type { Change, Frozen, Page } from './core'
-import type { AgentsFile, Lease, SessionRecord, Settings } from './types'
+import type { AgentsFile, Entrypoints, LateChecks, Lease, SessionRecord, Settings } from './types'
 
 type Engine = EngineInterface
 
@@ -132,6 +132,17 @@ export async function openPane($: Engine, s: State, page: Page = { kind: 'home' 
 export async function readLease($: Engine, base: string): Promise<Lease | null> {
   const l = (await readJson($, `${base}/poller.json`)) as Partial<Lease> | undefined
   return l?.v === 1 && typeof l.sessionId === 'string' && typeof l.heartbeat === 'number' ? (l as Lease) : null
+}
+
+// The two sidecar files; a missing or torn one is empty, and the next pass writes what it lacks.
+export async function readEntrypoints($: Engine, base: string): Promise<Entrypoints> {
+  const f = (await readJson($, `${base}/entrypoints.json`)) as Partial<Entrypoints> | undefined
+  return f?.v === 1 && typeof f.by === 'object' && f.by !== null ? (f as Entrypoints) : { v: 1, by: {} }
+}
+
+export async function readLateChecks($: Engine, base: string): Promise<LateChecks> {
+  const f = (await readJson($, `${base}/latechecks.json`)) as Partial<LateChecks> | undefined
+  return f?.v === 1 && typeof f.by === 'object' && f.by !== null ? (f as LateChecks) : { v: 1, by: {} }
 }
 
 export async function readAgentsFile($: Engine, base: string): Promise<AgentsFile | null> {

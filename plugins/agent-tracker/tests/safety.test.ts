@@ -1,7 +1,7 @@
 import { describe, expect, mock, test } from 'claude-code/testing'
 import type { Engine } from 'claude-code/testing'
 
-import { MODEL, bandData, isLive, taskLists } from '../hooks/tracker/core'
+import { MODEL, bandData, taskLists } from '../hooks/tracker/core'
 import * as agentsFixture from './fixtures/agents'
 import * as bandFixture from './fixtures/band'
 import * as milestoneFixture from './fixtures/milestone'
@@ -93,9 +93,8 @@ describe('headless sessions', () => {
     expect(record(w).asks.every(a => a.kind === 'not-classified' && a.verdict === undefined)).toBe(true)
     expect(record(w).notes).toBeUndefined()
     const snap = w.snapshot()
-    const mine = snap.sessions.find(r => r.sessionId === w.id)!
-    expect(isLive(mine)).toBe(false) // not running, not needs-you, in no band count
-    expect(taskLists({ ...snap, sessions: [{ ...mine, state: 'ended', endedAt: NOW }] }, NOW + 3 * 3600_000).tasks).toEqual([])
+    expect(snap.sessions.find(r => r.sessionId === w.id)).toBeUndefined() // not in the snapshot: not running, not needs-you, in no count
+    expect(taskLists(snap, NOW + 3 * 3600_000)).toEqual({ tasks: [], unchecked: [] })
     expect(bandData(snap, 'other', NOW).live).toBe(0)
   })
 
@@ -169,7 +168,7 @@ describe('safety', () => {
   })
 
   test(`@F130 ${TAG} every write path is the session's own file, a lease file while held, a transcripts file or settings.json`, async ($, on) => {
-    const allowed = new RegExp(`^${esc(DIR)}/(sessions/${esc('self-0000')}\\.json|settings\\.json|poller\\.json|agents\\.json|transcripts/[^/]+\\.json)$`)
+    const allowed = new RegExp(`^${esc(DIR)}/(sessions/${esc('self-0000')}\\.json|settings\\.json|poller\\.json|agents\\.json|entrypoints\\.json|latechecks\\.json|transcripts/[^/]+\\.json)$`)
     const holder = world(on, { now: NOW })
     await runSession($, holder, true)
     expect(holder.writes.filter(p => !allowed.test(p))).toEqual([])

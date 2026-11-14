@@ -15,6 +15,7 @@ export type Ask = {
   // The haiku read at turn.complete of a task ask: done, partly done, not started, or replaced by the later ask `replacedBy`. Absent: not judged.
   verdict?: 'done' | 'partly' | 'not-started' | 'replaced'
   replacedBy?: number
+  source?: 'late' // the verdict came from the one late check, not from a turn's notes call
 }
 
 // A line the agent's last message gave (haiku reads it at turn.complete): kind `know` is a side effect, a risk, an odd finding
@@ -54,6 +55,7 @@ export type SessionRecord = {
   unknownValue: string | null
   questionFlag: { at: number } | null
   usage: { tokensIn: number; tokensOut: number; toolErrors: number; retries: number }
+  entrypoint?: string // how the session was started, from its transcript; sdk-* is an automated run
   headless?: boolean // a `claude -p` or SDK run: no model call, never on a list or in a count
   asks: Ask[]
   notes?: Note[] // at most 50, newest kept; absent in a record written before the field
@@ -79,6 +81,11 @@ export type AgentRow = {
   waitingFor?: string | null
 }
 
+// Beside the session files, for what one session reads of another's: the entrypoint of each transcript of the week (`cli`,
+// `claude-desktop`, `sdk-ts`, ...; empty: not found), and the one late check of each session with unchecked tasks.
+export type Entrypoints = { v: 1; by: Record<string, string> }
+export type LateVerdict = { n: number; verdict: NonNullable<Ask['verdict']>; by?: number }
+export type LateChecks = { v: 1; by: Record<string, { at: number; verdicts: LateVerdict[] }> }
 export type Lease = { v: 1; sessionId: string; heartbeat: number }
 export type AgentsFile = { v: 1; readAt: number; agents: AgentRow[] }
 // seen: the notes the owner marked, `<session>:<note id>` or a file note's key, newest last. kept, closed: the owner's marks on a task

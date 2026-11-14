@@ -28,7 +28,11 @@ const VERDICT_WORDS = ['done', 'partly', 'not-started', 'replaced'] as const
 
 // The tasks the person gave in this session and nobody has judged done: the same call says how each stands.
 const verdictPrompt = (asks: Pick<Ask, 'n' | 'text'>[]) =>
-  `\nThe person gave these tasks in this session. None is judged done yet:\n${asks.map(a => `${a.n}: ${a.text.replace(/\s+/g, ' ').slice(0, ASK_LINE_MAX)}`).join('\n')}\nAdd "verdicts": one {"n":<task number>,"verdict":"..."} for each task you can judge from the message: "done" (finished), "partly" (some of it done), "not-started", or "replaced" (a later task in the list asks for something else instead; then add "by":<that later task's number>). Leave a task out when the message does not say.\n`
+  `\nThe person gave these tasks in this session. None is judged done yet:\n${asks.map(a => `${a.n}: ${a.text.replace(/\s+/g, ' ').slice(0, ASK_LINE_MAX)}`).join('\n')}\nAdd "verdicts": one {"n":<task number>,"verdict":"..."} for each task you can judge from what the agent wrote: "done" (finished), "partly" (some of it done), "not-started", or "replaced" (a later task in the list asks for something else instead; then add "by":<that later task's number>). Leave a task out when it does not say.\n`
+
+export const LATE_PROMPT = `Read what an AI coding agent wrote during a coding session, and the tasks the person gave in it. Reply with JSON only, no other words, in the form {"verdicts":[{"n":1,"verdict":"done"}]}.`
+// The one late check of a session: its unchecked tasks, and what the agent wrote after the first of them.
+export const latePrompt = (asks: Pick<Ask, 'n' | 'text'>[], written: string) => `${LATE_PROMPT}${verdictPrompt(asks)}\nWhat the agent wrote:\n${written}`
 
 export const notesPrompt = (message: string, asks: Pick<Ask, 'n' | 'text'>[] = []) => `${NOTES_PROMPT}${asks.length > 0 ? verdictPrompt(asks) : ''}\nMessage:\n${message}`
 
