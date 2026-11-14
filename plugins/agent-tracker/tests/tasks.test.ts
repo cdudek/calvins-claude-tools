@@ -1,6 +1,6 @@
 import { describe, expect, test } from 'claude-code/testing'
 
-import { IDLE_MS, applyVerdicts, firstWords, mergedKey, noMarks, noteItems, notesPrompt, parseChange, parseNotes, taskCounts, taskItems, taskKey, taskStatus } from '../hooks/tracker/core'
+import { IDLE_MS, taskLists, applyVerdicts, firstWords, mergedKey, noMarks, noteItems, notesPrompt, parseChange, parseNotes, taskCounts, taskItems, taskKey, taskStatus } from '../hooks/tracker/core'
 import type { TaskMarks } from '../hooks/tracker/core'
 import type { Ask } from '../hooks/tracker/types'
 import { MILESTONE } from './fixtures/band'
@@ -33,26 +33,31 @@ describe('the status of a task ask', () => {
   })
 
   test(`${TAG} forgotten: the session ended, or was quiet for more than 30 minutes; the reason says which, and "no milestone, no PR"`, () => {
-    const ended = one([ask(1, 'x', 180)], { state: 'ended', endedAt: at(120), milestone: MILESTONE })
+    const ended = one([ask(1, 'x', 180, { verdict: 'partly' })], { state: 'ended', endedAt: at(120), milestone: MILESTONE })
     expect(statusOf(ended)).toMatchObject({ status: 'forgotten', detail: 'session ended 2h ago, not done' })
     expect(statusOf({ ...ended, endedAt: null, lastActivityAt: at(150) })?.detail).toBe('session ended 2h 30m ago, not done') // no end time: the last activity
     expect(statusOf({ ...ended, milestone: null })?.detail).toBe('session ended 2h ago, not done, no milestone, no PR')
     expect(statusOf({ ...ended, milestone: null }, noMarks, true)?.detail).toBe('session ended 2h ago, not done') // a PR is on the branch
-    const idle = one([ask(1, 'x', 60)], { lastActivityAt: at(45), milestone: null })
+    const idle = one([ask(1, 'x', 60, { verdict: 'not-started' })], { lastActivityAt: at(45), milestone: null })
     expect(statusOf(idle)).toMatchObject({ status: 'forgotten', detail: 'idle 45m, not done, no milestone, no PR' })
     // The edge: 30 minutes exactly is not more than 30 minutes.
-    expect(statusOf(one([ask(1, 'x', 60)], { lastActivityAt: NOON - IDLE_MS }))?.status).toBe('in-progress')
-    expect(statusOf(one([ask(1, 'x', 60)], { lastActivityAt: NOON - IDLE_MS - 1 }))).toMatchObject({ status: 'forgotten', detail: 'idle 30m, not done, no milestone, no PR' })
+    expect(statusOf(one([ask(1, 'x', 60, { verdict: 'partly' })], { lastActivityAt: NOON - IDLE_MS }))?.status).toBe('in-progress')
+    expect(statusOf(one([ask(1, 'x', 60, { verdict: 'partly' })], { lastActivityAt: NOON - IDLE_MS - 1 }))).toMatchObject({ status: 'forgotten', detail: 'idle 30m, not done, no milestone, no PR' })
+    // No verdict is not "not done": an ended or idle session with none is unchecked; a live one is in progress.
+    expect(statusOf({ ...ended, asks: [ask(1, 'x', 180)] })?.status).toBe('unchecked')
+    expect(statusOf(one([ask(1, 'x', 60)], { lastActivityAt: at(45) }))?.status).toBe('unchecked')
+    expect(statusOf(one([ask(1, 'x', 60)], { lastActivityAt: at(5) }))?.status).toBe('in-progress')
     // A session at work is not idle, however old its last prompt.
     expect(statusOf(one([ask(1, 'x', 600)], { state: 'running', lastActivityAt: at(240) }))?.status).toBe('in-progress')
   })
 
-  test(`${TAG} superseded: replaced and not kept; kept goes on as in progress; an ended session is forgotten first`, () => {
+  test(`${TAG} superseded: replaced and not kept; kept goes on as in progress; an ended session keeps it superseded; kept on an ended one is forgotten`, () => {
     const asks = [ask(1, 'Add retry on 401 responses in the API client.', 30, { verdict: 'replaced', replacedBy: 2 }), ask(2, 'Fix the login redirect so users land back where they came from.', 20)]
     const r = one(asks)
     expect(taskStatus(r, asks[0]!, NOON, noMarks, false)).toMatchObject({ status: 'superseded', later: { at: at(20), text: 'Fix the login redirect so…' } })
     expect(taskStatus(r, asks[0]!, NOON, marks({ kept: new Set([taskKey('t-1', 1)]) }), false)?.status).toBe('in-progress')
-    expect(taskStatus({ ...r, state: 'ended', endedAt: at(10) }, asks[0]!, NOON, noMarks, false)?.status).toBe('forgotten')
+    expect(taskStatus({ ...r, state: 'ended', endedAt: at(10) }, asks[0]!, NOON, noMarks, false)?.status).toBe('superseded') // replaced, so not forgotten
+    expect(taskStatus({ ...r, state: 'ended', endedAt: at(10) }, asks[0]!, NOON, marks({ kept: new Set([taskKey('t-1', 1)]) }), false)?.status).toBe('forgotten') // the owner kept it, and the session is over
     expect(taskStatus(r, { ...asks[0]!, replacedBy: 9 }, NOON, noMarks, false)).toMatchObject({ status: 'superseded', later: null }) // the later ask is gone
     expect(firstWords('  one two   three ')).toBe('one two three')
   })
@@ -76,6 +81,11 @@ describe('the list', () => {
       ['in-progress', 'prog-2:1'], // 100
     ])
     expect(items[0]).toMatchObject({ repo: 'web-app', text: 'Fix the login redirect so users land back on the page they came from.', at: at(20) })
+    // Unchecked, not listed: the ended session with no verdict. The headless run is nowhere.
+    const { unchecked } = taskLists(snapAt(taskTown()), NOON)
+    expect(unchecked.map(u => u.key)).toEqual(['chk-1:1'])
+    expect(unchecked[0]).toMatchObject({ repo: 'api', text: 'Rename the config keys.' })
+    expect(items.some(i => i.sessionId === 'head-1')).toBe(false)
     // Not on it: the question, the ask nobody classified, the task judged done.
     expect(items.some(i => i.sessionId === 'else-1')).toBe(false)
     expect(taskCounts(items)).toEqual({ notDone: 7, needsYou: 1, alarm: true })
@@ -90,7 +100,7 @@ describe('the list', () => {
     expect(closed.map(i => i.key)).not.toContain('sup-1:1')
     expect(closed.map(i => i.key)).not.toContain('prog-1:1')
     // A PR on the branch (the repo's scan) is why a forgotten task does not say "no PR".
-    const lost = sess('l-1', 'ended', 120, 'web-app', 'x', { ...web, branch: 'feat/pr', endedAt: at(120), asks: [ask(1, 'task', 200)], scan: { at: at(1), ghOk: true, worktrees: [], prs: [{ number: 5, title: 't', url: '', branch: 'feat/pr', createdAt: '', checks: 'pass', review: 'none', mergeable: 'mergeable' }] } })
+    const lost = sess('l-1', 'ended', 120, 'web-app', 'x', { ...web, branch: 'feat/pr', endedAt: at(120), asks: [ask(1, 'task', 200, { verdict: 'partly' })], scan: { at: at(1), ghOk: true, worktrees: [], prs: [{ number: 5, title: 't', url: '', branch: 'feat/pr', createdAt: '', checks: 'pass', review: 'none', mergeable: 'mergeable' }] } })
     expect(taskItems(snapAt([lost]), NOON)[0]!.detail).toBe('session ended 2h ago, not done')
   })
 })

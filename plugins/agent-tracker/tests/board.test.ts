@@ -156,12 +156,14 @@ describe('the web page: your tasks not done', () => {
   const data = (sessions: SessionRecord[], marks?: Parameters<typeof boardData>[3], extra: Partial<Snapshot> = {}) => boardData(snapAt(sessions, extra), [], NOON, marks)
   // The page's own script, the part of the HTML that runs in the browser.
   const scriptOf = (html: string) => [...html.matchAll(/<script>([\s\S]*?)<\/script>/g)].at(-1)![1]!
-  const SIX = ['Running', 'You should know', 'Decided without you', 'Pull requests', 'Done today', 'Ended today']
+  const SIX = ['Running', 'You should know', 'Decided without you', 'Pull requests', 'Done today', 'Ended today', 'Not checked']
 
   test(`web page ${TAG} the data holds the tasks not done, in order, with the words each row shows`, () => {
     const d = data(taskTown())
     expect(d.tasks.map(t => [t.key, t.status])).toEqual([['need-1:1', 'needs-you'], ['lost-2:1', 'forgotten'], ['lost-1:1', 'forgotten'], ['sup-1:1', 'superseded'], ['sup-1:2', 'in-progress'], ['prog-1:1', 'in-progress'], ['prog-2:1', 'in-progress']])
     expect(d.counts).toEqual({ notDone: 7, needsYou: 1, alarm: true })
+    expect(d.unchecked.map(u => [u.key, u.text])).toEqual([['chk-1:1', 'Rename the config keys.']]) // "Not checked": ended, no verdict
+    expect(d.sessions.some(s => s.id === 'head-1')).toBe(false) // a headless run is not on the page
     expect(needsCount(d)).toBe(1) // "1 needs you now": the sessions that wait
     expect(d.tasks[0]).toMatchObject({ text: 'Fix the login redirect so users land back on the page they came from.', repo: 'web-app', at: NOON - 20 * 60_000, detail: 'waiting for your answer for 4m' }) // the whole ask
     expect(d.tasks[1]!.detail).toBe('idle 45m, not done, no milestone, no PR')
@@ -170,7 +172,7 @@ describe('the web page: your tasks not done', () => {
     expect(d.sessions.find(s => s.id === 'need-1')).toBeDefined() // each row's session has its page
   })
 
-  test(`web page ${TAG} the page draws the top bar, the one list and six collapsed sections; Keep and Close are shown, not wired`, () => {
+  test(`web page ${TAG} the page draws the top bar, the one list and seven collapsed sections; Keep and Close are shown, not wired`, () => {
     const html = boardHtml(data(taskTown()))
     const script = scriptOf(html)
     for (const words of ['Agent tracker', "' of your tasks '", "' not done · '", ' you now', 'Your tasks not done yet', 'Everything else', 'Open session', 'Updated ', 'Every task you gave is done']) expect(script).toContain(words)
@@ -188,7 +190,7 @@ describe('the web page: your tasks not done', () => {
 
   test(`web page ${TAG} the page stays read-only, with no fetch and no server, and text stays text`, () => {
     const evil = '</script><img src=x onerror=alert(1)> "q" & \u001b[31m'
-    const html = boardHtml(data([sess('x-1', 'ended', 90, 'web-app', 'evil', { repo: { path: '/work/web-app', name: 'web-app' }, endedAt: NOON - 90 * 60_000, asks: [ask(1, evil, 120)] })]))
+    const html = boardHtml(data([sess('x-1', 'ended', 90, 'web-app', 'evil', { repo: { path: '/work/web-app', name: 'web-app' }, endedAt: NOON - 90 * 60_000, asks: [ask(1, evil, 120, { verdict: 'partly' })] })]))
     expect(html).not.toContain('<img src=x')
     expect(html.split('</script>').length - 1).toBe(2) // the data block and the page script, and no more
     expect(dataOf(html).tasks[0].text).toBe('</script><img src=x onerror=alert(1)> "q" & [31m') // the escape character is gone, the rest is whole

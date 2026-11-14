@@ -67,6 +67,7 @@ summary .c{margin-left:auto;color:var(--mut);font-size:14px}
 .k-pr .n{color:var(--fg)}
 .k-done .n{color:var(--grn)}
 .k-end .n{color:var(--mut)}
+.k-chk .n{color:var(--mut)}
 details ul{margin:0 0 16px 28px;padding:0;list-style:none;display:flex;flex-direction:column;gap:8px;font-size:15px}
 details li .mut{font-size:14px}
 .red{color:var(--red)}
@@ -187,6 +188,7 @@ function home(){
   sec2.appendChild(group('k-done','Done today',String(done.length),done.map(function(s){return li2(s.title,s.repo)})));
   var ended=sessions(function(s){return s.state==='ended'&&s.endedAt>=midnight()});
   sec2.appendChild(group('k-end','Ended today',String(ended.length),ended.map(function(s){return li2(s.repo+', '+(s.branch||s.title),hm(s.endedAt))})));
+  sec2.appendChild(group('k-chk','Not checked',String(D.unchecked.length),D.unchecked.map(function(u){var l=li2(cut(u.text,90),u.repo+' \u00B7 '+asked(u.at));return l})));
   main.appendChild(sec2);app.appendChild(main);
 }
 

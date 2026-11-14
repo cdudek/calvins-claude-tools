@@ -1,7 +1,7 @@
 import { describe, expect, mock, test } from 'claude-code/testing'
 import type { Engine } from 'claude-code/testing'
 
-import { MODEL } from '../hooks/tracker/core'
+import { MODEL, bandData, isLive, taskLists } from '../hooks/tracker/core'
 import * as agentsFixture from './fixtures/agents'
 import * as bandFixture from './fixtures/band'
 import * as milestoneFixture from './fixtures/milestone'
@@ -70,6 +70,53 @@ const runSession = async ($: Engine, w: World, isHolder: boolean) => {
   await $.session.end({ reason: 'other', sessionId: w.id, resume: {} as never })
   return raised
 }
+
+describe('headless sessions', () => {
+  const NOTE_LONG = `Finished. ${'I skipped a step and took a default. '.repeat(8)}\n\nWhich branch should I use?`
+  const drive = async ($: Engine, w: World) => {
+    const prompt = (text: string) => $.prompt.submit({ text, wait: false, origin: { kind: 'composer' } })
+    await prompt('reply with ok')
+    w.completeReply = () => JSON.stringify({ know: ['x'], decided: [], verdicts: [{ n: 1, verdict: 'not-started' }] })
+    w.messages = [{ role: 'assistant', text: NOTE_LONG, toolUses: [] }]
+    await $.turn.complete({ answer: 'x', durationMs: 1, isAborted: false, turnId: 't', reason: 'answer' })
+    await new Promise<void>(done => setTimeout(done, 0))
+  }
+  const record = (w: World) => w.json(`${DIR}/sessions/${w.id}.json`) as { headless?: boolean; asks: { kind: string; verdict?: string }[]; notes?: unknown[] }
+
+  test(`${TAG} a -p run (session.start says it is not interactive) makes no model call at all, and is on no list or count`, async ($, on) => {
+    const w = world(on, { now: NOW })
+    await $.session.start({ cwd: w.cwd, surface: undefined as never, isInteractive: false })
+    await new Promise<void>(done => setTimeout(done, 0))
+    await drive($, w)
+    expect(w.models).toEqual([]) // no classification, no notes or verdict call, no question check
+    expect(record(w)).toMatchObject({ headless: true })
+    expect(record(w).asks.every(a => a.kind === 'not-classified' && a.verdict === undefined)).toBe(true)
+    expect(record(w).notes).toBeUndefined()
+    const snap = w.snapshot()
+    const mine = snap.sessions.find(r => r.sessionId === w.id)!
+    expect(isLive(mine)).toBe(false) // not running, not needs-you, in no band count
+    expect(taskLists({ ...snap, sessions: [{ ...mine, state: 'ended', endedAt: NOW }] }, NOW + 3 * 3600_000).tasks).toEqual([])
+    expect(bandData(snap, 'other', NOW).live).toBe(0)
+  })
+
+  test(`${TAG} with no session.start (after /clear) a session that draws nowhere is headless; one that draws is not`, async ($, on) => {
+    const w = world(on, { now: NOW })
+    on('session.surfaces', () => ({ value: [] }) as never)
+    await $.prompt.submit({ text: 'reply with ok', wait: false, origin: { kind: 'composer' } })
+    await new Promise<void>(done => setTimeout(done, 0))
+    expect(record(w).headless).toBe(true)
+    expect(w.models).toEqual([])
+  })
+
+  test(`${TAG} an interactive session is not headless and still makes its calls`, async ($, on) => {
+    const w = world(on, { now: NOW })
+    await start($, w)
+    await drive($, w)
+    expect(record(w).headless).toBeUndefined()
+    expect(w.models.length).toBeGreaterThan(0)
+    expect(record(w).asks[0]).toMatchObject({ kind: 'task', verdict: 'not-started' })
+  })
+})
 
 describe('safety', () => {
   test(`@F60 ${TAG} every model call passes the MODEL constant`, async ($, on) => {

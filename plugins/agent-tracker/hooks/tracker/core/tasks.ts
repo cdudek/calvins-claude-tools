@@ -41,7 +41,8 @@ export const firstWords = (text: string, words = 5) => {
 }
 
 // One task ask's status, first match wins; null: done (not on the list). `hasPr`: an open PR is on the session's branch.
-export const taskStatus = (r: SessionRecord, a: Ask, now: number, marks: TaskMarks, hasPr: boolean): Pick<TaskItem, 'status' | 'detail' | 'later' | 'progress'> | null => {
+// `unchecked`: no verdict was ever given and the session is over or idle, so nothing says it is not done. It is not on the list.
+export const taskStatus = (r: SessionRecord, a: Ask, now: number, marks: TaskMarks, hasPr: boolean): (Omit<Pick<TaskItem, 'status' | 'detail' | 'later' | 'progress'>, 'status'> & { status: TaskStatus | 'unchecked' }) | null => {
   const key = taskKey(r.sessionId, a.n)
   const isMerged = r.repo !== null && r.branch !== null && marks.merged.has(mergedKey(r.repo.path, r.branch))
   if (a.verdict === 'done' || isMerged || marks.closed.has(key)) return null
@@ -51,31 +52,46 @@ export const taskStatus = (r: SessionRecord, a: Ask, now: number, marks: TaskMar
   }
   const ended = r.state === 'ended'
   // A running session is working, whatever its last prompt or turn says: only a quiet one is idle.
-  if (ended || (r.state !== 'running' && now - r.lastActivityAt > IDLE_MS)) {
+  const over = ended || (r.state !== 'running' && now - r.lastActivityAt > IDLE_MS)
+  const kept = marks.kept.has(key)
+  // Forgotten needs a verdict that says it is not done (or the owner's Keep on a replaced one); no verdict is not "not done".
+  if (over && (a.verdict === 'partly' || a.verdict === 'not-started' || (a.verdict === 'replaced' && kept))) {
     const why = ended ? `session ended ${duration(now - (r.endedAt ?? r.lastActivityAt))} ago, not done` : `idle ${duration(now - r.lastActivityAt)}, not done`
     return { status: 'forgotten', detail: r.milestone === null && !hasPr ? `${why}, no milestone, no PR` : why, ...none }
   }
-  if (a.verdict === 'replaced' && !marks.kept.has(key)) {
+  if (a.verdict === 'replaced' && !kept) {
     const later = r.asks.find(x => x.n === a.replacedBy)
     return { status: 'superseded', detail: '', later: later ? { at: later.at, text: firstWords(later.text) } : null, progress: null }
   }
+  if (over && a.verdict === undefined) return { status: 'unchecked', detail: '', ...none }
   const m = r.milestone
   return { status: 'in-progress', detail: '', later: null, progress: m ? { slug: m.slug, done: completeCount(m.features), total: m.features.length } : null }
 }
 
-// Every task ask of the last week that is not done: needs you, forgotten, superseded, in progress; newest first inside each.
-export const taskItems = (snap: Snapshot, now: number, marks: TaskMarks = noMarks): TaskItem[] => {
-  const out: TaskItem[] = []
+export type Unchecked = Pick<TaskItem, 'key' | 'sessionId' | 'n' | 'text' | 'repo' | 'at'>
+
+// Every task ask of the last week that is not done. `tasks`: needs you, forgotten, superseded, in progress; newest first inside
+// each. `unchecked`: asks of an over or idle session that no verdict covers (asked before verdicts existed, or in turns too
+// short for the notes call), newest first. A headless session (`claude -p`, the SDK) has no asks of the owner's.
+export const taskLists = (snap: Snapshot, now: number, marks: TaskMarks = noMarks): { tasks: TaskItem[]; unchecked: Unchecked[] } => {
+  const tasks: TaskItem[] = []
+  const unchecked: Unchecked[] = []
   for (const r of snap.sessions) {
+    if (r.headless === true) continue
     const hasPr = r.repo !== null && r.branch !== null && (repoPrs(snap.sessions, r.repo.path, now)?.prs.some(p => p.branch === r.branch) ?? false)
     for (const a of r.asks) {
       if (a.kind !== 'task' || a.at < now - WEEK_MS) continue
       const s = taskStatus(r, a, now, marks, hasPr)
-      if (s !== null) out.push({ key: taskKey(r.sessionId, a.n), sessionId: r.sessionId, n: a.n, text: clean(a.text, TASK_TEXT_MAX).replace(/\s+/g, ' ').trim(), repo: repoLabel(r), at: a.at, ...s })
+      if (s === null) continue
+      const base = { key: taskKey(r.sessionId, a.n), sessionId: r.sessionId, n: a.n, text: clean(a.text, TASK_TEXT_MAX).replace(/\s+/g, ' ').trim(), repo: repoLabel(r), at: a.at }
+      if (s.status === 'unchecked') unchecked.push(base)
+      else tasks.push({ ...base, ...s, status: s.status })
     }
   }
-  return out.sort((a, b) => TASK_ORDER.indexOf(a.status) - TASK_ORDER.indexOf(b.status) || b.at - a.at || a.key.localeCompare(b.key))
+  const newest = (a: { at: number; key: string }, b: { at: number; key: string }) => b.at - a.at || a.key.localeCompare(b.key)
+  return { tasks: tasks.sort((a, b) => TASK_ORDER.indexOf(a.status) - TASK_ORDER.indexOf(b.status) || newest(a, b)), unchecked: unchecked.sort(newest) }
 }
+export const taskItems = (snap: Snapshot, now: number, marks: TaskMarks = noMarks): TaskItem[] => taskLists(snap, now, marks).tasks
 
 // The count the band shows, and whether it is red: a forgotten task or one waiting for you.
 export const taskCounts = (items: TaskItem[]) => ({ notDone: items.length, needsYou: items.filter(t => t.status === 'needs-you').length, alarm: items.some(t => t.status === 'needs-you' || t.status === 'forgotten') })

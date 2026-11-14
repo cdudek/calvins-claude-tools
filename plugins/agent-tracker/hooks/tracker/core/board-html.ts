@@ -5,7 +5,7 @@ import type { SessionRecord, Snapshot } from '../types'
 import { clean, resumeCommand } from './format'
 import { repoPrs } from './git'
 import { isLive, repoLabel } from './rank'
-import { mergedKey, taskCounts, taskItems } from './tasks'
+import { mergedKey, taskCounts, taskLists } from './tasks'
 import { turnKey } from './notes'
 import { ASK_KIND, ASK_STATUS, CHECKS_WORDS, DETACHED, MERGE_WORDS, REASON_WORDS, REVIEW_WORDS, UNTITLED } from './words'
 
@@ -150,7 +150,7 @@ export type BoardData = ReturnType<typeof boardData>
 // Everything the pages need. A session older than a week with nothing live about it is left out, so the page stays small.
 export const boardData = (snap: Snapshot, changes: ChangeFiles[], now: number, marks: Marks = noMarks) => {
   const recent = snap.sessions
-    .filter(r => isLive(r) || Math.max(r.lastActivityAt, r.endedAt ?? 0) >= now - DAYS)
+    .filter(r => r.headless !== true && (isLive(r) || Math.max(r.lastActivityAt, r.endedAt ?? 0) >= now - DAYS))
     .sort((a, b) => Math.max(b.lastActivityAt, b.endedAt ?? 0) - Math.max(a.lastActivityAt, a.endedAt ?? 0))
     .slice(0, SESSIONS_MAX)
   const paths = [...new Set(recent.flatMap(r => (r.repo ? [r.repo.path] : [])))]
@@ -167,7 +167,7 @@ export const boardData = (snap: Snapshot, changes: ChangeFiles[], now: number, m
   })
   // A change whose milestone.md says merged finishes the tasks of the session on its branch.
   const merged = new Set(changes.flatMap(c => (/^(merged|released|shipped)\b/i.test(front(c.milestone, 'status') ?? '') ? [mergedKey(c.repoPath, clean(front(c.milestone, 'branch'), 200))] : [])))
-  const tasks = taskItems(snap, now, { kept: marks.kept, closed: marks.closed, merged })
+  const { tasks, unchecked } = taskLists(snap, now, { kept: marks.kept, closed: marks.closed, merged })
   return {
     v: 1 as const,
     builtAt: now,
@@ -176,6 +176,7 @@ export const boardData = (snap: Snapshot, changes: ChangeFiles[], now: number, m
     loading: snap.at === 0,
     sessions: recent.map(r => sessionOf(r, snap, now, marks.seen)),
     tasks,
+    unchecked,
     counts: taskCounts(tasks),
     repos,
     milestones: changes.flatMap(c => {
