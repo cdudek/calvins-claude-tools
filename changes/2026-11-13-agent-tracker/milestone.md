@@ -25,7 +25,7 @@ branch), `merged` (feature PRs) or `blocked: <reason>`.
 | 1 | 2026-11-13-agent-tracker | collector: `claude agents --json` plus the mod's per-session file, asks classified task or question with a pinned cheap model | 3937139 | done 3937139 |
 | 2 | 2026-11-13-agent-tracker | backfill and scans: sessions without the mod from transcripts, plus git and gh scans | b6f48fe | done b6f48fe |
 | 3 | 2026-11-13-agent-tracker | band: details and compact views, Copy and Pane buttons, header naming repo, work and what runs | 704b278 | done 704b278 |
-| 4 | 2026-11-13-agent-tracker | pane: attention, sessions by repo, tasks in order, PRs, opened by `/tracker` | <commit> | todo |
+| 4 | 2026-11-13-agent-tracker | pane: attention, sessions by repo, tasks in order, PRs, opened by `/tracker` | 39d9919 | done 39d9919 (F92 open, Q26) |
 
 ## Done
 
