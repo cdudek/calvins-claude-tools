@@ -63,6 +63,18 @@ describe('automated sessions: the entrypoint', () => {
     expect(w.writes.filter(p => p === `${DIR}/entrypoints.json`).length).toBe(1)
   })
 
+  test(`${TAG} the newest transcripts are looked up first, 60 a pass, so today's sessions are known before older ones`, async ($, on) => {
+    const ids = Array.from({ length: 61 }, (_, i) => `t-${String(i).padStart(2, '0')}`)
+    const w = world1(on, [], Object.fromEntries(ids.map(id => [id, transcript('cli', [{ role: 'user', at: NOW - 3600_000, text: id }])])))
+    ids.forEach((id, i) => w.mtimes.set(`${PROJECTS}/${id}.jsonl`, NOW - (61 - i) * 60_000)) // listed oldest first: t-00 oldest, t-60 newest
+    await start($, w)
+    await tick(w)
+    const known = Object.keys(entrypoints(w) ?? {})
+    expect(known.length).toBe(60)
+    expect(known).toContain('t-60')
+    expect(known).not.toContain('t-00')
+  })
+
   test(`${TAG} a record kept before isInteractive existed is covered: its transcript says sdk, and it makes no band count, no running and no needs-you`, async ($, on) => {
     const old = inState('old-sdk', 'needs-you', 5, 'web-app', 'automated', { reason: 'waiting' }) // a file with no headless field
     const w = world1(on, [old], { 'old-sdk': transcript('sdk-py', [{ role: 'user', at: NOW - 3600_000, text: 'Review the supplied diff once' }]) })

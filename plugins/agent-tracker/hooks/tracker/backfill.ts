@@ -18,7 +18,7 @@ const ENTRY_MAX = 60 // transcripts whose entrypoint is looked up in one pass
 const LATE_MAX = 5 // sessions given their one late check in one pass
 // The collector writes it; the late check reads the sessions from it. The same literal, declared where it is read.
 const snapshot = atom({ plugin: 'agent-tracker', key: 'snapshot' } as const, { at: 0, agentsOk: true, okAt: 0, failedReads: 0, sessions: [] } as Snapshot)
-type TranscriptFile = { path: string; size: number }
+type TranscriptFile = { path: string; size: number; mtimeMs: number }
 
 // The fragments of a transcript, or null when it cannot be read. Over 4 MiB it is searched, not read whole.
 export async function readFragments($: Engine, path: string, size: number): Promise<string[] | null> {
@@ -47,7 +47,7 @@ async function transcriptFiles($: Engine, root: string, now: number) {
   const out = new Map<string, TranscriptFile>()
   for (const folder of (await $.fs.list(root).catch(() => [])).filter(e => e.kind === 'dir')) {
     for (const f of await $.fs.list(`${root}/${folder.name}`).catch(() => [])) {
-      if (f.kind === 'file' && f.name.endsWith('.jsonl') && now - f.mtimeMs <= WEEK_MS) out.set(f.name.slice(0, -'.jsonl'.length), { path: `${root}/${folder.name}/${f.name}`, size: f.size })
+      if (f.kind === 'file' && f.name.endsWith('.jsonl') && now - f.mtimeMs <= WEEK_MS) out.set(f.name.slice(0, -'.jsonl'.length), { path: `${root}/${folder.name}/${f.name}`, size: f.size, mtimeMs: f.mtimeMs })
     }
   }
   return out
@@ -59,7 +59,8 @@ async function entrypointPass($: Engine, base: string, files: Map<string, Transc
   const known = await readEntrypoints($, base)
   let budget = ENTRY_MAX
   let changed = false
-  for (const [id, f] of files) {
+  // Newest first: the lists show today, and a late check waits for its session's entrypoint.
+  for (const [id, f] of [...files].sort((a, b) => b[1].mtimeMs - a[1].mtimeMs)) {
     if (id in known.by) continue
     if (budget-- <= 0) break
     const run = await $.process.run(['grep', '-a', '-o', '-m', '1', '-E', '"entrypoint":"[^"]*"', f.path], { timeoutMs: 10_000 }).catch(() => null)
