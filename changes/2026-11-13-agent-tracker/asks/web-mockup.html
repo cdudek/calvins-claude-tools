@@ -1,0 +1,164 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>(1) Agent tracker - your tasks not done yet</title>
+<style>
+:root{--bg:#0d1117;--panel:#151b23;--line:#2b3542;--fg:#e6edf3;--mut:#a3afbc;
+--red:#ff6b80;--yel:#ffc107;--blue:#b1b9f9;--pur:#af87ff;--grn:#56d364}
+*{box-sizing:border-box}
+body{margin:0;background:var(--bg);color:var(--fg);font:16px/1.55 system-ui,-apple-system,"Segoe UI",Roboto,sans-serif}
+code{font:13px ui-monospace,"SF Mono",Menlo,Consolas,monospace;color:var(--mut)}
+a{color:var(--blue)} a:focus-visible,button:focus-visible,summary:focus-visible{outline:2px solid var(--blue);outline-offset:3px}
+.mut{color:var(--mut)}
+.top{padding:22px 24px;border-bottom:1px solid var(--line);display:flex;flex-wrap:wrap;gap:6px 24px;align-items:baseline}
+.top h1{font-size:20px;margin:0}
+.top p{margin:0;flex:1;min-width:240px}
+.top .fresh{font-size:14px;color:var(--mut)}
+main{max-width:860px;margin:0 auto;padding:0 20px 64px}
+h2{font-size:18px;margin:36px 0 14px}
+ol.tasks{list-style:none;margin:0;padding:0;display:flex;flex-direction:column;gap:12px}
+.row{--c:var(--yel);border:1px solid var(--line);border-left:4px solid var(--c);border-radius:8px;background:var(--panel);padding:14px 16px;display:grid;gap:6px}
+.row.need{--c:var(--red)}
+.row.lost{--c:var(--red);border-color:var(--red);border-left-width:4px}
+.row.sup{--c:var(--pur)}
+.ask{margin:0;font-size:16px}
+.line{display:flex;flex-wrap:wrap;gap:4px 14px;align-items:baseline;font-size:14px;color:var(--mut)}
+.line b{color:var(--fg);font-weight:600}
+.status{color:var(--c);font-weight:600}
+.row.lost .status{color:var(--red)}
+.foot{display:flex;flex-wrap:wrap;gap:8px 16px;align-items:center;font-size:14px}
+.foot .grow{flex:1}
+button{font:inherit;font-size:14px;border:1px solid var(--line);background:transparent;color:var(--fg);border-radius:6px;padding:4px 12px;cursor:pointer}
+button:hover{background:#1f2832}
+.note{font-size:13.5px;color:var(--mut);margin:2px 0 0}
+.bar{display:inline-flex;align-items:center;gap:8px}
+.bar i{display:inline-block;width:80px;height:6px;border-radius:3px;background:var(--line);overflow:hidden}
+.bar s{display:block;height:100%;background:var(--grn)}
+.group{font-size:13px;letter-spacing:.05em;text-transform:uppercase;color:var(--mut);margin:10px 0 -2px}
+.group:first-child{margin-top:0}
+details{border-top:1px solid var(--line)}
+details:last-of-type{border-bottom:1px solid var(--line)}
+summary{cursor:pointer;padding:14px 4px;display:flex;gap:10px;align-items:baseline;list-style:none}
+summary::-webkit-details-marker{display:none}
+summary::before{content:"\25B8";color:var(--mut);width:1em}
+details[open] summary::before{content:"\25BE"}
+summary .n{font-weight:600}
+summary .c{margin-left:auto;color:var(--mut);font-size:14px}
+.k-run .n{color:var(--yel)}.k-know .n{color:var(--blue)}.k-dec .n{color:var(--pur)}.k-pr .n{color:var(--fg)}.k-done .n{color:var(--grn)}.k-end .n{color:var(--mut)}
+details ul{margin:0 0 16px 28px;padding:0;list-style:none;display:flex;flex-direction:column;gap:8px;font-size:15px}
+details li .mut{font-size:14px}
+.notes{margin-top:44px;color:var(--mut);font-size:14.5px}
+.notes h3{color:var(--fg);font-size:16px;margin:22px 0 8px}
+.notes p,.notes ul{margin:0 0 8px;max-width:70ch}
+.notes ul{padding-left:20px}
+</style>
+</head>
+<body>
+<header class="top">
+  <h1>Agent tracker</h1>
+  <p>6 of your tasks are not done &middot; 1 needs you now</p>
+  <span class="fresh" role="status">Updated 6s ago</span>
+</header>
+
+<main>
+<h2 id="h-tasks">Your tasks not done yet</h2>
+<ol class="tasks" aria-labelledby="h-tasks">
+
+  <li class="row need">
+    <p class="ask">Fix the login redirect so users land back on the page they came from.</p>
+    <div class="line"><b>web-app</b><span>asked today 13:40</span></div>
+    <div class="foot"><span class="status">&#9679; You: waiting for your answer for 4m</span><span class="grow"></span><a href="#s1">Open session</a></div>
+  </li>
+
+  <li class="row lost">
+    <p class="ask">Migrate the orders table to the new schema and keep the old one until we are sure.</p>
+    <div class="line"><b>api-service</b><span>asked today 12:30</span></div>
+    <div class="foot"><span class="status">&#9888; Forgotten: session ended 2h ago, not done</span><span class="grow"></span><a href="#s2">Open session</a></div>
+  </li>
+
+  <li class="row lost">
+    <p class="ask">Add a retry with backoff when the payment provider returns 429.</p>
+    <div class="line"><b>api-service</b><span>asked yesterday 17:05</span></div>
+    <div class="foot"><span class="status">&#9888; Forgotten: no milestone, no PR</span><span class="grow"></span><a href="#s3">Open session</a></div>
+  </li>
+
+  <li class="row sup">
+    <p class="ask">Add retry on 401 responses in the API client.</p>
+    <div class="line"><b>web-app</b><span>asked today 13:12</span></div>
+    <div class="foot"><span class="status">? Superseded? A later ask at 13:40, &ldquo;Fix the login redirect&hellip;&rdquo;, may have replaced it</span></div>
+    <div class="foot"><button type="button">Keep</button><button type="button">Close</button><span class="grow"></span><a href="#s4">Open session</a></div>
+    <p class="note">This page is read-only. Keep and Close are chosen in the terminal pane; the buttons show what you will find there.</p>
+  </li>
+
+  <li class="row">
+    <p class="ask">Move every colour in the app to design tokens, with a dark mode that follows the system setting.</p>
+    <div class="line"><b>web-app</b><span>asked today 11:05</span></div>
+    <div class="foot"><span class="status">&#9680; In progress</span><span class="bar"><i><s style="width:60%"></s></i>design-tokens-1, 9 of 15 features</span><span class="grow"></span><a href="#s5">Open session</a></div>
+  </li>
+
+  <li class="row">
+    <p class="ask">Rebuild the search index on every docs deploy.</p>
+    <div class="line"><b>docs-site</b><span>asked today 09:15</span></div>
+    <div class="foot"><span class="status">&#9680; In progress</span><span class="bar"><i><s style="width:43%"></s></i>search-index-1, 3 of 7 features</span><span class="grow"></span><a href="#s6">Open session</a></div>
+  </li>
+
+</ol>
+
+<h2>Everything else</h2>
+<section aria-label="Everything else">
+  <details class="k-run">
+    <summary><span class="n">Running</span><span class="c">4</span></summary>
+    <ul><li>web-app, design-tokens: Design tokens for dark mode <span class="mut">&middot; goal 2h 10m</span></li><li>docs-site, search-index: Rebuild search index <span class="mut">&middot; 26m</span></li><li>api-service, retry-bug <span class="mut">&middot; 1h 5m</span></li><li>docs-site, typos <span class="mut">&middot; 4m</span></li></ul>
+  </details>
+
+  <details class="k-know" open>
+    <summary><span class="n">You should know</span><span class="c">2 new</span></summary>
+    <ul>
+      <li><b>New</b> &middot; api-service <span class="mut">13:58</span><br>Tests hit the real payment sandbox, not a mock. A flaky sandbox will fail the suite.</li>
+      <li><b>New</b> &middot; web-app <span class="mut">13:31</span><br>Skipped F13: it needs a browser that is not installed on this machine.</li>
+    </ul>
+  </details>
+
+  <details class="k-dec">
+    <summary><span class="n">Decided without you</span><span class="c">1 new</span></summary>
+    <ul><li><b>New</b> &middot; web-app <span class="mut">13:40</span><br>Dark mode follows the system setting. Default taken, no manual toggle.</li></ul>
+  </details>
+
+  <details class="k-pr">
+    <summary><span class="n">Pull requests</span><span class="c">4 open &middot; 1 failing</span></summary>
+    <ul><li>web-app, fix-login <span class="mut">&middot; checks pass</span></li><li>web-app, design-tokens <span class="mut">&middot; checks running</span></li><li>api-service, retry-bug <span style="color:var(--red)">&middot; checks failing</span></li><li>docs-site, sitemap-fix <span class="mut">&middot; checks pass</span></li></ul>
+  </details>
+
+  <details class="k-done">
+    <summary><span class="n">Done today</span><span class="c">6</span></summary>
+    <ul><li>Add search filters <span class="mut">&middot; web-app</span></li><li>Cache CI dependencies <span class="mut">&middot; api-service</span></li><li>Four more</li></ul>
+  </details>
+
+  <details class="k-end">
+    <summary><span class="n">Ended today</span><span class="c">3</span></summary>
+    <ul><li>web-app, search-filters <span class="mut">&middot; 11:48</span></li><li>api-service, ci-cache <span class="mut">&middot; 10:15</span></li><li>docs-site, readme <span class="mut">&middot; 09:30</span></li></ul>
+  </details>
+</section>
+
+<section class="notes" aria-labelledby="h-notes">
+  <h2 id="h-notes" style="margin-top:0">Notes</h2>
+  <h3>How &ldquo;not done&rdquo; is decided</h3>
+  <ul>
+    <li>At each turn end the mod already calls haiku once for notes. Proposal: the same call also judges every open task ask in that session as done, partly done, not started, or replaced by a later ask.</li>
+    <li>A task stays on the list until it is judged done, its PR merges, or you close it in the pane.</li>
+    <li>A session that ended, or has been idle over 30 minutes, with a not-done task shows as forgotten, with the reason.</li>
+    <li>Questions are not on this list, tasks only. Order: needs you, forgotten, superseded, in progress.</li>
+  </ul>
+  <h3>What is new data</h3>
+  <ul>
+    <li>The done judgement per task ask (done, partly done, not started, replaced). The page has asks, session state and PR state today, but no verdict.</li>
+    <li>The keep and close marks, saved from the terminal pane.</li>
+  </ul>
+  <h3>Stale page</h3>
+  <p>If no session has updated the page for a few minutes, one amber line appears under the top bar. It is not shown here.</p>
+</section>
+</main>
+</body>
+</html>

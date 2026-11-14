@@ -21,6 +21,7 @@ export type World = {
   origins: string[] // who raised each prompt that reached the engine
   toolCalls: number
   commandRuns: number
+  answerCommand: ((e: { command: string; args: string }) => { text: string } | undefined) | null // answers a command nothing else does, like another mod's hook
   invalidations: number // each $.ui.invalidate the mod raised
   toasts: string[]
   copies: { text: string; surface?: string }[]
@@ -42,6 +43,7 @@ export type World = {
   subagents: AgentInfo[]
   tool: (e: unknown) => { result: object; isError?: boolean }
   classify: (text: string, labels: readonly string[]) => string | undefined | Error
+  completeReply: ((request: { prompt: string }) => string | undefined | Error) | null // what `$.model.complete` answers; none: it is refused
   id: string
   cwd: string
   mtimes: Map<string, number> // a file's modification time, set by put
@@ -65,6 +67,7 @@ export function world(on: On, o: { id?: string; cwd?: string; now?: number; pane
     origins: [],
     toolCalls: 0,
     commandRuns: 0,
+    answerCommand: null,
     invalidations: 0,
     toasts: [],
     copies: [],
@@ -86,6 +89,7 @@ export function world(on: On, o: { id?: string; cwd?: string; now?: number; pane
     subagents: [],
     tool: () => ({ result: {} }),
     classify: () => 'task',
+    completeReply: null,
     id: o.id ?? 'self-0000',
     cwd: o.cwd ?? '/work/repo-self',
     mtimes,
@@ -117,9 +121,9 @@ export function world(on: On, o: { id?: string; cwd?: string; now?: number; pane
     w.toolCalls += 1
     return w.tool(e) as never
   })
-  on('command.run', () => {
+  on('command.run', (_, e) => {
     w.commandRuns += 1
-    return {}
+    return w.answerCommand?.(e) ?? {}
   })
 
   // Like the engine: a read over 4 MiB rejects.
@@ -234,7 +238,9 @@ export function world(on: On, o: { id?: string; cwd?: string; now?: number; pane
   })
   on('model.complete', (_, e) => {
     w.models.push({ op: 'complete', text: JSON.stringify(e), model: (e as { model?: string }).model })
-    return { deny: 'no complete in tests' }
+    const reply = w.completeReply?.(e as { prompt: string })
+    if (reply === undefined || reply instanceof Error) return { deny: reply?.message ?? 'no complete in tests' }
+    return { value: { isAnswered: true as const, text: reply, usage: { input_tokens: 1, output_tokens: 1, cache_read_input_tokens: 0, cache_creation_input_tokens: 0 } } } as never
   })
   on('model.fork', (_, e) => {
     w.models.push({ op: 'fork', text: JSON.stringify(e), model: (e as { model?: string }).model })

@@ -44,7 +44,7 @@ describe('backfill from transcripts', () => {
     expect(r.asks.length).toBe(3)
     expect(r.asks.every(a => a.kind === 'not-classified')).toBe(true)
     expect(w.models.length).toBe(0) // the backfill makes no model call
-    expect(w.procs.some(p => p.argv[0] === 'grep')).toBe(false) // a small file is read whole
+    expect(w.procs.some(p => p.argv[0] === 'grep' && !p.argv.some(a => a.includes('entrypoint')))).toBe(false) // a small file is read whole (the entrypoint lookup is its own grep)
     // Ended: absent from a good list.
     expect(w.snapshot().sessions.find(s => s.sessionId === TRANSCRIPT_ID)).toMatchObject({ source: 'transcript', state: 'ended' })
   })
@@ -75,7 +75,7 @@ describe('backfill from transcripts', () => {
     w.put(PATH, TRANSCRIPT_TEXT)
     w.sizes.set(PATH, BIG) // the engine reports 5 MiB; a whole read of it rejects
     await run($, w)
-    const greps = w.procs.filter(p => p.argv[0] === 'grep')
+    const greps = w.procs.filter(p => p.argv[0] === 'grep' && !p.argv.some(a => a.includes('entrypoint')))
     expect(greps.length).toBe(1)
     expect(greps[0]!.argv.at(-1)).toBe(PATH)
     expect(greps[0]!.argv).toContain('-o') // only the matching parts come back, never the lines

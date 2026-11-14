@@ -23,8 +23,8 @@ export const pr = (number: number, extra: Partial<Pr> = {}): Pr => ({
   checks: 'pass', review: 'none', mergeable: 'unknown', ...extra,
 })
 
-// 4 open PRs, 1 failing, 2 mergeable.
-export const PRS: Pr[] = [pr(1, { mergeable: 'mergeable', review: 'approved' }), pr(2, { checks: 'failing', mergeable: 'conflicts' }), pr(3, { mergeable: 'mergeable' }), pr(4, { checks: 'running' })]
+// 4 open PRs, 1 failing, 2 behind.
+export const PRS: Pr[] = [pr(1, { mergeable: 'mergeable', review: 'approved', behind: true }), pr(2, { checks: 'failing', mergeable: 'conflicts' }), pr(3, { mergeable: 'mergeable', behind: true }), pr(4, { checks: 'running' })]
 export const scan = (prs: Pr[], ghOk = true, at = NOW - 30_000) => ({ at, ghOk, worktrees: [], prs })
 
 // This session works on milestone agent-tracker-1, 2 of 4 features complete, with a goal 14 minutes old.

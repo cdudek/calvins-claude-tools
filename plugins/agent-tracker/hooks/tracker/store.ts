@@ -3,9 +3,9 @@
 // `$` is passed only to plain top-level functions: the engine's source scan reads no other spelling.
 import type { EngineInterface } from 'claude-code'
 
-import { COMMAND_DESCRIPTION, COMMAND_HINT, PANE_ID, PANE_TITLE, REDRAW_MS, askStatuses, emptyRecord, gitArgv, parseMilestone, repoFromCommonDir } from './core'
-import type { Frozen, Page } from './core'
-import type { AgentsFile, Lease, SessionRecord, Settings } from './types'
+import { COMMAND_DESCRIPTION, COMMAND_HINT, PANE_ID, PANE_TITLE, REDRAW_MS, SEEN_MAX, askStatuses, emptyRecord, gitArgv, parseMilestone, repoFromCommonDir } from './core'
+import type { Change, Frozen, Page } from './core'
+import type { AgentsFile, Entrypoints, LateChecks, Lease, SessionRecord, Settings } from './types'
 
 type Engine = EngineInterface
 
@@ -28,6 +28,7 @@ export type State = {
   initializing: Promise<void> | null
   isTicking: boolean
   hasTimer: boolean
+  headless: boolean | null // session.start said so (`claude -p`, the SDK); null: not known yet, after a /clear the surfaces say
   hasCollector: boolean // the collector was started, by session.start or by the first draw of a mod loaded mid-session
   scannedAt: number
   isBackfilling: boolean // a backfill pass or a repo scan is running: the next timer fire skips
@@ -38,6 +39,7 @@ export type State = {
   settings: Settings // the last good read of settings.json
   hasBand: boolean // the band or the pane started: its command is registered and the one-minute redraw runs (F126)
   pane: PaneState
+  changes: Map<string, { at: number; changes: Change[] }> // a repo's change folders as last read, by repo path
 }
 
 export const newState = (): State => ({
@@ -51,6 +53,7 @@ export const newState = (): State => ({
   initializing: null,
   isTicking: false,
   hasTimer: false,
+  headless: null,
   hasCollector: false,
   scannedAt: 0,
   isBackfilling: false,
@@ -58,9 +61,10 @@ export const newState = (): State => ({
   seen: new Set(),
   okAt: 0,
   failedReads: 0,
-  settings: { v: 1, view: 'compact', bandHidden: false },
+  settings: { v: 1, view: 'compact', bandHidden: false, seen: [], kept: [], closed: [] },
   hasBand: false,
   pane: newPane(),
+  changes: new Map(),
 })
 
 export async function claudeDir($: Engine) {
@@ -86,7 +90,8 @@ export function writeJson($: Engine, path: string, value: unknown) {
 // The view and the hidden flag, one file for every session (F22, F29). A torn or missing file keeps the last good copy.
 export async function readSettings($: Engine, s: State): Promise<Settings> {
   const f = (await readJson($, `${await dir($)}/settings.json`)) as Partial<Settings> | undefined
-  if (f?.v === 1) s.settings = { v: 1, view: f.view === 'details' ? 'details' : 'compact', bandHidden: f.bandHidden === true }
+  const keys = (v: unknown) => (Array.isArray(v) ? v.filter((k): k is string => typeof k === 'string').slice(-SEEN_MAX) : [])
+  if (f?.v === 1) s.settings = { v: 1, view: f.view === 'details' ? 'details' : 'compact', bandHidden: f.bandHidden === true, seen: keys(f.seen), kept: keys(f.kept), closed: keys(f.closed) }
   return s.settings
 }
 
@@ -95,6 +100,18 @@ export async function writeSettings($: Engine, s: State, change: Partial<Setting
   s.settings = next
   await writeJson($, `${await dir($)}/settings.json`, next).catch(() => undefined) // not kept: the choice holds for this session
   $.ui.invalidate('ui.render')
+}
+
+// Mark notes seen: the one thing the pane writes, and only to settings.json. A session's own file is not touched.
+export async function markSeen($: Engine, s: State, keys: string[]) {
+  const have = (await readSettings($, s)).seen
+  await writeSettings($, s, { seen: [...have, ...keys.filter(k => !have.includes(k))].slice(-SEEN_MAX) })
+}
+
+// Keep or Close a task ask: the pane's other write, and also only to settings.json. Close ends the task; Keep says "not superseded".
+export async function markTask($: Engine, s: State, mark: 'kept' | 'closed', keys: string[]) {
+  const have = (await readSettings($, s))[mark]
+  await writeSettings($, s, { [mark]: [...have, ...keys.filter(k => !have.includes(k))].slice(-SEEN_MAX) })
 }
 
 // Once per session, at the first draw of the band or the pane: the /tracker command and the one-minute redraw.
@@ -115,6 +132,17 @@ export async function openPane($: Engine, s: State, page: Page = { kind: 'home' 
 export async function readLease($: Engine, base: string): Promise<Lease | null> {
   const l = (await readJson($, `${base}/poller.json`)) as Partial<Lease> | undefined
   return l?.v === 1 && typeof l.sessionId === 'string' && typeof l.heartbeat === 'number' ? (l as Lease) : null
+}
+
+// The two sidecar files; a missing or torn one is empty, and the next pass writes what it lacks.
+export async function readEntrypoints($: Engine, base: string): Promise<Entrypoints> {
+  const f = (await readJson($, `${base}/entrypoints.json`)) as Partial<Entrypoints> | undefined
+  return f?.v === 1 && typeof f.by === 'object' && f.by !== null ? (f as Entrypoints) : { v: 1, by: {} }
+}
+
+export async function readLateChecks($: Engine, base: string): Promise<LateChecks> {
+  const f = (await readJson($, `${base}/latechecks.json`)) as Partial<LateChecks> | undefined
+  return f?.v === 1 && typeof f.by === 'object' && f.by !== null ? (f as LateChecks) : { v: 1, by: {} }
 }
 
 export async function readAgentsFile($: Engine, base: string): Promise<AgentsFile | null> {
@@ -199,7 +227,9 @@ export function initOwn($: Engine, s: State) {
     if (s.mine) return
     const now = await $.clock.now()
     const cwd = await $.session.cwd()
-    s.mine = { ...emptyRecord(await $.session.id(), cwd, now), ...(await where($, cwd)) }
+    // No session.start (a /clear): a session that draws nowhere is headless. An unreadable answer counts as interactive.
+    s.headless ??= ((await $.session.surfaces().catch(() => ['terminal'])) as readonly string[]).length === 0
+    s.mine = { ...emptyRecord(await $.session.id(), cwd, now), ...(s.headless ? { headless: true } : {}), ...(await where($, cwd)) }
     s.lastSaved = ''
     s.scannedAt = now
     await saveOwn($, s)

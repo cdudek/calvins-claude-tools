@@ -1,7 +1,7 @@
 import { describe, expect, mock, test } from 'claude-code/testing'
 import type { Engine } from 'claude-code/testing'
 
-import { MODEL } from '../hooks/tracker/core'
+import { MODEL, bandData, taskLists } from '../hooks/tracker/core'
 import * as agentsFixture from './fixtures/agents'
 import * as bandFixture from './fixtures/band'
 import * as milestoneFixture from './fixtures/milestone'
@@ -9,6 +9,8 @@ import * as scansFixture from './fixtures/scans'
 import * as transcriptFixture from './fixtures/transcript'
 import { DIR, start, world } from './fixtures/world'
 import type { World } from './fixtures/world'
+
+declare function setTimeout(run: () => void, ms: number): unknown // the runtime has it; the plugin's type set does not
 
 const TAG = '@2026-11-13-agent-tracker'
 const NOW = 1_700_003_600_000
@@ -50,6 +52,12 @@ const runSession = async ($: Engine, w: World, isHolder: boolean) => {
   await prompt('second ask')
   w.messages = [{ role: 'assistant', text: 'All done.', toolUses: [] }]
   await turn()
+  // A turn whose last message is 200 characters or more: one more call, the notes read, pinned to the same model.
+  await prompt('third ask')
+  w.completeReply = () => JSON.stringify({ know: ['A step was skipped'], decided: ['A default was taken'], verdicts: [{ n: 1, verdict: 'done' }] })
+  w.messages = [{ role: 'assistant', text: `Finished the work. ${'I skipped a step and took a default. '.repeat(8)}`, toolUses: [] }]
+  await turn()
+  await new Promise<void>(done => setTimeout(done, 0)) // the notes call runs after the turn went on
   w.tool = () => ({ result: {}, isError: true })
   await $.tool.call({ tool: 'Bash', command: 'make' })
   raised.tools += 1
@@ -63,13 +71,60 @@ const runSession = async ($: Engine, w: World, isHolder: boolean) => {
   return raised
 }
 
+describe('headless sessions', () => {
+  const NOTE_LONG = `Finished. ${'I skipped a step and took a default. '.repeat(8)}\n\nWhich branch should I use?`
+  const drive = async ($: Engine, w: World) => {
+    const prompt = (text: string) => $.prompt.submit({ text, wait: false, origin: { kind: 'composer' } })
+    await prompt('reply with ok')
+    w.completeReply = () => JSON.stringify({ know: ['x'], decided: [], verdicts: [{ n: 1, verdict: 'not-started' }] })
+    w.messages = [{ role: 'assistant', text: NOTE_LONG, toolUses: [] }]
+    await $.turn.complete({ answer: 'x', durationMs: 1, isAborted: false, turnId: 't', reason: 'answer' })
+    await new Promise<void>(done => setTimeout(done, 0))
+  }
+  const record = (w: World) => w.json(`${DIR}/sessions/${w.id}.json`) as { headless?: boolean; asks: { kind: string; verdict?: string }[]; notes?: unknown[] }
+
+  test(`${TAG} a -p run (session.start says it is not interactive) makes no model call at all, and is on no list or count`, async ($, on) => {
+    const w = world(on, { now: NOW })
+    await $.session.start({ cwd: w.cwd, surface: undefined as never, isInteractive: false })
+    await new Promise<void>(done => setTimeout(done, 0))
+    await drive($, w)
+    expect(w.models).toEqual([]) // no classification, no notes or verdict call, no question check
+    expect(record(w)).toMatchObject({ headless: true })
+    expect(record(w).asks.every(a => a.kind === 'not-classified' && a.verdict === undefined)).toBe(true)
+    expect(record(w).notes).toBeUndefined()
+    const snap = w.snapshot()
+    expect(snap.sessions.find(r => r.sessionId === w.id)).toBeUndefined() // not in the snapshot: not running, not needs-you, in no count
+    expect(taskLists(snap, NOW + 3 * 3600_000)).toEqual({ tasks: [], unchecked: [] })
+    expect(bandData(snap, 'other', NOW).live).toBe(0)
+  })
+
+  test(`${TAG} with no session.start (after /clear) a session that draws nowhere is headless; one that draws is not`, async ($, on) => {
+    const w = world(on, { now: NOW })
+    on('session.surfaces', () => ({ value: [] }) as never)
+    await $.prompt.submit({ text: 'reply with ok', wait: false, origin: { kind: 'composer' } })
+    await new Promise<void>(done => setTimeout(done, 0))
+    expect(record(w).headless).toBe(true)
+    expect(w.models).toEqual([])
+  })
+
+  test(`${TAG} an interactive session is not headless and still makes its calls`, async ($, on) => {
+    const w = world(on, { now: NOW })
+    await start($, w)
+    await drive($, w)
+    expect(record(w).headless).toBeUndefined()
+    expect(w.models.length).toBeGreaterThan(0)
+    expect(record(w).asks[0]).toMatchObject({ kind: 'task', verdict: 'not-started' })
+  })
+})
+
 describe('safety', () => {
   test(`@F60 ${TAG} every model call passes the MODEL constant`, async ($, on) => {
     const w = world(on, { now: NOW })
     await runSession($, w, true)
     expect(MODEL).toBe('haiku')
     expect(w.models.length).toBeGreaterThan(0)
-    expect(w.models.every(m => m.op === 'classify' && m.model === MODEL)).toBe(true)
+    expect(w.models.every(m => (m.op === 'classify' || m.op === 'complete') && m.model === MODEL)).toBe(true) // classify and complete, never fork
+    expect(w.models.some(m => m.op === 'complete')).toBe(true) // the notes call is among them
   })
 
   test(`@F61 ${TAG} call counts for one ask and one turn, none for a turn without a question mark`, async ($, on) => {
@@ -77,7 +132,11 @@ describe('safety', () => {
     await runSession($, w, true)
     const asks = w.models.filter(m => m.labels?.includes('task'))
     const checks = w.models.filter(m => m.labels?.includes('asks-owner'))
-    expect(asks.map(m => m.text)).toEqual(['first ask', 'second ask']) // one classification per ask
+    expect(asks.map(m => m.text)).toEqual(['first ask', 'second ask', 'third ask']) // one classification per ask
+    const notes = w.models.filter(m => m.op === 'complete')
+    expect(notes.length).toBe(1) // one notes call, for the one turn of 200 characters or more: it also judges the open tasks, with no call of its own
+    expect(notes[0]!.text).toContain('verdicts')
+    expect(notes[0]!.text).toContain('1: first ask')
     expect(checks.length).toBe(1) // one check, for the turn whose final paragraph holds a "?"; none for the other
     expect(checks[0]!.text).toContain('Which branch should I use?')
   })
@@ -109,7 +168,7 @@ describe('safety', () => {
   })
 
   test(`@F130 ${TAG} every write path is the session's own file, a lease file while held, a transcripts file or settings.json`, async ($, on) => {
-    const allowed = new RegExp(`^${esc(DIR)}/(sessions/${esc('self-0000')}\\.json|settings\\.json|poller\\.json|agents\\.json|transcripts/[^/]+\\.json)$`)
+    const allowed = new RegExp(`^${esc(DIR)}/(sessions/${esc('self-0000')}\\.json|settings\\.json|poller\\.json|agents\\.json|entrypoints\\.json|latechecks\\.json|transcripts/[^/]+\\.json)$`)
     const holder = world(on, { now: NOW })
     await runSession($, holder, true)
     expect(holder.writes.filter(p => !allowed.test(p))).toEqual([])

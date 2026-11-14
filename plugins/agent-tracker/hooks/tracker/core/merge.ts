@@ -1,4 +1,4 @@
-import type { AgentRow, SessionRecord } from '../types'
+import type { AgentRow, Ask, Entrypoints, LateChecks, SessionRecord } from '../types'
 import { labelRepos } from './repo'
 import { resolveState } from './states'
 import { WEEK_MS, emptyRecord } from './types'
@@ -9,6 +9,8 @@ type In = {
   agents: AgentRow[] | null // null: the list read failed or is old
   now: number
   selfId: string
+  entrypoints?: Entrypoints['by'] // how each session was started; an sdk-* run is automated and left out
+  late?: LateChecks['by'] // the one late verdict of a session, given to the asks no turn judged
   seen?: ReadonlySet<string> // the sessions the last good list read showed; a failed read restores only these
 }
 
@@ -31,7 +33,9 @@ const fitSnapshot = (sessions: SessionRecord[], selfId: string) => {
 
 // Every record merged into one list (F68). A sessions/ file wins over a transcripts/ file; a session the list
 // shows and no file has appears from the list alone (source 'engine'); only the last 7 days show.
-export const mergeSessions = ({ files, transcripts, agents, now, selfId, seen }: In): SessionRecord[] => {
+export const isAutomated = (entrypoint: string | undefined) => entrypoint !== undefined && entrypoint.startsWith('sdk')
+
+export const mergeSessions = ({ files, transcripts, agents, now, selfId, seen, entrypoints = {}, late = {} }: In): SessionRecord[] => {
   const byId = new Map<string, SessionRecord>()
   for (const r of [...transcripts, ...files]) byId.set(r.sessionId, r)
   for (const a of agents ?? []) {
@@ -42,13 +46,20 @@ export const mergeSessions = ({ files, transcripts, agents, now, selfId, seen }:
   const merged = [...byId.values()].map(r => {
     const agent = live.get(r.sessionId)
     const d = resolveState(r, agent, agents !== null, r.sessionId === selfId, seen)
+    const entrypoint = entrypoints[r.sessionId] || r.entrypoint
+    const verdicts = late[r.sessionId]?.verdicts ?? []
+    const asks: Ask[] = verdicts.length === 0 ? r.asks : r.asks.map(a => { const v = a.kind === 'task' && a.verdict === undefined ? verdicts.find(x => x.n === a.n) : undefined; return v ? { ...a, verdict: v.verdict, ...(v.by !== undefined ? { replacedBy: v.by } : {}), source: 'late' as const } : a })
     return {
       ...r,
+      asks,
+      ...(entrypoint ? { entrypoint } : {}),
+      ...(isAutomated(entrypoint) ? { headless: true } : {}),
       title: agent?.name || r.title,
       kind: agent?.kind ?? r.kind,
       engine: agent ? { status: agent.status, state: agent.state, waitingFor: agent.waitingFor, since: r.source === 'mod' ? r.engine.since : null } : r.engine,
       ...d,
     }
   })
-  return fitSnapshot(labelRepos(merged.filter(r => r.state !== 'ended' || now - r.lastActivityAt <= WEEK_MS)), selfId)
+  // A headless or sdk-* run is nobody's work: it never reaches the snapshot, so no list, count or band sees it.
+  return fitSnapshot(labelRepos(merged.filter(r => r.headless !== true && (r.state !== 'ended' || now - r.lastActivityAt <= WEEK_MS))), selfId)
 }

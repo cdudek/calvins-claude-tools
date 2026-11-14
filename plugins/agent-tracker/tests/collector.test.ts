@@ -230,8 +230,9 @@ describe('collector and states', () => {
     expect(by('t').state).toBe('running')
     expect(by('t').engine.since).toBeNull() // no mod file saw it change: its age is not a wait
     expect(isLive(by('gone'))).toBe(false)
-    const home = homeModel({ at: NOW, agentsOk: true, okAt: NOW, failedReads: 0, sessions }, 'me', NOW, { midnight: 0, clock: () => '' }, null)
-    expect(home.needs.map(r => r.parts.some(p => p.kind === 'time'))).toEqual([false])
+    const home = homeModel({ at: NOW, agentsOk: true, okAt: NOW, failedReads: 0, sessions }, 'me', NOW, { midnight: 0, clock: () => '', day: () => '' }, null, 80)
+    const row = home.blocks.find(x => x.kind === 'row' && x.key === 'session:e')
+    expect(row?.kind === 'row' && row.lines[0]!.map(x => x.text).join('')).not.toMatch(/\d+m|<1m/) // the row shows no wait
   })
 
   test(`@F6 ${TAG} a failed list read restores only the sessions the last good read showed (R11)`, () => {

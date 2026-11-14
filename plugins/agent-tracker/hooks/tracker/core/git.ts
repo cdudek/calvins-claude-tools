@@ -36,8 +36,8 @@ const checksOf = (rollup: Check[]): Pr['checks'] => {
 const REVIEW: Record<string, Pr['review']> = { APPROVED: 'approved', CHANGES_REQUESTED: 'changes', REVIEW_REQUIRED: 'requested' }
 const MERGEABLE: Record<string, Pr['mergeable']> = { MERGEABLE: 'mergeable', CONFLICTING: 'conflicts' }
 
-// `gh pr list --json number,title,url,headRefName,createdAt,statusCheckRollup,reviewDecision,mergeable`. null: not a list.
-export const GH_FIELDS = 'number,title,url,headRefName,createdAt,statusCheckRollup,reviewDecision,mergeable'
+// `gh pr list --json number,title,url,headRefName,createdAt,statusCheckRollup,reviewDecision,mergeable,mergeStateStatus`. null: not a list.
+export const GH_FIELDS = 'number,title,url,headRefName,createdAt,statusCheckRollup,reviewDecision,mergeable,mergeStateStatus'
 export const parsePrs = (json: string): Pr[] | null => {
   let list: unknown
   try {
@@ -57,6 +57,7 @@ export const parsePrs = (json: string): Pr[] | null => {
       checks: checksOf(Array.isArray(p.statusCheckRollup) ? (p.statusCheckRollup as Check[]) : []),
       review: REVIEW[String(p.reviewDecision ?? '')] ?? 'none',
       mergeable: MERGEABLE[String(p.mergeable ?? '')] ?? 'unknown',
+      behind: p.mergeStateStatus === 'BEHIND',
     }))
 }
 
