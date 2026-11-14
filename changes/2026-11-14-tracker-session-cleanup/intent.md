@@ -4,9 +4,9 @@ type: intent
 change: 2026-11-14-tracker-session-cleanup
 design: docs/designs/agent-tracker.md
 author: Calvin Dudek
-status: draft
-reviewed_by: null
-approved_at: null
+status: approved
+reviewed_by: Calvin Dudek
+approved_at: 2026-11-14T17:43
 created: 2026-11-14
 ---
 
