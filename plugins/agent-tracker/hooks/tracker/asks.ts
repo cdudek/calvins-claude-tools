@@ -2,7 +2,7 @@
 // Every hook is an observer: it lets the event through first and never throws after that.
 import type { EngineInterface, On } from 'claude-code'
 
-import { ASKS_MAX, ASK_TEXT_MAX, MODEL, NOTES_MIN_CHARS, addNotes, addTokens, finalParagraphHasQuestion, notesPrompt, parseNotes } from './core'
+import { ASKS_MAX, ASK_TEXT_MAX, MODEL, NOTES_MIN_CHARS, OPEN_ASKS_MAX, addNotes, addTokens, applyVerdicts, finalParagraphHasQuestion, notesPrompt, openTaskAsks, parseNotes } from './core'
 import { initOwn, saveOwn } from './store'
 import type { State } from './store'
 
@@ -10,13 +10,19 @@ import type { State } from './store'
 const OWNER = new Set(['composer', 'bridge', 'sdk'])
 type Engine = EngineInterface
 
-// You should know, Decided without you: one haiku call on the turn's last message, JSON back, nothing stored when it is not
-// JSON of the right shape. A short message is skipped without a call. Runs after the turn went on; it never fails it.
+// You should know, Decided without you, and how each open task of the session stands: one haiku call on the turn's last
+// message, JSON back, nothing stored when it is not JSON of the right shape. A short message is skipped without a call.
+// Runs after the turn went on; it never fails it.
 async function readNotes($: Engine, s: State, message: string, at: number) {
   if (message.length < NOTES_MIN_CHARS) return
-  const r = await $.model.complete({ model: MODEL, prompt: notesPrompt(message.slice(-ASK_TEXT_MAX)), maxTokens: 400, effort: 'low', timeoutMs: 30_000 })
-  const found = r.isAnswered ? parseNotes(r.text) : null
-  if (found !== null && found.know.length + found.decided.length > 0) await saveOwn($, s, m => ({ ...m, notes: addNotes(m.notes, found, at) }))
+  const all = s.mine?.asks ?? []
+  const open = openTaskAsks(all).slice(-OPEN_ASKS_MAX)
+  const r = await $.model.complete({ model: MODEL, prompt: notesPrompt(message.slice(-ASK_TEXT_MAX), open), maxTokens: 600, effort: 'low', timeoutMs: 30_000 })
+  const found = r.isAnswered ? parseNotes(r.text, { open: new Set(open.map(a => a.n)), all: new Set(all.map(a => a.n)) }) : null
+  if (found === null) return
+  const verdicts = found.verdicts ?? []
+  const lines = found.know.length + found.decided.length
+  if (lines + verdicts.length > 0) await saveOwn($, s, m => ({ ...m, ...(lines > 0 ? { notes: addNotes(m.notes, found, at) } : {}), asks: applyVerdicts(m.asks, verdicts) }))
 }
 
 const CHECK_LABELS = ['asks-owner', 'does-not-ask'] as const

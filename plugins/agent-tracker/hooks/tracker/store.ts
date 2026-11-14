@@ -59,7 +59,7 @@ export const newState = (): State => ({
   seen: new Set(),
   okAt: 0,
   failedReads: 0,
-  settings: { v: 1, view: 'compact', bandHidden: false, seen: [] },
+  settings: { v: 1, view: 'compact', bandHidden: false, seen: [], kept: [], closed: [] },
   hasBand: false,
   pane: newPane(),
   changes: new Map(),
@@ -88,7 +88,8 @@ export function writeJson($: Engine, path: string, value: unknown) {
 // The view and the hidden flag, one file for every session (F22, F29). A torn or missing file keeps the last good copy.
 export async function readSettings($: Engine, s: State): Promise<Settings> {
   const f = (await readJson($, `${await dir($)}/settings.json`)) as Partial<Settings> | undefined
-  if (f?.v === 1) s.settings = { v: 1, view: f.view === 'details' ? 'details' : 'compact', bandHidden: f.bandHidden === true, seen: Array.isArray(f.seen) ? f.seen.filter((k): k is string => typeof k === 'string').slice(-SEEN_MAX) : [] }
+  const keys = (v: unknown) => (Array.isArray(v) ? v.filter((k): k is string => typeof k === 'string').slice(-SEEN_MAX) : [])
+  if (f?.v === 1) s.settings = { v: 1, view: f.view === 'details' ? 'details' : 'compact', bandHidden: f.bandHidden === true, seen: keys(f.seen), kept: keys(f.kept), closed: keys(f.closed) }
   return s.settings
 }
 
@@ -103,6 +104,12 @@ export async function writeSettings($: Engine, s: State, change: Partial<Setting
 export async function markSeen($: Engine, s: State, keys: string[]) {
   const have = (await readSettings($, s)).seen
   await writeSettings($, s, { seen: [...have, ...keys.filter(k => !have.includes(k))].slice(-SEEN_MAX) })
+}
+
+// Keep or Close a task ask: the pane's other write, and also only to settings.json. Close ends the task; Keep says "not superseded".
+export async function markTask($: Engine, s: State, mark: 'kept' | 'closed', keys: string[]) {
+  const have = (await readSettings($, s))[mark]
+  await writeSettings($, s, { [mark]: [...have, ...keys.filter(k => !have.includes(k))].slice(-SEEN_MAX) })
 }
 
 // Once per session, at the first draw of the band or the pane: the /tracker command and the one-minute redraw.

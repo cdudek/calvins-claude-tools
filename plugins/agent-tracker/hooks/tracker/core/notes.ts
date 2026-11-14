@@ -1,28 +1,36 @@
 // "You should know" and "Decided without you": the lines a finished turn's last message gives (one haiku call), and the
 // open questions and plan revisions of an sdlc-run change, read as files. Pure: the I/O layer reads and calls the model.
-import type { Note, SessionRecord, Snapshot } from '../types'
+import type { Ask, Note, SessionRecord, Snapshot } from '../types'
 import type { Change } from './change'
 import { isMerged } from './change'
 import { clean } from './format'
 import { isLive, repoLabel, sessionLabel } from './rank'
 import { WEEK_MS } from './types'
+import type { Judged } from './tasks'
 
 export const NOTES_MIN_CHARS = 200 // a shorter last message is skipped: no model call
 export const NOTES_MAX = 50 // per session, newest kept
 export const NOTES_EACH = 3 // per kind and turn
 export const NOTE_TEXT_MAX = 160
 export const SEEN_MAX = 500 // the seen keys settings.json keeps, newest last
+export const DAY_MS = 24 * 3600 * 1000 // a change folder's item older than this counts as already seen
 export const FILE_REVISIONS = 3 // the newest revisions of a change that count, and only the last week's
 
 export const NOTES_PROMPT = `Read the message an AI coding agent wrote at the end of its turn. Reply with JSON only, no other words, in the form {"know":["..."],"decided":["..."]}.
 "know": what the person should know: a side effect, a risk, an odd finding, a skipped step.
 "decided": a call the agent made itself without asking: a library chosen, a default taken, a change to the plan's order.
 Each item is one short line (under 120 characters). At most 3 per list. An empty list when there is none. Do not invent items.
-
-Message:
 `
 
-export const notesPrompt = (message: string) => `${NOTES_PROMPT}${message}`
+export const OPEN_ASKS_MAX = 8 // the newest open task asks the same call judges
+const ASK_LINE_MAX = 200
+const VERDICT_WORDS = ['done', 'partly', 'not-started', 'replaced'] as const
+
+// The tasks the person gave in this session and nobody has judged done: the same call says how each stands.
+const verdictPrompt = (asks: Pick<Ask, 'n' | 'text'>[]) =>
+  `\nThe person gave these tasks in this session. None is judged done yet:\n${asks.map(a => `${a.n}: ${a.text.replace(/\s+/g, ' ').slice(0, ASK_LINE_MAX)}`).join('\n')}\nAdd "verdicts": one {"n":<task number>,"verdict":"..."} for each task you can judge from the message: "done" (finished), "partly" (some of it done), "not-started", or "replaced" (a later task in the list asks for something else instead; then add "by":<that later task's number>). Leave a task out when the message does not say.\n`
+
+export const notesPrompt = (message: string, asks: Pick<Ask, 'n' | 'text'>[] = []) => `${NOTES_PROMPT}${asks.length > 0 ? verdictPrompt(asks) : ''}\nMessage:\n${message}`
 
 const list = (v: unknown): string[] | null => {
   if (v === undefined) return []
@@ -33,9 +41,25 @@ const list = (v: unknown): string[] | null => {
     .slice(0, NOTES_EACH)
 }
 
-// The model's reply as the two lists. A code fence or words around the JSON are tolerated; anything that is not an object
-// of string lists is null, and nothing is stored.
-export const parseNotes = (reply: string): { know: string[]; decided: string[] } | null => {
+// The numbers a verdict may name: `open` the tasks that were asked about, `all` every ask of the session (a "replaced" names a later one).
+export type Asked = { open: ReadonlySet<number>; all: ReadonlySet<number> }
+
+// The verdicts of a reply, each one checked against what was asked; a bad one is dropped, the rest stay.
+const judgedOf = (v: unknown, asked: Asked | undefined): Judged[] => {
+  if (!Array.isArray(v) || asked === undefined) return []
+  const out = new Map<number, Judged>()
+  for (const x of v as Record<string, unknown>[]) {
+    const { n, verdict, by } = x ?? {}
+    if (typeof n !== 'number' || !asked.open.has(n) || !VERDICT_WORDS.includes(verdict as (typeof VERDICT_WORDS)[number])) continue
+    if (verdict !== 'replaced') out.set(n, { n, verdict: verdict as Judged['verdict'] })
+    else if (typeof by === 'number' && by > n && asked.all.has(by)) out.set(n, { n, verdict: 'replaced', by })
+  }
+  return [...out.values()]
+}
+
+// The model's reply as the two lists, and the verdicts when tasks were asked about. A code fence or words around the JSON are
+// tolerated; anything that is not an object of string lists is null, and nothing is stored.
+export const parseNotes = (reply: string, asked?: Asked): { know: string[]; decided: string[]; verdicts?: Judged[] } | null => {
   const from = reply.indexOf('{')
   const to = reply.lastIndexOf('}')
   if (from < 0 || to < from) return null
@@ -47,10 +71,11 @@ export const parseNotes = (reply: string): { know: string[]; decided: string[] }
   }
   if (typeof v !== 'object' || v === null || Array.isArray(v)) return null
   const o = v as Record<string, unknown>
-  if (o.know === undefined && o.decided === undefined) return null
+  if (o.know === undefined && o.decided === undefined && o.verdicts === undefined) return null
   const know = list(o.know)
   const decided = list(o.decided)
-  return know === null || decided === null ? null : { know, decided }
+  const verdicts = judgedOf(o.verdicts, asked)
+  return know === null || decided === null ? null : { know, decided, ...(verdicts.length > 0 ? { verdicts } : {}) }
 }
 
 // The session's notes with the found ones added, ids n1, n2, ...; at most NOTES_MAX, the newest kept.
@@ -86,6 +111,7 @@ const sentence = (text: string) => clean((/^(.+?[.!?])(\s|$)/.exec(text)?.[1] ??
 // All the items, newest first. `changes` are the change folders by repo path; a merged change adds nothing.
 export const noteItems = (snap: Snapshot, changes: ReadonlyMap<string, Change[]>, seen: ReadonlySet<string>, now: number): NoteItem[] => {
   const out: NoteItem[] = []
+  const old = (at: number) => now - at > DAY_MS // a change folder's item the owner had a day to see is no longer news; a turn's note stays until marked
   for (const r of snap.sessions as SessionRecord[]) {
     for (const n of r.notes ?? []) {
       const key = turnKey(r.sessionId, n.id)
@@ -100,11 +126,11 @@ export const noteItems = (snap: Snapshot, changes: ReadonlyMap<string, Change[]>
       const base = { repo: name, label: `${name}/${c.slug}`, session: session ? (session.title ?? session.branch) : null, sessionId: session?.sessionId ?? null }
       for (const q of c.questions) {
         const key = `q:${c.dir}:${q.id}`
-        out.push({ ...base, key, kind: 'decided', text: q.fallback !== '' ? `${sentence(q.fallback).replace(/\.+$/, '')} (default taken, ${q.id})` : `${q.title} (open, ${q.id})`, at: c.questionsAt, dayOnly: false, seen: seen.has(key), source: `changes/${c.dir}/questions.md`, ref: q.id, question: q.title })
+        out.push({ ...base, key, kind: 'decided', text: q.fallback !== '' ? `${sentence(q.fallback).replace(/\.+$/, '')} (default taken, ${q.id})` : `${q.title} (open, ${q.id})`, at: c.questionsAt, dayOnly: false, seen: seen.has(key) || old(c.questionsAt), source: `changes/${c.dir}/questions.md`, ref: q.id, question: q.title })
       }
       for (const rev of c.revisions.filter(x => now - x.at <= WEEK_MS).slice(-FILE_REVISIONS)) {
         const key = `r:${c.dir}:${rev.at}:${rev.text.length}`
-        out.push({ ...base, key, kind: 'decided', text: sentence(rev.text), at: rev.at, dayOnly: true, seen: seen.has(key), source: `changes/${c.dir}/plan.md`, ref: rev.ref === '' ? 'Revisions' : rev.ref, question: null })
+        out.push({ ...base, key, kind: 'decided', text: sentence(rev.text), at: rev.at, dayOnly: true, seen: seen.has(key) || old(rev.at), source: `changes/${c.dir}/plan.md`, ref: rev.ref === '' ? 'Revisions' : rev.ref, question: null })
       }
     }
   }

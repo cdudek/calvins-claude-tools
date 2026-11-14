@@ -12,6 +12,9 @@ export type Ask = {
   kind: 'task' | 'question' | 'not-classified'
   status: 'in-progress' | 'needs-you' | 'replied'
   at: number
+  // The haiku read at turn.complete of a task ask: done, partly done, not started, or replaced by the later ask `replacedBy`. Absent: not judged.
+  verdict?: 'done' | 'partly' | 'not-started' | 'replaced'
+  replacedBy?: number
 }
 
 // A line the agent's last message gave (haiku reads it at turn.complete): kind `know` is a side effect, a risk, an odd finding
@@ -77,7 +80,9 @@ export type AgentRow = {
 
 export type Lease = { v: 1; sessionId: string; heartbeat: number }
 export type AgentsFile = { v: 1; readAt: number; agents: AgentRow[] }
-export type Settings = { v: 1; view: 'compact' | 'details'; bandHidden: boolean; seen: string[] } // seen: the notes the owner marked, `<session>:<note id>` or a file note's key, newest last
+// seen: the notes the owner marked, `<session>:<note id>` or a file note's key, newest last. kept, closed: the owner's marks on a task
+// ask, `<session>:<ask n>`, newest last; only the pane writes them.
+export type Settings = { v: 1; view: 'compact' | 'details'; bandHidden: boolean; seen: string[]; kept: string[]; closed: string[] }
 
 // What the band and the pane read: every session merged, and whether the list read was good.
 // `okAt` is the time of the last good list read (0: none yet) and `failedReads` the failed reads in a row: two or

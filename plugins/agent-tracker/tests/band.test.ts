@@ -494,12 +494,12 @@ describe('the band on screen', () => {
     expect(await ui.find({ key: 'copy' })).toBeUndefined()
     expect(settings(w)).toBeNull() // nothing stored: compact
     await ui.press({ key: 'details' })
-    expect(settings(w)).toEqual({ v: 1, view: 'details', bandHidden: false, seen: [] })
+    expect(settings(w)).toEqual({ v: 1, view: 'details', bandHidden: false, seen: [], kept: [], closed: [] })
     expect(w.invalidations).toBeGreaterThan(0) // every mounted band is asked to draw again
     await ui.redraw()
     expect(await ui.find({ key: 'copy' })).toBeDefined() // details drawn
     await ui.press({ key: 'details' })
-    expect(settings(w)).toEqual({ v: 1, view: 'compact', bandHidden: false, seen: [] })
+    expect(settings(w)).toEqual({ v: 1, view: 'compact', bandHidden: false, seen: [], kept: [], closed: [] })
     await ui.redraw()
     expect(await ui.find({ key: 'copy' })).toBeUndefined()
     await ui.unmount()
@@ -589,16 +589,16 @@ describe('the band on screen', () => {
     const ui = await mount($, 'terminal')
     expect(await ui.find({ key: 'pane' })).toBeDefined()
     await run($, 'band off')
-    expect(settings(w)).toEqual({ v: 1, view: 'compact', bandHidden: true, seen: [] })
+    expect(settings(w)).toEqual({ v: 1, view: 'compact', bandHidden: true, seen: [], kept: [], closed: [] })
     await ui.redraw()
     expect(await ui.find({ key: 'pane' })).toBeUndefined() // no tracker row
     expect(await ui.find({ type: 'Text', text: /other band/ })).toBeDefined() // other mods' rows stay
     await run($, 'band on')
-    expect(settings(w)).toEqual({ v: 1, view: 'compact', bandHidden: false, seen: [] })
+    expect(settings(w)).toEqual({ v: 1, view: 'compact', bandHidden: false, seen: [], kept: [], closed: [] })
     await ui.redraw()
     expect(await ui.find({ key: 'pane' })).toBeDefined()
     // Another session wrote the file: this band follows it.
-    w.put(`${DIR}/settings.json`, { v: 1, view: 'compact', bandHidden: true, seen: [] } satisfies Settings)
+    w.put(`${DIR}/settings.json`, { v: 1, view: 'compact', bandHidden: true, seen: [], kept: [], closed: [] } satisfies Settings)
     await ui.redraw()
     expect(await ui.find({ key: 'pane' })).toBeUndefined()
     // The command is registered, so `band on` is always there.

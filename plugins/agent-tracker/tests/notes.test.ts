@@ -26,6 +26,8 @@ const finish = async ($: Engine, w: World, text: string, reply: string | Error |
   await settle() // the notes call runs after the turn went on
 }
 const completes = (w: World) => w.models.filter(m => m.op === 'complete')
+const prompt = ($: Engine, text: string) => $.prompt.submit({ text, wait: false, origin: { kind: 'composer' } })
+const promptOf = (w: World, i: number) => (JSON.parse(completes(w)[i]!.text) as { prompt: string }).prompt
 
 describe('you should know, decided without you: the notes of a turn', () => {
   test(`${TAG} items are parsed from the last message and stored on the session record, unseen`, async ($, on) => {
@@ -99,6 +101,56 @@ describe('you should know, decided without you: the notes of a turn', () => {
     await finish($, w, LONG)
     expect(w.writes.every(p => p === `${DIR}/sessions/${w.id}.json` || p === `${DIR}/poller.json` || p === `${DIR}/agents.json`)).toBe(true)
     expect(w.procs.every(p => ['claude', 'git', 'gh'].includes(p.argv[0]!))).toBe(true)
+  })
+})
+
+describe('how each open task stands: the same call, one per turn', () => {
+  const VERDICTS = JSON.stringify({ know: [], decided: [], verdicts: [{ n: 1, verdict: 'replaced', by: 2 }, { n: 2, verdict: 'done' }, { n: 3, verdict: 'done' }] })
+
+  test(`${TAG} the one notes call also judges every open task ask; the verdicts are stored on the asks, a question gets none`, async ($, on) => {
+    const w = world(on, { now: NOW })
+    w.classify = text => (text.startsWith('Why') ? 'question' : 'task')
+    await start($, w)
+    for (const text of ['Add retry on 401 responses', 'Fix the login redirect', 'Why is it slow?']) await prompt($, text)
+    await settle()
+    await finish($, w, LONG, VERDICTS)
+    expect(completes(w).length).toBe(1) // still one call for the turn
+    expect(promptOf(w, 0)).toContain('1: Add retry on 401 responses')
+    expect(promptOf(w, 0)).toContain('2: Fix the login redirect')
+    expect(promptOf(w, 0)).not.toContain('Why is it slow') // a question is not a task
+    expect(mine(w).asks.map(a => [a.n, a.kind, a.verdict, a.replacedBy])).toEqual([[1, 'task', 'replaced', 2], [2, 'task', 'done', undefined], [3, 'question', undefined, undefined]])
+    expect(mine(w).notes).toBeUndefined() // no lines in the reply: no notes
+    // The next turn asks about the tasks not judged done, and takes a new verdict over the old one.
+    await finish($, w, `${LONG} Again.`, JSON.stringify({ verdicts: [{ n: 1, verdict: 'partly' }] }))
+    expect(completes(w).length).toBe(2)
+    expect(promptOf(w, 1)).toContain('1: Add retry')
+    expect(promptOf(w, 1)).not.toContain('2: Fix the login') // judged done: not asked again
+    expect(mine(w).asks[0]).toMatchObject({ n: 1, verdict: 'partly' })
+    expect(mine(w).asks[0]!.replacedBy).toBeUndefined()
+  })
+
+  test(`${TAG} a verdict that names a task nobody asked about is dropped; the notes of the same reply stay; a short turn makes no call`, async ($, on) => {
+    const w = world(on, { now: NOW })
+    await start($, w)
+    await prompt($, 'Do the thing')
+    await settle()
+    await finish($, w, LONG, JSON.stringify({ know: ['A step was skipped'], decided: [], verdicts: [{ n: 9, verdict: 'done' }, { n: 1, verdict: 'replaced', by: 1 }] }))
+    expect(mine(w).asks[0]!.verdict).toBeUndefined()
+    expect(mine(w).notes!.map(n => n.text)).toEqual(['A step was skipped'])
+    await finish($, w, 'x'.repeat(199), JSON.stringify({ verdicts: [{ n: 1, verdict: 'done' }] }))
+    expect(completes(w).length).toBe(1) // the skip rule holds: nothing is judged
+    expect(mine(w).asks[0]!.verdict).toBeUndefined()
+  })
+
+  test(`${TAG} with no task open the prompt is the notes prompt alone: no verdicts asked`, async ($, on) => {
+    const w = world(on, { now: NOW })
+    w.classify = () => 'question'
+    await start($, w)
+    await prompt($, 'Why?')
+    await settle()
+    await finish($, w, LONG)
+    expect(completes(w).length).toBe(1)
+    expect(promptOf(w, 0)).not.toContain('verdicts')
   })
 })
 

@@ -54,7 +54,7 @@ const runSession = async ($: Engine, w: World, isHolder: boolean) => {
   await turn()
   // A turn whose last message is 200 characters or more: one more call, the notes read, pinned to the same model.
   await prompt('third ask')
-  w.completeReply = () => JSON.stringify({ know: ['A step was skipped'], decided: ['A default was taken'] })
+  w.completeReply = () => JSON.stringify({ know: ['A step was skipped'], decided: ['A default was taken'], verdicts: [{ n: 1, verdict: 'done' }] })
   w.messages = [{ role: 'assistant', text: `Finished the work. ${'I skipped a step and took a default. '.repeat(8)}`, toolUses: [] }]
   await turn()
   await new Promise<void>(done => setTimeout(done, 0)) // the notes call runs after the turn went on
@@ -87,7 +87,10 @@ describe('safety', () => {
     const asks = w.models.filter(m => m.labels?.includes('task'))
     const checks = w.models.filter(m => m.labels?.includes('asks-owner'))
     expect(asks.map(m => m.text)).toEqual(['first ask', 'second ask', 'third ask']) // one classification per ask
-    expect(w.models.filter(m => m.op === 'complete').length).toBe(1) // one notes call, for the one turn of 200 characters or more
+    const notes = w.models.filter(m => m.op === 'complete')
+    expect(notes.length).toBe(1) // one notes call, for the one turn of 200 characters or more: it also judges the open tasks, with no call of its own
+    expect(notes[0]!.text).toContain('verdicts')
+    expect(notes[0]!.text).toContain('1: first ask')
     expect(checks.length).toBe(1) // one check, for the turn whose final paragraph holds a "?"; none for the other
     expect(checks[0]!.text).toContain('Which branch should I use?')
   })
