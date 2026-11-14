@@ -32,3 +32,18 @@ PY
 sdlc_field() {
   printf '%s' "$1" | python3 -c 'import json,sys; d=json.load(sys.stdin); print(d.get("tool_input",{}).get(sys.argv[1],"") if sys.argv[1]!="stop_hook_active" else str(d.get("stop_hook_active",False)).lower())' "$2" 2>/dev/null || true
 }
+
+# Hash of the source diff: `git diff HEAD` plus every untracked file matching the verifyDirty
+# globs in $1 (space separated). One function, so turn-start.sh and verify-on-stop.sh hash
+# identically. Run inside the repo, with `set -f` so the globs reach git as patterns.
+sdlc_diff_hash() {
+  {
+    git diff HEAD 2>/dev/null
+    for g in $1; do
+      git ls-files --others --exclude-standard -- "$g" | while IFS= read -r f; do
+        printf '%s\n' "$f"
+        cat "$f"
+      done
+    done
+  } | git hash-object --stdin
+}

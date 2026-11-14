@@ -82,6 +82,7 @@ GENERATED = [
     ".claude/hooks/plan-gate.sh",
     ".claude/hooks/pr-gate.sh",
     ".claude/hooks/session-check.sh",
+    ".claude/hooks/turn-start.sh",
     ".claude/hooks/verify-on-stop.sh",
     ".github/tiers.json",
     ".github/workflows/ship-show-ask.yml",

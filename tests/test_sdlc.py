@@ -394,6 +394,7 @@ def test_no_plans_or_handovers_in_claude_plans() -> None:
 # sdlc.json blocks, chain-gate.sh for the chain's own gates - and a dict kept only one.
 EXPECTED_HOOKS = [
     ("SessionStart", "session-check.sh"),
+    ("UserPromptSubmit", "turn-start.sh"),
     ("PermissionRequest", "plan-gate.sh"),
     ("PreToolUse", "gate-bash.sh"),
     ("PreToolUse", "pr-gate.sh"),
@@ -696,6 +697,39 @@ def test_verify_on_stop_skips_when_the_dirty_diff_is_unchanged(tmp_path: Path) -
     assert count.read_text().count("ran") == 1
     (repo / "x.py").write_text("x = 2\n")
     assert _run_hook("verify-on-stop.sh", {}, env=env).returncode == 0
+    assert count.read_text().count("ran") == 2
+
+
+def test_verify_on_stop_skips_a_turn_that_changed_nothing(tmp_path: Path) -> None:
+    repo, count = _counting_repo(tmp_path)
+    env = {"CLAUDE_PROJECT_DIR": str(repo)}
+    (repo / "x.py").write_text("x = 1\n")  # uncommitted before the prompt
+    assert _run_hook("turn-start.sh", {}, env=env).returncode == 0
+    assert _run_hook("verify-on-stop.sh", {}, env=env).returncode == 0
+    assert not count.exists()
+    assert _run_hook("turn-start.sh", {}, env=env).returncode == 0
+    (repo / "x.py").write_text("x = 2\n")  # this turn changed code
+    assert _run_hook("verify-on-stop.sh", {}, env=env).returncode == 0
+    assert count.read_text().count("ran") == 1
+
+
+def test_verify_on_stop_does_not_rerun_or_reblock_a_failing_state(tmp_path: Path) -> None:
+    repo, count = _counting_repo(tmp_path)
+    cfg = json.loads((repo / "sdlc.json").read_text())
+    cfg["verify"] = f"sh -c 'echo ran >> {count}; echo red; exit 1'"
+    (repo / "sdlc.json").write_text(json.dumps(cfg))
+    env = {"CLAUDE_PROJECT_DIR": str(repo)}
+    _run_hook("turn-start.sh", {}, env=env)
+    (repo / "x.py").write_text("x = 1\n")
+    assert _run_hook("verify-on-stop.sh", {}, env=env).returncode == 2
+    for _ in range(2):  # later turns: chat, then chat with no snapshot at all
+        _run_hook("turn-start.sh", {}, env=env)
+        assert _run_hook("verify-on-stop.sh", {}, env=env).returncode == 0
+    (repo / ".git" / "sdlc-turn-start.hash").unlink()
+    assert _run_hook("verify-on-stop.sh", {}, env=env).returncode == 0
+    assert count.read_text().count("ran") == 1
+    (repo / "x.py").write_text("x = 2\n")  # new code, verified again
+    assert _run_hook("verify-on-stop.sh", {}, env=env).returncode == 2
     assert count.read_text().count("ran") == 2
 
 

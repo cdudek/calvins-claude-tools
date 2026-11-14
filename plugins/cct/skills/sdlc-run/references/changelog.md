@@ -5,6 +5,15 @@ version warning, the **Mechanical** lines are what `adopt` does for you (it adds
 with the stack's defaults and never overwrites a value), the **Manual** lines are printed for
 the engineer. A version with no migration lines needs nothing but a re-run of `adopt`.
 
+## 3.15.1 — verify-on-stop runs only after a turn that changed code
+
+- The Stop hook ran `verify` (up to 300 s) after every turn, even a chat reply, because it asked "is anything uncommitted?" and not "did this turn change anything?". It also read the whole transcript on every Stop and re-ran a failing `verify` after every later turn.
+- A new `UserPromptSubmit` hook, `turn-start.sh`, snapshots the source diff hash when you send a prompt. `verify-on-stop.sh` runs `verify` only when the hash differs at Stop.
+- A state that was verified, pass or fail, is not verified again. A red state blocks once; it does not block again until the code changes.
+- The `/goal` check reads the transcript last, only when `verify` would otherwise run.
+- Mechanical: re-running `adopt` refreshes `verify-on-stop.sh` and `sdlc-config.sh`, adds `turn-start.sh` and registers the `UserPromptSubmit` hook in `.claude/settings.json`.
+- Manual: restart open Claude Code sessions so they load the new hook. A repo that lists `.claude/hooks/verify-on-stop.sh` under `keep` in `sdlc.json` copies the new `verify-on-stop.sh` and `sdlc-config.sh` by hand.
+
 ## 3.15.0 — the local gate is removed; GitHub's required checks are the gate
 
 - The local CI gate from 3.9.1 and 3.11.0 is gone: the plugin's Bash `PreToolUse` hook (`hooks/local-gate.py`) no longer blocks `git push`, `gh pr create` or `gh pr ready` without a `scripts/ci-local` receipt, and nothing posts a `local-ci` status. Merge protection is the repository's required GitHub Actions checks.
