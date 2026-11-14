@@ -85,7 +85,7 @@ One drop order at every width, applied until the line fits `bodyColumns`: 1 the 
 |---|---|---|---|
 | Row | Box (row, gap 2) | have | as the ponytail band's compact row |
 | Segments | Text | have | |
-| Buttons | Button, plain, hotkey | have | |
+| Buttons | Button, plain, hotkey | have | Superseded 2026-11-14: no hotkeys (owner) |
 
 ## Band, details
 

@@ -417,17 +417,17 @@ describe('the pane only observes', () => {
 })
 
 describe('navigation between pages', () => {
-  test(`@F88 ${TAG} Close (x) on Home; Back (b), Home (h) and Close (x) on a Session page`, async ($, on) => {
+  test(`@F88 ${TAG} Close on Home; Back, Home and Close on a Session page, no quick keys`, async ($, on) => {
     withSnap(on, paneTown())
     const ui = await mount($)
     const close = (await ui.find({ key: 'close' }))!
-    expect([close.props.label, close.props.hotkey, close.props.plain]).toEqual(['Close', 'x', true])
+    expect([close.props.label, close.props.hotkey, close.props.plain]).toEqual(['Close', undefined, true])
     expect(await ui.find({ key: 'back' })).toBeUndefined()
     expect(await ui.find({ key: 'home' })).toBeUndefined()
     await ui.press({ key: 'session:web-1' })
     await ui.redraw()
     const nav = await Promise.all(['back', 'home', 'close'].map(async k => (await ui.find({ key: k }))!.props))
-    expect(nav.map(p => [p.label, p.hotkey, p.plain])).toEqual([['Back', 'b', true], ['Home', 'h', true], ['Close', 'x', true]])
+    expect(nav.map(p => [p.label, p.hotkey, p.plain])).toEqual([['Back', undefined, true], ['Home', undefined, true], ['Close', undefined, true]])
     await ui.unmount()
   })
 
@@ -643,7 +643,7 @@ describe('the Session page', () => {
     const ended = sess('gone-1', 'ended', 90, 'web-app', 'old job', { endedAt: at(90), cwd: "/work/my web-app's copy" })
     const { ui, w, box } = await sessionPage($, on, [sess(SELF, 'running', 1, 'web-app', 'me'), ended], 'gone-1')
     const resume = (await ui.find({ key: 'resume' }))!
-    expect([resume.props.label, resume.props.hotkey, resume.props.plain]).toEqual(['Copy resume command', 'r', true])
+    expect([resume.props.label, resume.props.hotkey, resume.props.plain]).toEqual(['Copy resume command', undefined, true])
     await ui.press({ key: 'resume' })
     expect(w.copies.map(c => c.text)).toEqual(["cd '/work/my web-app'\\''s copy' && claude --resume gone-1"])
     // A live session offers none.
@@ -860,7 +860,7 @@ describe('the Repo page', () => {
   test(`@F88 ${TAG} Back, Home and Close on the Repo page, and Back returns to the same row`, async ($, on) => {
     const { ui } = await repoPage($, on)
     const nav = await Promise.all(['back', 'home', 'close'].map(async k => (await ui.find({ key: k }))!.props))
-    expect(nav.map(p => [p.label, p.hotkey, p.plain])).toEqual([['Back', 'b', true], ['Home', 'h', true], ['Close', 'x', true]])
+    expect(nav.map(p => [p.label, p.hotkey, p.plain])).toEqual([['Back', undefined, true], ['Home', undefined, true], ['Close', undefined, true]])
     await ui.press({ key: 'session:web-1' })
     await ui.redraw()
     await ui.press({ key: 'repo:/work/web-app' }) // the header button of the Session page
@@ -934,8 +934,8 @@ describe('/tracker page words', () => {
   test(`@F59 ${TAG} session not found line`, async ($, on) => {
     const { ui } = await opened($, on, 'session nothing-like-it')
     expect(await texts(ui)).toContain('No session matches "nothing-like-it". Pick one on Home.')
-    expect((await ui.find({ key: 'home' }))?.props.hotkey).toBe('h')
-    expect((await ui.find({ key: 'close' }))?.props.hotkey).toBe('x')
+    expect((await ui.find({ key: 'home' }))?.props.hotkey).toBeUndefined()
+    expect((await ui.find({ key: 'close' }))?.props.hotkey).toBeUndefined()
     await ui.press({ key: 'home' })
     await ui.redraw()
     expect(await headings(ui)).toContain('Needs you')
@@ -951,7 +951,7 @@ describe('/tracker page words', () => {
 
   test(`${TAG} /tracker with no word opens Home; an unknown word shows the one-line hint; the band's words pass`, async ($, on) => {
     const h = withSnap(on, paneTown())
-    expect((await run($, '')) as unknown).toMatchObject({ text: '' })
+    expect((await run($, '')) as unknown).toMatchObject({ text: 'Tracker pane opened.' })
     expect(h.w.opens.length).toBe(1)
     expect((await run($, 'frobnicate')) as unknown).toMatchObject({ text: 'Try /tracker, details, compact, copy, repo, session, band on, band off.' })
     expect(h.w.opens.length).toBe(1) // nothing opened

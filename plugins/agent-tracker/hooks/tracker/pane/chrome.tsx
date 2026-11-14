@@ -20,7 +20,7 @@ export const ringOn = (a: Actions, key: string) => (a.ring === key ? (true as co
 
 const partProps = (p: Part, dim: boolean) => ({ dimColor: dim || p.tone === 'dim', color: p.tone === 'error' ? ('error' as const) : undefined })
 
-// The title row of Home: "Tracker", when it was read, and Close (x).
+// The title row of Home: "Tracker", when it was read, and Close.
 export function titleRow(ui: Ui, a: Actions, updated: string | null) {
   const { Box, Text, Button } = ui
   return (
@@ -28,19 +28,19 @@ export function titleRow(ui: Ui, a: Actions, updated: string | null) {
       <Text bold>{PANE_TITLE}</Text>
       {updated !== null && <Text dimColor>{updated}</Text>}
       <Box flexGrow={1} />
-      <Button key="close" plain label={PANE_BUTTONS.close} hotkey="x" autoFocus={ringOn(a, 'close')} onPress={a.close} />
+      <Button key="close" plain label={PANE_BUTTONS.close} autoFocus={ringOn(a, 'close')} onPress={a.close} />
     </Box>
   )
 }
 
-// Session and Repo: Back (b), Home (h) and Close (x) in a row.
+// Session and Repo: Back, Home and Close in a row.
 export function navRow(ui: Ui, a: Actions, withBack = true) {
   const { Box, Button } = ui
   return (
     <Box key="nav" flexDirection="row" flexWrap="wrap" gap={2}>
-      {withBack && <Button key="back" plain label={PANE_BUTTONS.back} hotkey="b" autoFocus={ringOn(a, 'back')} onPress={a.back} />}
-      <Button key="home" plain label={PANE_BUTTONS.home} hotkey="h" autoFocus={ringOn(a, 'home')} onPress={a.home} />
-      <Button key="close" plain label={PANE_BUTTONS.close} hotkey="x" autoFocus={ringOn(a, 'close')} onPress={a.close} />
+      {withBack && <Button key="back" plain label={PANE_BUTTONS.back} autoFocus={ringOn(a, 'back')} onPress={a.back} />}
+      <Button key="home" plain label={PANE_BUTTONS.home} autoFocus={ringOn(a, 'home')} onPress={a.home} />
+      <Button key="close" plain label={PANE_BUTTONS.close} autoFocus={ringOn(a, 'close')} onPress={a.close} />
     </Box>
   )
 }

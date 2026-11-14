@@ -28,6 +28,7 @@ export type State = {
   initializing: Promise<void> | null
   isTicking: boolean
   hasTimer: boolean
+  hasCollector: boolean // the collector was started, by session.start or by the first draw of a mod loaded mid-session
   scannedAt: number
   isBackfilling: boolean // a backfill pass or a repo scan is running: the next timer fire skips
   isScanning: boolean
@@ -50,6 +51,7 @@ export const newState = (): State => ({
   initializing: null,
   isTicking: false,
   hasTimer: false,
+  hasCollector: false,
   scannedAt: 0,
   isBackfilling: false,
   isScanning: false,

@@ -90,10 +90,12 @@ export type Segment = { id: 'loading' | 'needs' | 'run' | 'alone' | 'prs' | 'wor
 export const cells = (text: string) => [...text].length
 const segmentCells = (s: Segment) => s.chunks.reduce((n, c) => n + cells(c.text), 0)
 
-// A plain Button with a hotkey draws "p: Pane": its label and three cells. Compact has Pane and Details (17 cells).
-const buttonCells = (labels: readonly string[]) => labels.reduce((n, label) => n + cells(label) + 3, 0)
+// A plain Button draws its label alone. The buttons sit 2 cells apart and 2 cells after the text. Compact has Pane and
+// Details: 4 + 7 + 2 + 2 = 15 cells.
+const GAP = 2
+const buttonCells = (labels: readonly string[]) => labels.reduce((n, label) => n + cells(label), 0) + GAP * labels.length
 export const BUTTONS_COMPACT = buttonCells(['Pane', 'Details'])
-// Details has Copy, Pane and Compact: 24 cells. The spec counts 21 (questions.md Q17).
+// Details has Copy, Pane and Compact: 4 + 4 + 7 + 6 = 21 cells.
 export const BUTTONS_DETAILS = buttonCells(['Copy', 'Pane', 'Compact'])
 
 const rowWidth = (segments: Segment[], buttons: number) => segments.reduce((n, s) => n + segmentCells(s), 0) + cells(SEP) * Math.max(0, segments.length - 1) + buttons

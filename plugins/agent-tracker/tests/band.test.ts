@@ -23,7 +23,7 @@ import type { CompactLayout, Details } from '../hooks/tracker/core'
 import type { SessionRecord, Settings, Snapshot } from '../hooks/tracker/types'
 import { AGENTS_JSON, ID, T0 } from './fixtures/agents'
 import { MIN, MILESTONE, NOW, PRS, SELF, inState, pr, rec, scan, snap, town, townSelfWaiting } from './fixtures/band'
-import { DIR, start, world } from './fixtures/world'
+import { DIR, settle, start, world } from './fixtures/world'
 import type { World } from './fixtures/world'
 
 const TAG = '@2026-11-13-agent-tracker'
@@ -38,12 +38,12 @@ const texts = async (ui: { findAll: (q: object) => Promise<{ text?: string }[]> 
 const row = async (ui: { findAll: (q: object) => Promise<{ text?: string }[]> }) => (await texts(ui)).join('')
 
 describe('compact band, the model', () => {
-  test(`@F24 ${TAG} segments in order: needs you, running and done, PRs, work, then the buttons; 125 cells at full width`, () => {
+  test(`@F24 ${TAG} segments in order: needs you, running and done, PRs, work, then the buttons; 123 cells at full width`, () => {
     const l = compact(town(), 200)
     expect(text(l)).toBe('● 2 need you · web-app: fix login 6m │ ◐ 3 running · ✓ 2 done │ 4 PRs · 1 ✗ │ agent-tracker-1 2/4 · goal 14m')
     expect(l.segments.map(s => s.id)).toEqual(['needs', 'run', 'prs', 'work'])
-    expect(l.width).toBe(125) // the spec's measure: 39 + 25 + 14 + 33 + 17, less the last gap
-    expect(BUTTONS_COMPACT).toBe(17)
+    expect(l.width).toBe(123) // 39 + 25 + 14 + 33, the 3 gaps, and 15 for the buttons (no quick keys: 2 less than the spec's 17)
+    expect(BUTTONS_COMPACT).toBe(15)
   })
 
   test(`@F22 ${TAG} the compact row is the default and its buttons are Pane and Details`, () => {
@@ -92,31 +92,31 @@ describe('compact band, the model', () => {
   })
 
   test(`@F28 ${TAG} drop order at 115, 75 and 50 columns; below 40 bodyColumns`, () => {
-    // 1 goal age: 125 -> 114, fits 115.
+    // 1 goal age: 123 -> 112, fits 115.
     const w115 = compact(town(), 115)
     expect(text(w115)).toBe('● 2 need you · web-app: fix login 6m │ ◐ 3 running · ✓ 2 done │ 4 PRs · 1 ✗ │ agent-tracker-1 2/4')
-    expect(w115.width).toBe(114)
-    // With "this session" (needs you 46 cells) the Work segment drops too: 99.
+    expect(w115.width).toBe(112)
+    // With "this session" (needs you 46 cells) the Work segment drops too: 97.
     const mine = compact(townSelfWaiting(), 115)
-    expect(mine.width).toBe(99)
+    expect(mine.width).toBe(97)
     expect(mine.segments.map(s => s.id)).toEqual(['needs', 'run', 'prs'])
-    // Steps 1 to 3 together are 79 cells; the words go before the PR segment.
+    // Steps 1 to 3 together are 77 cells; the words go before the PR segment.
     const w79 = compact(town(), 79)
     expect(text(w79)).toBe('● 2 need you · web-app: fix login 6m │ ◐ 3 · ✓ 2 │ 4 PRs · 1 ✗')
-    expect(w79.width).toBe(79)
-    expect(text(compact(town(), 92))).toContain('◐ 3 running · ✓ 2 done') // words stay while the row fits (goal and work gone: 92)
-    // 4 the PR segment: 65, fits 75.
+    expect(w79.width).toBe(77)
+    expect(text(compact(town(), 92))).toContain('◐ 3 running · ✓ 2 done') // words stay while the row fits (goal and work gone: 90)
+    // 4 the PR segment: 63, fits 75.
     const w75 = compact(town(), 75)
     expect(text(w75)).toBe('● 2 need you · web-app: fix login 6m │ ◐ 3 · ✓ 2')
-    expect(w75.width).toBe(65)
-    // 5 the waiting session's title, keeping its repo and wait: 54.
+    expect(w75.width).toBe(63)
+    // 5 the waiting session's title, keeping its repo and wait: 52.
     const w54 = compact(town(), 54)
     expect(text(w54)).toBe('● 2 need you · web-app 6m │ ◐ 3 · ✓ 2')
-    expect(w54.width).toBe(54)
+    expect(w54.width).toBe(52)
     // Nothing else fits at 50: the counts go before the waiting session (questions.md Q16).
     const w50 = compact(town(), 50)
     expect(text(w50)).toBe('● 2 need you · web-app 6m')
-    expect(w50.width).toBe(42)
+    expect(w50.width).toBe(40)
     // Below 40 only the count and the buttons stay.
     const w39 = compact(town(), 39)
     expect(text(w39)).toBe('● 2 need you')
@@ -260,26 +260,26 @@ describe('details view, the model', () => {
     const sdlc = (b: string) => branch(b)
     const wide = 'platform-tools-suite · agent-tracker-1 · 2 of 4 features complete · feat/band'
     expect(details(sdlc('feat/band'), 200).header[0]).toBe(wide)
-    // Cut 1: the branch. The full header and the 24 button cells are 101; without the branch, 89.
-    expect(details(sdlc('feat/band'), 101).header[0]).toBe(wide)
-    expect(details(sdlc('feat/band'), 100).header[0]).toBe('platform-tools-suite · agent-tracker-1 · 2 of 4 features complete')
-    expect(details(sdlc('feat/band'), 89).header[0]).toBe('platform-tools-suite · agent-tracker-1 · 2 of 4 features complete')
-    // Then "2 of 4 features complete" shortens: at 80 columns, the case the fact names.
-    expect(details(sdlc('feat/band'), 88).header[0]).toBe('platform-tools-suite · agent-tracker-1 · 2/4 complete')
-    expect(details(sdlc('feat/band'), 80).header[0]).toBe('platform-tools-suite · agent-tracker-1 · 2/4 complete')
+    // Cut 1: the branch. The full header and the 21 button cells are 98; without the branch, 86.
+    expect(details(sdlc('feat/band'), 98).header[0]).toBe(wide)
+    expect(details(sdlc('feat/band'), 97).header[0]).toBe('platform-tools-suite · agent-tracker-1 · 2 of 4 features complete')
+    expect(details(sdlc('feat/band'), 86).header[0]).toBe('platform-tools-suite · agent-tracker-1 · 2 of 4 features complete')
+    // Then "2 of 4 features complete" shortens: (77 columns now: 80 less the 3 cells the quick keys took).
+    expect(details(sdlc('feat/band'), 85).header[0]).toBe('platform-tools-suite · agent-tracker-1 · 2/4 complete')
     expect(details(sdlc('feat/band'), 77).header[0]).toBe('platform-tools-suite · agent-tracker-1 · 2/4 complete')
+    expect(details(sdlc('feat/band'), 74).header[0]).toBe('platform-tools-suite · agent-tracker-1 · 2/4 complete')
     // Last the milestone name.
-    expect(details(sdlc('feat/band'), 76).header[0]).toBe('platform-tools-suite · 2/4 complete')
-    expect(details(sdlc('feat/band'), 59).header[0]).toBe('platform-tools-suite · 2/4 complete')
+    expect(details(sdlc('feat/band'), 73).header[0]).toBe('platform-tools-suite · 2/4 complete')
+    expect(details(sdlc('feat/band'), 56).header[0]).toBe('platform-tools-suite · 2/4 complete')
     // Without sdlc-run: branch, then title.
-    expect(details(plain(), 65).header[0]).toBe('web-app · fix login redirect · feat/login')
-    expect(details(plain(), 64).header[0]).toBe('web-app · fix login redirect')
-    expect(details(plain(), 52).header[0]).toBe('web-app · fix login redirect')
-    expect(details(plain(), 51).header[0]).toBe('web-app')
+    expect(details(plain(), 62).header[0]).toBe('web-app · fix login redirect · feat/login')
+    expect(details(plain(), 61).header[0]).toBe('web-app · fix login redirect')
+    expect(details(plain(), 49).header[0]).toBe('web-app · fix login redirect')
+    expect(details(plain(), 48).header[0]).toBe('web-app')
     // What runs stays on its own line.
     const goal = plain({ runs: { goalSince: NOW - 14 * MIN, subagents: [], background: [] } })
-    expect(details(goal, 60).header).toEqual(['web-app · fix login redirect', 'goal 14m'])
-    expect(BUTTONS_DETAILS).toBe(24)
+    expect(details(goal, 57).header).toEqual(['web-app · fix login redirect', 'goal 14m'])
+    expect(BUTTONS_DETAILS).toBe(21) // Copy, Pane, Compact: 15 label cells, 2 before the buttons and 2 between
   })
 
   test(`@F35 ${TAG} four columns, empty column`, () => {
@@ -448,18 +448,45 @@ describe('the band on screen', () => {
     await ui.unmount()
   })
 
-  test(`@F23 ${TAG} buttons are Pane and Details only, with hotkeys p and d`, async ($, on) => {
+  test(`@F23 ${TAG} buttons are Pane and Details only, with no quick keys`, async ($, on) => {
     await withTown($, on, town())
     const ui = await mount($, 'terminal')
     const pane = (await ui.find({ key: 'pane' }))!
     const detailsButton = (await ui.find({ key: 'details' }))!
-    expect([pane.props.label, pane.props.hotkey, pane.props.plain]).toEqual(['Pane', 'p', true])
-    expect([detailsButton.props.label, detailsButton.props.hotkey, detailsButton.props.plain]).toEqual(['Details', 'd', true])
+    expect([pane.props.label, pane.props.hotkey, pane.props.plain]).toEqual(['Pane', undefined, true])
+    expect([detailsButton.props.label, detailsButton.props.hotkey, detailsButton.props.plain]).toEqual(['Details', undefined, true])
     expect(await ui.find({ key: 'board' })).toBeUndefined() // no Board button
     expect((await ui.findAll({ type: 'Button' })).length).toBe(2)
     // The row is as wide as the terminal and is drawn from the layout.
     expect(await row(ui)).toBe('● 2 need you · web-app: fix login 6m │ ◐ 3 running · ✓ 2 done │ 4 PRs · 1 ✗ │ agent-tracker-1 2/4')
     await ui.unmount()
+  })
+
+  test(`${TAG} no button has a quick key, and the buttons sit 2 cells apart, in both views`, async ($, on) => {
+    await withTown($, on, town())
+    const ui = await mount($, 'terminal')
+    for (const view of ['compact', 'details']) {
+      await run($, view)
+      await ui.redraw()
+      const buttons = await ui.findAll({ type: 'Button' })
+      expect(buttons.length).toBe(view === 'compact' ? 2 : 3)
+      expect(buttons.every(b => b.props.hotkey === undefined)).toBe(true)
+      expect((await ui.findAll({ type: 'Box' })).some(b => b.props.gap === 2)).toBe(true) // the row of buttons
+    }
+    await ui.unmount()
+  })
+
+  test(`${TAG} each band command answers with one short line`, async ($, on) => {
+    const w = await withTown($, on, town())
+    const said = async (args: string) => ((await run($, args)) as { text: string }).text
+    expect(await said('details')).toBe('Band switched to details.')
+    expect(await said('compact')).toBe('Band switched to compact.')
+    expect(await said('band off')).toBe('Band hidden. /tracker band on shows it again.')
+    expect(await said('band on')).toBe('Band shown.')
+    expect(await said('copy')).toBe(COPIED) // the reply is the toast
+    expect(w.toasts.at(-1)).toBe(COPIED)
+    w.failCopy = 'no-clipboard'
+    expect(await said('copy')).toBe('Copy failed: no-clipboard. Press Copy again or run /tracker copy.')
   })
 
   test(`@F29 ${TAG} band off and on, kept in settings.json, every session`, async ($, on) => {
@@ -503,13 +530,13 @@ describe('the band on screen', () => {
     await ui.unmount()
   })
 
-  test(`@F80 ${TAG} details buttons and hotkeys`, async ($, on) => {
+  test(`@F80 ${TAG} details buttons, no quick keys`, async ($, on) => {
     const w = await withTown($, on, town())
     const ui = await mount($, 'terminal')
     await run($, 'details')
     await ui.redraw()
     const keys = await ui.findAll({ type: 'Button' })
-    expect(keys.map(b => [b.props.key, b.props.label, b.props.hotkey])).toEqual([['copy', 'Copy', 'c'], ['pane', 'Pane', 'p'], ['details', 'Compact', 'd']])
+    expect(keys.map(b => [b.props.key, b.props.label, b.props.hotkey])).toEqual([['copy', 'Copy', undefined], ['pane', 'Pane', undefined], ['details', 'Compact', undefined]])
     expect(keys.every(b => b.props.plain === true)).toBe(true)
     await ui.press({ key: 'details' }) // Compact
     expect(settings(w)?.view).toBe('compact')
@@ -651,6 +678,25 @@ describe('the band follows the data', () => {
     const line = await row(ui)
     expect(line).toContain('● 2 need you')
     expect(line).toContain('◐ 2 running · ✓ 1 done')
+    await ui.unmount()
+  })
+
+  test(`@F53 ${TAG} a mod loaded mid-session gets no session.start: its first draw starts the collector, and the band loads`, async ($, on) => {
+    const w = world(on, { now: T0 + 3_600_000, id: ID.busy, cwd: '/work/repo-4' })
+    w.agents.json = AGENTS_JSON
+    const ui = await mount($, 'terminal', 200) // no start(): nothing has polled yet
+    await settle() // the poll the draw started and did not wait for
+    await ui.redraw()
+    expect(await row(ui)).not.toContain(LOADING)
+    expect(await row(ui)).toContain('● 2 need you')
+    expect(w.snapshot().at).not.toBe(0)
+    const polls = () => w.procs.filter(p => p.argv[1] === 'agents').length
+    expect(polls()).toBe(1)
+    await ui.redraw() // a second draw does not start a second collector
+    await settle()
+    expect(polls()).toBe(1)
+    await w.clock.advance(5000) // the timer polls on
+    expect(polls()).toBe(2)
     await ui.unmount()
   })
 

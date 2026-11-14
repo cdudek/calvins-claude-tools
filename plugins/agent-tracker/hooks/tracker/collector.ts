@@ -1,5 +1,5 @@
 // The collector: the one poller (by lease), this session's record from the list, and the merge into `snapshot`.
-import { atom, update } from 'claude-code'
+import { atom, read, update } from 'claude-code'
 import type { EngineInterface, On } from 'claude-code'
 
 import { startBackfill } from './backfill'
@@ -16,7 +16,7 @@ const RESCAN_MS = 60_000 // branch and milestone are read again about once a min
 const GOAL_END = /^(clear|off|stop|cancel)\b/i
 
 // One poll: take or keep the lease and run `claude agents --json`, or read the holder's agents.json (F127 to F129).
-const readAgents = async ($: Engine, base: string, me: string, now: number): Promise<AgentRow[] | null> => {
+async function readAgents($: Engine, base: string, me: string, now: number): Promise<AgentRow[] | null> {
   if (leaseState(await readLease($, base), me, now) === 'other') {
     const f = await readAgentsFile($, base)
     return f !== null && agentsFresh(f.readAt, now) ? f.agents : null // old or unreadable counts as failed
@@ -30,7 +30,7 @@ const readAgents = async ($: Engine, base: string, me: string, now: number): Pro
   return agents
 }
 
-const tick = async ($: Engine, s: State) => {
+async function tick($: Engine, s: State) {
   if (s.isTicking) return
   s.isTicking = true
   try {
@@ -82,7 +82,7 @@ const tick = async ($: Engine, s: State) => {
 }
 
 // The first poll now, then one every 5 seconds; the backfill and the repo scan run beside it, each on its own timer.
-const begin = async ($: Engine, s: State) => {
+async function begin($: Engine, s: State) {
   await tick($, s).catch(() => undefined)
   if (!s.hasTimer) {
     s.hasTimer = true
@@ -92,9 +92,18 @@ const begin = async ($: Engine, s: State) => {
   }
 }
 
+// A mod installed or reloaded mid-session never gets session.start, so its snapshot would stay empty: the first draw
+// of the band or the pane starts the collector instead. Once per session, and the draw does not wait for the poll.
+export async function ensureCollector($: Engine, s: State) {
+  if (s.hasCollector || (await read($, snapshot)).at !== 0 || s.hasCollector) return
+  s.hasCollector = true
+  void begin($, s).catch(() => undefined)
+}
+
 export const registerCollector = (on: On, s: State) => {
   on('session.start', async ($, e, next) => {
     const r = await next(e)
+    s.hasCollector = true
     void begin($, s).catch(() => undefined) // the first poll runs on; the session does not wait for `claude agents --json`
     return r
   })

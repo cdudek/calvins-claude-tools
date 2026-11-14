@@ -4,6 +4,8 @@ Every guideline in `docs/ux/interaction-guidelines.md` is `unresolved`. Each row
 
 What the mod API allows, and so what this spec uses (Claude Code 2.1.323 types, checked 2026-11-13):
 
+Superseded 2026-11-14: no hotkeys (owner). The two lines below that name hotkeys no longer hold.
+
 - **Band keys:** `ctrl+x tab` or a click gives the band the keyboard; Tab and the arrows walk its buttons, Enter presses one, a one-letter `hotkey` presses it directly. A letter hotkey never fires from the prompt: only while the band or pane has the keyboard (engine types, the `hotkey` rule). Digit hotkeys are not used, because a bare digit in an empty prompt does press them.
 - **Pane keys:** the same ring (`ctrl+x tab`, Tab, Enter, letter hotkeys, arrows scroll). No raw key handler, so every move is a Button. `ctrl+x x` closes a pane.
 - **Escape, one step at a time:** Escape hands the keyboard from the band or pane back to the prompt; the pane stays open. Close (`x`) or `ctrl+x x` closes it. Over typed text or a running turn, Escape is Claude Code's own. (Owner, 2026-11-14: "Escape returns keys only"; the engine cannot close on a second Escape only.)
