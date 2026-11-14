@@ -7,9 +7,11 @@ import { prsOf } from './band-model'
 import { isLive, isNumbered, repoLabel, sessionLabel } from './rank'
 import { dim, DOT, join, sp } from './paint'
 import type { Span, Spans } from './paint'
-import { HEADINGS, NOTHING_NEEDS, ONLY_THIS, NO_REPOS, NEW_MARK, PRS_NOT_SHOWN, THIS_SESSION, KEY_HINTS, staleTop, updatedWords, withoutTracker } from './words'
+import { HEADINGS, NOTHING_NEEDS, ONLY_THIS, NO_REPOS, NO_TASKS, NEW_MARK, PRS_NOT_SHOWN, THIS_SESSION, KEY_HINTS, staleTop, updatedWords, withoutTracker } from './words'
 import type { NoteItem } from './notes'
 import { unseenCount } from './notes'
+import type { TaskItem } from './tasks'
+import { TASK_LABEL, taskCounts } from './tasks'
 
 export const RUN_MAX = 8 // Running rows on Home before "and N more"
 export const REPOS_MAX = 8
@@ -26,8 +28,9 @@ export type Page =
 // The day and the clock face are the I/O layer's: core never reads a time zone. `day` is the weekday of an older ask.
 export type Local = { midnight: number; clock: (ms: number) => string; day: (ms: number) => string }
 
-// A Button that does something other than open a page: mark notes seen, copy the reply to overrule one, copy a resume command.
-export type ActionItem = { key: string; label: string; action: 'seen' | 'overrule' | 'resume'; keys?: string[] }
+// A Button that does something other than open a page: mark notes seen, copy the reply to overrule one, copy a resume command,
+// keep or close a task (`keys` are the task keys).
+export type ActionItem = { key: string; label: string; action: 'seen' | 'overrule' | 'resume' | 'keep' | 'close'; keys?: string[] }
 
 // One item of an inline list: a Button when it has `to`, a Link when it has `href`, plain text otherwise.
 export type Item = { key: string; spans: Spans; to?: Page; href?: string; joined?: boolean } // joined: no separator before it
@@ -121,6 +124,27 @@ export const repoEntries = (sessions: SessionRecord[]): RepoEntry[] => {
   return [...by.values()].sort((a, b) => b.at - a.at || a.path.localeCompare(b.path)).map(({ at: _at, ...e }) => e)
 }
 
+export const TASKS_SHOWN = 8 // task rows on Home before "and N more": the list leads the page and must leave the rest on the first screen
+
+const TASK_STYLE = { 'needs-you': { glyph: '●', tone: 'red' }, forgotten: { glyph: '○', tone: 'red' }, superseded: { glyph: '?', tone: 'magenta' }, 'in-progress': { glyph: '◐', tone: 'yellow' } } as const
+
+// "● Fix the login redirect", then "   web-app  asked 13:40  You: waiting for your answer for 4m". A superseded task adds Keep and Close.
+const taskBlocks = (t: TaskItem, local: Local, columns: number): Block[] => {
+  const st = TASK_STYLE[t.status]
+  const detail =
+    t.status === 'superseded'
+      ? t.later === null ? 'a later ask may have replaced it' : `a later ask at ${when(t.later.at, local)}, “${t.later.text}”, may have replaced it`
+      : t.status === 'in-progress' && t.progress !== null ? `${t.progress.slug}, ${t.progress.done} of ${t.progress.total} features` : t.detail
+  const words = `${TASK_LABEL[t.status]}${detail === '' ? '' : `${t.status === 'superseded' ? ' ' : ': '}${detail}`}`
+  const row: Block = {
+    kind: 'row',
+    key: `task:${t.key}`,
+    to: { kind: 'session', id: t.sessionId },
+    lines: [[sp(st.glyph, st.tone), sp(' '), sp(cut(t.text, columns - 4))], [sp('   '), sp(t.repo, undefined, { bold: true }), sp('  '), dim(`asked ${when(t.at, local)}`), sp('  '), sp(words, st.tone)]],
+  }
+  return t.status === 'superseded' ? [row, { kind: 'actions', key: `task-act:${t.key}`, items: [{ key: `keep:${t.key}`, label: 'Keep', action: 'keep', keys: [t.key] }, { key: `close:${t.key}`, label: 'Close', action: 'close', keys: [t.key] }] }] : [row]
+}
+
 export const NOTES_UNSEEN_SHOWN = 4 // unseen items of one kind on Home before "and N more"
 export const NOTES_SEEN_SHOWN = 2 // seen items of one kind on Home, one line each
 
@@ -147,7 +171,7 @@ const noteSection = (kind: 'know' | 'decided', items: NoteItem[], local: Local, 
   ]
 }
 
-export const homeModel = (snap: Snapshot, selfId: string, now: number, local: Local, frozen: Frozen | null, columns: number, items: NoteItem[] = []): HomeModel => {
+export const homeModel = (snap: Snapshot, selfId: string, now: number, local: Local, frozen: Frozen | null, columns: number, items: NoteItem[] = [], tasks: TaskItem[] = []): HomeModel => {
   const sessions = snap.sessions
   const live = sessions.filter(isLive)
   const of = (state: SessionRecord['state']) => live.filter(r => r.state === state)
@@ -172,6 +196,14 @@ export const homeModel = (snap: Snapshot, selfId: string, now: number, local: Lo
   if (isStale) blocks.push({ kind: 'lines', key: 'stale', wrap: true, lines: [[sp(staleTop(snap.okAt > 0 ? duration(Math.max(0, now - snap.okAt)) : null), 'yellow')]] })
   if (prs.partial) blocks.push({ kind: 'lines', key: 'partial', wrap: true, lines: [[dim(PRS_NOT_SHOWN)]] })
   const dimIf = (b: Block): Block => (isStale && b.kind === 'row' ? { ...b, lines: b.lines.map(l => l.map(x => ({ ...x, tone: 'dim' as const }))) } : b)
+
+  // The owner's open tasks lead the page: the same list, order and colours as the Board.
+  const counts = taskCounts(tasks)
+  blocks.push({ kind: 'lines', key: 'tasks-head', lines: [heading(HEADINGS.tasks, counts.alarm ? 'red' : tasks.length > 0 ? 'yellow' : undefined, [sp('  '), sp(String(tasks.length), counts.alarm ? 'red' : tasks.length > 0 ? 'yellow' : 'dim')])] })
+  if (tasks.length === 0) blocks.push({ kind: 'lines', key: 'tasks-empty', lines: [[dim(NO_TASKS)]] })
+  blocks.push(...tasks.slice(0, TASKS_SHOWN).flatMap(t => taskBlocks(t, local, columns)))
+  if (tasks.length > TASKS_SHOWN) blocks.push({ kind: 'lines', key: 'tasks-more', lines: [[dim(`and ${tasks.length - TASKS_SHOWN} more, all on the Board (/tracker web)`)]] })
+  blocks.push({ kind: 'rule' })
 
   blocks.push({ kind: 'lines', key: 'needs-head', lines: [heading(HEADINGS.needs, 'red')] })
   if (needsList.length > 0) blocks.push(...needsList.map(r => dimIf(needsRow(r, selfId, now, columns, seen !== undefined && !seen.includes(r.sessionId)))))

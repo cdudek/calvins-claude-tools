@@ -5,6 +5,7 @@ import type { Engine } from 'claude-code/testing'
 import { REPLY_COPIED, resumeCommand } from '../hooks/tracker/core'
 import type { Note, SessionRecord, Settings, Snapshot } from '../hooks/tracker/types'
 import { NOON, SELF, aloneTown, at, paneTown, sess, snapAt, use } from './fixtures/pane'
+import { taskTown } from './fixtures/tasks'
 import { world } from './fixtures/world'
 import type { World } from './fixtures/world'
 
@@ -84,6 +85,91 @@ const putChange = (w: World) => {
   w.put(`${base}/plan.md`, PLAN)
   w.put(`${base}/decisions.json`, { project: { slug: 'design system' }, ticket: 'ABC-210' })
 }
+
+describe('Home leads with your tasks not done', () => {
+  const TASKED = [...paneTown(), ...taskTown()]
+  const ROWS = ['task:need-1:1', 'task:lost-2:1', 'task:lost-1:1', 'task:sup-1:1', 'task:sup-1:2', 'task:prog-1:1', 'task:prog-2:1']
+
+  test(`${TAG} the heading and the count come first, then the rows: needs you, forgotten, superseded, in progress, newest first`, async ($, on) => {
+    withSnap(on, TASKED)
+    const ui = await mount($)
+    const all = await texts(ui)
+    const head = all.findIndex(t => t.startsWith('YOUR TASKS NOT DONE'))
+    expect(head).toBeGreaterThanOrEqual(0)
+    expect(all.slice(head, head + 3).join('')).toContain('7') // the count beside the heading
+    expect(head).toBeLessThan(all.findIndex(t => t.startsWith('NEEDS YOU'))) // before every other section
+    expect(all.findIndex(t => t.startsWith('NEEDS YOU'))).toBeLessThan(all.findIndex(t => t.startsWith('RUNNING')))
+    expect(await keys(ui, 'task:')).toEqual(ROWS)
+    expect((await buttons(ui))[0]!.props.key).toBe(ROWS[0]) // the ring starts on the first task
+    expect(await rowText(ui, 'task:need-1:1')).toContain('● Fix the login redirect so users land back on the page they came …') // one line, cut to the pane's width
+    expect(await rowText(ui, 'task:lost-1:1')).toContain('Forgotten: session ended 2h ago, not done, no milestone, no PR')
+    expect(await rowText(ui, 'task:lost-2:1')).toContain('Forgotten: idle 45m, not done, no milestone, no PR')
+    expect(await rowText(ui, 'task:sup-1:1')).toContain('Superseded? a later ask at 11:52, “Fix the login redirect and…”, may have replaced it')
+    expect(await rowText(ui, 'task:prog-1:1')).toContain('In progress: agent-tracker-1, 2 of 4 features')
+    await ui.unmount()
+  })
+
+  test(`${TAG} the colours: red needs you and forgotten, purple superseded, yellow in progress`, async ($, on) => {
+    withSnap(on, TASKED)
+    const ui = await mount($)
+    expect(await colorOf(ui, 'YOUR TASKS NOT DONE')).toMatchObject({ color: 'error', bold: true })
+    expect(await colorOf(ui, /^You: waiting/)).toMatchObject({ color: 'error' })
+    expect(await colorOf(ui, /^Forgotten: idle/)).toMatchObject({ color: 'error' })
+    expect(await colorOf(ui, /^Superseded\?/)).toMatchObject({ color: 'merged' })
+    expect(await colorOf(ui, /^In progress: agent/)).toMatchObject({ color: 'warning' })
+    await ui.unmount()
+  })
+
+  test(`${TAG} only a superseded row has Keep and Close: plain Buttons, no quick key, two cells apart`, async ($, on) => {
+    withSnap(on, TASKED)
+    const ui = await mount($)
+    expect(await keys(ui, 'keep:')).toEqual(['keep:sup-1:1'])
+    expect(await keys(ui, 'close:')).toEqual(['close:sup-1:1'])
+    const pair = [...(await buttons(ui, 'keep:')), ...(await buttons(ui, 'close:'))]
+    expect(pair.map(b => b.props.label)).toEqual(['Keep', 'Close'])
+    expect(pair.every(b => b.props.plain === true && b.props.hotkey === undefined)).toBe(true)
+    const row = (await ui.findAll({ type: 'Box' })).find(b => b.props.flexDirection === 'row' && Number(b.props.gap) >= 2 && (b.text ?? '').startsWith('KeepClose'))
+    expect(row).toBeDefined()
+    await ui.unmount()
+  })
+
+  test(`${TAG} Keep writes settings.json only; the task goes on as in progress, without its buttons`, async ($, on) => {
+    const { w } = withSnap(on, TASKED)
+    const ui = await mount($)
+    await go(ui, 'keep:sup-1:1')
+    expect(settings(w)).toMatchObject({ kept: ['sup-1:1'], closed: [] })
+    expect(w.writes.every(p => p === `${DIR}/settings.json`)).toBe(true) // no session file, no other file
+    expect(await ui.find({ key: 'keep:sup-1:1' })).toBeUndefined()
+    expect(await rowText(ui, 'task:sup-1:1')).toContain('In progress')
+    expect(await keys(ui, 'task:')).toHaveLength(7) // kept is still not done
+    await ui.unmount()
+  })
+
+  test(`${TAG} Close writes settings.json only; the task leaves the list and the count`, async ($, on) => {
+    const { w } = withSnap(on, TASKED)
+    w.put(`${DIR}/settings.json`, { v: 1, view: 'compact', bandHidden: false, seen: ['x:1'] }) // a file from before Keep and Close
+    const ui = await mount($)
+    await go(ui, 'close:sup-1:1')
+    expect(settings(w)).toMatchObject({ seen: ['x:1'], kept: [], closed: ['sup-1:1'] })
+    expect(w.writes.every(p => p === `${DIR}/settings.json`)).toBe(true)
+    expect(await ui.find({ key: 'task:sup-1:1' })).toBeUndefined()
+    expect(await keys(ui, 'task:')).toHaveLength(6)
+    expect((await texts(ui)).some(t => t === '6')).toBe(true)
+    await ui.unmount()
+  })
+
+  test(`${TAG} a long list stops at 8 rows and says where the rest is; with none, the heading says so`, async ($, on) => {
+    const many = Array.from({ length: 10 }, (_, i) => sess(`m-${i}`, 'running', 1, 'web-app', `t${i}`, { repo: { path: '/work/web-app', name: 'web-app' }, asks: [{ n: 1, text: `task ${i}`, kind: 'task', status: 'in-progress', at: at(10 + i) }] }))
+    const { box } = withSnap(on, many)
+    const ui = await mount($)
+    expect(await keys(ui, 'task:')).toHaveLength(8)
+    expect((await texts(ui)).some(t => t === 'and 2 more, all on the Board (/tracker web)')).toBe(true)
+    box.value = snapAt(paneTown())
+    await ui.redraw()
+    expect((await texts(ui)).some(t => t === 'Every task you gave is done.')).toBe(true)
+    await ui.unmount()
+  })
+})
 
 describe('Home, the triage queue', () => {
   test(`@F38 ${TAG} Pane button and /tracker open Home with focus on the first row`, async ($, on) => {

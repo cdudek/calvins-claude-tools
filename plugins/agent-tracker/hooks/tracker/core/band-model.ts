@@ -7,6 +7,8 @@ import type { Span, Spans, Tone } from './paint'
 import { repoPrs } from './git'
 import type { NoteItem } from './notes'
 import { unseenCount } from './notes'
+import type { TaskItem } from './tasks'
+import { taskCounts } from './tasks'
 import { completeCount, isComplete } from './milestone'
 import type { Line } from './rank'
 import { doneLines, isLive, needsLines, repoLabel, runningLines } from './rank'
@@ -36,6 +38,7 @@ export type BandData = {
   partial: boolean // gh was asked and failed
   notes: { know: number; decided: number; topKnow: string | null; topDecided: string | null } // unseen counts, and the newest unseen item of each kind
   work: Work | null // this session's work
+  tasks: { notDone: number; needsYou: number; alarm: boolean } // the tasks not done; alarm: one is forgotten or waits for you
 }
 
 // Open PRs of every repo with a session in 7 days, each from its latest stored scan (F78). A repo whose gh failed
@@ -76,7 +79,7 @@ const workOf = (r: SessionRecord | undefined, now: number): Work | null =>
         background: r.runs.background.length,
       }
 
-export const bandData = (snap: Snapshot, selfId: string, now: number, items: NoteItem[] = []): BandData => {
+export const bandData = (snap: Snapshot, selfId: string, now: number, items: NoteItem[] = [], tasks: TaskItem[] = []): BandData => {
   const live = snap.sessions.filter(isLive)
   return {
     loading: snap.at === 0,
@@ -88,12 +91,13 @@ export const bandData = (snap: Snapshot, selfId: string, now: number, items: Not
     ...prsOf(snap.sessions, now),
     notes: { know: unseenCount(items, 'know'), decided: unseenCount(items, 'decided'), topKnow: items.find(i => i.kind === 'know' && !i.seen)?.text ?? null, topDecided: items.find(i => i.kind === 'decided' && !i.seen)?.text ?? null },
     work: workOf(snap.sessions.find(r => r.sessionId === selfId), now),
+    tasks: taskCounts(tasks),
   }
 }
 
 // A segment of the compact row. `id` says what it is; each segment carries the gap before it.
 export type Chunk = Span
-export type Segment = { id: 'label' | 'loading' | 'work' | 'needs' | 'run' | 'know' | 'decided' | 'prs' | 'tail' | 'stale'; chunks: Chunk[] }
+export type Segment = { id: 'label' | 'loading' | 'work' | 'needs' | 'tasks' | 'run' | 'know' | 'decided' | 'prs' | 'tail' | 'stale'; chunks: Chunk[] }
 
 const segmentCells = (s: Segment) => spanCells(s.chunks)
 
@@ -110,7 +114,7 @@ const rowWidth = (segments: Segment[], buttons: number) => segments.reduce((n, s
 
 // The owner's mockup (2026-11-14): "agent tracker M1 3/7 goal 42m · ● 2 need you  ◐3  !2  ◆2  PRs 1✗ 1↓  · fix-login waits 4m".
 // The drop order, one step at a time: 1 the waiting session, 2 PRs, 3 the !N and ◆N counts, 4 the goal age, 5 the work
-// shortened, 6 the work, 7 the label, 8 the running count. The need-you count and the buttons never drop. Below 40 columns: step 8 at once.
+// shortened, 6 the work, 7 the label, 8 the running and not-done counts. The need-you count and the buttons never drop. Below 40 columns: step 8 at once.
 const LAST_STEP = 8
 const SPACES = '  '
 export const LABEL = 'agent tracker'
@@ -132,6 +136,8 @@ const needsSegment = (d: BandData): Segment => {
   return { id: 'needs', chunks: [n === 0 ? sp('○ all clear', 'dim') : sp(`● ${n} ${n === 1 ? 'needs' : 'need'} you`, 'red')] }
 }
 
+const tasksSegment = (n: BandData['tasks']): Segment => ({ id: 'tasks', chunks: [sp(`${n.notDone} not done`, n.alarm ? 'red' : 'yellow')] })
+
 const prsSegment = (p: NonNullable<BandData['prs']>): Segment => {
   const parts = [p.failing > 0 ? sp(`${p.failing}✗`, 'red') : null, p.behind > 0 ? sp(`${p.behind}↓`, 'yellow') : null].filter((x): x is Span => x !== null)
   return { id: 'prs', chunks: [dim('PRs '), ...(parts.length > 0 ? parts.flatMap((x, i) => (i === 0 ? [x] : [sp(' '), x])) : [sp(String(p.open))])] }
@@ -151,6 +157,7 @@ const build = (d: BandData, step: number, stale: string | null): Segment[] => {
     const work = d.work && stale === null && step < 6 ? workSegment(d.work, step) : null
     if (work) body.push(work)
     body.push(needsSegment(d))
+    if (d.tasks.notDone > 0 && step < 8) body.push(tasksSegment(d.tasks))
     if (step < 8) body.push({ id: 'run', chunks: [sp(`◐${d.running.length}`, 'yellow')] })
     if (step < 3 && d.notes.know > 0) body.push({ id: 'know', chunks: [sp(`!${d.notes.know}`, 'cyan')] })
     if (step < 3 && d.notes.decided > 0) body.push({ id: 'decided', chunks: [sp(`◆${d.notes.decided}`, 'magenta')] })
@@ -194,10 +201,11 @@ const JOIN = ' · '
 export const COLUMN_CELLS = 21
 const GUTTER = 2 // a column's text leaves 2 cells before the next column
 
-// "/goal running 42m · 2 subagents · 1 background session · ● 2 need you elsewhere · 6 live": each part only when there is one.
+// "6 not done · /goal running 42m · 2 subagents · 1 background session · ● 2 need you elsewhere · 6 live": each part only when there is one.
 const runsParts = (w: Work | null, d: BandData): Spans[] => {
   const elsewhere = d.needs.filter(l => !l.self).length
   return [
+    d.tasks.notDone > 0 ? [sp(`${d.tasks.notDone} not done`, d.tasks.alarm ? 'red' : 'yellow')] : [],
     w === null || w.goalMs === null ? [] : [sp(`/goal running ${duration(w.goalMs)}`, 'cyan')],
     w !== null && w.subagents > 0 ? [dim(plural(w.subagents, 'subagent', 'subagents'))] : [],
     w !== null && w.background > 0 ? [dim(plural(w.background, 'background session', 'background sessions'))] : [],

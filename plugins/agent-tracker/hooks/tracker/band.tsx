@@ -7,7 +7,7 @@ import type { EngineInterface, On } from 'claude-code'
 import { BAND_REPLY, BOARD_FAILED, DIVIDER_LABEL, DIVIDER_LEAD, TONE_COLOR, cells, BUTTON_LABELS, COPIED, bandData, columnsAlt, columnsSvg, compactLayout, copyFailed, detailsLayout, paint, rule, stateMarkdown } from './core'
 import type { Column, Spans } from './core'
 import { ensureCollector } from './collector'
-import { itemsOf } from './notes'
+import { itemsOf, tasksOf } from './notes'
 import { openPane, readSettings, startUi, writeSettings } from './store'
 import type { State } from './store'
 import type { Snapshot } from './types'
@@ -20,7 +20,7 @@ const snapshot = atom({ plugin: 'agent-tracker', key: 'snapshot' } as const, { a
 async function current($: Engine, s: State) {
   const snap = await read($, snapshot)
   const now = await $.clock.now()
-  return bandData(snap, await $.session.id(), now, await itemsOf($, s, snap, now))
+  return bandData(snap, await $.session.id(), now, await itemsOf($, s, snap, now), await tasksOf($, s, snap, now))
 }
 
 // Copy the state as Markdown. The toast says whether it worked (F36, F86).

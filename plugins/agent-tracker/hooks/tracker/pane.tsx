@@ -9,9 +9,9 @@ import type { ActionItem, Local, NoteItem, Page, PaneModel } from './core'
 import type { Actions } from './pane/view'
 import { paneView } from './pane/view'
 import { changesOf } from './changes'
-import { itemsOf } from './notes'
+import { itemsOf, tasksOf } from './notes'
 import { ensureCollector } from './collector'
-import { markSeen, openPane, startUi } from './store'
+import { markSeen, markTask, openPane, startUi } from './store'
 import type { State } from './store'
 import type { Snapshot } from './types'
 
@@ -68,9 +68,10 @@ function back($: Engine, s: State) {
   $.ui.invalidate('ui.render')
 }
 
-// An action Button: mark notes seen (the one write, to settings.json), copy the reply that overrules an item, copy a resume command.
+// An action Button: mark notes seen, keep or close a task (the only writes, both to settings.json), copy the reply that overrules an item, copy a resume command.
 async function act($: Engine, s: State, it: ActionItem, item: NoteItem | undefined, resume: string | null, surface: Surface) {
   if (it.action === 'seen') await markSeen($, s, it.keys ?? [])
+  else if (it.action === 'keep' || it.action === 'close') await markTask($, s, it.action === 'keep' ? 'kept' : 'closed', it.keys ?? [])
   else if (it.action === 'overrule' && item !== undefined) {
     const done = await $.ui.copy({ text: overruleText(item), ...(surface === undefined ? {} : { surface }) })
     $.ui.toast(done.isCopied ? REPLY_COPIED : replyFailed(done.reason))
@@ -141,10 +142,11 @@ export const registerPane = (on: On, s: State) => {
     const columns = Math.max(20, e.props.bodyColumns - 1) // one cell of margin on the left
     const page = s.pane.page
     const items = await itemsOf($, s, snap, now)
+    const tasks = page.kind === 'home' ? await tasksOf($, s, snap, now) : []
     // Home keeps its order while the pane has the keyboard, and sorts again when the keyboard leaves (F43).
     let model: PaneModel
     if (page.kind === 'home') {
-      const home = homeModel(snap, selfId, now, localDay(now), e.props.isFocused ? s.pane.frozen : null, columns, items)
+      const home = homeModel(snap, selfId, now, localDay(now), e.props.isFocused ? s.pane.frozen : null, columns, items, tasks)
       s.pane.frozen = e.props.isFocused ? home.frozen : null
       model = home
     } else model = await modelOf($, s, snap, now, selfId, columns, items)

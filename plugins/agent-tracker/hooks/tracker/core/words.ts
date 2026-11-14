@@ -24,8 +24,9 @@ export const PANE_TITLE = 'Tracker'
 export const NOTHING_NEEDS = 'Nothing needs you.'
 export const ONLY_THIS = 'Only this session is running.'
 export const NO_REPOS = 'No repos yet.'
+export const NO_TASKS = 'Every task you gave is done.'
 // Section headings in capitals, as the mockups draw them.
-export const HEADINGS = { needs: 'NEEDS YOU', know: 'YOU SHOULD KNOW', decided: 'DECIDED WITHOUT YOU', running: 'RUNNING', milestones: 'MILESTONES', asks: 'YOUR ASKS HERE', worktrees: 'WORKTREES', otherPrs: 'OTHER PRs', stage: 'STAGE', features: 'FEATURES', facts: 'FACTS', questions: 'QUESTIONS', findings: 'FINDINGS', sessions: 'SESSIONS', tests: 'TESTS', builder: 'BUILDER' } as const
+export const HEADINGS = { tasks: 'YOUR TASKS NOT DONE', needs: 'NEEDS YOU', know: 'YOU SHOULD KNOW', decided: 'DECIDED WITHOUT YOU', running: 'RUNNING', milestones: 'MILESTONES', asks: 'YOUR ASKS HERE', worktrees: 'WORKTREES', otherPrs: 'OTHER PRs', stage: 'STAGE', features: 'FEATURES', facts: 'FACTS', questions: 'QUESTIONS', findings: 'FINDINGS', sessions: 'SESSIONS', tests: 'TESTS', builder: 'BUILDER' } as const
 // Plain words, no keys bound: the rows are Buttons.
 export const KEY_HINTS = '↑↓ move  ⏎ open'
 export const PANE_BUTTONS = { close: 'Close', back: 'Back', home: 'Home', resume: 'Copy resume command' } as const
