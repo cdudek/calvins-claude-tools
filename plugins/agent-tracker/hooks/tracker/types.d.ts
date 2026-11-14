@@ -86,7 +86,7 @@ export type AgentRow = {
 export type Entrypoints = { v: 1; by: Record<string, string> }
 export type LateVerdict = { n: number; verdict: NonNullable<Ask['verdict']>; by?: number }
 export type LateChecks = { v: 1; by: Record<string, { at: number; verdicts: LateVerdict[] }> }
-export type Lease = { v: 1; sessionId: string; heartbeat: number }
+export type Lease = { v: 1; sessionId: string; heartbeat: number; gen?: number } // gen absent: written by 0.1.x
 export type AgentsFile = { v: 1; readAt: number; agents: AgentRow[] }
 // seen: the notes the owner marked, `<session>:<note id>` or a file note's key, newest last. kept, closed: the owner's marks on a task
 // ask, `<session>:<ask n>`, newest last; only the pane writes them.

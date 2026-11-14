@@ -1,6 +1,6 @@
 import { describe, expect, test } from 'claude-code/testing'
 
-import { IDLE_MS, taskLists, applyVerdicts, firstWords, mergedKey, noMarks, noteItems, notesPrompt, parseChange, parseNotes, taskCounts, taskItems, taskKey, taskStatus } from '../hooks/tracker/core'
+import { IDLE_MS, isNews, unseenCount, taskLists, applyVerdicts, firstWords, mergedKey, noMarks, noteItems, notesPrompt, parseChange, parseNotes, taskCounts, taskItems, taskKey, taskStatus } from '../hooks/tracker/core'
 import type { TaskMarks } from '../hooks/tracker/core'
 import type { Ask } from '../hooks/tracker/types'
 import { MILESTONE } from './fixtures/band'
@@ -138,7 +138,7 @@ describe('the verdicts of the notes call', () => {
 })
 
 describe('decided without you: the change folders', () => {
-  test(`${TAG} an item of a change folder older than 24 hours counts as seen; a turn's note stays until marked`, () => {
+  test(`${TAG} a change folder's question or revision is never news, whatever its age; a turn's note is news until marked`, () => {
     const day = 24 * 3600_000
     const change = parseChange({
       dir: '2026-11-13-demo',
@@ -156,9 +156,10 @@ describe('decided without you: the change folders', () => {
     const mine = sess('n-1', 'running', 1, 'web-app', 'x', { ...web, notes: [{ id: 'n1', kind: 'decided', text: 'an old note', at: NOON - 3 * day, seen: false }] })
     const items = noteItems(snapAt([mine]), new Map([['/work/web-app', [{ ...change, slug: 'demo-1' }]]]), new Set(), NOON)
     const by = (needle: string) => items.find(i => i.text.includes(needle))!
-    expect(by('fresh revision').seen).toBe(false) // 2026-11-14 12:00 UTC, a day or less before NOON local
-    expect(by('old revision').seen).toBe(true)
-    expect(by('Q2').seen).toBe(true) // questions.md changed two days ago
-    expect(by('an old note').seen).toBe(false)
+    expect(isNews(by('fresh revision'))).toBe(false)
+    expect(isNews(by('old revision'))).toBe(false)
+    expect(isNews(by('Q2'))).toBe(false)
+    expect(isNews(by('an old note'))).toBe(true)
+    expect(unseenCount(items, 'decided')).toBe(1) // the band's count: the note alone
   })
 })

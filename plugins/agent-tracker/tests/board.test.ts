@@ -266,7 +266,7 @@ describe('/tracker web', () => {
 
 describe('the board rewrites', () => {
   const lease = (w: ReturnType<typeof world>, who: string) => {
-    w.put(`${DIR}/poller.json`, { v: 1, sessionId: who, heartbeat: w.clock.now() })
+    w.put(`${DIR}/poller.json`, { v: 1, sessionId: who, heartbeat: w.clock.now(), gen: 2 })
     w.put(`${DIR}/agents.json`, { v: 1, readAt: w.clock.now(), agents: [] })
   }
   const boards = (w: ReturnType<typeof world>) => w.writes.filter(p => p === `${DIR}/board.html`).length

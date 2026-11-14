@@ -50,7 +50,7 @@ describe('collector and states', () => {
 
   test(`@F1 ${TAG} a session that does not hold the lease reads agents.json and runs no call`, async ($, on) => {
     const w = world(on, { now: NOW, id: ID.busy, cwd: '/work/repo-4' })
-    w.put(`${DIR}/poller.json`, { v: 1, sessionId: 'someone-else', heartbeat: NOW } satisfies Lease)
+    w.put(`${DIR}/poller.json`, { v: 1, sessionId: 'someone-else', heartbeat: NOW, gen: 2 } satisfies Lease)
     w.put(`${DIR}/agents.json`, { v: 1, readAt: NOW, agents: rows } satisfies AgentsFile)
     await start($, w)
     await w.clock.advance(5000)
@@ -250,15 +250,18 @@ describe('collector and states', () => {
   test(`@F127 ${TAG} lease taken when none is fresh, kept while fresh, dropped when another session holds it`, async ($, on) => {
     const w = world(on, { now: NOW })
     expect(leaseState(null, 'me', NOW)).toBe('free')
-    expect(leaseState({ v: 1, sessionId: 'me', heartbeat: NOW - 14_000 }, 'me', NOW)).toBe('mine')
-    expect(leaseState({ v: 1, sessionId: 'x', heartbeat: NOW - 16_000 }, 'me', NOW)).toBe('free')
+    expect(leaseState({ v: 1, sessionId: 'me', heartbeat: NOW - 14_000, gen: 2 }, 'me', NOW)).toBe('mine')
+    expect(leaseState({ v: 1, sessionId: 'x', heartbeat: NOW - 16_000, gen: 2 }, 'me', NOW)).toBe('free')
+    // A fresh lease from an older tracker (0.1.x wrote no gen) is taken, so its old session never blocks the late check.
+    expect(leaseState({ v: 1, sessionId: 'x', heartbeat: NOW - 1000 }, 'me', NOW)).toBe('free')
+    expect(leaseState({ v: 1, sessionId: 'x', heartbeat: NOW - 1000, gen: 2 }, 'me', NOW)).toBe('other')
     const polls = () => w.procs.filter(p => p.argv[0] === 'claude').length
     await start($, w)
     expect((w.json(`${DIR}/poller.json`) as Lease).sessionId).toBe(w.id) // none was fresh: taken
     await w.clock.advance(5000)
     expect((w.json(`${DIR}/poller.json`) as Lease).heartbeat).toBe(NOW + 5000) // kept: heartbeat refreshed
     const before = polls()
-    w.put(`${DIR}/poller.json`, { v: 1, sessionId: 'other', heartbeat: w.clock.now() } satisfies Lease)
+    w.put(`${DIR}/poller.json`, { v: 1, sessionId: 'other', heartbeat: w.clock.now(), gen: 2 } satisfies Lease)
     await w.clock.advance(5000) // another session holds it now: this one stops polling
     expect(polls()).toBe(before)
     expect((w.json(`${DIR}/poller.json`) as Lease).sessionId).toBe('other')
@@ -280,7 +283,7 @@ describe('collector and states', () => {
 
   test(`@F129 ${TAG} a non-holder runs no call and reads agents.json; an old file counts as a failed read`, async ($, on) => {
     const w = world(on, { now: NOW })
-    w.put(`${DIR}/poller.json`, { v: 1, sessionId: 'other', heartbeat: NOW } satisfies Lease)
+    w.put(`${DIR}/poller.json`, { v: 1, sessionId: 'other', heartbeat: NOW, gen: 2 } satisfies Lease)
     w.put(`${DIR}/agents.json`, { v: 1, readAt: NOW, agents: rows } satisfies AgentsFile)
     w.put(`${DIR}/sessions/old.json`, record('old', { state: 'done' }))
     await start($, w)
@@ -288,7 +291,7 @@ describe('collector and states', () => {
     expect(w.procs.filter(p => p.argv[0] === 'claude').length).toBe(0)
     expect((w.snapshot()).agentsOk).toBe(true)
     // The holder keeps its heartbeat fresh, but agents.json is 21 s old: that counts as a failed read.
-    w.put(`${DIR}/poller.json`, { v: 1, sessionId: 'other', heartbeat: w.clock.now() } satisfies Lease)
+    w.put(`${DIR}/poller.json`, { v: 1, sessionId: 'other', heartbeat: w.clock.now(), gen: 2 } satisfies Lease)
     w.put(`${DIR}/agents.json`, { v: 1, readAt: w.clock.now() - 16_000, agents: rows } satisfies AgentsFile)
     await w.clock.advance(5000)
     const snap = w.snapshot()

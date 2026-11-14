@@ -193,7 +193,7 @@ describe('the late check of "Not checked"', () => {
 
   test(`${TAG} a session that does not hold the lease makes no late call`, async ($, on) => {
     const other = world1(on, [person('b1')], { b1: text('b1') })
-    other.put(`${DIR}/poller.json`, { v: 1, sessionId: 'someone-else', heartbeat: other.clock.now() })
+    other.put(`${DIR}/poller.json`, { v: 1, sessionId: 'someone-else', heartbeat: other.clock.now(), gen: 2 })
     other.put(`${DIR}/agents.json`, { v: 1, readAt: other.clock.now(), agents: [] })
     other.completeReply = () => reply
     await start($, other)

@@ -367,8 +367,9 @@ describe('One item, opened', () => {
     const decided = (await keys(ui, 'note:')).filter(k => k.startsWith('note:q:') || k.startsWith('note:r:'))
     expect(decided.length).toBe(2)
     const q = decided.find(k => k.startsWith('note:q:'))!
-    expect(await rowText(ui, q)).toMatch(/^◆ web-app\/design-tokens-1\s+\S+\n\s+follow the system \(default taken, Q1\)$/)
-    expect(await rowText(ui, decided.find(k => k.startsWith('note:r:'))!)).toMatch(/\n\s+moved the motion work before spacing/)
+    // A change folder's record is listed by its source, one dim line, and is never counted as news.
+    expect(await rowText(ui, q)).toMatch(/^· web-app\/design-tokens-1\s+\S+\s+Q1$/)
+    expect(await rowText(ui, decided.find(k => k.startsWith('note:r:'))!)).toMatch(/F9$/)
     await go(ui, q)
     const all = await texts(ui)
     expect(all).toContain('The question:')
@@ -378,7 +379,7 @@ describe('One item, opened', () => {
     expect(w.copies.at(-1)!.text).toBe('Overruling "follow the system (default taken, Q1)"\n(questions.md, Q1). Instead: <your call>')
     // The revision has a date and no clock time: it reads "today".
     await go(ui, 'back')
-    expect((await rowText(ui, decided.find(k => k.startsWith('note:r:'))!))!.split('\n')[0]).toMatch(/today$/)
+    expect(await rowText(ui, decided.find(k => k.startsWith('note:r:'))!)).toMatch(/today\s+F9$/)
     // Read only: nothing but the pane's own copy was written, no change file touched.
     expect(w.writes).toEqual([])
     await ui.unmount()
