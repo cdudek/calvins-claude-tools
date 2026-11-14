@@ -39,6 +39,7 @@ See, from any Claude Code session or one terminal tab, what is happening across 
 - **agent-tracker-1, usable inside Claude:** steps 1, 2, 3 and 3a. Change `changes/2026-11-13-agent-tracker/`, Beads `cct-83h.1`.
 - **agent-tracker-2, the web page:** step 4. Beads `cct-83h.2`.
 - **agent-tracker-3, insights and links:** steps 5 to 8. Beads `cct-83h.3`.
+- **agent-tracker-4, dead sessions, Clear and tidy:** change `changes/2026-11-14-tracker-session-cleanup/`, Beads `cct-83h.4`.
 
 ## Work
 
