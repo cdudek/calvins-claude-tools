@@ -8,6 +8,7 @@ import type { ChangeFiles } from '../hooks/tracker/core/board-html'
 import type { SessionRecord, Snapshot } from '../hooks/tracker/types'
 import { MILESTONE_MD } from './fixtures/milestone'
 import { NOON, SELF, paneTown, rec, sess, snapAt } from './fixtures/pane'
+import { ask, taskTown } from './fixtures/tasks'
 import { DIR, settle, start, world } from './fixtures/world'
 
 const TAG = '@2026-11-13-agent-tracker'
@@ -85,9 +86,9 @@ describe('the web page, built from a snapshot', () => {
     expect(web).toMatchObject({ repo: 'web-app', title: 'fix login redirect', state: 'needs-you', reason: 'permission', branch: 'feat/login' })
     expect(d.repos.map((r: { label: string }) => r.label)).toEqual(expect.arrayContaining(['web-app', 'api', 'docs-site']))
     expect(d.repos.find((r: { label: string }) => r.label === 'web-app').prs.list.length).toBe(4)
-    expect(html).toContain('<title>(2) Agent tracker</title>') // web-app and docs-site wait
+    expect(html).toContain('<title>(2) Agent tracker - your tasks not done yet</title>') // web-app and docs-site wait
     expect(needsCount(boardData(snapAt(aloneOf()), [], NOON))).toBe(0)
-    expect(titleOf(0)).toBe('Agent tracker')
+    expect(titleOf(0)).toBe('Agent tracker - your tasks not done yet')
     // The routes of the pages, and the page keeps its route through the reload.
     for (const route of ["'#/repo/'", "'/milestone/'", "'/feature/'", "'#/session/'", "'/note/'"]) expect(html).toContain(route)
     expect(html).toContain('location.hash')
@@ -148,6 +149,73 @@ describe('the web page, built from a snapshot', () => {
     const d = boardData(snapAt([old, ...aloneOf()], { failedReads: 2 }), [], NOON)
     expect(d.sessions.map(s => s.id)).toEqual([SELF])
     expect(d.stale).toBe(true)
+  })
+})
+
+describe('the web page: your tasks not done', () => {
+  const data = (sessions: SessionRecord[], marks?: Parameters<typeof boardData>[3], extra: Partial<Snapshot> = {}) => boardData(snapAt(sessions, extra), [], NOON, marks)
+  // The page's own script, the part of the HTML that runs in the browser.
+  const scriptOf = (html: string) => [...html.matchAll(/<script>([\s\S]*?)<\/script>/g)].at(-1)![1]!
+  const SIX = ['Running', 'You should know', 'Decided without you', 'Pull requests', 'Done today', 'Ended today']
+
+  test(`web page ${TAG} the data holds the tasks not done, in order, with the words each row shows`, () => {
+    const d = data(taskTown())
+    expect(d.tasks.map(t => [t.key, t.status])).toEqual([['need-1:1', 'needs-you'], ['lost-2:1', 'forgotten'], ['lost-1:1', 'forgotten'], ['sup-1:1', 'superseded'], ['sup-1:2', 'in-progress'], ['prog-1:1', 'in-progress'], ['prog-2:1', 'in-progress']])
+    expect(d.counts).toEqual({ notDone: 7, needsYou: 1, alarm: true })
+    expect(needsCount(d)).toBe(1) // "1 needs you now": the sessions that wait
+    expect(d.tasks[0]).toMatchObject({ text: 'Fix the login redirect so users land back on the page they came from.', repo: 'web-app', at: NOON - 20 * 60_000, detail: 'waiting for your answer for 4m' }) // the whole ask
+    expect(d.tasks[1]!.detail).toBe('idle 45m, not done, no milestone, no PR')
+    expect(d.tasks[3]!.later).toEqual({ at: NOON - 8 * 60_000, text: 'Fix the login redirect and…' })
+    expect(d.tasks[5]!.progress).toEqual({ slug: 'agent-tracker-1', done: 2, total: 4 })
+    expect(d.sessions.find(s => s.id === 'need-1')).toBeDefined() // each row's session has its page
+  })
+
+  test(`web page ${TAG} the page draws the top bar, the one list and six collapsed sections; Keep and Close are shown, not wired`, () => {
+    const html = boardHtml(data(taskTown()))
+    const script = scriptOf(html)
+    for (const words of ['Agent tracker', "' of your tasks '", "' not done · '", ' you now', 'Your tasks not done yet', 'Everything else', 'Open session', 'Updated ', 'Every task you gave is done']) expect(script).toContain(words)
+    for (const name of SIX) expect(script).toContain(`'${name}'`)
+    expect(script).toContain('Keep and Close are chosen in the terminal pane.')
+    expect(script).toContain("['Keep','Close']")
+    expect(script).toContain("setAttribute('aria-disabled','true')") // shown, and does nothing
+    expect(script).toContain("el('details',cls)")
+    expect(script).not.toMatch(/setAttribute\('open'|\.open\s*=|'details'[^)]*open/) // no section starts open
+    expect(script).toContain("'#/session/'") // Open session is the session route the drill-in page has
+    expect(html).toContain('data-look=web') // the mockup's look, the drill-in pages keep the terminal look
+    expect(html).toContain('data-look=term')
+    expect(html).toContain('STALE=180000') // the amber line after a few minutes
+  })
+
+  test(`web page ${TAG} the page stays read-only, with no fetch and no server, and text stays text`, () => {
+    const evil = '</script><img src=x onerror=alert(1)> "q" & \u001b[31m'
+    const html = boardHtml(data([sess('x-1', 'ended', 90, 'web-app', 'evil', { repo: { path: '/work/web-app', name: 'web-app' }, endedAt: NOON - 90 * 60_000, asks: [ask(1, evil, 120)] })]))
+    expect(html).not.toContain('<img src=x')
+    expect(html.split('</script>').length - 1).toBe(2) // the data block and the page script, and no more
+    expect(dataOf(html).tasks[0].text).toBe('</script><img src=x onerror=alert(1)> "q" & [31m') // the escape character is gone, the rest is whole
+    const page = html.replace(/<script type="application\/json" id="data">[\s\S]*?<\/script>/, '') // the markup, the style and the script: not the session's data
+    expect(page).not.toMatch(/fetch\(|XMLHttpRequest|WebSocket|EventSource|sendBeacon|\ssrc=|<link|@import/)
+    expect(page).not.toContain('innerHTML')
+    expect(scriptOf(html)).toContain("h.indexOf('https://')===0") // an outside link is https only
+  })
+
+  test(`web page ${TAG} Keep, Close and a merged change take tasks away; the owner's seen marks reach the notes`, () => {
+    const keys = (d: ReturnType<typeof data>) => d.tasks.map(t => `${t.key}:${t.status}`)
+    expect(keys(data(taskTown(), { seen: new Set(), kept: new Set(['sup-1:1']), closed: new Set(['need-1:1']) }))).toEqual(expect.arrayContaining(['sup-1:1:in-progress']))
+    expect(keys(data(taskTown(), { seen: new Set(), kept: new Set(), closed: new Set(['need-1:1']) }))).not.toContain('need-1:1:needs-you')
+    const merged = { ...CHANGE, repoPath: '/work/web-app', milestone: MILESTONE_MD.replace('status: building', 'status: merged').replace('milestone/demo-1', 'milestone/agent-tracker-1') }
+    expect(boardData(snapAt(taskTown()), [merged], NOON).tasks.some(t => t.key === 'prog-1:1')).toBe(false) // its branch is a merged change
+    expect(boardData(snapAt(taskTown()), [], NOON).tasks.some(t => t.key === 'prog-1:1')).toBe(true)
+    const notes = [{ id: 'n1', kind: 'know', text: 'a', at: NOON - 1000, seen: false }, { id: 'n2', kind: 'know', text: 'b', at: NOON - 2000, seen: false }]
+    const town = taskTown().map(r => (r.sessionId === 'prog-1' ? ({ ...r, notes } as SessionRecord) : r))
+    expect(data(town, { seen: new Set(['prog-1:n2']), kept: new Set(), closed: new Set() }).sessions.find(s => s.id === 'prog-1')!.notes.map(n => [n.id, n.seen])).toEqual([['n1', false], ['n2', true]])
+  })
+
+  test(`web page ${TAG} the sections that are not tasks come from the same data: running, done and ended today, pull requests`, () => {
+    const d = data(paneTown())
+    expect(d.sessions.filter(s => s.live && s.state === 'running').length).toBe(3)
+    expect(d.repos.find(r => r.label === 'web-app')!.prs!.list.filter(p => p.checks === 'failing').length).toBe(2)
+    expect(d.tasks).toEqual([]) // no ask, no task
+    expect(d.counts).toEqual({ notDone: 0, needsYou: 0, alarm: false })
   })
 })
 

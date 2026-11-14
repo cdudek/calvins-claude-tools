@@ -5,11 +5,14 @@ import type { SessionRecord, Snapshot } from '../types'
 import { clean, resumeCommand } from './format'
 import { repoPrs } from './git'
 import { isLive, repoLabel } from './rank'
+import { mergedKey, taskCounts, taskItems } from './tasks'
+import { turnKey } from './notes'
 import { ASK_KIND, ASK_STATUS, CHECKS_WORDS, DETACHED, MERGE_WORDS, REASON_WORDS, REVIEW_WORDS, UNTITLED } from './words'
 
 export const BOARD_FILE = 'board.html'
 export const BOARD_PATH_TEXT = '~/.claude/agent-tracker/board.html'
 export const BOARD_RELOAD_MS = 5000
+export const BOARD_STALE_MS = 3 * 60_000 // no session rewrote the page for this long: one amber line under the top bar
 export const BOARD_WRITE_MS = 10_000
 
 // "You should know" and "Decided without you": a field another part of the mod adds to a session record. Read when
@@ -27,12 +30,19 @@ const TEXT = 300
 type Row = Record<string, unknown>
 const cells = (line: string) => line.split('|').map(c => c.trim())
 
-export const notesOf = (r: SessionRecord): Note[] => {
+// What the owner marked in settings.json (the Board only reads it): notes seen, tasks kept and closed.
+export type Marks = { seen: ReadonlySet<string>; kept: ReadonlySet<string>; closed: ReadonlySet<string> }
+const noMarks: Marks = { seen: new Set(), kept: new Set(), closed: new Set() }
+
+export const notesOf = (r: SessionRecord, seen: ReadonlySet<string> = noMarks.seen): Note[] => {
   const list = (r as { notes?: unknown }).notes
   if (!Array.isArray(list)) return []
   return (list as Row[])
     .filter(n => n !== null && typeof n === 'object' && (n.kind === 'know' || n.kind === 'decided') && typeof n.at === 'number')
-    .map((n, i) => ({ id: clean(n.id ?? i, 80), kind: n.kind as Note['kind'], text: clean(n.text, TEXT), at: n.at as number, seen: n.seen === true }))
+    .map((n, i) => {
+      const id = clean(n.id ?? i, 80)
+      return { id, kind: n.kind as Note['kind'], text: clean(n.text, TEXT), at: n.at as number, seen: n.seen === true || seen.has(turnKey(r.sessionId, id)) }
+    })
 }
 
 // milestone.md, the Features table with its PR or commit cell (parseMilestone keeps no cell but name and state).
@@ -104,7 +114,7 @@ const milestoneOf = (c: ChangeFiles) => {
   }
 }
 
-const sessionOf = (r: SessionRecord, snap: Snapshot, now: number) => {
+const sessionOf = (r: SessionRecord, snap: Snapshot, now: number, seen: ReadonlySet<string>) => {
   const prs = r.repo ? repoPrs(snap.sessions, r.repo.path, now) : null
   const onBranch = prs !== null && prs.ghOk && r.branch !== null ? prs.prs.find(p => p.branch === r.branch) : undefined
   return {
@@ -130,7 +140,7 @@ const sessionOf = (r: SessionRecord, snap: Snapshot, now: number) => {
     asksTotal: r.asks.length,
     milestone: r.milestone,
     pr: onBranch ? { number: onBranch.number, url: onBranch.url, checks: onBranch.checks } : null,
-    notes: notesOf(r),
+    notes: notesOf(r, seen),
     resume: r.state === 'ended' ? resumeCommand(r.cwd, r.sessionId) : null,
   }
 }
@@ -138,7 +148,7 @@ const sessionOf = (r: SessionRecord, snap: Snapshot, now: number) => {
 export type BoardData = ReturnType<typeof boardData>
 
 // Everything the pages need. A session older than a week with nothing live about it is left out, so the page stays small.
-export const boardData = (snap: Snapshot, changes: ChangeFiles[], now: number) => {
+export const boardData = (snap: Snapshot, changes: ChangeFiles[], now: number, marks: Marks = noMarks) => {
   const recent = snap.sessions
     .filter(r => isLive(r) || Math.max(r.lastActivityAt, r.endedAt ?? 0) >= now - DAYS)
     .sort((a, b) => Math.max(b.lastActivityAt, b.endedAt ?? 0) - Math.max(a.lastActivityAt, a.endedAt ?? 0))
@@ -155,13 +165,18 @@ export const boardData = (snap: Snapshot, changes: ChangeFiles[], now: number) =
       worktrees: trees,
     }
   })
+  // A change whose milestone.md says merged finishes the tasks of the session on its branch.
+  const merged = new Set(changes.flatMap(c => (/^(merged|released|shipped)\b/i.test(front(c.milestone, 'status') ?? '') ? [mergedKey(c.repoPath, clean(front(c.milestone, 'branch'), 200))] : [])))
+  const tasks = taskItems(snap, now, { kept: marks.kept, closed: marks.closed, merged })
   return {
     v: 1 as const,
     builtAt: now,
     agentsOk: snap.agentsOk,
     stale: snap.at !== 0 && snap.failedReads >= 2,
     loading: snap.at === 0,
-    sessions: recent.map(r => sessionOf(r, snap, now)),
+    sessions: recent.map(r => sessionOf(r, snap, now, marks.seen)),
+    tasks,
+    counts: taskCounts(tasks),
     repos,
     milestones: changes.flatMap(c => {
       const m = paths.includes(c.repoPath) ? milestoneOf(c) : null
@@ -173,7 +188,7 @@ export const boardData = (snap: Snapshot, changes: ChangeFiles[], now: number) =
 
 // The count in the tab title: sessions that need you now.
 export const needsCount = (d: BoardData) => d.sessions.filter(s => s.live && s.state === 'needs-you').length
-export const titleOf = (n: number) => (n > 0 ? `(${n}) Agent tracker` : 'Agent tracker')
+export const titleOf = (n: number) => (n > 0 ? `(${n}) Agent tracker - your tasks not done yet` : 'Agent tracker - your tasks not done yet')
 
 // A JSON block inside a <script>: nothing in it can close the tag or start a comment.
 export const inlineJson = (value: unknown) =>

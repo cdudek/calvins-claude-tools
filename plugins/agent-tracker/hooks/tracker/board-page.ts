@@ -1,29 +1,84 @@
 // The page itself: its stylesheet, its script and the one function that puts them round the data. The script runs in
 // the browser (it reads the clock and the location there), so it lives beside the I/O files, not in core/, which
 // reads no clock. The data and every value in it come from core/board-html.ts; no value is ever put into markup.
-import { BOARD_RELOAD_MS, inlineJson, needsCount, titleOf } from './core/board-html'
+import { BOARD_RELOAD_MS, BOARD_STALE_MS, inlineJson, needsCount, titleOf } from './core/board-html'
 import type { BoardData } from './core/board-html'
 
-// The look is the owner's mockups: a dark page, monospace, one colour class per meaning (r y g c m d b).
-const CSS = String.raw`
-:root{--bg:#0f1418;--card:#0d1117;--line:#243039;--tfg:#c9d1d9;--dim:#6e7681;--red:#ff7b72;--yel:#e3b341;--grn:#56d364;--cyn:#79c0ff;--mag:#d2a8ff}
-*{box-sizing:border-box}
-body{margin:0;background:var(--bg);color:var(--tfg);padding:20px 24px 60px;font:13px/1.5 ui-monospace,"SF Mono",Menlo,Consolas,monospace}
+// Two looks in one page. The home page is the owner's web mockup (2026-11-14): proportional type, one colour per meaning. The
+// drill-in pages (session, repo, milestone, feature, note) keep the dark terminal look of the owner's earlier mockups.
+// `scope` puts a look's rules under its own `data-look` on <body>, so the two never touch.
+const scope = (look: string, css: string) =>
+  css.replace(/(^|\})\s*([^{}]+)\{/g, (_m, close: string, sel: string) => `${close}${sel.split(',').map(s => (s.trim() === 'body' ? `body[data-look=${look}]` : `body[data-look=${look}] ${s.trim()}`)).join(',')}{`)
+
+const TERM_CSS = String.raw`
+body{--bg:#0f1418;--card:#0d1117;--line:#243039;--tfg:#c9d1d9;--dim:#6e7681;--red:#ff7b72;--yel:#e3b341;--grn:#56d364;--cyn:#79c0ff;--mag:#d2a8ff;margin:0;background:var(--bg);color:var(--tfg);padding:20px 24px 60px;font:13px/1.5 ui-monospace,"SF Mono",Menlo,Consolas,monospace}
 #app{max-width:980px;margin:0 auto;background:var(--card);border-radius:8px;padding:12px 14px;overflow-x:auto}
 .l{white-space:pre-wrap;word-break:break-word;min-height:1.5em}
 .r{color:var(--red)}.y{color:var(--yel)}.g{color:var(--grn)}.c{color:var(--cyn)}.m{color:var(--mag)}.d{color:var(--dim)}.b{font-weight:700;color:#fff}.s{text-decoration:line-through;color:var(--dim)}
-a{color:inherit;text-decoration:none}a:hover,a:focus{background:#161b22;outline:1px solid var(--line)}
+a{color:inherit;text-decoration:none}
+a:hover,a:focus{background:#161b22;outline:1px solid var(--line)}
 button{font:inherit;background:transparent;color:var(--dim);border:1px solid var(--line);border-radius:4px;padding:1px 8px;cursor:pointer}
 button:hover{color:#fff}
-.compact .sub{display:none}
 .bar{display:flex;justify-content:space-between;align-items:baseline;gap:12px;flex-wrap:wrap}
-.rule{border-top:1px solid var(--line);margin:6px 0}.r2{display:flex;gap:14px;align-items:baseline}
+.rule{border-top:1px solid var(--line);margin:6px 0}
+.r2{display:flex;gap:14px;align-items:baseline}
 `
+
+const WEB_CSS = String.raw`
+body{--bg:#0d1117;--panel:#151b23;--line:#2b3542;--fg:#e6edf3;--mut:#a3afbc;--red:#ff6b80;--yel:#ffc107;--blue:#b1b9f9;--pur:#af87ff;--grn:#56d364;margin:0;background:var(--bg);color:var(--fg);font:16px/1.55 system-ui,-apple-system,"Segoe UI",Roboto,sans-serif}
+a{color:var(--blue)}
+a:focus-visible,button:focus-visible,summary:focus-visible{outline:2px solid var(--blue);outline-offset:3px}
+.mut{color:var(--mut)}
+.top{padding:22px 24px;border-bottom:1px solid var(--line);display:flex;flex-wrap:wrap;gap:6px 24px;align-items:baseline}
+.top h1{font-size:20px;margin:0}
+.top p{margin:0;flex:1;min-width:240px}
+.fresh{font-size:14px;color:var(--mut)}
+.stale{margin:0;padding:10px 24px;color:var(--yel);border-bottom:1px solid var(--line);font-size:14.5px}
+main{max-width:860px;margin:0 auto;padding:0 20px 64px}
+h2{font-size:18px;margin:36px 0 14px}
+ol.tasks{list-style:none;margin:0;padding:0;display:flex;flex-direction:column;gap:12px}
+.row{--c:var(--yel);border:1px solid var(--line);border-left:4px solid var(--c);border-radius:8px;background:var(--panel);padding:14px 16px;display:grid;gap:6px}
+.row.need{--c:var(--red)}
+.row.lost{--c:var(--red);border-color:var(--red);border-left-width:4px}
+.row.sup{--c:var(--pur)}
+.ask{margin:0;font-size:16px;overflow-wrap:anywhere}
+.line{display:flex;flex-wrap:wrap;gap:4px 14px;align-items:baseline;font-size:14px;color:var(--mut)}
+.line b{color:var(--fg);font-weight:600}
+.status{color:var(--c);font-weight:600}
+.foot{display:flex;flex-wrap:wrap;gap:8px 16px;align-items:center;font-size:14px}
+.grow{flex:1}
+button{font:inherit;font-size:14px;border:1px solid var(--line);background:transparent;color:var(--fg);border-radius:6px;padding:4px 12px;cursor:default}
+.note{font-size:13.5px;color:var(--mut);margin:2px 0 0}
+.meter{display:inline-flex;align-items:center;gap:8px}
+.meter i{display:inline-block;width:80px;height:6px;border-radius:3px;background:var(--line);overflow:hidden}
+.meter s{display:block;height:100%;background:var(--grn)}
+.empty{color:var(--mut);margin:0}
+details{border-top:1px solid var(--line)}
+details:last-of-type{border-bottom:1px solid var(--line)}
+summary{cursor:pointer;padding:14px 4px;display:flex;gap:10px;align-items:baseline;list-style:none}
+summary::-webkit-details-marker{display:none}
+summary::before{content:"\25B8";color:var(--mut);width:1em}
+details[open] summary::before{content:"\25BE"}
+summary .n{font-weight:600}
+summary .c{margin-left:auto;color:var(--mut);font-size:14px}
+.k-run .n{color:var(--yel)}
+.k-know .n{color:var(--blue)}
+.k-dec .n{color:var(--pur)}
+.k-pr .n{color:var(--fg)}
+.k-done .n{color:var(--grn)}
+.k-end .n{color:var(--mut)}
+details ul{margin:0 0 16px 28px;padding:0;list-style:none;display:flex;flex-direction:column;gap:8px;font-size:15px}
+details li .mut{font-size:14px}
+.red{color:var(--red)}
+`
+
+// The compact toggle sits on <body> itself, so its rule is written whole.
+const CSS = `*{box-sizing:border-box}${scope('term', TERM_CSS)}${scope('web', WEB_CSS)}body[data-look=term].compact .sub{display:none}`
 
 // The page's own script: reads the JSON block and draws the route in location.hash with textContent only. No innerHTML.
 const SCRIPT = String.raw`
 (function(){
-var D=JSON.parse(document.getElementById('data').textContent),NOW=D.builtAt,W=D.words,app=document.getElementById('app');
+var D=JSON.parse(document.getElementById('data').textContent),NOW=D.builtAt,W=D.words,STALE=__STALE__,app=document.getElementById('app');
 var enc=encodeURIComponent;
 function node(t,c,x){var e=document.createElement(t);if(c)e.className=c;if(x!==undefined)e.textContent=x;return e}
 function dur(ms){var m=Math.floor(Math.max(0,ms)/60000);if(m<1)return '<1m';if(m<60)return m+'m';if(m<1440)return m%60===0?(m/60)+'h':Math.floor(m/60)+'h '+(m%60)+'m';return Math.floor(m/1440)+'d'}
@@ -51,20 +106,17 @@ function repoOf(l){return D.repos.filter(function(r){return r.label===l})[0]||nu
 function sesById(i){return D.sessions.filter(function(s){return s.id===i})[0]||null}
 function msOf(l,slug){var r=repoOf(l);return r?D.milestones.filter(function(m){return m.repoPath===r.path&&m.slug===slug})[0]||null:null}
 function prOf(r,branch){return r&&r.prs&&r.prs.ghOk?r.prs.list.filter(function(p){return p.branch===branch})[0]||null:null}
-function lastAsk(s){return s.asks.length?s.asks[s.asks.length-1].text:null}
-function allNotes(){var out=[];D.sessions.forEach(function(s){s.notes.forEach(function(n){out.push({s:s,n:n})})});return out}
 function crumbs(list){var parts=[];list.forEach(function(c,i){if(i>0)parts.push(' › ');parts.push(c[1]?['d',c[0],c[1]]:['b',c[0]])});return line('',parts)}
-function prsTotals(){var open=0,fail=0,conf=0;D.repos.forEach(function(r){if(r.prs&&r.prs.ghOk){r.prs.list.forEach(function(p){open++;if(p.checks==='failing')fail++;if(p.mergeable==='conflicts')conf++})}});return {open:open,fail:fail,conf:conf}}
 
 function top(el,trail,right){
   var b=node('div','bar');var left=node('div');left.appendChild(trail);b.appendChild(left);
   var r=node('div');r.appendChild(right||document.createTextNode(''));b.appendChild(r);el.appendChild(b)}
-function age(){var ms=Date.now()-NOW;return ms>20000?line('',[['y','No session is updating this page. Last build '+dur(ms)+' ago.']]):null}
+function age(){var ms=Date.now()-NOW;return ms>STALE?line('',[['y','No session is updating this page. Last build '+dur(ms)+' ago.']]):null}
 function toolbar(right){
   var w=node('span','r2');if(right)w.appendChild(right);var c=node('button',null,document.body.classList.contains('compact')?'Details':'Compact');
   c.type='button';c.addEventListener('click',function(){var on=!document.body.classList.contains('compact');document.body.classList.toggle('compact',on);try{localStorage.setItem('agent-tracker-compact',on?'1':'0')}catch(e){}c.textContent=on?'Details':'Compact'});
   w.appendChild(c);return w}
-function page(trail,body,right){app.textContent='';top(app,trail,toolbar(right));var a=age();if(a)app.appendChild(a);app.appendChild(rule());body.forEach(function(n){app.appendChild(n)})}
+function page(trail,body,right){document.body.setAttribute('data-look','term');app.textContent='';top(app,trail,toolbar(right));var a=age();if(a)app.appendChild(a);app.appendChild(rule());body.forEach(function(n){app.appendChild(n)})}
 
 function notesBlock(kind,title,cls,mark,list,out,withRepo){
   var mine=list.filter(function(x){return x.n.kind===kind});if(!mine.length)return;
@@ -75,35 +127,67 @@ function notesBlock(kind,title,cls,mark,list,out,withRepo){
   seen.forEach(function(x){out.push(L(['d','· '],['d',x.s.repo+'  '+clock(x.n.at)+'  seen',H.note(x.s.id,x.n.id)]))});
 }
 
+// ---- the home page: the owner's web mockup ----
+function el(t,c,x){return node(t,c,x)}
+function add(p){[].slice.call(arguments,1).forEach(function(c){if(c)p.appendChild(c)});return p}
+function sec(ms){var s=Math.floor(Math.max(0,ms)/1000);return s<60?s+'s':dur(ms)}
+function hm(ms){var d=new Date(ms);return two(d.getHours())+':'+two(d.getMinutes())}
+function asked(ms){var m=midnight();return ms>=m?'today '+hm(ms):ms>=m-864e5?'yesterday '+hm(ms):['Sun','Mon','Tue','Wed','Thu','Fri','Sat'][new Date(ms).getDay()]+' '+hm(ms)}
+function link(text,href){var a=el('a',null,text);a.href=href;return a}
+function mark(t){var c=t.status==='needs-you'?'● You: ':t.status==='forgotten'?'⚠ Forgotten: ':t.status==='superseded'?'? Superseded? ':'◐ In progress';
+  if(t.status==='superseded')return c+(t.later?'A later ask at '+(t.later.at>=midnight()?hm(t.later.at):asked(t.later.at))+', “'+t.later.text+'”, may have replaced it':'A later ask may have replaced it');
+  return c+(t.status==='in-progress'?'':t.detail)}
+function taskRow(t){
+  var li=el('li','row'+({'needs-you':' need',forgotten:' lost',superseded:' sup'}[t.status]||''));
+  add(li,el('p','ask',t.text));
+  var line=el('div','line');add(line,el('b',null,t.repo),el('span',null,'asked '+asked(t.at)));li.appendChild(line);
+  var foot=el('div','foot');foot.appendChild(el('span','status',mark(t)));
+  if(t.status==='in-progress'&&t.progress){var pc=t.progress.total?Math.round(t.progress.done/t.progress.total*100):0,m=el('span','meter'),i=el('i'),s=el('s');s.style.width=pc+'%';i.appendChild(s);add(m,i,document.createTextNode(t.progress.slug+', '+t.progress.done+' of '+t.progress.total+' features'));foot.appendChild(m)}
+  var open=link('Open session',H.ses(t.sessionId));
+  if(t.status!=='superseded'){add(foot,el('span','grow'),open);li.appendChild(foot);return li}
+  li.appendChild(foot);
+  var f2=el('div','foot');
+  ['Keep','Close'].forEach(function(w){var b=el('button',null,w);b.type='button';b.setAttribute('aria-disabled','true');f2.appendChild(b)});
+  add(f2,el('span','grow'),open);li.appendChild(f2);
+  li.appendChild(el('p','note','Keep and Close are chosen in the terminal pane.'));
+  return li}
+var CAP=5;
+function group(cls,name,count,items,more){
+  var d=el('details',cls),s=el('summary');add(s,el('span','n',name),el('span','c',count));d.appendChild(s);
+  var u=el('ul');if(!items.length)u.appendChild(el('li','mut','Nothing.'));items.slice(0,CAP).forEach(function(x){u.appendChild(x)});
+  if(items.length>CAP)u.appendChild(el('li','mut','and '+(items.length-CAP)+' more'));d.appendChild(u);return d}
+function li2(main,mut){var l=el('li');l.appendChild(document.createTextNode(main));if(mut)l.appendChild(el('span','mut',' · '+mut));return l}
+function noteLi(x){var l=el('li');if(!x.n.seen)l.appendChild(el('b',null,'New'));l.appendChild(document.createTextNode((x.n.seen?'':' · ')+x.s.repo+' '));l.appendChild(el('span','mut',hm(x.n.at)));l.appendChild(el('br'));l.appendChild(document.createTextNode(x.n.text));return l}
 function home(){
-  var live=sessions(function(s){return s.live}),need=live.filter(function(s){return s.state==='needs-you'}),run=live.filter(function(s){return s.state==='running'});
-  var out=[];
-  out.push(L(['r','NEEDS YOU']));
-  if(!need.length)out.push(L(['d','  Nothing needs you.']));
-  need.sort(function(a,b){return (a.since===null)-(b.since===null)||(a.since||0)-(b.since||0)}).forEach(function(s){
-    out.push(L(glyph(s),' ',[null,cut(sesName(s),32),H.ses(s.id),33],['r',W.reason[s.reason||'waiting'],undefined,16],s.since===null?null:['d',dur(NOW-s.since)]));
-    var q=lastAsk(s);if(q)out.push(SUB('   ',['d','“'+cut(q,100)+'”']))});
-  var notes=allNotes();if(notes.length){out.push(rule());notesBlock('know','YOU SHOULD KNOW','c','!',notes,out,true);notesBlock('decided','DECIDED WITHOUT YOU','m','◆',notes,out,true)}
-  out.push(rule());
-  out.push(L(['y','RUNNING'],'  ',['y','◐ '+plural(run.length,'session','sessions')]));
-  run.sort(function(a,b){return (a.since||0)-(b.since||0)}).forEach(function(s){
-    var m=s.milestone,done=m?m.features.filter(function(f){return isComplete(f.state)}).length:0;
-    var tot=m?m.features.length:0;out.push(L(glyph(s),' ',[null,cut(sesName(s),32),H.ses(s.id),33],tot?done+'/'+tot+' ':null,tot?bar(done,tot,8)[0]:null,tot?bar(done,tot,8)[1]:null,tot?' '+Math.round(done/tot*100)+'%':null,s.goalSince?['c','  goal '+dur(NOW-s.goalSince)]:null,s.since===null?null:['d','  '+dur(NOW-s.since)],s.usage.retries>0?['y','  '+plural(s.usage.retries,'retry','retries')]:null))});
-  out.push(rule());
-  var done=live.filter(function(s){return s.state==='done'}).length,p=prsTotals(),today=0;
-  D.sessions.forEach(function(s){if(s.lastActivityAt>=midnight())today+=s.usage.in+s.usage.out});
-  out.push(L(['g','✓'],' done '+done,p.open?'   PRs '+p.open+' open':null,p.fail?['d',' · ']:null,p.fail?['r',p.fail+' failing']:null,p.conf?['d',' · ']:null,p.conf?['y',p.conf+' conflicts']:null));
-  out.push(SUB(['d','tokens today '+tok(today)]));
+  document.body.setAttribute('data-look','web');app.textContent='';
+  var live=sessions(function(s){return s.live}),need=live.filter(function(s){return s.state==='needs-you'}).length,tasks=D.tasks,n=tasks.length;
+  var top=el('header','top');
+  add(top,el('h1',null,'Agent tracker'),el('p',null,n?n+' of your tasks '+(n===1?'is':'are')+' not done · '+need+(need===1?' needs':' need')+' you now':'Every task you gave is done · '+need+(need===1?' needs':' need')+' you now'));
+  var fresh=el('span','fresh','Updated '+sec(Date.now()-NOW)+' ago');fresh.setAttribute('role','status');top.appendChild(fresh);app.appendChild(top);
+  var old=Date.now()-NOW;
+  if(D.loading)app.appendChild(el('p','stale','Reading sessions…'));
+  else if(D.stale)app.appendChild(el('p','stale','Session list unavailable. Showing what was last read.'));
+  else if(old>STALE)app.appendChild(el('p','stale','No session has updated this page for '+dur(old)+'. What you see is from '+hm(NOW)+'.'));
+  var main=el('main');
+  var h=el('h2',null,'Your tasks not done yet');main.appendChild(h);
+  if(!n)main.appendChild(el('p','empty','Nothing is waiting for you.'));
+  else{var ol=el('ol','tasks');tasks.forEach(function(t){ol.appendChild(taskRow(t))});main.appendChild(ol)}
+  main.appendChild(el('h2',null,'Everything else'));
+  var sec2=el('section');sec2.setAttribute('aria-label','Everything else');
+  var run=live.filter(function(s){return s.state==='running'}).sort(function(a,b){return (a.since||0)-(b.since||0)});
+  sec2.appendChild(group('k-run','Running',String(run.length),run.map(function(s){return li2(s.repo+', '+(s.branch||s.title),s.goalSince?'goal '+dur(NOW-s.goalSince):s.since===null?null:dur(NOW-s.since))})));
+  var notes=[];D.sessions.forEach(function(s){s.notes.forEach(function(x){notes.push({s:s,n:x})})});
+  notes.sort(function(a,b){return (a.n.seen-b.n.seen)||b.n.at-a.n.at});
+  [['know','k-know','You should know'],['decided','k-dec','Decided without you']].forEach(function(k){
+    var mine=notes.filter(function(x){return x.n.kind===k[0]}),fresh=mine.filter(function(x){return !x.n.seen}).length;
+    sec2.appendChild(group(k[1],k[2],fresh?fresh+' new':'none new',mine.map(noteLi)))});
+  var prs=[],fail=0;D.repos.forEach(function(r){if(r.prs&&r.prs.ghOk)r.prs.list.forEach(function(p){if(p.checks==='failing')fail++;prs.push({r:r,p:p})})});
+  sec2.appendChild(group('k-pr','Pull requests',prs.length+' open'+(fail?' · '+fail+' failing':''),prs.map(function(x){var l=li2(x.r.label+', '+x.p.title,null),c=el('span',x.p.checks==='failing'?'red':'mut',' · '+W.checks[x.p.checks].replace(/^[✓✗] /,''));l.appendChild(c);return l})));
+  var done=live.filter(function(s){return s.state==='done'&&s.lastActivityAt>=midnight()});
+  sec2.appendChild(group('k-done','Done today',String(done.length),done.map(function(s){return li2(s.title,s.repo)})));
   var ended=sessions(function(s){return s.state==='ended'&&s.endedAt>=midnight()});
-  if(ended.length){out.push(rule());out.push(L(['d','ENDED TODAY']));ended.slice(0,5).forEach(function(s){out.push(L(['d','○ '],[null,sesName(s),H.ses(s.id)],['d','  ended '+dur(NOW-s.endedAt)+' ago']))})}
-  out.push(rule());
-  out.push(L(['b','REPOS']));
-  if(!D.repos.length)out.push(L(['d','  No repos yet.']));
-  D.repos.forEach(function(r){var n=live.filter(function(s){return s.repoPath===r.path&&s.state==='needs-you'}).length;out.push(L('  ',['c',r.label,H.repo(r.label)],n?['r','  '+n+' needs you']:null,r.prs&&r.prs.ghOk&&r.prs.list.length?['d','  '+plural(r.prs.list.length,'PR','PRs')]:null))});
-  var t=L(['b','Agent tracker']),cnt=L(['d',live.length+' live · '],need.length?['r',need.length+' need you']:['d','none need you']);
-  var s2=D.loading?L(['d','Reading sessions…']):D.stale?L(['y','Session list unavailable. Showing what was last read.']):null;
-  if(s2)out.unshift(s2);
-  page(t,out,cnt);
+  sec2.appendChild(group('k-end','Ended today',String(ended.length),ended.map(function(s){return li2(s.repo+', '+(s.branch||s.title),hm(s.endedAt))})));
+  main.appendChild(sec2);app.appendChild(main);
 }
 
 function repoPage(label){
@@ -229,6 +313,6 @@ export const boardHtml = (d: BoardData): string =>
 <style>${CSS}</style>
 <body><div id="app"></div>
 <script type="application/json" id="data">${inlineJson(d)}</script>
-<script>${SCRIPT.replace('__RELOAD__', String(BOARD_RELOAD_MS))}</script>
+<script>${SCRIPT.replace('__RELOAD__', String(BOARD_RELOAD_MS)).replace('__STALE__', String(BOARD_STALE_MS))}</script>
 </body></html>
 `

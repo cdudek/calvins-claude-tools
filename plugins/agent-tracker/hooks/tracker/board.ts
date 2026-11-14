@@ -10,7 +10,7 @@ import { boardHtml } from './board-page'
 import { BOARD_FILE, BOARD_PATH_TEXT, BOARD_WRITE_MS, boardData } from './core/board-html'
 import type { ChangeFiles } from './core/board-html'
 import { leaseState } from './core/states'
-import { dir, readLease } from './store'
+import { dir, readLease, readSettings } from './store'
 import type { State } from './store'
 import type { Snapshot } from './types'
 
@@ -78,7 +78,8 @@ async function writeBoard($: Engine, s: State, fresh: boolean) {
     cached = { at: now, list: await readChanges($, snap, now) }
     changeCache.set(s, cached)
   }
-  await $.fs.write(await boardPath($), boardHtml(boardData(snap, cached.list, now)))
+  const { seen, kept, closed } = await readSettings($, s) // the owner's marks, read only
+  await $.fs.write(await boardPath($), boardHtml(boardData(snap, cached.list, now, { seen: new Set(seen), kept: new Set(kept), closed: new Set(closed) })))
 }
 
 // Only the session holding the poller lease writes on the timer, so one mod writes the file; and only once a board
