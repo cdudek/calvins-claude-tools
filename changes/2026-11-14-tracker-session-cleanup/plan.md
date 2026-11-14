@@ -186,7 +186,7 @@ and `python3 -m unittest discover -s tests`, then commits with a Conventional Co
 - [x] 14. Feature 4, `SKILL.md`: the conversation, the haiku subagents, `allowed-tools`, `user_invocable: true`. Proof: F58, F60, F77 and F78 pass, and `claude plugin validate --strict plugins/agent-tracker` exits 0.
 - [x] 15. Feature 4, the safety tests and the layout test change. Proof: F64 to F69, F76 and F82 pass, and `python3 -m unittest discover -s tests` exits 0.
 - [x] 16. Feature 4, one owner-run pass of `/git-cleanup-run` is left to the owner at the render check. The build only proves the script and the text. Proof: the note is in `questions.md`.
-- [ ] 17. Feature 5, design edits, the ADR, `setup.md`, the guidelines, the glossary, the README, the plugin description and the version. Proof: `python3 scripts/design_index.py write` leaves `git diff --stat docs/designs/INDEX.md` showing only the new ADR line.
+- [x] 17. Feature 5, design edits, the ADR, `setup.md`, the guidelines, the glossary, the README, the plugin description and the version. Proof: `python3 scripts/design_index.py write` leaves `git diff --stat docs/designs/INDEX.md` showing only the new ADR line.
 - [ ] 18. Sync again, then hand the close to one `Mode: close` builder. Proof: `python3 scripts/verify_gate.py milestone 2026-11-14-tracker-session-cleanup` ends `VERIFY PASS milestone`.
 
 ## Milestones

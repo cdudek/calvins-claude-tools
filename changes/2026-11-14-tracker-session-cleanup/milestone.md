@@ -26,7 +26,7 @@ branch), `merged` (feature PRs) or `blocked: <reason>`.
 | 2 | 2026-11-14-tracker-session-cleanup | Clear with confirm, Reopen tasks, task closing and its store write | <commit> | todo |
 | 3 | 2026-11-14-tracker-session-cleanup | Worktree offer: five checks, ignored-file list, never force, branch kept | <commit> | todo |
 | 4 | 2026-11-14-tracker-session-cleanup | git-cleanup-run skill and script: list, act, haiku summaries, safety guards | d682205 | done d682205 |
-| 5 | 2026-11-14-tracker-session-cleanup | Docs and release: design edits, ADR, setup.md, version bump | <commit> | todo |
+| 5 | 2026-11-14-tracker-session-cleanup | Docs and release: design edits, ADR, setup.md, version bump | 3f9b20a | done 3f9b20a |
 
 ## Done
 
