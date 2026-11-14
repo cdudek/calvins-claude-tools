@@ -2,9 +2,9 @@
 type: validation
 change: 2026-11-14-tracker-session-cleanup
 verdict: ready
-status: draft
-reviewed_by: null
-approved_at: null
+status: approved
+reviewed_by: Calvin Dudek
+approved_at: 2026-11-14T23:06
 created: 2026-11-14
 ---
 
