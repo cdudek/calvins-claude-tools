@@ -22,7 +22,7 @@ branch), `merged` (feature PRs) or `blocked: <reason>`.
 | # | Change | Feature | PR or commit | State |
 |---|---|---|---|---|
 | 0 | 2026-11-14-tracker-session-cleanup | sync: `git fetch origin && git merge origin/main`, locally; again after every earlier milestone merges | 115978f | done 115978f |
-| 1 | 2026-11-14-tracker-session-cleanup | State and age: a row with no `pid` is ended, the last-activity age line, this session never ended | <commit> | todo |
+| 1 | 2026-11-14-tracker-session-cleanup | State and age: a row with no `pid` is ended, the last-activity age line, this session never ended | dfee5da | done dfee5da |
 | 2 | 2026-11-14-tracker-session-cleanup | Clear with confirm, Reopen tasks, task closing and its store write | <commit> | todo |
 | 3 | 2026-11-14-tracker-session-cleanup | Worktree offer: five checks, ignored-file list, never force, branch kept | <commit> | todo |
 | 4 | 2026-11-14-tracker-session-cleanup | git-cleanup-run skill and script: list, act, haiku summaries, safety guards | <commit> | todo |
