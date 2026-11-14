@@ -345,7 +345,7 @@ test jobs from 57% to under 5% with automatic detection and suppression
 
 | Lane | What | When | Blocks |
 |---|---|---|---|
-| PR gate | T1 specs against the production build (`next build`, then `next start` or the standalone server) and a freshly migrated, seeded database, sharded over N jobs | the full local gate before every push; during diagnosis run changed specs and neighbours until green (the linked local-first contract) | yes |
+| PR gate | T1 specs against the production build (`next build`, then `next start` or the standalone server) and a freshly migrated, seeded database, sharded over N jobs | the full suite before every push; during diagnosis run changed specs and neighbours until green (the linked local-first contract) | yes |
 | Milestone gate | T1 and T2; repeat scope per `suite-speed-and-reliability.md` section G | before a milestone PR merges | yes |
 | Nightly | T1, T2, quarantine, second-locale smoke, integration evidence against sandboxes | nightly | no, but it pages the owner |
 | Preview | T1 read-only journeys against the deployed preview | after each preview deploy | advisory |

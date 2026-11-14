@@ -22,7 +22,7 @@ Use only the owner-approved supported LTS majors, Node 24 or 26 (decision 2026-1
 For new pins choose the current or active LTS line; never choose an end-of-life or
 maintenance-only line. `.nvmrc` is the version source; CI uses `node-version-file`,
 `engines.node` constrains the same major, and Docker build and runtime stages agree.
-The local gate checks the installed major first and fails with the required version,
+The repo's verify command checks the installed major first and fails with the required version,
 the installed version and `nvm use` before running checks. Electron bundles its own
 Node; this rule also governs the separate Node used for tooling and CI.
 

@@ -15,7 +15,7 @@ while IFS= read -r f; do
 done < <(find "$root/hooks" "$root/skills" -type f \( -name 'test_*.py' -o -name 'test_*.sh' \) -not -path '*/templates/*' | sort)
 
 # The agent-tracker mod: validate the manifest and the marketplace, type-check the module, run its *.test.ts files.
-# GitHub's runner has no `claude` CLI, so CI skips this block; the local gate has it.
+# GitHub's runner has no `claude` CLI, so CI skips this block; a local run has it.
 mod="$repo/plugins/agent-tracker"
 run_mod() { # <label> <command...>
   local label="$1"; shift

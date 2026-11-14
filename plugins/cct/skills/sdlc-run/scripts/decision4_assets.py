@@ -1,6 +1,6 @@
 """The Decision4 files a repo gets: boundary map, AGENTS.md section, PR-template section.
 
-Decision4 is advisory: no workflow, no ci-local step, no status check. Existing files are
+Decision4 is advisory: no workflow, no status check. Existing files are
 never overwritten; a repo that already has the heading keeps its own text.
 """
 

@@ -45,7 +45,7 @@ New keys: `checks`, `milestones`, `projects`, `hotfix`, `goal`, `languages`, `re
 
     {{VERIFY}}
 
-Run it before reporting done and before pushing. Use the linked targeted local failure loop; the full gate runs once on the final head before push. The Stop hook runs
+Run it before reporting done and before pushing. Use the linked targeted local failure loop; the full suite runs once on the final head before push, and GitHub's required checks are the merge gate. The Stop hook runs
 `{{VERIFY_STOP}}` for dirty source files.
 
 ## Pull requests, issues and PR comments: scannable, never a text blob
@@ -73,7 +73,7 @@ Full example for a Repair change (illustrative evidence, not claims to copy). Om
 ## Proof
 
 - **Migration tests:** 12 passed, including reading the old format.
-- **Local gate:** `scripts/ci-local --check` passed on the proposed head.
+- **Checks:** The repo's verify command passed on the proposed head.
 
 ## Before merge
 

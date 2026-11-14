@@ -17,7 +17,7 @@ Keep repo-specific requirements and human checklists; never tick human attestati
 
 ## Proof
 
-- **Local gate:** <verify command and actual result on this head>
+- **Checks:** <verify command and actual result on this head>
 
 - **Traceability:** One row per requirement from `changes/<id>/facts.md` or the issue; every requirement needs proof and every proof needs a requirement.
 
