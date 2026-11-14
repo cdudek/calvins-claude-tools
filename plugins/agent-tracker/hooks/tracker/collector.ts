@@ -2,7 +2,7 @@
 import { atom, update } from 'claude-code'
 import type { EngineInterface, On } from 'claude-code'
 
-import { POLL_MS, addTokens, agentsFresh, deriveState, leaseState, mergeSessions, noteTool, parseAgents } from './core'
+import { POLL_MS, agentsFresh, deriveState, leaseState, mergeSessions, noteTool, parseAgents } from './core'
 import type { AgentRow, Lease, SessionRecord, Snapshot } from './types'
 import { dir, initOwn, readAgentsFile, readFolder, readLease, saveOwn, where, writeJson } from './store'
 import type { State } from './store'
@@ -103,14 +103,8 @@ export const registerCollector = (on: On, s: State) => {
     return r
   })
 
-  // Tokens, tool errors and retries (F21), and a goal the model proposes.
-  on('turn.complete', async ($, e, next) => {
-    const r = await next(e)
-    const { usage } = e
-    if (usage) await saveOwn($, s, m => ({ ...m, usage: addTokens(m.usage, usage) })).catch(() => undefined)
-    return r
-  })
-
+  // Tool errors and retries (F21), and a goal the model proposes. Tokens come at turn.complete, in asks.ts: the
+  // engine's scan allows one hook per event without a matcher.
   on('tool.call', async ($, e, next) => {
     const r = await next(e)
     try {
