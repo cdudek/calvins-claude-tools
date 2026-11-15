@@ -30,8 +30,8 @@ export type Page =
 export type Local = { midnight: number; clock: (ms: number) => string; day: (ms: number) => string; date: (ms: number, withYear: boolean) => string }
 
 // A Button that does something other than open a page: mark notes seen, copy the reply to overrule one, copy a resume command,
-// keep or close a task (`keys` are the task keys).
-export type ActionItem = { key: string; label: string; action: 'seen' | 'overrule' | 'resume' | 'keep' | 'close'; keys?: string[] }
+// keep or close a task (`keys` are the task keys), and the Session page's Clear: open its confirm, run it, cancel it, reopen the tasks it closed.
+export type ActionItem = { key: string; label: string; action: 'seen' | 'overrule' | 'resume' | 'keep' | 'close' | 'clear' | 'confirm-clear' | 'cancel-clear' | 'reopen'; keys?: string[] }
 
 // One item of an inline list: a Button when it has `to`, a Link when it has `href`, plain text otherwise.
 export type Item = { key: string; spans: Spans; to?: Page; href?: string; joined?: boolean } // joined: no separator before it
@@ -127,7 +127,7 @@ export const repoEntries = (sessions: SessionRecord[]): RepoEntry[] => {
 
 export const TASKS_SHOWN = 8 // task rows on Home before "and N more": the list leads the page and must leave the rest on the first screen
 
-const TASK_STYLE = { 'needs-you': { glyph: '●', tone: 'red' }, forgotten: { glyph: '○', tone: 'red' }, superseded: { glyph: '?', tone: 'magenta' }, 'in-progress': { glyph: '◐', tone: 'yellow' } } as const
+export const TASK_STYLE = { 'needs-you': { glyph: '●', tone: 'red' }, forgotten: { glyph: '○', tone: 'red' }, superseded: { glyph: '?', tone: 'magenta' }, 'in-progress': { glyph: '◐', tone: 'yellow' } } as const
 
 // "● Fix the login redirect", then "   web-app  asked 13:40  You: waiting for your answer for 4m". A superseded task adds Keep and Close.
 const taskBlocks = (t: TaskItem, local: Local, columns: number): Block[] => {

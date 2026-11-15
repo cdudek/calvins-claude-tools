@@ -1,5 +1,6 @@
 import type { AgentRow, Ask, Entrypoints, LateChecks, SessionRecord } from '../types'
 import { lastActivity } from './activity'
+import { jobId } from './clear'
 import { labelRepos } from './repo'
 import { resolveState } from './states'
 import { WEEK_MS, emptyRecord } from './types'
@@ -66,6 +67,7 @@ export const mergeSessions = ({ files, transcripts, agents, now, selfId, seen, e
       ...d,
     }
   })
-  // A headless or sdk-* run is nobody's work: it never reaches the snapshot, so no list, count or band sees it.
-  return fitSnapshot(labelRepos(merged.filter(r => r.headless !== true && (r.state !== 'ended' || now - r.lastActivityAt <= WEEK_MS))), selfId)
+  // A headless or sdk-* run is nobody's work: it never reaches the snapshot, so no list, count or band sees it. An ended session
+  // older than a week stays while Claude Code still lists it with a job id, so its page can offer Clear (F8).
+  return fitSnapshot(labelRepos(merged.filter(r => r.headless !== true && (r.state !== 'ended' || now - r.lastActivityAt <= WEEK_MS || jobId(live.get(r.sessionId)?.id) !== null))), selfId)
 }

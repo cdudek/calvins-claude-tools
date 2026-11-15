@@ -448,9 +448,19 @@ describe('Session detail', () => {
     await ui.unmount()
   })
 
-  test(`@F49 ${TAG} Copy resume command, for any session with a plain id; the folder single-quoted`, async ($, on) => {
-    const odd = waiting({ cwd: "/work/my web-app's copy" })
-    const { ui, w } = await sessionPage($, on, [...paneTown(), odd], 'web-9')
+  // An ended session's page, opened by its title (an ended session has no Home row): Copy resume command is for ended sessions
+  // whose folder exists (@F9, @F14 of change 2026-11-14-tracker-session-cleanup correct milestone 1's "any session").
+  const endedPage = async ($: Engine, on: On, extra: Partial<SessionRecord>) => {
+    const h = withSnap(on, [...paneTown(), waiting({ title: 'zebra work', state: 'ended', endedAt: at(0), reason: null, ...extra })])
+    h.w.put(`${extra.cwd ?? '/work/web-app'}/README`, '')
+    const ui = await mount($, 70)
+    await run($, 'session zebra')
+    await ui.redraw()
+    return { ...h, ui }
+  }
+
+  test(`@F49 ${TAG} Copy resume command, for an ended session with a plain id; the folder single-quoted`, async ($, on) => {
+    const { ui, w } = await endedPage($, on, { cwd: "/work/my web-app's copy" })
     const resume = (await ui.find({ key: 'resume' }))!
     expect([resume.props.label, resume.props.hotkey, resume.props.plain]).toEqual(['Copy resume command', undefined, true])
     await go(ui, 'resume')
@@ -468,7 +478,7 @@ describe('Session detail', () => {
     expect(resumeCommand('/work/web-app', '')).toBeNull()
     expect(resumeCommand('/work/web-app', 'a'.repeat(65))).toBeNull()
     expect(resumeCommand("/work/it's", 'Ab_9-z')).toBe("cd '/work/it'\\''s' && claude --resume Ab_9-z")
-    const { ui, w } = await sessionPage($, on, [...paneTown(), waiting({ sessionId: 'x; rm -rf ~' })], 'x; rm -rf ~')
+    const { ui, w } = await endedPage($, on, { sessionId: 'x; rm -rf ~' })
     expect(await ui.find({ key: 'resume' })).toBeUndefined()
     expect(w.copies).toEqual([])
     await ui.unmount()

@@ -29,7 +29,7 @@ export const NO_TASKS = 'Every task you gave is done.'
 export const HEADINGS = { tasks: 'YOUR TASKS NOT DONE', needs: 'NEEDS YOU', know: 'YOU SHOULD KNOW', decided: 'DECIDED WITHOUT YOU', running: 'RUNNING', milestones: 'MILESTONES', asks: 'YOUR ASKS HERE', worktrees: 'WORKTREES', otherPrs: 'OTHER PRs', stage: 'STAGE', features: 'FEATURES', facts: 'FACTS', questions: 'QUESTIONS', findings: 'FINDINGS', sessions: 'SESSIONS', tests: 'TESTS', builder: 'BUILDER' } as const
 // Plain words, no keys bound: the rows are Buttons.
 export const KEY_HINTS = '↑↓ move  ⏎ open'
-export const PANE_BUTTONS = { close: 'Close', back: 'Back', home: 'Home', resume: 'Copy resume command' } as const
+export const PANE_BUTTONS = { close: 'Close', back: 'Back', home: 'Home', resume: 'Copy resume command', clear: 'Clear', confirmClear: 'Clear session', cancelClear: 'Cancel', reopen: 'Reopen tasks' } as const
 export const NEW_MARK = 'new'
 export const moreLine = (n: number) => `and ${n} more on the Repo pages`
 export const updatedWords = (age: string) => (age === '<1m' ? 'updated just now' : `updated ${age} ago`)
@@ -72,3 +72,26 @@ export const BOARD_FAILED = 'The Board is not available in this build.'
 export const PANE_OPENED = 'Tracker pane opened.'
 // A waiting session's reason in two or three words, for the band's column line.
 export const SHORT_REASON = { permission: 'perm', question: 'question', waiting: 'waiting', unknown: 'waiting' } as const
+
+// Clear on the Session page, from spec/screens.md "Pane, Session" Words. `<reason>` clauses come in as ": reason" or "".
+export const CLEAR_WORDS = {
+  liveInteractive: 'Clear is for ended sessions. Close its terminal first.',
+  liveBackground: 'Clear is for ended sessions. This one is still running. Resume comes back when it ends.',
+  nothing: "Nothing to clear: it is not in Claude Code's list and has no open tasks.",
+  waitsNoPid: "Clear waits: Claude Code did not say which sessions have a process.",
+  waitsUnreadable: "Clear waits: Claude Code's session list could not be read. Retrying every 5 seconds.",
+  question: 'Clear this session?',
+  leaves: "It leaves Claude Code's list",
+  kept: 'The conversation is kept. The list entry does not come back.',
+  reopenHint: 'You can reopen the tasks afterwards.',
+  madeWorktree: (label: string) => `If it made the worktree ${label}, Claude Code also removes it, when that is safe.`,
+  clearing: 'Clearing…',
+  left: "Left Claude Code's list. The conversation is kept.",
+  closed: (n: number) => `${n} ${n === 1 ? 'task' : 'tasks'} closed.`,
+  reopened: (n: number) => `${n} ${n === 1 ? 'task' : 'tasks'} reopened.`,
+  refusedRunning: 'This session is running again. Nothing was changed.',
+  refusedUnreadable: "Clear waits: Claude Code's session list could not be read. Nothing was changed.",
+  refusedNoPid: 'Clear waits: Claude Code did not say which sessions have a process. Nothing was changed.',
+  failed: (why: string) => `Claude Code could not clear this session${why}. Nothing else was changed. Press Clear to try again.`,
+  partly: (why: string, left: boolean) => `The tracker could not close the tasks${why}. ${left ? "The session left Claude Code's list. Press Clear to close them." : 'Press Clear to try again.'}`,
+} as const

@@ -2,6 +2,7 @@
 export * from './activity'
 export * from './band-model'
 export * from './change'
+export * from './clear'
 export * from './format'
 export * from './git'
 export * from './markdown'
