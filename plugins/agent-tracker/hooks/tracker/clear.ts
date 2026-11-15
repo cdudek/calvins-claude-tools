@@ -1,5 +1,5 @@
 // Clear on the Session page, the run after the owner's press of "Clear session": read `claude agents --json` again, run
-// `claude rm <job id>` for a listed row with no process, then close the session's tasks. Never `claude stop`, never a flag,
+// `claude rm <job id>` for a listed row with no process, then close the session's tasks. It never stops a session, never passes a flag,
 // never a shell. `$` is passed only to plain top-level functions.
 import type { EngineInterface } from 'claude-code'
 
