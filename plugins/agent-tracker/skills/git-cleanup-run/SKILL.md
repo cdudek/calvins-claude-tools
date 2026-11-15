@@ -13,7 +13,7 @@ The script `${CLAUDE_SKILL_DIR}/scripts/cleanup.py` does every check and every r
 
 ## 1. List
 
-Run `python3 ${CLAUDE_SKILL_DIR}/scripts/cleanup.py list`. It changes nothing and prints JSON: `no_pid_reported` and `items`. Each item has `type` (`session` or `worktree`), `id`, `label`, `short`, `idle_days`, `verdict` (`removable` or `needs-look`), `failed` (the first failed check) and `reason`.
+Run `python3 ${CLAUDE_SKILL_DIR}/scripts/cleanup.py list`. It changes nothing and prints JSON: `no_pid_reported` and `items`. Each item has `type` (`session` or `worktree`), `id`, `act_arg`, `label`, `short`, `idle_days`, `verdict` (`removable` or `needs-look`), `failed` (the first failed check) and `reason`.
 
 - If it prints an `error`, say it in one line and stop.
 - If `no_pid_reported` is true, say "Nothing is removable: Claude Code did not say which sessions have a process." and stop.
@@ -46,7 +46,7 @@ The owner may type items to keep under Other. Match each typed item to exactly o
 
 ## 4. Act
 
-After a batch is answered, and only for "Clear all" or "Remove all", run `python3 ${CLAUDE_SKILL_DIR}/scripts/cleanup.py act '<id>' '<id>' ...` with the `id` of each item left in that batch in single quotes, copied from the list and from nowhere else. The script checks each id again right before it acts and prints JSON: `cleared`, `removed`, `skipped` and `failed`. "Skip these N" runs nothing.
+After a batch is answered, and only for "Clear all" or "Remove all", run `python3 ${CLAUDE_SKILL_DIR}/scripts/cleanup.py act <act_arg> <act_arg> ...` with the `act_arg` of each item left in that batch, copied exactly as the list printed it (it is already quoted for the shell) and from nowhere else. The script checks each id again right before it acts and prints JSON: `cleared`, `removed`, `skipped` and `failed`. "Skip these N" runs nothing.
 
 ## 5. Report
 
@@ -54,7 +54,7 @@ Start with "Cleanup done." Then write from the `act` JSON and from the `needs-lo
 
 - "Cleared 5 sessions." from `cleared`.
 - "Removed 3 worktrees. Branches kept." from `removed`.
-- "Could not clear: web-app · fix login: <reason>" for each `failed` item (a worktree reads "Could not remove: web-app/login: <reason>"). Cut the reason at 60 cells.
+- "Could not clear: web-app · fix login: <reason>" for each `failed` item (a worktree reads "Could not remove: web-app/login: <reason>"). The script already cuts the reason at 60 cells; say it as printed.
 - "Kept, needs a look: web-app/login (uncommitted changes); api/users (2 commits not pushed)." from the `needs-look` items and from `skipped` items of kind `needs-look`, each with its `reason`.
 - "Skipped: docs (a session is running in it)." from the other `skipped` items, each with its `reason`.
 

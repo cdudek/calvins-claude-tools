@@ -16,6 +16,8 @@ import argparse
 import fnmatch
 import json
 import os
+import re
+import shlex
 import subprocess
 import sys
 import time
@@ -26,6 +28,10 @@ DAY = 86400
 SECRET_NAMES = (".env*", "*.pem", "*key*", "credentials*")
 OTHER_MAX = 3  # other ignored names listed before "and N more"
 NAME_MAX = 30  # cells
+REASON_MAX = 60  # cells, as the tracker cuts a failure reason
+JOB_ID = re.compile(r"[A-Za-z0-9][A-Za-z0-9_.-]{0,63}")  # a job id is a plain word, as the tracker takes it
+# The tracker's git flags: a repo's own config cannot start a program (fsmonitor, hooks).
+GIT_FLAGS = ["-c", "core.fsmonitor=false", "-c", "core.hooksPath=/dev/null"]
 WHY = {
     "pid_reported": "no pid reported",
     "no_process": "a process is running",
@@ -44,7 +50,9 @@ class Unreadable(Exception):
 
 
 def run(argv, cwd=None, timeout=60):
-    """The one place a command runs: an argument list, no shell, no input."""
+    """The one place a command runs: an argument list, no shell, no input. Every git call gets the tracker's -c flags."""
+    if argv[0] == "git":
+        argv = ["git", *GIT_FLAGS, *argv[1:]]
     try:
         r = subprocess.run(argv, cwd=cwd, capture_output=True, text=True, stdin=subprocess.DEVNULL, timeout=timeout,
                            env={**os.environ, "GIT_OPTIONAL_LOCKS": "0"})
@@ -76,6 +84,26 @@ def read_rows():
     return [r for r in rows if isinstance(r, dict)]
 
 
+def read_late(path):
+    """The late verdicts by session id, and whether the file is unreadable. A missing file has none."""
+    try:
+        data = json.loads(path.read_text())
+    except FileNotFoundError:
+        return {}, False
+    except (OSError, ValueError):
+        return {}, True
+    ok = isinstance(data, dict) and data.get("v") == 1 and isinstance(data.get("by"), dict)
+    return (data["by"], False) if ok else ({}, True)
+
+
+def late_verdicts(w, sid):
+    """One session's late verdicts by ask number; None when the file or the session's entry is unreadable."""
+    entry = w.late.get(sid)
+    if w.late_torn or (entry is not None and not (isinstance(entry, dict) and isinstance(entry.get("verdicts", []), list))):
+        return None
+    return {v.get("n"): v.get("verdict") for v in (entry or {}).get("verdicts", []) if isinstance(v, dict) and isinstance(v.get("n"), int)}
+
+
 class World:
     """One read of everything the checks need, taken at the start of a pass."""
 
@@ -94,6 +122,7 @@ class World:
                     self.records.setdefault(f.stem, rec)
                 elif f.stem not in self.records or folder == "sessions":
                     self.torn.add(f.stem)
+        self.late, self.late_torn = read_late(claude / "agent-tracker" / "latechecks.json")
         self.transcripts = {}  # session id -> (modified time, path)
         for d in sorted((claude / "projects").glob("*")):
             try:
@@ -158,17 +187,23 @@ def session_item(w, row):
     if last is None or w.now - last < DAYS * DAY or not isinstance(ident, str):
         return None
     rec = w.records.get(sid)
-    asks, reason = True, None
+    asks, reasons = True, {}
+    late = late_verdicts(w, sid)
     if sid in w.torn or not isinstance((rec or {}).get("asks", []), list):
-        asks, reason = False, "ask record unreadable"
-    elif any(isinstance(a, dict) and a.get("verdict") in ("partly", "not-started") for a in (rec or {}).get("asks", [])):
+        asks, reasons["asks"] = False, "ask record unreadable"
+    elif late is None:
+        asks, reasons["asks"] = False, "late checks unreadable"
+    elif any(isinstance(a, dict) and (a["verdict"] if "verdict" in a else late.get(a.get("n")) if a.get("kind") == "task" and isinstance(a.get("n"), int) else None)
+             in ("partly", "not-started") for a in (rec or {}).get("asks", [])):  # a late verdict fills an ask no turn judged, as the tracker's merge does
         asks = False
-    checks = {"pid_reported": w.pid_seen, "no_process": True, "job_id": isinstance(jid, str) and jid != "", "asks": asks}
+    if isinstance(jid, str) and jid != "" and not JOB_ID.fullmatch(jid):
+        reasons["job_id"] = "job id not plain"
+    checks = {"pid_reported": w.pid_seen, "no_process": True, "job_id": isinstance(jid, str) and JOB_ID.fullmatch(jid) is not None, "asks": asks}
     verdict, failed = first_failed(checks)
     repo, title, days = w.repo_name(row.get("cwd"), rec), w.title.get(sid) or "untitled", int((w.now - last) // DAY)
-    return {"type": "session", "id": ident, "label": f"{repo} · {title} · idle {days}d", "short": f"{repo} · {title}", "repo": repo,
+    return {"type": "session", "id": ident, "act_arg": shlex.quote(ident), "label": f"{repo} · {title} · idle {days}d", "short": f"{repo} · {title}", "repo": repo,
             "title": title, "idle_days": days, "transcript": (w.transcripts.get(sid) or (None, None))[1], "checks": checks,
-            "verdict": verdict, "failed": failed, "reason": (reason if failed == "asks" and reason else WHY[failed]) if failed else None}
+            "verdict": verdict, "failed": failed, "reason": (reasons.get(failed) or WHY[failed]) if failed else None}
 
 
 def ignored_names(lines):
@@ -229,7 +264,7 @@ def worktree_item(w, main, block):
     if failed == "pushed" and unpushed:
         reason = f"{unpushed} commit{'' if unpushed == 1 else 's'} not pushed"
     repo, folder, days = os.path.basename(main), os.path.basename(path), int((w.now - max(times)) // DAY)
-    return {"type": "worktree", "id": path, "main": main, "label": f"{repo} · {folder} · idle {days}d", "short": f"{repo}/{folder}",
+    return {"type": "worktree", "id": path, "act_arg": shlex.quote(path), "main": main, "label": f"{repo} · {folder} · idle {days}d", "short": f"{repo}/{folder}",
             "repo": repo, "branch": branch, "idle_days": days, "last_commit": subject.strip(), "checks": checks,
             "ignored": ignored_names([line[3:].strip('"') for line in lines if line.startswith("!! ")]),
             "sessions": sorted({w.title[s] for s in w.last if w.title.get(s) and s in w.rcwd and under(w.rcwd[s], where)}),
@@ -274,7 +309,11 @@ def cmd_act(ids):
         if item is None or item["verdict"] != "removable":
             skip(ident, item)
             continue
-        w.refresh()
+        try:
+            w.refresh()
+        except Unreadable:
+            skip(ident, item, "session list unreadable")
+            continue
         again = build(w, {ident})  # the re-check right before the action
         item = next((i for i in again if i["id"] == ident), None)
         if item is None or item["verdict"] != "removable":
@@ -284,13 +323,14 @@ def cmd_act(ids):
             rc, o, e = run(["claude", "rm", ident], timeout=15)
             done, bucket = rc == 0, "cleared"
         else:
-            rc, o, e = run(["git", "worktree", "remove", ident], cwd=item["main"])
+            rc, o, e = run(["git", "worktree", "remove", ident], cwd=item["main"], timeout=120)  # the tracker's allowance for a removal
             done, bucket = rc == 0, "removed"
         if done:
             out[bucket].append({"id": ident, "short": item["short"]})
         else:
             reason = next((s.strip() for s in (e + "\n" + o).splitlines() if s.strip()), "no reason given")
-            out["failed"].append({"id": ident, "short": item["short"], "reason": reason[:200]})
+            cut = reason if len(reason) <= REASON_MAX else reason[: REASON_MAX - 1] + "…"
+            out["failed"].append({"id": ident, "short": item["short"], "reason": cut})
     print(json.dumps(out, indent=1))
 
 
