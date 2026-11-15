@@ -298,6 +298,16 @@ describe('Remove worktree and Keep worktree', () => {
     await h.ui.unmount()
   })
 
+  test(`@F42 ${CLEANUP} two presses before the first await runs the removal once and keeps its result line`, async ($, on) => {
+    const h = await openTree($, on, ONLY_TREE)
+    await press(h.ui, 'clear')
+    await Promise.all([h.ui.press({ key: 'remove-worktree' }), h.ui.press({ key: 'remove-worktree' })])
+    await settled(h.ui)
+    expect(removes(h.w).length).toBe(1)
+    expect(await page(h.ui)).toContain('✓ Worktree login removed. The branch fix-login stays.')
+    await h.ui.unmount()
+  })
+
   test(`@F43 ${CLEANUP} the branch is kept, the result lines say so and no resume button is drawn after removal`, async ($, on) => {
     const h = await openTree($, on, ONLY_TREE)
     await press2(h.ui, 'clear', 'remove-worktree')

@@ -125,11 +125,11 @@ async function actClear($: Engine, s: State, it: ActionItem) {
     if (await reopenTasks($, s, keys)) set({ outcome: { kind: 'reopened', count: keys.length } })
   } else if (it.action === 'keep-worktree' && c.step === 'idle' && c.offer) set({ offer: false })
   else if (it.action === 'remove-worktree' && c.step === 'idle' && c.offer) {
+    set({ step: 'removing' }) // before the first await: a second press meanwhile finds the step taken
     const r = await sessionOf()
     const have = s.pane.clear.facts
     const label = r === undefined ? null : worktreeOf(s, r)?.label
-    if (have?.value == null || label == null) return
-    set({ step: 'removing' })
+    if (have?.value == null || label == null) return set({ step: 'idle' })
     const done = await removeWorktree($, have.value, label)
     set({ step: 'idle', offer: false, wt: done.outcome, facts: { ...have, value: done.facts, reading: false } })
   } else if (it.action === 'confirm-clear' && c.step === 'confirm') {
