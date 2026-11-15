@@ -294,13 +294,17 @@ def cmd_list():
 
 
 def cmd_act(ids):
+    """@F59 @2026-11-14-tracker-session-cleanup act re-reads the session list before each id; after the first unreadable read it skips every remaining id without reading again."""
     out = {"cleared": [], "removed": [], "skipped": [], "failed": []}
     unique = list(dict.fromkeys(ids))
     w = World()  # the fresh list; each id below gets its own fresh read of the session list
     known = {i["id"]: i for i in build(w, set(unique))}
 
-    def skip(ident, item, why=None):
-        kind = "unknown" if item is None else "running" if item["failed"] == "unused" else "needs-look"
+    unreadable = False
+
+    def skip(ident, item, why=None, kind=None):
+        """@F61 @2026-11-14-tracker-session-cleanup a skip caused by an unreadable session list has its own kind, not a failed check."""
+        kind = kind or ("unknown" if item is None else "running" if item["failed"] == "unused" else "needs-look")
         out["skipped"].append({"id": ident, "short": item["short"] if item else ident, "kind": kind,
                                "reason": why or (item["reason"] if item else "not in a fresh list")})
 
@@ -309,10 +313,13 @@ def cmd_act(ids):
         if item is None or item["verdict"] != "removable":
             skip(ident, item)
             continue
-        try:
-            w.refresh()
-        except Unreadable:
-            skip(ident, item, "session list unreadable")
+        if not unreadable:
+            try:
+                w.refresh()
+            except Unreadable:
+                unreadable = True
+        if unreadable:
+            skip(ident, item, "session list unreadable", "unreadable")
             continue
         again = build(w, {ident})  # the re-check right before the action
         item = next((i for i in again if i["id"] == ident), None)

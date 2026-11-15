@@ -42,6 +42,8 @@ if args[:1] == ["agents"]:
     open(d + "/count", "w").write(str(n))
     if os.path.exists(d + "/agents_fail_from") and n >= int(open(d + "/agents_fail_from").read()):
         sys.exit(1)
+    if os.path.exists(d + "/agents_fail_at") and n == int(open(d + "/agents_fail_at").read()):
+        sys.exit(1)
     while n > 1 and not os.path.exists(d + "/agents.%d.json" % n):
         n -= 1
     sys.stdout.write(open(d + "/agents.%d.json" % n).read())
@@ -565,10 +567,31 @@ class Act(Base):
         self.assertEqual(r.returncode, 0, r.stdout + r.stderr)
         self.assertEqual(sorted(r.out), ["cleared", "failed", "removed", "skipped"])
         self.assertEqual([c["id"] for c in r.out["cleared"]], ["good0001"])
-        self.assertEqual([(s["id"], s["reason"]) for s in r.out["skipped"]], [("next0001", "session list unreadable"), (str(wt), "session list unreadable")])
+        self.assertEqual([(s["id"], s["reason"], s["kind"]) for s in r.out["skipped"]], [("next0001", "session list unreadable", "unreadable"), (str(wt), "session list unreadable", "unreadable")])
         self.assertEqual(r.out["removed"], [])
         self.assertTrue(wt.exists())
         self.assertEqual([c for c in fx.log() if c.startswith("rm")], ["rm good0001"])
+
+    def test_F59_after_one_unreadable_read_act_reads_no_more_and_acts_on_no_later_id(self):
+        """@F59 @2026-11-14-tracker-session-cleanup the session list fails on one read only; every id after it is skipped as unreadable without another read, though that read would succeed."""
+        fx = self.fx
+        fx.agents(LIVE, row("good0001"), row("next0001"), row("later001"))
+        fx.flag("agents_fail_at", "3")  # the first read and good0001's re-check work; next0001's fails; a fourth would work
+        r = fx.run("act", "good0001", "next0001", "later001")
+        self.assertEqual(r.returncode, 0, r.stdout + r.stderr)
+        self.assertEqual([c["id"] for c in r.out["cleared"]], ["good0001"])
+        self.assertEqual([(s["id"], s["kind"], s["reason"]) for s in r.out["skipped"]], [("next0001", "unreadable", "session list unreadable"), ("later001", "unreadable", "session list unreadable")])
+        self.assertEqual([c for c in fx.log() if c.startswith("rm")], ["rm good0001"])
+        self.assertEqual(len([c for c in fx.log() if c.startswith("agents")]), 3)
+
+    def test_F61_a_skip_from_an_unreadable_read_has_kind_unreadable(self):
+        """@F61 @2026-11-14-tracker-session-cleanup a removable item skipped because the session list cannot be read has kind unreadable, not needs-look."""
+        fx = self.fx
+        fx.agents(LIVE, row("good0001"))
+        fx.flag("agents_fail_at", "2")
+        r = fx.run("act", "good0001")
+        self.assertEqual([(s["id"], s["kind"]) for s in r.out["skipped"]], [("good0001", "unreadable")])
+        self.assertEqual(r.out["cleared"], [])
 
     def test_F59_act_re_checks_a_worktree_right_before_removing_it(self):
         """@F59 @2026-11-14-tracker-session-cleanup act re-checks the worktree's status again before the removal and removes it without force from the main checkout; the branch stays."""
