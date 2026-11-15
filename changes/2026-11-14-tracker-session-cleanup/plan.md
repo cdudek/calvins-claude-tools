@@ -177,10 +177,10 @@ and `python3 -m unittest discover -s tests`, then commits with a Conventional Co
 - [x] 5. Feature 2, `clear.ts` and the Clearing, Refused, Cleared, Failed and PartlyCleared states, `store.ts` `unmarkTask` and Reopen tasks. Proof: F22 to F34 pass in `clear.test.ts`, `tasks.test.ts` and `pane.test.ts`.
 - [x] 6. Feature 2, the `claude rm` boundary on a fake `claude` binary first on `PATH`: a hang, a refusal and a success, with closed stdin. The build never runs `claude rm` on a real session. Proof: F28 passes against the fake, and the defaults taken are in `questions.md`. The one real run is the owner's press at the render check.
 - [x] 7. Feature 2, the band guard. Proof: F70 passes in `band.test.ts`.
-- [ ] 8. Feature 3, git fixtures, tests first, then `core/worktree.ts` and `worktrees.ts` gathering. Proof: F35 to F38 and F41 pass in `worktree.test.ts`.
-- [ ] 9. Feature 3, the offer, Remove, Keep, the result states and the focus rule. Proof: F39, F40, F42 to F45, F47 and F73 pass.
-- [ ] 10. Feature 3, the post-`claude rm` re-check and the offer-only Clear. Proof: F21 and F46 pass in `clear.test.ts` against the git fixtures.
-- [ ] 11. Feature 3, the render check at 120, 80, 54 and 40 columns and a 24-column dock, rows counted. Proof: N1 holds, with a terminal screenshot kept under `changes/2026-11-14-tracker-session-cleanup/verify/shots/`.
+- [x] 8. Feature 3, git fixtures, tests first, then `core/worktree.ts` and `worktrees.ts` gathering. Proof: F35 to F38 and F41 pass in `worktree.test.ts`.
+- [x] 9. Feature 3, the offer, Remove, Keep, the result states and the focus rule. Proof: F39, F40, F42 to F45, F47 and F73 pass.
+- [x] 10. Feature 3, the post-`claude rm` re-check and the offer-only Clear. Proof: F21 and F46 pass in `clear.test.ts` against the git fixtures.
+- [x] 11. Feature 3, the render check at 120, 80, 54 and 40 columns and a 24-column dock, rows counted. Proof: N1 holds, with a terminal screenshot kept under `changes/2026-11-14-tracker-session-cleanup/verify/shots/`.
 - [x] 12. Feature 4, tests first in `tests/test_git_cleanup_run.py`, then `cleanup.py` `list`: collection, checks, verdicts, the no-pid rule, no job id. Proof: F48, F49, F74, F75, F79 and F80 pass.
 - [x] 13. Feature 4, `cleanup.py` `act`: explicit ids, re-check per id, refusals, the result JSON. Proof: F59, F61, F62 and F81 pass.
 - [x] 14. Feature 4, `SKILL.md`: the conversation, the haiku subagents, `allowed-tools`, `user_invocable: true`. Proof: F58, F60, F77 and F78 pass, and `claude plugin validate --strict plugins/agent-tracker` exits 0.
