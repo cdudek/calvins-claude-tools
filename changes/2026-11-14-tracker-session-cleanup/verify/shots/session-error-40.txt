@@ -1,0 +1,17 @@
+ Home › web-app › old login work
+ ○ ended 2h ago
+ ───────────────────────────────────────
+ branch fix-login  started 14 Nov 2023
+ 23:13  last activity 2h ago
+ tokens in 0 out 0
+ struggles 0 retries · 0 tool errors
+ worktree login · fix-login  Clear
+ offers to remove it.
+ Clear offers to remove the worktree
+ below.
+ Copy resume command  Clear
+ ✗ Git could not remove the worktree:
+ fatal: cannot remove a locked working
+ tree because it is ch…. Nothing was
+ lost. Check it in a terminal.
+ ↑↓ move  ⏎ open                   Close

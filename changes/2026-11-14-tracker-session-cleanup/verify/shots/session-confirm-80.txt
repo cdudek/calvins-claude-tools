@@ -1,0 +1,19 @@
+ Home › web-app › old login work                                  ○ ended 2h ago
+ ───────────────────────────────────────────────────────────────────────────────
+ branch fix-login  started 14 Nov 2023 23:13  last activity 2h ago
+ tokens in 0 out 0
+ struggles 0 retries · 0 tool errors
+ tasks Fix the login redirect on the account p… ○ forgotten · Fix the login
+ redirect on the account p… ○ forgotten · Fix the login redirect on the account
+ p… ○ forgotten · Fix the login redirect on the account p… ○ forgotten · Fix the
+ login redirect on the account p… ○ forgotten · Fix the login redirect on the
+ account p… ○ forgotten
+ and 1 more
+ worktree login · fix-login  Clear offers to remove it.
+ Clear this session?
+ It leaves Claude Code's list and closes the 7 tasks above.
+ If it made the worktree login, Claude Code also removes it, when that is safe.
+ The conversation is kept. The list entry does not come back. You can reopen the
+ tasks afterwards.
+ Clear session  Cancel
+ ↑↓ move  ⏎ open                                                     Back  Close

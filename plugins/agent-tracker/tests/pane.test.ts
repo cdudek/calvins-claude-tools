@@ -7,6 +7,7 @@ import type { Note, SessionRecord, Settings, Snapshot } from '../hooks/tracker/t
 import { NOON, SELF, aloneTown, at, paneTown, sess, snapAt, use } from './fixtures/pane'
 import { ask, taskTown } from './fixtures/tasks'
 import { dead, keys as uiKeys, open as openEnded, page as uiPage } from './fixtures/ui'
+import { isWorktreeRead } from './fixtures/git'
 import { world } from './fixtures/world'
 import type { World } from './fixtures/world'
 
@@ -698,7 +699,7 @@ describe('/tracker words and what the pane touches', () => {
     for (const args of ['', 'session login', 'repo web', 'session zzz', 'repo zzz', 'frobnicate']) await run($, args)
     expect(w.writes.every(p => p === `${DIR}/settings.json`)).toBe(true)
     expect([w.origins.length, w.toolCalls, w.net.length, w.models.length]).toEqual([0, 0, 0, 0])
-    expect(w.procs.length).toBe(0)
+    expect(w.procs.filter(p => !isWorktreeRead(p.argv))).toEqual([]) // the Session pages read git, and nothing else runs
     // Copies: the reply to overrule and the resume commands, and nothing else.
     expect(w.copies.every(c => c.text.startsWith('Overruling') || c.text.startsWith("cd '"))).toBe(true)
     await ui.unmount()

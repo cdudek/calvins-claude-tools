@@ -4,17 +4,18 @@
 import { atom, read } from 'claude-code'
 import type { EngineInterface, On } from 'claude-code'
 
-import { COMMAND_HELP, IDLE, PANE_ID, noteModel, noteNotFound, overruleText, PANE_OPENED, REPLY_COPIED, RESUME_COPIED, replyFailed, featureModel, homeModel, matchRepo, matchSession, milestoneModel, milestoneNotFound, missingModel, repoModel, repoNotFound, resumeCommand, resumeFailed, sessionModel, sessionNotFound, workOf } from './core'
-import type { ActionItem, ClearState, Local, NoteItem, Page, PaneModel, TaskItem } from './core'
+import { COMMAND_HELP, IDLE, PANE_ID, noteModel, noteNotFound, overruleText, PANE_OPENED, REPLY_COPIED, RESUME_COPIED, replyFailed, featureModel, hasProcess, homeModel, judge, listingOf, liveFolders, matchRepo, matchSession, milestoneModel, milestoneNotFound, missingModel, onlyWorktree, repoModel, repoNotFound, resumeCommand, resumeFailed, sessionModel, sessionNotFound, workOf, worktreeLabel } from './core'
+import type { ActionItem, ClearState, Local, NoteItem, Page, PaneModel, TaskItem, WtOutcome } from './core'
 import type { Actions } from './pane/view'
 import { paneView } from './pane/view'
 import { changesOf } from './changes'
 import { itemsOf, tasksOf } from './notes'
 import { ensureCollector } from './collector'
-import { clearSession, reopenTasks } from './clear'
+import { clearSession, readRows, reopenTasks } from './clear'
 import { markSeen, markTask, openPane, startUi } from './store'
 import type { State } from './store'
-import type { Snapshot } from './types'
+import type { SessionRecord, Snapshot } from './types'
+import { afterRm, readWorktree, removeWorktree } from './worktrees'
 
 type Engine = EngineInterface
 // The collector writes it; the band and the pane read it. The same literal, declared where it is read.
@@ -75,35 +76,88 @@ function back($: Engine, s: State) {
   $.ui.invalidate('ui.render')
 }
 
-// The Session page's Clear. Pressing "Clear" opens the confirm and writes nothing; only "Clear session" runs it. The page's state
+// What git says about the folder a session ran in: read once per visit, in the background, and again when the session's process
+// starts or ends. The page draws without it until it lands (a redraw follows). A result for a page the owner left is dropped.
+function readFacts($: Engine, s: State, snap: Snapshot, r: SessionRecord) {
+  const ended = !hasProcess(r, snap)
+  const have = s.pane.clear.facts
+  if (r.cwd === '' || (have !== null && have.id === r.sessionId && have.ended === ended)) return
+  s.pane = { ...s.pane, clear: { ...s.pane.clear, facts: { id: r.sessionId, ended, value: have?.id === r.sessionId ? have.value : null, reading: true } } }
+  void readWorktree($, r.cwd, liveFolders(snap.sessions, snap.listing), ended)
+    .catch(() => null)
+    .then(value => {
+      const now = s.pane.clear.facts
+      if (s.pane.page.kind !== 'session' || s.pane.page.id !== r.sessionId || now === null || now.id !== r.sessionId || now.ended !== ended) return
+      s.pane = { ...s.pane, clear: { ...s.pane.clear, facts: { id: r.sessionId, ended, value, reading: false } } }
+      $.ui.invalidate('ui.render')
+    })
+}
+
+// The worktree of a session, judged: its folder label is the one the Repo page shows.
+const worktreeOf = (s: State, r: SessionRecord) => {
+  const f = s.pane.clear.facts?.id === r.sessionId ? s.pane.clear.facts.value : null
+  return judge(f, worktreeLabel(f?.path ?? '', r.repo?.path ?? f?.main ?? ''))
+}
+
+// The Session page's Clear and worktree offer. Pressing "Clear" opens the confirm and writes nothing (when only a removable worktree
+// is left it opens the offer instead, which is its own confirm); only "Clear session" and "Remove worktree" write. The page's state
 // lives in `s.pane.clear` until the owner leaves the page; a result that lands after they left is dropped.
 async function actClear($: Engine, s: State, it: ActionItem) {
   const page = s.pane.page
   if (page.kind !== 'session') return
   const c = s.pane.clear
-  const set = (clear: ClearState, focus: string | null = null) => {
+  // A patch on the state as it is when the work lands: a read or a press may have changed it meanwhile.
+  const set = (patch: Partial<ClearState>, focus: string | null = null) => {
     if (s.pane.page.kind !== 'session' || s.pane.page.id !== page.id) return
-    s.pane = { ...s.pane, clear, focus }
+    s.pane = { ...s.pane, clear: { ...s.pane.clear, ...patch }, focus }
     $.ui.invalidate('ui.render')
   }
-  if (it.action === 'clear' && c.step === 'idle') set({ ...c, step: 'confirm' })
-  else if (it.action === 'cancel-clear' && c.step === 'confirm') set({ ...c, step: 'idle' }, 'clear')
+  const sessionOf = async () => (await read($, snapshot)).sessions.find(x => x.sessionId === page.id)
+  if (it.action === 'clear' && c.step === 'idle') {
+    const snap = await read($, snapshot)
+    const r = snap.sessions.find(x => x.sessionId === page.id)
+    const work = r === undefined ? null : workOf(r, snap, await tasksOf($, s, snap, await $.clock.now()), worktreeOf(s, r), c.left)
+    if (work !== null && onlyWorktree(work)) set({ offer: true, wt: null })
+    else set({ step: 'confirm' })
+  } else if (it.action === 'cancel-clear' && c.step === 'confirm') set({ step: 'idle' }, 'clear')
   else if (it.action === 'reopen' && c.step === 'idle') {
     const keys = it.keys ?? []
-    if (await reopenTasks($, s, keys)) set({ ...c, outcome: { kind: 'reopened', count: keys.length } })
+    if (await reopenTasks($, s, keys)) set({ outcome: { kind: 'reopened', count: keys.length } })
+  } else if (it.action === 'keep-worktree' && c.step === 'idle' && c.offer) set({ offer: false })
+  else if (it.action === 'remove-worktree' && c.step === 'idle' && c.offer) {
+    const r = await sessionOf()
+    const have = s.pane.clear.facts
+    const label = r === undefined ? null : worktreeOf(s, r)?.label
+    if (have?.value == null || label == null) return
+    set({ step: 'removing' })
+    const done = await removeWorktree($, have.value, label)
+    set({ step: 'idle', offer: false, wt: done.outcome, facts: { ...have, value: done.facts, reading: false } })
   } else if (it.action === 'confirm-clear' && c.step === 'confirm') {
-    set({ ...c, step: 'clearing', outcome: null })
+    set({ step: 'clearing', outcome: null, wt: null })
     const snap = await read($, snapshot)
     const r = snap.sessions.find(x => x.sessionId === page.id)
     const keys = r === undefined ? [] : workOf(r, snap, await tasksOf($, s, snap, await $.clock.now()), null).tasks.map(t => t.key)
     const done = await clearSession($, s, page.id, keys)
-    set({ step: 'idle', left: c.left || done.left, outcome: done.outcome })
+    // `claude rm` may have removed the worktree the session made: look again, and say so (F46). Else a clean Clear is followed by the offer.
+    const have = s.pane.clear.facts
+    const before = r === undefined ? null : worktreeOf(s, r)
+    let value = have?.id === page.id ? have.value : null
+    let wt: WtOutcome | null = null
+    if (done.left && value !== null) {
+      const rows = await readRows($)
+      const after = await afterRm($, value, rows === null ? null : liveFolders(rows, listingOf(rows)))
+      if (after === 'gone' && before !== null) wt = { kind: 'claude-removed', label: before.label }
+      value = after === 'gone' ? null : after
+    }
+    const facts = have === null ? null : { ...have, value, reading: false }
+    const offer = done.outcome.kind === 'cleared' && before !== null && value !== null && value.linked && judge(value, before.label)?.removable === true
+    set({ step: 'idle', left: c.left || done.left, outcome: done.outcome, wt, offer, facts })
   }
 }
 
 // An action Button: mark notes seen, keep or close a task (writes to settings.json), copy the reply that overrules an item, copy a resume command, Clear.
 async function act($: Engine, s: State, it: ActionItem, item: NoteItem | undefined, resume: string | null, surface: Surface) {
-  if (it.action === 'clear' || it.action === 'confirm-clear' || it.action === 'cancel-clear' || it.action === 'reopen') await actClear($, s, it)
+  if (it.action === 'clear' || it.action === 'confirm-clear' || it.action === 'cancel-clear' || it.action === 'reopen' || it.action === 'remove-worktree' || it.action === 'keep-worktree') await actClear($, s, it)
   else if (it.action === 'seen') await markSeen($, s, it.keys ?? [])
   else if (it.action === 'keep' || it.action === 'close') await markTask($, s, it.action === 'keep' ? 'kept' : 'closed', it.keys ?? [])
   else if (it.action === 'overrule' && item !== undefined) {
@@ -123,9 +177,12 @@ async function modelOf($: Engine, s: State, snap: Snapshot, now: number, selfId:
   switch (page.kind) {
     case 'session': {
       const r = snap.sessions.find(x => x.sessionId === page.id)
-      // The resume command needs the session's folder; the worktree stays null until its git check is read (row 3).
+      // The resume command needs the session's folder. The worktree is what git said about it, read in the background (readFacts).
       const folder = r !== undefined && r.state === 'ended' && (await $.fs.exists(r.cwd).catch(() => false))
-      return sessionModel(snap, page.id, now, local, columns, { tasks, folder, clear: s.pane.clear, worktree: null }) ?? missingModel(sessionNotFound(page.id))
+      if (r !== undefined) readFacts($, s, snap, r)
+      const facts = s.pane.clear.facts?.id === page.id ? s.pane.clear.facts.value : null
+      const worktree = r === undefined ? null : judge(facts, worktreeLabel(facts?.path ?? '', r.repo?.path ?? facts?.main ?? ''))
+      return sessionModel(snap, page.id, now, local, columns, { tasks, folder, clear: s.pane.clear, worktree }) ?? missingModel(sessionNotFound(page.id))
     }
     case 'note': {
       const item = items.find(i => i.key === page.key)

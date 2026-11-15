@@ -13,7 +13,7 @@ type Engine = EngineInterface
 const RM_MS = 15_000 // a `claude rm` that asks a question or hangs ends here, as the error line
 
 // The list as the press sees it, read now; null: it could not be read.
-async function readRows($: Engine): Promise<AgentRow[] | null> {
+export async function readRows($: Engine): Promise<AgentRow[] | null> {
   const run = await $.process.run(['claude', 'agents', '--json'], { timeoutMs: 10_000 }).catch(() => null)
   return run !== null && run.exitCode === 0 ? parseAgents(run.stdout) : null
 }

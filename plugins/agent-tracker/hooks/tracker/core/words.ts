@@ -29,7 +29,7 @@ export const NO_TASKS = 'Every task you gave is done.'
 export const HEADINGS = { tasks: 'YOUR TASKS NOT DONE', needs: 'NEEDS YOU', know: 'YOU SHOULD KNOW', decided: 'DECIDED WITHOUT YOU', running: 'RUNNING', milestones: 'MILESTONES', asks: 'YOUR ASKS HERE', worktrees: 'WORKTREES', otherPrs: 'OTHER PRs', stage: 'STAGE', features: 'FEATURES', facts: 'FACTS', questions: 'QUESTIONS', findings: 'FINDINGS', sessions: 'SESSIONS', tests: 'TESTS', builder: 'BUILDER' } as const
 // Plain words, no keys bound: the rows are Buttons.
 export const KEY_HINTS = '↑↓ move  ⏎ open'
-export const PANE_BUTTONS = { close: 'Close', back: 'Back', home: 'Home', resume: 'Copy resume command', clear: 'Clear', confirmClear: 'Clear session', cancelClear: 'Cancel', reopen: 'Reopen tasks' } as const
+export const PANE_BUTTONS = { close: 'Close', back: 'Back', home: 'Home', resume: 'Copy resume command', clear: 'Clear', confirmClear: 'Clear session', cancelClear: 'Cancel', reopen: 'Reopen tasks', removeWorktree: 'Remove worktree', keepWorktree: 'Keep worktree' } as const
 export const NEW_MARK = 'new'
 export const moreLine = (n: number) => `and ${n} more on the Repo pages`
 export const updatedWords = (age: string) => (age === '<1m' ? 'updated just now' : `updated ${age} ago`)
@@ -94,4 +94,28 @@ export const CLEAR_WORDS = {
   refusedNoPid: 'Clear waits: Claude Code did not say which sessions have a process. Nothing was changed.',
   failed: (why: string) => `Claude Code could not clear this session${why}. Nothing else was changed. Press Clear to try again.`,
   partly: (why: string, left: boolean) => `The tracker could not close the tasks${why}. ${left ? "The session left Claude Code's list. Press Clear to close them." : 'Press Clear to try again.'}`,
+} as const
+
+// The worktree on the Session page, from spec/screens.md "Pane, Session" Words. A worktree is named by its folder label, never a path.
+export const WORKTREE_WORDS = {
+  line: (label: string, branch: string | null) => `worktree ${label}${branch === null ? '' : ` · ${branch}`}`,
+  offersRemoval: 'Clear offers to remove it.',
+  onlyWorktree: 'Clear offers to remove the worktree below.',
+  // The first failed condition, as the reason a worktree stays (F37) and as the reason a press found it changed (F44).
+  why: { clean: 'it has uncommitted changes', pushed: 'it has commits that are not pushed', merged: 'its branch is not merged', unused: 'another session is using it' },
+  commit: ' Commit or stash them in a terminal.',
+  stays: (label: string, why: string, next: string) => `Worktree ${label} stays: ${why}.${next}`,
+  ignoredChanged: 'its ignored files changed',
+  unreadable: 'git could not read it',
+  safe: (label: string, how: 'branch' | 'merged-pr' | 'closed-pr') =>
+    how === 'branch' ? `Worktree ${label} is clean, pushed and merged.` : `Worktree ${label} is clean and pushed, and its PR is ${how === 'merged-pr' ? 'merged' : 'closed'}.`,
+  ignored: (names: string) => `These ignored files are deleted and do not come back: ${names}.`,
+  more: (n: number) => `and ${n} more`,
+  ask: (branch: string | null) => (branch === null ? 'Remove it?' : `Remove it? The branch ${branch} stays, so you can make it again.`),
+  removing: 'Removing worktree…',
+  removed: (label: string, branch: string | null) => `Worktree ${label} removed.${branch === null ? '' : ` The branch ${branch} stays.`}`,
+  claudeRemoved: (label: string) => `Claude Code also removed the worktree ${label}.`,
+  resume: 'To resume this conversation, make the worktree again from the branch first.',
+  changed: (why: string) => `The worktree changed since it was checked: ${why}. Nothing was removed. Check it in a terminal.`,
+  gitFailed: (why: string) => `Git could not remove the worktree${why}. Nothing was lost. Check it in a terminal.`,
 } as const

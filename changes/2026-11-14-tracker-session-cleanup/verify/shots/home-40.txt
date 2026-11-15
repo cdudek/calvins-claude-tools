@@ -1,0 +1,38 @@
+ Agent tracker        1 live · all clear
+ ───────────────────────────────────────
+ YOUR TASKS NOT DONE  7
+ ○ Fix the login redirect on the acco…
+    web-app  asked 10:00  Forgotten:
+ session ended 2h ago, not done, no
+ milestone, no PR
+ ○ Fix the login redirect on the acco…
+    web-app  asked 09:50  Forgotten:
+ session ended 2h ago, not done, no
+ milestone, no PR
+ ○ Fix the login redirect on the acco…
+    web-app  asked 09:40  Forgotten:
+ session ended 2h ago, not done, no
+ milestone, no PR
+ ○ Fix the login redirect on the acco…
+    web-app  asked 09:30  Forgotten:
+ session ended 2h ago, not done, no
+ milestone, no PR
+ ○ Fix the login redirect on the acco…
+    web-app  asked 09:20  Forgotten:
+ session ended 2h ago, not done, no
+ milestone, no PR
+ ○ Fix the login redirect on the acco…
+    web-app  asked 09:10  Forgotten:
+ session ended 2h ago, not done, no
+ milestone, no PR
+ ○ Fix the login redirect on the acco…
+    web-app  asked 09:00  Forgotten:
+ session ended 2h ago, not done, no
+ milestone, no PR
+ ───────────────────────────────────────
+ NEEDS YOU
+ Only this session is running.
+ ───────────────────────────────────────
+ RUNNING  ◐ 1 session
+ REPOS  platform-tools-suite ◐ · web-app
+ ↑↓ move  ⏎ open · updated just …  Close

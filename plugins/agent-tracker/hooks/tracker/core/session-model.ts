@@ -11,18 +11,20 @@ import { DOT, bar, dim, join, sp } from './paint'
 import type { Spans } from './paint'
 import { REASON, TASK_STYLE, hint, tidy } from './pane-model'
 import type { ActionItem, Block, Local, PaneModel } from './pane-model'
-import { clearGate, confirmLines, hasProcess, outcomeLines, workOf } from './clear'
-import type { ClearState, WorktreeFact } from './clear'
+import { clearGate, confirmLines, hasProcess, onlyWorktree, outcomeLines, workOf, wtLines } from './clear'
+import type { ClearState } from './clear'
+import { offerLines, staysLine } from './worktree'
+import type { WorktreeFact } from './worktree'
 import { TASK_LABEL } from './tasks'
 import type { TaskItem } from './tasks'
 import { checksGlyph } from './repo-model'
 import { lastActivity, startedWords } from './activity'
-import { CHECKS_WORDS, CLEAR_WORDS, DETACHED, FROM_TRANSCRIPT, MERGE_WORDS, PANE_BUTTONS, REVIEW_WORDS, UNKNOWN_ACTIVITY, UNTITLED, endedWords } from './words'
+import { CHECKS_WORDS, CLEAR_WORDS, DETACHED, FROM_TRANSCRIPT, MERGE_WORDS, PANE_BUTTONS, REVIEW_WORDS, UNKNOWN_ACTIVITY, UNTITLED, WORKTREE_WORDS, endedWords } from './words'
 
 export const SESSION_ASKS_SHOWN = 6
 
 // What the page needs beyond the snapshot: the tasks Home lists, whether the session's folder exists (the resume command needs it),
-// the page's own Clear state, and the worktree the session ran in (null until row 3 reads git).
+// the page's own Clear state, and the worktree the session ran in (null: no linked worktree, or git has not said yet).
 export type SessionCtx = { tasks: TaskItem[]; folder: boolean; clear: ClearState | null; worktree: WorktreeFact | null }
 const NO_CTX: SessionCtx = { tasks: [], folder: false, clear: null, worktree: null }
 
@@ -118,12 +120,20 @@ export const sessionModel = (snap: Snapshot, id: string, now: number, local: Loc
 
   // Clear: for an ended session with work left, behind a confirm. A live session, or a list that says nothing about processes, gets one line instead.
   const clear = ctx.clear
-  const work = workOf(r, snap, ctx.tasks, ctx.worktree, clear?.left === true)
+  const wt = ctx.worktree
+  const work = workOf(r, snap, ctx.tasks, wt, clear?.left === true)
   const gate = clearGate(r, snap, work)
-  const resume = ended && ctx.folder && resumeCommand(r.cwd, r.sessionId) !== null
+  // The worktree: its label and branch, or why it stays (the first failed condition). Clear mentions it only when Clear is drawn.
+  if (wt !== null) {
+    const stays = ended ? staysLine(wt) : null
+    blocks.push({ kind: 'lines', key: 'worktree', wrap: true, lines: [stays !== null ? [sp(stays)] : [dim(WORKTREE_WORDS.line(wt.label, wt.branch)), ...(gate === 'clear' && wt.removable ? [sp(`  ${WORKTREE_WORDS.offersRemoval}`)] : [])]] })
+  }
+  const gone = clear?.wt?.kind === 'removed' || clear?.wt?.kind === 'claude-removed' // no folder to resume in
+  const resume = ended && ctx.folder && !gone && resumeCommand(r.cwd, r.sessionId) !== null
   const note = gate === 'live' ? (r.kind === 'background' ? CLEAR_WORDS.liveBackground : CLEAR_WORDS.liveInteractive) : gate === 'unreadable' ? CLEAR_WORDS.waitsUnreadable : gate === 'pid-unknown' ? CLEAR_WORDS.waitsNoPid : null
   if (note !== null) blocks.push({ kind: 'lines', key: 'clear-note', wrap: true, lines: [[sp(note)]] })
   let first = resume ? 'resume' : 'crumb:0'
+  const offer = clear?.offer === true && wt?.removable === true && gate === 'clear' && clear.step === 'idle'
   if (clear?.step === 'clearing') {
     blocks.push({ kind: 'lines', key: 'clearing', lines: [[dim(CLEAR_WORDS.clearing)]] })
     first = 'crumb:0'
@@ -133,15 +143,26 @@ export const sessionModel = (snap: Snapshot, id: string, now: number, local: Loc
     blocks.push({ kind: 'actions', key: 'confirm-actions', items: [{ key: 'confirm-clear', label: PANE_BUTTONS.confirmClear, action: 'confirm-clear' }, { key: 'cancel-clear', label: PANE_BUTTONS.cancelClear, action: 'cancel-clear' }] })
     first = 'cancel-clear'
   } else {
+    const asking = gate === 'clear' && !offer && clear?.step !== 'removing' // Clear is drawn: the offer is its own confirm while it is open
     const items: ActionItem[] = [
       ...(resume ? [{ key: 'resume', label: PANE_BUTTONS.resume, action: 'resume' as const }] : []),
-      ...(gate === 'clear' ? [{ key: 'clear', label: PANE_BUTTONS.clear, action: 'clear' as const }] : []),
+      ...(asking ? [{ key: 'clear', label: PANE_BUTTONS.clear, action: 'clear' as const }] : []),
       ...(clear?.outcome?.kind === 'cleared' && clear.outcome.closed.length > 0 ? [{ key: 'reopen', label: PANE_BUTTONS.reopen, action: 'reopen' as const, keys: clear.outcome.closed }] : []),
     ]
+    if (asking && onlyWorktree(work)) blocks.push({ kind: 'lines', key: 'clear-hint', wrap: true, lines: [[sp(WORKTREE_WORDS.onlyWorktree)]] })
     if (items.length > 0) blocks.push({ kind: 'actions', key: 'session-actions', items })
+    if (clear?.step === 'removing') {
+      blocks.push({ kind: 'lines', key: 'removing', lines: [[dim(WORKTREE_WORDS.removing)]] })
+      first = 'crumb:0'
+    } else if (offer) {
+      blocks.push({ kind: 'lines', key: 'offer', wrap: true, lines: offerLines(wt).map((l): Spans => [sp(l)]) })
+      blocks.push({ kind: 'actions', key: 'offer-actions', items: [{ key: 'remove-worktree', label: PANE_BUTTONS.removeWorktree, action: 'remove-worktree' }, { key: 'keep-worktree', label: PANE_BUTTONS.keepWorktree, action: 'keep-worktree' }] })
+      first = 'keep-worktree'
+    }
   }
-  // What the last Clear did, or that there is nothing to clear. The lines stay until the owner leaves the page.
-  const result = clear?.step === 'clearing' ? [] : clear?.outcome != null ? outcomeLines(clear.outcome) : gate === 'nothing' ? [{ glyph: null, text: CLEAR_WORDS.nothing }] : []
+  // What the last Clear and the offer did, or that there is nothing to clear. The lines stay until the owner leaves the page.
+  const done = [...(clear?.outcome != null ? outcomeLines(clear.outcome) : []), ...(clear?.wt != null ? wtLines(clear.wt) : [])]
+  const result = clear?.step === 'clearing' ? [] : done.length > 0 ? done : gate === 'nothing' ? [{ glyph: null, text: CLEAR_WORDS.nothing }] : []
   if (result.length > 0)
     blocks.push({ kind: 'lines', key: 'clear-result', wrap: true, lines: result.map((l): Spans => [...(l.glyph === null ? [] : [sp(l.glyph, l.glyph === '✓' ? 'green' : 'red'), sp(' ')]), sp(l.text)]) })
   const crumbs = [{ text: 'Home', to: { kind: 'home' } as const }, ...(r.repo ? [{ text: repoLabel(r), to: { kind: 'repo', path: r.repo.path } as const }] : []), { text: title, to: null, bold: true }]
