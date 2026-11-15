@@ -7,6 +7,7 @@ import ast
 import json
 import os
 import re
+import shlex
 import shutil
 import subprocess
 import sys
@@ -39,12 +40,15 @@ if args[:1] == ["agents"]:
     if os.path.exists(d + "/count"):
         n = int(open(d + "/count").read()) + 1
     open(d + "/count", "w").write(str(n))
+    if os.path.exists(d + "/agents_fail_from") and n >= int(open(d + "/agents_fail_from").read()):
+        sys.exit(1)
     while n > 1 and not os.path.exists(d + "/agents.%d.json" % n):
         n -= 1
     sys.stdout.write(open(d + "/agents.%d.json" % n).read())
 elif args[:1] == ["rm"] and len(args) == 2:
     if os.path.exists(d + "/rm_fail_" + args[1]):
-        sys.stderr.write("refused: not safe to remove\\n")
+        msg = open(d + "/rm_fail_" + args[1]).read()
+        sys.stderr.write((msg if msg != "1" else "refused: not safe to remove") + "\\n")
         sys.exit(1)
 else:
     sys.exit(2)
@@ -95,8 +99,8 @@ class Fx:
     def gh(self, states):
         (self.fake / "gh.json").write_text(json.dumps(states))
 
-    def flag(self, name):
-        (self.fake / name).write_text("1")
+    def flag(self, name, text="1"):
+        (self.fake / name).write_text(text)
 
     def log(self, name="log"):
         p = self.fake / name
@@ -107,6 +111,10 @@ class Fx:
         data = {"v": 1, "sessionId": sid, "cwd": str(cwd), "lastActivityAt": int((time.time() - active_days * DAY) * 1000),
                 "repo": {"path": str(repo), "name": Path(repo).name} if repo else None, "asks": list(asks)}
         (self.home / ".claude/agent-tracker/sessions" / f"{sid}.json").write_text(json.dumps(data))
+
+    def late(self, text):
+        """The tracker's latechecks.json, as text (a torn file is a string that is not JSON)."""
+        (self.home / ".claude/agent-tracker/latechecks.json").write_text(text)
 
     def transcript(self, sid, days_ago):
         f = self.home / ".claude/projects/p" / f"{sid}.jsonl"
@@ -268,6 +276,61 @@ class ListChecks(Base):
         self.assertEqual(i["checks"], {"linked": True, "clean": True, "pushed": True, "merged": True, "unused": True})
         self.assertEqual((i["verdict"], i["type"], i["repo"], i["branch"]), ("removable", "worktree", "web-app", "login"))
         self.assertEqual(i["ignored"], {"secret": [], "other": [], "more": 0})
+
+
+class LateAndJobIds(Base):
+    def task(self, **extra):
+        return {"n": 1, "kind": "task", "text": "x", **extra}
+
+    def test_F49_a_late_partly_or_not_started_verdict_fails_asks(self):
+        """@F49 @2026-11-14-tracker-session-cleanup a late verdict in latechecks.json counts for an ask no turn judged: partly or not-started fails asks; done, a judged ask and another session do not."""
+        fx = self.fx
+        fx.record("sess-late", asks=[self.task()])
+        fx.record("sess-judged", asks=[self.task(verdict="done")])
+        fx.record("sess-other", asks=[self.task()])
+        late = {"v": 1, "by": {"sess-late": {"at": 1, "verdicts": [{"n": 1, "verdict": "not-started"}]},
+                               "sess-judged": {"at": 1, "verdicts": [{"n": 1, "verdict": "partly"}]},
+                               "sess-gone": {"at": 1, "verdicts": [{"n": 1, "verdict": "done"}]}}}
+        fx.late(json.dumps(late))
+        fx.agents(LIVE, row("late0001", sid="sess-late"), row("judg0001", sid="sess-judged"), row("othr0001", sid="sess-other"))
+        items = {i["id"]: i for i in fx.list()["items"]}
+        self.assertEqual((items["late0001"]["verdict"], items["late0001"]["failed"]), ("needs-look", "asks"))
+        self.assertEqual(items["judg0001"]["verdict"], "removable")  # the turn's own verdict wins
+        self.assertEqual(items["othr0001"]["verdict"], "removable")
+        r = fx.run("act", "late0001")
+        self.assertEqual((r.out["cleared"], [s["kind"] for s in r.out["skipped"]]), ([], ["needs-look"]))
+        self.assertFalse([c for c in fx.log() if c.startswith("rm")])
+        fx.late(json.dumps({"v": 1, "by": {"sess-late": {"at": 1, "verdicts": [{"n": 1, "verdict": "done"}]}}}))
+        self.assertEqual(fx.item("late0001")["verdict"], "removable")
+
+    def test_F49_a_torn_late_checks_file_is_needs_look(self):
+        """@F49 @2026-11-14-tracker-session-cleanup a latechecks.json that does not parse, or has another shape, makes every session needs-look; a missing one changes nothing."""
+        fx = self.fx
+        fx.agents(LIVE, row("good0001"))
+        self.assertEqual(fx.item("good0001")["verdict"], "removable")  # no file
+        for text in ("{not json", json.dumps({"v": 2, "by": {}}), json.dumps({"v": 1, "by": []}),
+                     json.dumps({"v": 1, "by": {"sess-good0001": {"verdicts": "x"}}})):
+            fx.late(text)
+            i = fx.item("good0001")
+            self.assertEqual((i["verdict"], i["failed"]), ("needs-look", "asks"), text)
+            self.assertIn("unreadable", i["reason"])
+            fx.run("act", "good0001")
+        self.assertFalse([c for c in fx.log() if c.startswith("rm")])
+
+    def test_F80_a_job_id_that_is_not_plain_is_needs_look_and_never_reaches_claude_rm(self):
+        """@F80 @2026-11-14-tracker-session-cleanup a job id outside the tracker's plain shape (a leading dash, a space, over 64 characters) is needs-look and no claude rm is run for it."""
+        fx = self.fx
+        bad = ["-rf", "a b", "x" * 65, "-", "a;b", ".hidden", "a\n"]
+        fx.agents(LIVE, *[row(b, sid=f"sess-{n}") for n, b in enumerate(bad)], row("ok.id_1-2", sid="sess-ok"), row("x" * 64, sid="sess-64"))
+        items = {i["id"]: i for i in fx.list()["items"]}
+        for b in bad:
+            self.assertEqual((items[b]["verdict"], items[b]["failed"]), ("needs-look", "job_id"), repr(b))
+            self.assertNotIn("asks", items[b]["reason"])
+            fx.run("act", "--", b)
+        self.assertEqual((items["ok.id_1-2"]["verdict"], items["x" * 64]["verdict"]), ("removable", "removable"))
+        self.assertFalse([c for c in fx.log() if c.startswith("rm")])
+        r = fx.run("act", "ok.id_1-2")
+        self.assertEqual([c["id"] for c in r.out["cleared"]], ["ok.id_1-2"])
 
 
 class FiveConditions(Base):
@@ -465,7 +528,7 @@ class ListIsReadOnly(Base):
         fx.list()
         self.assertEqual([c for c in fx.log() if c], ["agents --json --all"])
         for c in fx.log("gitlog"):
-            sub = re.sub(r"^-C \S+ ", "", c)
+            sub = re.sub(r"^-C \S+ ", "", re.sub(r"^(-c \S+ )+", "", c))
             self.assertTrue(sub.startswith(self.READS), f"git was run with a write command: {c}")
         for c in fx.log("ghlog"):
             self.assertTrue(c.startswith("pr list"), c)
@@ -489,6 +552,23 @@ class Act(Base):
         rms = [c for c in fx.log() if c.startswith("rm")]
         self.assertEqual(rms, ["rm good0001", "rm fail0001"])
         self.assertGreaterEqual(len([c for c in fx.log() if c.startswith("agents")]), 4)  # one read, then one per id
+
+    def test_F59_an_unreadable_session_list_mid_act_keeps_what_was_done(self):
+        """@F59 @2026-11-14-tracker-session-cleanup a session list that cannot be read mid-act skips the rest as unreadable and still prints cleared, removed, skipped and failed."""
+        fx = self.fx
+        root = fx.repo()
+        wt = fx.worktree(root, "login")
+        fx.record("sess-a", repo=root, cwd=wt)
+        fx.agents(LIVE, row("good0001"), row("next0001"))
+        fx.flag("agents_fail_from", "3")  # the first read and good0001's re-check work; the next one fails
+        r = fx.run("act", "good0001", "next0001", str(wt))
+        self.assertEqual(r.returncode, 0, r.stdout + r.stderr)
+        self.assertEqual(sorted(r.out), ["cleared", "failed", "removed", "skipped"])
+        self.assertEqual([c["id"] for c in r.out["cleared"]], ["good0001"])
+        self.assertEqual([(s["id"], s["reason"]) for s in r.out["skipped"]], [("next0001", "session list unreadable"), (str(wt), "session list unreadable")])
+        self.assertEqual(r.out["removed"], [])
+        self.assertTrue(wt.exists())
+        self.assertEqual([c for c in fx.log() if c.startswith("rm")], ["rm good0001"])
 
     def test_F59_act_re_checks_a_worktree_right_before_removing_it(self):
         """@F59 @2026-11-14-tracker-session-cleanup act re-checks the worktree's status again before the removal and removes it without force from the main checkout; the branch stays."""
@@ -526,6 +606,39 @@ class Act(Base):
         self.assertEqual([c["short"] for c in r.out["removed"]], ["web-app/login"])
         self.assertEqual([c["short"] for c in r.out["failed"]], ["nowhere · fix login"])
         self.assertEqual([(s["short"], s["kind"], s["reason"]) for s in r.out["skipped"]], [("web-app/users", "needs-look", "uncommitted changes")])
+
+    def test_F61_a_failure_reason_is_cut_at_60_cells_in_the_json(self):
+        """@F61 @2026-11-14-tracker-session-cleanup the reason of a failed item is cut at 60 cells with an ellipsis in the script's JSON; a short one is kept whole."""
+        fx = self.fx
+        fx.agents(LIVE, row("long0001"), row("shrt0001"), row("exct0001"))
+        fx.flag("rm_fail_long0001", "refused: " + "very long reason " * 10)
+        fx.flag("rm_fail_shrt0001", "refused: busy")
+        fx.flag("rm_fail_exct0001", "x" * 60)
+        r = fx.run("act", "long0001", "shrt0001", "exct0001")
+        reasons = {f["id"]: f["reason"] for f in r.out["failed"]}
+        self.assertEqual(len(reasons["long0001"]), 60)
+        self.assertTrue(reasons["long0001"].startswith("refused: very long reason") and reasons["long0001"].endswith("…"))
+        self.assertEqual((reasons["shrt0001"], reasons["exct0001"]), ("refused: busy", "x" * 60))
+
+    def test_F81_list_prints_a_ready_quoted_act_arg_and_the_skill_uses_it(self):
+        """@F81 @2026-11-14-tracker-session-cleanup each list item carries act_arg, its id quoted for the shell; a worktree path with a quote round-trips through act and SKILL.md passes act_arg, not a hand-quoted id."""
+        fx = self.fx
+        root = fx.repo()
+        wt = fx.worktree(root, "it's-here")
+        fx.record("sess-a", repo=root, cwd=wt)
+        fx.agents(LIVE, row("good0001"))
+        items = {i["id"]: i for i in fx.list()["items"]}
+        for ident, i in items.items():
+            self.assertEqual(i["act_arg"], shlex.quote(ident))
+        self.assertIn("'", str(wt))
+        self.assertEqual(shlex.split(items[str(wt)]["act_arg"]), [str(wt)])
+        r = fx.run("act", *shlex.split(items[str(wt)]["act_arg"]))
+        self.assertEqual([w["id"] for w in r.out["removed"]], [str(wt)])
+        self.assertFalse(wt.exists())
+        body = skill_text().split("\n---\n", 1)[1]
+        self.assertIn("act_arg", body)
+        self.assertNotIn("<id>'", body)
+        self.assertNotIn("single quotes", body)
 
     def test_F62_act_refuses_a_needs_look_id_whatever_the_answer(self):
         """@F62 @2026-11-14-tracker-session-cleanup act refuses an id that failed a check and removes nothing."""
@@ -582,6 +695,27 @@ class Safety(Base):
         self.assertIsNone(re.search(r"shell\s*=\s*True|os\.system|os\.popen|\beval\(|\bexec\(", src))
         self.assertIsNone(re.search(r"branch -[dD]|update-ref|['\"](push|prune|reset|checkout)['\"]|['\"](clean|branch)['\"]\s*[,\]]", src))
         self.assertEqual(len(re.findall(r"subprocess\.\w+\(", src)), 1)  # one wrapper holds the only call
+
+    def test_F67_every_git_call_ignores_the_repos_own_fsmonitor_and_hooks(self):
+        """@F67 @2026-11-14-tracker-session-cleanup every git call the script makes, list and act, starts with -c core.fsmonitor=false -c core.hooksPath=/dev/null, as the tracker's does."""
+        fx = self.fx
+        root = fx.repo()
+        wt = fx.worktree(root, "login")
+        fx.record("sess-a", repo=root, cwd=wt)
+        fx.agents(LIVE)
+        fx.list()
+        fx.run("act", str(wt))
+        calls = fx.log("gitlog")
+        self.assertTrue(any("worktree remove" in c for c in calls) and len(calls) > 5)
+        self.assertEqual([c for c in calls if not c.startswith("-c core.fsmonitor=false -c core.hooksPath=/dev/null ")], [])
+
+    def test_F67_the_removal_waits_as_long_as_the_trackers_120_seconds(self):
+        """@F67 @2026-11-14-tracker-session-cleanup git worktree remove is run with a 120 second timeout, the tracker's, not the 60 seconds of the reads."""
+        tree = ast.parse(SCRIPT.read_text())
+        removals = [n for n in ast.walk(tree) if isinstance(n, ast.Call) and getattr(n.func, "id", None) == "run" and n.args
+                    and isinstance(n.args[0], ast.List) and [getattr(e, "value", None) for e in n.args[0].elts][:3] == ["git", "worktree", "remove"]]
+        self.assertEqual(len(removals), 1)
+        self.assertEqual({k.arg: getattr(k.value, "value", None) for k in removals[0].keywords}.get("timeout"), 120)
 
     def test_F67_the_removal_never_forces_and_keeps_the_branch(self):
         """@F67 @2026-11-14-tracker-session-cleanup git worktree remove runs without force and the branch stays."""

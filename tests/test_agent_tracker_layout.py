@@ -35,13 +35,34 @@ class AgentTrackerLayout(unittest.TestCase):
         self.assertEqual(bad, [])
 
     def test_the_mod_never_writes_to_a_session_or_opens_a_port(self):
-        # The mod starts nothing of its own: no note, prompt, tool call or registered tool, agent, command, request or MCP call, and nothing is armed (F76).
+        """@F76 @2026-11-14-tracker-session-cleanup The mod starts nothing of its own: no note, prompt, tool call or registered tool, agent, command, request or MCP call, and nothing is armed."""
         # Its two writes run through `$.process.run` after the owner's press, and the cleanup skill's script acts only on the owner's answer (F66).
         forbidden = r"\$\.(session\.(append|send)|prompt\.submit|tool\.(call|register)|command\.run|agent\.spawn|http\.|process\.spawn|mcp\.)"
         # One exception, the owner's (2026-11-14): the band's Board button runs the mod's own `/tracker web` command.
         own = "$.command.run({ command: 'tracker', args: 'web' })"
         bad = [f"{f.name}:{n}" for f in SOURCES for n, line in enumerate(f.read_text().splitlines(), 1) if re.search(forbidden, line) and own not in line]
         self.assertEqual(bad, [])
+
+    def test_every_process_the_mod_runs_is_an_allowed_source(self):
+        """@F69 @2026-11-14-tracker-session-cleanup every `$.process.run` call under hooks/tracker starts claude, git, gh, bd or tail; the few others are named with their reason."""
+        sources = {"claude", "git", "gh", "bd", "tail"}
+        # Beyond F69's list, each with its reason: grep reads the transcripts F69 allows; uname and the opener belong to the Board button.
+        named = {"grep": "reads transcripts", "uname": "Board: picks the opener", "opener": "Board: opens the page"}
+        call = re.compile(r"(?:\$\.process\.run|\bout)\(\s*(?:\$,\s*)?(\[\s*'([^']+)'|gitArgv\(|argv\b|\[opener\b)")
+        every = re.compile(r"\$\.process\.run\(|\bout\(\$,")
+        found, bad = set(), []
+        for f in SOURCES:
+            text = f.read_text()
+            self.assertEqual(len(every.findall(text)), len(call.findall(text)), f"{f.name}: a process call this scan cannot read")
+            for m in call.finditer(text):
+                head = m.group(2) or ("git" if m.group(1).startswith("gitArgv") else "opener" if m.group(1).startswith("[opener") else None)
+                if head is None:  # `argv`: the helper's own parameter, fed by the `out($, ...)` calls scanned here
+                    continue
+                found.add(head)
+                if head not in sources | named.keys():
+                    bad.append(f"{f.name}: {head}")
+        self.assertEqual(bad, [])
+        self.assertTrue({"claude", "git", "gh", "tail"} <= found, found)
 
     def test_no_file_registers_a_classic_hook(self):
         bad = [f"{f.name}:{n}" for f in SOURCES for n, line in enumerate(f.read_text().splitlines(), 1) if "classic." in line]

@@ -32,9 +32,10 @@ export type Gate = 'live' | 'unreadable' | 'pid-unknown' | 'nothing' | 'clear'
 export const hasProcess = (r: SessionRecord, snap: Snapshot) => r.state !== 'ended' || snap.listing?.[r.sessionId]?.pid !== undefined
 
 export const clearGate = (r: SessionRecord, snap: Snapshot, work: ClearWork): Gate => {
-  if (hasProcess(r, snap)) return 'live'
+  if (snap.listing?.[r.sessionId]?.pid !== undefined) return 'live'
   if (snap.failedReads >= 2) return 'unreadable'
-  if (!pidReported(snap.listing)) return 'pid-unknown'
+  if (!pidReported(snap.listing)) return 'pid-unknown' // before the record's state: with no pid in the read nothing says the state is true (F11)
+  if (hasProcess(r, snap)) return 'live'
   return work.id !== null || work.tasks.length > 0 || work.worktree?.removable === true ? 'clear' : 'nothing'
 }
 

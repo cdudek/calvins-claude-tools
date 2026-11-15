@@ -89,6 +89,14 @@ describe('Clear: when it is offered', () => {
     expect(actionsOf(m)).toEqual(['resume'])
   })
 
+  test(`@F11 ${CLEANUP} a session that is not ended gets the pid line, not the live line, when no row names a pid`, async () => {
+    for (const state of ['done', 'needs-you'] as const) {
+      const m = modelOf(dead({ state }), {}, { [DEAD]: { id: 'bg-dead' } })
+      expect(linesOf(m)).toContain('Clear waits: Claude Code did not say which sessions have a process.')
+      expect(linesOf(m).filter(l => l.startsWith('Clear is for ended sessions'))).toEqual([])
+    }
+  })
+
   test(`@F12 ${CLEANUP} unreadable list withholds Clear`, async () => {
     const m = modelOf(dead(), {}, LISTED, 2)
     expect(linesOf(m)).toContain("Clear waits: Claude Code's session list could not be read. Retrying every 5 seconds.")

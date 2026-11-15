@@ -200,6 +200,17 @@ describe('Home, the triage queue', () => {
     }
   })
 
+  test(`@F76 ${CLEANUP} Home draws no TIDY block and no Tidy button, and there is no tidy command`, async ($, on) => {
+    withSnap(on, NOTED)
+    const ui = await mount($)
+    expect((await texts(ui)).filter(t => /tidy/i.test(t))).toEqual([])
+    expect((await buttons(ui)).filter(b => /tidy/i.test(`${b.props.key} ${b.props.label ?? ''}`))).toEqual([])
+    expect(COMMAND_HELP).not.toMatch(/tidy/i)
+    expect(COMMAND_HINT).not.toMatch(/tidy/i)
+    expect(((await run($, 'tidy')) as { text: string }).text).toBe(COMMAND_HELP) // not a command: the help
+    await ui.unmount()
+  })
+
   test(`@F39 ${TAG} section order: needs you, you should know, decided without you, running, repos; the sessions without the tracker last`, async ($, on) => {
     withSnap(on, [...NOTED, sess('plain-1', 'running', 3, 'web-app', 'no mod', { source: 'transcript', engine: { since: at(3), status: 'busy' } })])
     const ui = await mount($)

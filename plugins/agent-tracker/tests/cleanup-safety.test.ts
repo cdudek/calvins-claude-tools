@@ -63,6 +63,24 @@ describe('what the tracker writes after an owner press', () => {
       await h.ui.unmount()
     })
 
+  const SOURCES = ['claude', 'git', 'gh', 'bd', 'tail']
+  test(`@F69 ${CLEANUP} every process Clear session runs is claude, git, gh, bd or tail`, async ($, on) => {
+    const { w, ui } = await runs($, on)
+    expect(argvs(w).length).toBeGreaterThan(1)
+    expect(argvs(w).filter(a => !SOURCES.includes(a[0] ?? ''))).toEqual([])
+    await ui.unmount()
+  })
+
+  test(`@F69 ${CLEANUP} every process Remove worktree runs is claude, git, gh, bd or tail`, async ($, on) => {
+    const h = await openTree($, on, { session: inTree({ asks: [] }), extra: { listing: { ...UNLISTED } }, row: 'command' })
+    await press(h.ui, 'clear')
+    await press(h.ui, 'remove-worktree')
+    await settle()
+    expect(argvs(h.w).length).toBeGreaterThan(1)
+    expect(argvs(h.w).filter(a => !SOURCES.includes(a[0] ?? ''))).toEqual([])
+    await h.ui.unmount()
+  })
+
   test(`@F64 ${CLEANUP} the scan catches each banned argument`, () => {
     for (const bad of [['git', 'worktree', 'remove', '--force', 'x'], ['claude', 'rm', '-f', 'x'], ['git', 'branch', '-D', 'x'], ['git', 'worktree', 'remove', '-f', 'x'], ['git', 'push', '--discard-unpushed'], ['claude', 'stop', 'x'], ['sh', '-c', 'claude rm x'], ['git', 'worktree', 'remove', '--force-remove-worktree']]) expect(isBanned(bad)).toBe(true)
     expect(isBanned(['claude', 'rm', 'bg-dead'])).toBe(false)
