@@ -19,7 +19,7 @@ One list from the milestone reviews on head 16754d0: a Claude code review (full-
 - [x] **R7 repo config (review 7, Low):** the script's git calls lack `-c core.fsmonitor=false -c core.hooksPath=/dev/null`, which the tracker passes. Add them; test. Fixed in a3d7dfe.
 - [x] **R8 job id shape (review 8, audit):** the script passes any job id to `claude rm`. Apply the tracker's `^[A-Za-z0-9][A-Za-z0-9_.-]{0,63}$`; an id that fails is `needs-look`; test. Fixed in a3d7dfe.
 - [x] **R9 F61 cut (audit):** the 60-cell cut of a failure reason lives only in `SKILL.md`. Cut it in the script's JSON too; test. Fixed in a3d7dfe.
-- [x] **R10 F76 and F69 tests (audit):** no `@F76` test that Home draws no TIDY block or Tidy button; the layout test lacks its tag. No tracker test that every process call is one of the allowed sources (`claude`, `git`, `gh`, `bd`, `tail`). Add both. Fixed in 5bd467a and a3d7dfe.
+- [x] **R10 F76 and F69 tests (audit):** no `@F76` test that Home draws no TIDY block or Tidy button; the layout test lacks its tag. No tracker test that every process call is one of the allowed sources (`claude`, `git`, `gh`, `bd`, `tail`). Add both. Fixed in 5bd467a, a3d7dfe and e2041a1.
 
 ## Advisory
 
