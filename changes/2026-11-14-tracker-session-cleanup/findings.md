@@ -25,8 +25,8 @@ One list from the milestone reviews on head 16754d0: a Claude code review (full-
 
 Round 1 re-reviewed the fix round (Claude, correctness and safety): R1 to R10 closed, no safety defect, two small gaps.
 
-- [ ] **C1 act after an unreadable read (converge 1):** `act` skips only the id whose re-read failed and goes on; R2 says skip the rest, and its test cannot tell (every later read also fails). After the first unreadable read, skip every remaining id without reading; the fake `claude` fails on one read only and a later id is not acted on.
-- [ ] **C2 skip kind (converge 2):** a removable item skipped for an unreadable read is reported as `needs-look`, so the owner is told it failed a check. Use its own kind `unreadable`, reported under "Skipped:".
+- [x] **C1 act after an unreadable read (converge 1):** `act` skips only the id whose re-read failed and goes on; R2 says skip the rest, and its test cannot tell (every later read also fails). After the first unreadable read, skip every remaining id without reading; the fake `claude` fails on one read only and a later id is not acted on. Fixed in 5fb1740.
+- [x] **C2 skip kind (converge 2):** a removable item skipped for an unreadable read is reported as `needs-look`, so the owner is told it failed a check. Use its own kind `unreadable`, reported under "Skipped:". Fixed in 5fb1740.
 
 ## Advisory
 

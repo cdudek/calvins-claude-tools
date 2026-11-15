@@ -56,6 +56,6 @@ Start with "Cleanup done." Then write from the `act` JSON and from the `needs-lo
 - "Removed 3 worktrees. Branches kept." from `removed`.
 - "Could not clear: web-app · fix login: <reason>" for each `failed` item (a worktree reads "Could not remove: web-app/login: <reason>"). The script already cuts the reason at 60 cells; say it as printed.
 - "Kept, needs a look: web-app/login (uncommitted changes); api/users (2 commits not pushed)." from the `needs-look` items and from `skipped` items of kind `needs-look`, each with its `reason`.
-- "Skipped: docs (a session is running in it)." from the other `skipped` items, each with its `reason`.
+- "Skipped: docs (a session is running in it)." from the other `skipped` items, each with its `reason`. A `skipped` item of kind `unreadable` goes here, never under "Kept, needs a look": the session list could not be read, no check failed.
 
 The output of this skill stays in this conversation.
