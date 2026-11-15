@@ -89,14 +89,14 @@ describe('what the tracker writes after an owner press', () => {
     test(`@F67 ${CLEANUP} no branch deletion, no shell when claude rm ${mode === 'ok' ? 'works' : 'fails'}: every argument list is one the allow-list knows`, async ($, on) => {
       const { w, ui } = await runs($, on, w => (w.rm = { mode, stderr: 'refused', drops: mode === 'ok' }))
       expect(argvs(w).filter(a => !isAllowed(a, 'bg-dead'))).toEqual([])
-      expect(w.procs.every(p => (p.init?.timeoutMs ?? 0) > 0)).toBe(true) // a timeout on each, no stdin, no shell option
+      expect(w.procs.every(p => Number(p.init?.timeoutMs ?? 0) > 0)).toBe(true) // a timeout on each, no stdin, no shell option
       expect(w.procs.every(p => Object.keys(p.init ?? {}).every(k => k === 'timeoutMs'))).toBe(true)
       await ui.unmount()
     })
 
   test(`@F68 ${CLEANUP} new words hold no path, internal name or URL`, async ($, on) => {
     const leak = /\/Users\/|\/home\/|[\w.+-]+@[\w-]+\.[\w.-]+|https?:\/\//
-    const words = [...Object.values(CLEAR_WORDS).map(v => (typeof v === 'function' ? v('x', true) : v)), ...Object.values(PANE_BUTTONS)]
+    const words: string[] = [...Object.values(CLEAR_WORDS).flatMap(v => (typeof v === 'string' ? [v as string] : [])), CLEAR_WORDS.madeWorktree('x'), CLEAR_WORDS.closed(2), CLEAR_WORDS.reopened(1), CLEAR_WORDS.failed(': r'), CLEAR_WORDS.partly(': r', true), CLEAR_WORDS.partly('', false), ...Object.values(PANE_BUTTONS)]
     expect(words.filter(w => leak.test(w))).toEqual([])
     expect(leak.test(JSON.stringify({ ...uiFixture, dead: dead(), DEAD, FOLDER, LISTED }))).toBe(false)
     const { ui } = await open($, on)
