@@ -66,7 +66,7 @@ export const inTree = (extra: Partial<SessionRecord> = {}): SessionRecord => dea
 
 // What a git or gh call of the worktree check looks like, for a test that wants "nothing but these ran".
 export const isWorktreeRead = (argv: readonly string[]) => {
-  const sub = argv.slice(1).filter((a, i, all) => a !== '-c' && all[i - 1] !== '-c')
+  const sub = argv.slice(1).filter((a, i, all) => a !== '-c' && all[i - 1] !== '-c' && a !== '--no-optional-locks')
   if (argv[0] === 'gh') return sub[0] === 'pr' && sub[1] === 'list'
   if (argv[0] !== 'git') return false
   return ['status', 'rev-list', 'merge-base', 'symbolic-ref'].includes(sub[0] ?? '') || (sub[0] === 'worktree' && sub[1] === 'list') || (sub[0] === 'rev-parse' && sub.includes('--verify')) || (sub[0] === 'remote' && sub[1] === 'get-url')

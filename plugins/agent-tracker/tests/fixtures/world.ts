@@ -196,7 +196,7 @@ export function world(on: On, o: { id?: string; cwd?: string; now?: number; pane
       return { value: { exitCode: 0, stdout: text.slice(-Number(argv[2])), ...RUN } }
     }
     if (argv[0] === 'git') {
-      const sub = argv.slice(1).filter((a, i, all) => a !== '-c' && all[i - 1] !== '-c') // the leading `-c key=value` pairs are not the subcommand
+      const sub = argv.slice(1).filter((a, i, all) => a !== '-c' && all[i - 1] !== '-c' && a !== '--no-optional-locks') // the leading `-c key=value` pairs and `--no-optional-locks` are not the subcommand
       const hooked = w.gitHook?.(sub, init?.cwd)
       if (hooked !== undefined) return { value: { ...RUN, stdout: '', ...hooked } }
       if (sub[0] === 'remote') {

@@ -277,7 +277,7 @@ describe('Remove worktree and Keep worktree', () => {
     expect(remove[0]!.argv).toEqual(gitArgv('worktree', 'remove', TREE)) // the exact argument list: no flag, the path last
     expect(remove[0]!.cwd).toBe(MAIN) // from the main checkout, never from the worktree
     expect(ran[ran.length - 1]).toBe(remove[0]) // the re-check came first
-    const checks = ran.slice(0, -1).map(p => p.argv.filter((a, i, all) => a !== '-c' && all[i - 1] !== '-c').slice(0, 3).join(' '))
+    const checks = ran.slice(0, -1).map(p => p.argv.filter((a, i, all) => a !== '-c' && all[i - 1] !== '-c' && a !== '--no-optional-locks').slice(0, 3).join(' '))
     expect(checks).toEqual(['claude agents --json', 'git worktree list', 'git status --porcelain', 'git rev-list --count', 'git symbolic-ref --short', 'git merge-base --is-ancestor'])
     expect(ran.every(p => Number(p.init?.timeoutMs ?? 0) > 0)).toBe(true)
     await h.ui.unmount()

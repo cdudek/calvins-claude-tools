@@ -50,7 +50,8 @@ export async function readWorktree($: Engine, cwd: string, live: string[] | null
   if (main === undefined || tree === undefined) return null
   const facts: Facts = { path: tree.path, main: main.path, linked: tree.path !== main.path, branch: tree.branch, status: [], unpushed: null, inDefault: false, pr: null, live }
   if (!facts.linked || !deep) return facts
-  const status = await out($, gitArgv('status', '--porcelain', '--ignored'), tree.path)
+  // No optional lock: reading a worktree must not refresh its index under a session that is using it.
+  const status = await out($, gitArgv('--no-optional-locks', 'status', '--porcelain', '--ignored'), tree.path)
   if (status === null) return null
   const count = ((await out($, gitArgv('rev-list', '--count', 'HEAD', '--not', '--remotes'), tree.path)) ?? '').trim()
   const ref = await defaultRef($, tree.path)
