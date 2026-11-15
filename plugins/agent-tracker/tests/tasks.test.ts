@@ -7,6 +7,8 @@ import { MILESTONE } from './fixtures/band'
 import { MILESTONE_MD } from './fixtures/milestone'
 import { NOON, at, sess, snapAt } from './fixtures/pane'
 import { ask, taskTown } from './fixtures/tasks'
+import { CLEANUP, DEAD, dead, focused, keys, open, page, press, settings } from './fixtures/ui'
+import { settle } from './fixtures/world'
 
 const TAG = '@2026-11-13-agent-tracker'
 const marks = (m: Partial<TaskMarks>): TaskMarks => ({ ...noMarks, ...m })
@@ -161,5 +163,70 @@ describe('decided without you: the change folders', () => {
     expect(isNews(by('Q2'))).toBe(false)
     expect(isNews(by('an old note'))).toBe(true)
     expect(unseenCount(items, 'decided')).toBe(1) // the band's count: the note alone
+  })
+})
+
+// Clear closes the open tasks of the session with the owner's closed marks, Reopen tasks takes them away, and Home follows.
+describe('Clear closes tasks and Reopen tasks opens them again', () => {
+  const clear = async (ui: Parameters<typeof press>[0]) => {
+    await press(ui, 'clear')
+    await press(ui, 'confirm-clear')
+    await settle()
+    await ui.redraw()
+  }
+
+  test(`@F29 ${CLEANUP} Clear marks the session's open tasks closed`, async ($, on) => {
+    const { ui, w } = await open($, on)
+    const before = await keys(ui) // the page of dead-1, opened from its first task row on Home
+    expect(before).toContain('clear')
+    await clear(ui)
+    expect([...settings(w)!.closed].sort()).toEqual([`${DEAD}:1`, `${DEAD}:2`])
+    expect(await page(ui)).toContain('✓ 2 tasks closed.')
+    expect(settings(w)!.kept).toEqual([]) // only closed marks, only this session's tasks
+    await ui.unmount()
+  })
+
+  test(`@F29 ${CLEANUP} one task reads "1 task"`, async ($, on) => {
+    const { ui, w } = await open($, on, dead({ asks: dead().asks.slice(0, 1) }))
+    await clear(ui)
+    expect(settings(w)!.closed).toEqual([`${DEAD}:1`])
+    expect(await page(ui)).toContain('✓ 1 task closed.')
+    await ui.unmount()
+  })
+
+  test(`@F31 ${CLEANUP} Reopen tasks removes the closed marks`, async ($, on) => {
+    const { ui, w } = await open($, on)
+    w.put('/u/.claude/agent-tracker/settings.json', { v: 1, view: 'compact', bandHidden: false, seen: [], kept: [], closed: ['other-1:1'] }) // a mark of the owner's own
+    await clear(ui)
+    expect(settings(w)!.closed).toEqual(['other-1:1', `${DEAD}:2`, `${DEAD}:1`])
+    expect(await keys(ui)).toContain('reopen')
+    expect(await focused(ui)).not.toContain('reopen') // never the first press after a Clear
+    await press(ui, 'reopen')
+    expect(settings(w)!.closed).toEqual(['other-1:1']) // the owner's own mark stays
+    const all = await page(ui)
+    expect(all).toContain('✓ 2 tasks reopened.')
+    expect(await keys(ui)).not.toContain('reopen') // the button is for one press
+    expect(await keys(ui)).toContain('clear') // work is left again
+    expect(all).not.toContain('✓ 2 tasks closed.')
+    await ui.unmount()
+  })
+
+  test(`@F31 ${CLEANUP} Reopen tasks does not survive leaving the page`, async ($, on) => {
+    const { ui } = await open($, on)
+    await clear(ui)
+    await press(ui, 'crumb:0')
+    await $.command.run({ command: 'tracker', args: 'session old login', origin: { kind: 'composer' }, presentation: {} as never })
+    await ui.redraw()
+    expect(await keys(ui)).not.toContain('reopen')
+    await ui.unmount()
+  })
+
+  test(`@F32 ${CLEANUP} closed tasks leave Home; tasks over 7 days never list`, () => {
+    const r = sess('old-1', 'ended', 120, 'web-app', 'old', { ...web, endedAt: at(120), asks: [ask(1, 'Fix it', 180, { verdict: 'not-started' }), ask(2, 'Fix more', 9 * 24 * 60, { verdict: 'not-started' })] })
+    expect(taskItems(snapAt([r]), NOON).map(t => t.key)).toEqual(['old-1:1']) // the ask of 9 days ago never lists
+    expect(taskItems(snapAt([r]), NOON, marks({ closed: new Set([taskKey('old-1', 1)]) }))).toEqual([]) // closed: off Home
+    // An ended session older than a week still has its page (it stays listed), and its old task still does not list.
+    const old = sess('old-2', 'ended', 13 * 24 * 60, 'web-app', 'older', { ...web, endedAt: at(13 * 24 * 60), asks: [ask(1, 'Old ask', 13 * 24 * 60 + 5, { verdict: 'partly' })] })
+    expect(taskItems(snapAt([old]), NOON)).toEqual([])
   })
 })

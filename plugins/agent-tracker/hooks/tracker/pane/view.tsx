@@ -93,7 +93,7 @@ export function paneView(ui: Ui, m: PaneModel, a: Actions, columns: number) {
         )
       case 'actions':
         return (
-          <Box key={b.key} flexDirection="row" gap={2}>
+          <Box key={b.key} flexDirection="row" flexWrap="wrap" gap={2}>
             {b.items.map(it => (
               <Button key={it.key} plain autoFocus={ringOn(ring, it.key)} label={it.label} onPress={() => a.act(it)} />
             ))}

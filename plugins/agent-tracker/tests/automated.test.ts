@@ -117,7 +117,7 @@ describe('needs you is one set', () => {
     const expected = snap.sessions.filter(isNeedsYou).length
     expect(expected).toBe(3)
     const tasks = taskItems(snap, NOON)
-    const local = { midnight: NOON - 12 * 3600_000, clock: (ms: number) => String(ms), day: () => 'Mon' }
+    const local = { midnight: NOON - 12 * 3600_000, clock: (ms: number) => String(ms), day: () => 'Mon', date: () => '14 Nov' }
     const home = homeModel(snap, 'self-x', NOON, local, null, 80, [], tasks)
     const needRows = home.blocks.filter(b => b.kind === 'row' && b.key.startsWith('session:'))
     expect(bandData(snap, 'self-x', NOON, [], tasks).needs.length).toBe(expected)

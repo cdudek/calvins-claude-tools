@@ -1,4 +1,6 @@
 import type { AgentRow, Ask, Entrypoints, LateChecks, SessionRecord } from '../types'
+import { lastActivity } from './activity'
+import { jobId } from './clear'
 import { labelRepos } from './repo'
 import { resolveState } from './states'
 import { WEEK_MS, emptyRecord } from './types'
@@ -12,6 +14,7 @@ type In = {
   entrypoints?: Entrypoints['by'] // how each session was started; an sdk-* run is automated and left out
   late?: LateChecks['by'] // the one late verdict of a session, given to the asks no turn judged
   seen?: ReadonlySet<string> // the sessions the last good list read showed; a failed read restores only these
+  lastLines?: Record<string, number> // the time of the last line of a session's transcript, where the collector read it (F71)
 }
 
 // The engine refuses a state value over 4 MiB, and the snapshot is one: with thousands of transcripts in a week the
@@ -35,7 +38,7 @@ const fitSnapshot = (sessions: SessionRecord[], selfId: string) => {
 // shows and no file has appears from the list alone (source 'engine'); only the last 7 days show.
 export const isAutomated = (entrypoint: string | undefined) => entrypoint !== undefined && entrypoint.startsWith('sdk')
 
-export const mergeSessions = ({ files, transcripts, agents, now, selfId, seen, entrypoints = {}, late = {} }: In): SessionRecord[] => {
+export const mergeSessions = ({ files, transcripts, agents, now, selfId, seen, entrypoints = {}, late = {}, lastLines = {} }: In): SessionRecord[] => {
   const byId = new Map<string, SessionRecord>()
   for (const r of [...transcripts, ...files]) byId.set(r.sessionId, r)
   for (const a of agents ?? []) {
@@ -43,14 +46,18 @@ export const mergeSessions = ({ files, transcripts, agents, now, selfId, seen, e
     byId.set(a.sessionId, { ...emptyRecord(a.sessionId, a.cwd, a.startedAt), source: 'engine', kind: a.kind, title: a.name || null, engine: { since: null } })
   }
   const live = new Map((agents ?? []).map(a => [a.sessionId, a]))
+  // A row with no `pid` is ended (F1) only when the read shows `pid` on some row (F4) and lists this session: a list that
+  // lacks this session is not trusted, and the next read corrects it (F72).
+  const pidKnown = (agents ?? []).some(a => a.pid !== undefined) && live.has(selfId)
   const merged = [...byId.values()].map(r => {
     const agent = live.get(r.sessionId)
-    const d = resolveState(r, agent, agents !== null, r.sessionId === selfId, seen)
+    const d = resolveState(r, agent, agents !== null, r.sessionId === selfId, seen, pidKnown)
     const entrypoint = entrypoints[r.sessionId] || r.entrypoint
     const verdicts = late[r.sessionId]?.verdicts ?? []
     const asks: Ask[] = verdicts.length === 0 ? r.asks : r.asks.map(a => { const v = a.kind === 'task' && a.verdict === undefined ? verdicts.find(x => x.n === a.n) : undefined; return v ? { ...a, verdict: v.verdict, ...(v.by !== undefined ? { replacedBy: v.by } : {}), source: 'late' as const } : a })
     return {
       ...r,
+      lastActivityAt: lastActivity(r, lastLines[r.sessionId]) ?? r.lastActivityAt,
       asks,
       ...(entrypoint ? { entrypoint } : {}),
       ...(isAutomated(entrypoint) ? { headless: true } : {}),
@@ -60,6 +67,7 @@ export const mergeSessions = ({ files, transcripts, agents, now, selfId, seen, e
       ...d,
     }
   })
-  // A headless or sdk-* run is nobody's work: it never reaches the snapshot, so no list, count or band sees it.
-  return fitSnapshot(labelRepos(merged.filter(r => r.headless !== true && (r.state !== 'ended' || now - r.lastActivityAt <= WEEK_MS))), selfId)
+  // A headless or sdk-* run is nobody's work: it never reaches the snapshot, so no list, count or band sees it. An ended session
+  // older than a week stays while Claude Code still lists it with a job id, so its page can offer Clear (F8).
+  return fitSnapshot(labelRepos(merged.filter(r => r.headless !== true && (r.state !== 'ended' || now - r.lastActivityAt <= WEEK_MS || jobId(live.get(r.sessionId)?.id) !== null))), selfId)
 }

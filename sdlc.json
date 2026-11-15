@@ -209,7 +209,7 @@
     "e2e": "true",
     "e2eTouched": "true"
   },
-  "sdlcVersion": "3.13.0",
+  "sdlcVersion": "3.15.1",
   "tracker": {
     "kind": "beads"
   }

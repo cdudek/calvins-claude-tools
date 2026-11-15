@@ -1,6 +1,8 @@
 // The shared pure module: plain data in, plain data out. No engine, file, process or clock access.
+export * from './activity'
 export * from './band-model'
 export * from './change'
+export * from './clear'
 export * from './format'
 export * from './git'
 export * from './markdown'
@@ -21,3 +23,4 @@ export * from './transcript'
 export * from './types'
 export * from './usage'
 export * from './words'
+export * from './worktree'

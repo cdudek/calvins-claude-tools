@@ -1,0 +1,15 @@
+ Home › web-app › old login work                                                                          ○ ended 2h ago
+ ───────────────────────────────────────────────────────────────────────────────────────────────────────────────────────
+ branch fix-login  started 14 Nov 2023 23:13  last activity 2h ago
+ tokens in 0 out 0
+ struggles 0 retries · 0 tool errors
+ worktree login · fix-login  Clear offers to remove it.
+ Copy resume command  Reopen tasks
+ Worktree login is clean, pushed and merged.
+ These ignored files are deleted and do not come back: .env, .env.local, api_key.txt, credentials.json, server.pem,
+ a.log, b.log, notes.txt and 2 more.
+ Remove it? The branch fix-login stays, so you can make it again.
+ Remove worktree  Keep worktree
+ ✓ Left Claude Code's list. The conversation is kept.
+ ✓ 7 tasks closed.
+ ↑↓ move  ⏎ open                                                                                             Back  Close
