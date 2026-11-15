@@ -187,7 +187,7 @@ and `python3 -m unittest discover -s tests`, then commits with a Conventional Co
 - [x] 15. Feature 4, the safety tests and the layout test change. Proof: F64 to F69, F76 and F82 pass, and `python3 -m unittest discover -s tests` exits 0.
 - [x] 16. Feature 4, one owner-run pass of `/git-cleanup-run` is left to the owner at the render check. The build only proves the script and the text. Proof: the note is in `questions.md`.
 - [x] 17. Feature 5, design edits, the ADR, `setup.md`, the guidelines, the glossary, the README, the plugin description and the version. Proof: `python3 scripts/design_index.py write` leaves `git diff --stat docs/designs/INDEX.md` showing only the new ADR line.
-- [ ] 18. Sync again, then hand the close to one `Mode: close` builder. Proof: `python3 scripts/verify_gate.py milestone 2026-11-14-tracker-session-cleanup` ends `VERIFY PASS milestone`.
+- [x] 18. Sync again, then hand the close to one `Mode: close` builder. Proof: `python3 scripts/verify_gate.py milestone 2026-11-14-tracker-session-cleanup` ends `VERIFY PASS milestone`.
 
 ## Milestones
 
@@ -393,5 +393,9 @@ The goal:
 ## Revisions
 
 Only after approval. One line per change: `YYYY-MM-DD — what changed, and why`.
+
+- 2026-11-15 — The milestone close ran in the supervisor with typed review agents instead of one `Mode: close` builder, because the checks are two commands and the reviews needed parallel agents; the gate is the same `verify_gate.py milestone`.
+- 2026-11-15 — `verify/shots/` holds layout-model text frames, not terminal screenshots: the plugin CLI has no headless render. The real render is an owner check before merge.
+- 2026-11-15 — The Codex co-review did not run: its workspace is out of credits.
 
 Verification follows the [local-first contract](https://github.com/cdudek/calvins-claude-tools/blob/main/plugins/cct/skills/sdlc-run/references/local-first.md).

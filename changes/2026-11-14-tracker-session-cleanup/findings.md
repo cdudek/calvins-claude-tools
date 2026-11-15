@@ -28,6 +28,8 @@ Round 1 re-reviewed the fix round (Claude, correctness and safety): R1 to R10 cl
 - [x] **C1 act after an unreadable read (converge 1):** `act` skips only the id whose re-read failed and goes on; R2 says skip the rest, and its test cannot tell (every later read also fails). After the first unreadable read, skip every remaining id without reading; the fake `claude` fails on one read only and a later id is not acted on. Fixed in 5fb1740.
 - [x] **C2 skip kind (converge 2):** a removable item skipped for an unreadable read is reported as `needs-look`, so the owner is told it failed a check. Use its own kind `unreadable`, reported under "Skipped:". Fixed in 5fb1740.
 
+Converged: round 1. The C1 and C2 diff (19 lines in `cleanup.py`, its tests and one `SKILL.md` line) was read by the supervisor and adds nothing new.
+
 ## Advisory
 
 - [ ] **A1 symlinked cwd (review 6, Low, unverified):** the tracker compares worktree paths as strings, the script with `realpath`. A row whose `cwd` differs from git's path by a symlink fails safe at `readWorktree`, but condition 5 could pass. Claude Code reports a resolved `cwd`; not changed here.
