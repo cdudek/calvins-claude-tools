@@ -2,7 +2,10 @@ import { describe, expect, test } from 'claude-code/testing'
 
 import { WORKTREE_WORDS, conditions, failedOf, gitArgv, ignoredOf, ignoredWords, liveFolders, worktreeLabel } from '../hooks/tracker/core'
 import type { Facts } from '../hooks/tracker/core'
+import { frame, clipped } from './fixtures/frame'
+import type { Node } from './fixtures/frame'
 import { sess } from './fixtures/pane'
+import { ask } from './fixtures/tasks'
 import { BRANCH, MAIN, TREE, inTree, isWorktreeRead, openTree } from './fixtures/git'
 import type { Repo } from './fixtures/git'
 import { AGENT_ROWS, CLEANUP, DEAD_ROW, LISTED, THIS, UNLISTED, focused, keys, page, press } from './fixtures/ui'
@@ -439,4 +442,56 @@ describe('what the page reads from git', () => {
     const strings = [...fns, ...Object.values(WORKTREE_WORDS.why), WORKTREE_WORDS.offersRemoval, WORKTREE_WORDS.onlyWorktree, WORKTREE_WORDS.commit, WORKTREE_WORDS.resume, WORKTREE_WORDS.removing, WORKTREE_WORDS.ignoredChanged, WORKTREE_WORDS.unreadable]
     expect(strings.filter(s => leak.test(s))).toEqual([])
   })
+})
+
+// N1: the Session page, its confirm, its offer and an error line, and Home, at 120, 80, 54 and 40 columns and a 24-column dock. The
+// frames come from fixtures/frame.ts, a model of the layout (the test kit gives the element tree, not cells), so this proves no
+// button is split or cut and counts rows; it is not a terminal screenshot. The frames of the same scenes are kept under
+// changes/2026-11-14-tracker-session-cleanup/verify/shots/.
+const MANY = Array.from({ length: 7 }, (_, i) => ask(i + 1, `Fix the login redirect on the account page number ${i + 1} please`, 180 - i * 10, { verdict: 'not-started' }))
+const NOISY = ['!! .env', '!! .env.local', '!! server.pem', '!! api_key.txt', '!! credentials.json', '!! notes.txt', '!! build/', '!! very-long-generated-file-name-that-goes-on-and-on.log', '!! a.log', '!! b.log']
+const REFUSAL = 'fatal: cannot remove a locked working tree because it is checked out elsewhere'
+// The most rows each scene may take at each width (what the frames measured, with one row of room).
+const ROWS: Record<string, Record<number, number>> = {
+  offer: { 120: 16, 80: 16, 54: 20, 40: 25, 24: 38 },
+  confirm: { 120: 17, 80: 20, 54: 26, 40: 31, 24: 47 },
+  error: { 120: 12, 80: 12, 54: 15, 40: 18, 24: 27 },
+}
+
+describe('N1: no button is clipped at any width', () => {
+  for (const width of [120, 80, 54, 40, 24])
+    for (const scene of ['offer', 'confirm', 'error', 'home'] as const)
+      test(`@N1 ${CLEANUP} ${scene} at ${width} columns: every button whole on one line, no line over the width, rows counted`, async ($, on) => {
+        const quiet = scene === 'error'
+        const h = await openTree($, on, {
+          session: inTree({ asks: quiet ? [] : MANY }),
+          columns: width,
+          extra: { listing: quiet ? { ...UNLISTED } : LISTED },
+          row: quiet ? 'command' : 'task:dead-1:1',
+          repo: { status: { [TREE]: scene === 'confirm' ? [] : NOISY }, ...(quiet ? { refuse: REFUSAL } : {}) },
+        })
+        if (scene === 'offer') {
+          await press2(h.ui, 'clear', 'confirm-clear')
+          await settled(h.ui)
+        } else if (scene === 'confirm') await press(h.ui, 'clear')
+        else if (scene === 'error') {
+          await press2(h.ui, 'clear', 'remove-worktree')
+          await settled(h.ui)
+        } else await press(h.ui, 'crumb:0')
+        const lines = frame((await h.ui.drawn()) as Node, width)
+        // A row Button of Home holds several lines of text: it wraps as a paragraph, so only the short labels of the action Buttons count.
+        const labels = (await h.ui.findAll({ type: 'Button' })).map(b => String(b.props.label ?? '')).filter(l => l !== '' && !l.includes('\n') && !l.includes('…'))
+        expect(labels.length).toBeGreaterThan(1)
+        expect(clipped(lines, labels, width)).toEqual([])
+        if (scene !== 'home') expect(lines.length).toBeLessThanOrEqual(ROWS[scene]![width]!)
+        if (scene === 'offer') {
+          const at = (label: string) => lines.findIndex(l => l.includes(label))
+          expect(at('Keep worktree')).toBeLessThan(at('✓ Left Claude')) // the offer is on screen before the results
+          // The two buttons share a line while they fit (30 cells), and wrap one per line in the narrowest dock.
+          expect(at('Remove worktree') === at('Keep worktree')).toBe(width - 1 >= 30)
+          expect(lines.filter(l => l.includes('Remove worktree') && l.includes('Keep worktree')).length).toBe(width - 1 >= 30 ? 1 : 0)
+        }
+        if (scene === 'confirm') expect(lines.some(l => l.includes('Clear session') && l.includes('Cancel'))).toBe(true) // 21 cells: fits the narrowest dock
+        await h.ui.unmount()
+      })
 })

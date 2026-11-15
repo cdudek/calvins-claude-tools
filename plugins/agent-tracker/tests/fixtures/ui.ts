@@ -57,12 +57,12 @@ export const AGENT_ROWS = (rows: Record<string, unknown>[] = []) =>
 export const DEAD_ROW = { kind: 'background', state: 'blocked', sessionId: DEAD, cwd: FOLDER, name: 'old login work', startedAt: 1, id: 'bg-dead' }
 
 // The page of a session, opened as the person does: from its row on Home (a task row while it has a task Home lists).
-export const open = async ($: Engine, on: On, session: SessionRecord = dead(), extra: Partial<Snapshot> = { listing: LISTED }, o: { folder?: boolean; row?: string; setup?: (w: World) => void } = {}) => {
+export const open = async ($: Engine, on: On, session: SessionRecord = dead(), extra: Partial<Snapshot> = { listing: LISTED }, o: { folder?: boolean; row?: string; setup?: (w: World) => void; columns?: number } = {}) => {
   const h = withSnap(on, [THIS, session], extra)
   if (o.folder !== false) h.w.put(`${session.cwd}/README`, '')
   h.w.agents.json = AGENT_ROWS([DEAD_ROW])
   o.setup?.(h.w) // before the page draws, so what it reads from git is in place
-  const ui = await mount($)
+  const ui = await mount($, o.columns)
   await ui.redraw()
   if (o.row === 'command') {
     await $.command.run({ command: 'tracker', args: `session ${session.title}`, origin: { kind: 'composer' }, presentation: {} as never })

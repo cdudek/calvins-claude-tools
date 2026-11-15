@@ -73,10 +73,11 @@ export const isWorktreeRead = (argv: readonly string[]) => {
 }
 
 // The Session page of a session in the worktree, opened as the person does, with the page's own git reads done and drawn.
-export const openTree = async ($: Engine, on: On, o: { session?: SessionRecord; extra?: Partial<Snapshot>; repo?: Partial<Repo>; setup?: (w: World, r: Repo) => void; row?: string } = {}) => {
+export const openTree = async ($: Engine, on: On, o: { session?: SessionRecord; extra?: Partial<Snapshot>; repo?: Partial<Repo>; setup?: (w: World, r: Repo) => void; row?: string; columns?: number } = {}) => {
   let repo!: Repo
   const h = await open($, on, o.session ?? inTree(), o.extra ?? { listing: LISTED }, {
     ...(o.row === undefined ? {} : { row: o.row }),
+    ...(o.columns === undefined ? {} : { columns: o.columns }),
     setup: w => {
       repo = repoWorld(w, o.repo)
       o.setup?.(w, repo)
