@@ -34,11 +34,13 @@ export type World = {
   snapshot: () => Snapshot
   failWrite: (path: string) => boolean
   agents: { json: string | null }
+  gitHook: ((sub: string[], cwd: string | undefined) => { exitCode: number; stdout?: string; stderr?: string } | undefined) | null // answers a git call first (the subcommand without its leading `-c` pairs); undefined: the default answers
+  onRm: ((id: string) => void) | null // runs when the fake `claude rm` works, for what Claude Code removes beside the session
   rm: { mode: 'ok' | 'fail' | 'hang'; stderr: string; drops: boolean } // the fake `claude rm <id>`: hang ends in a refusal only when the call set a timeout; drops: the row leaves the list, even when it fails
   hold: Promise<void> | null // while set, `claude agents --json` answers only after it settles, so a test can look at the page meanwhile
   git: Record<string, Git>
   worktrees: Record<string, string> // `git worktree list --porcelain` output by folder; none: exit 128
-  gh: { json: string | null; missing: boolean } // `gh pr list` output; null: signed out (exit 1); missing: no gh binary
+  gh: { json: string | null; missing: boolean; heads: Record<string, string[]> | null } // `gh pr list` output; null: signed out (exit 1); missing: no gh binary. `heads`: the PR states of `gh pr list --head <branch>` (none listed: no PR); null: signed out
   unreadable: Set<string> // files that exist and cannot be read, by read or by grep
   sizes: Map<string, number> // a file's size as the engine reports it, when a test needs a big one
   messages: SessionMessage[]
@@ -82,11 +84,13 @@ export function world(on: On, o: { id?: string; cwd?: string; now?: number; pane
     snapshot: () => w.states.get('agent-tracker/snapshot') as Snapshot,
     failWrite: () => false,
     agents: { json: '[]' },
+    gitHook: null,
+    onRm: null,
     rm: { mode: 'ok', stderr: 'could not remove', drops: true },
     hold: null,
     git: {},
     worktrees: {},
-    gh: { json: null, missing: false },
+    gh: { json: null, missing: false, heads: {} },
     unreadable: new Set(),
     sizes: new Map(),
     messages: [],
@@ -164,6 +168,7 @@ export function world(on: On, o: { id?: string; cwd?: string; now?: number; pane
     if (argv[0] === 'claude' && argv[1] === 'rm') {
       if (w.rm.mode === 'hang') return init?.timeoutMs === undefined ? new Promise<never>(() => undefined) : { deny: `timed out after ${init.timeoutMs}ms` }
       if (w.rm.drops && w.agents.json !== null) w.agents.json = JSON.stringify((JSON.parse(w.agents.json) as { id?: string }[]).filter(a => a.id !== argv[2]))
+      if (w.rm.mode === 'ok') w.onRm?.(argv[2]!)
       return w.rm.mode === 'fail' ? { value: { exitCode: 1, stdout: '', ...RUN, stderr: w.rm.stderr } } : { value: { exitCode: 0, stdout: `removed ${argv[2]}\n`, ...RUN } }
     }
     if (argv[0] === 'claude' && argv[1] === 'agents') {
@@ -172,6 +177,8 @@ export function world(on: On, o: { id?: string; cwd?: string; now?: number; pane
     }
     if (argv[0] === 'gh') {
       if (w.gh.missing) return { deny: 'ENOENT gh' }
+      const head = argv.indexOf('--head')
+      if (head >= 0) return w.gh.heads === null ? { value: { exitCode: 1, stdout: '', ...RUN, stderr: 'gh auth login' } } : { value: { exitCode: 0, stdout: JSON.stringify((w.gh.heads[argv[head + 1]!] ?? []).map(state => ({ state }))), ...RUN } }
       return w.gh.json === null ? { value: { exitCode: 1, stdout: '', ...RUN, stderr: 'gh auth login' } } : { value: { exitCode: 0, stdout: w.gh.json, ...RUN } }
     }
     // grep -o -E <pattern> <file>: the pattern runs as a JS regex over the file text, one match per line.
@@ -190,6 +197,8 @@ export function world(on: On, o: { id?: string; cwd?: string; now?: number; pane
     }
     if (argv[0] === 'git') {
       const sub = argv.slice(1).filter((a, i, all) => a !== '-c' && all[i - 1] !== '-c') // the leading `-c key=value` pairs are not the subcommand
+      const hooked = w.gitHook?.(sub, init?.cwd)
+      if (hooked !== undefined) return { value: { ...RUN, stdout: '', ...hooked } }
       if (sub[0] === 'remote') {
         const remote = w.git[init?.cwd ?? w.cwd]?.remote
         return remote === null ? { value: { exitCode: 2, stdout: '', ...RUN, stderr: 'no such remote' } } : { value: { exitCode: 0, stdout: `${remote ?? 'https://github.com/acme/repo.git'}\n`, ...RUN } }

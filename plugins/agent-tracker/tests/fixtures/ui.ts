@@ -6,7 +6,8 @@ import type { Engine } from 'claude-code/testing'
 import type { Listing, SessionRecord, Snapshot } from '../../hooks/tracker/types'
 import { NOON, SELF, at, sess, snapAt } from './pane'
 import { ask } from './tasks'
-import { world } from './world'
+import { settle, world } from './world'
+import type { World } from './world'
 
 export const DIR = '/u/.claude/agent-tracker'
 export const CLEANUP = '@2026-11-14-tracker-session-cleanup'
@@ -56,10 +57,11 @@ export const AGENT_ROWS = (rows: Record<string, unknown>[] = []) =>
 export const DEAD_ROW = { kind: 'background', state: 'blocked', sessionId: DEAD, cwd: FOLDER, name: 'old login work', startedAt: 1, id: 'bg-dead' }
 
 // The page of a session, opened as the person does: from its row on Home (a task row while it has a task Home lists).
-export const open = async ($: Engine, on: On, session: SessionRecord = dead(), extra: Partial<Snapshot> = { listing: LISTED }, o: { folder?: boolean; row?: string } = {}) => {
+export const open = async ($: Engine, on: On, session: SessionRecord = dead(), extra: Partial<Snapshot> = { listing: LISTED }, o: { folder?: boolean; row?: string; setup?: (w: World) => void } = {}) => {
   const h = withSnap(on, [THIS, session], extra)
   if (o.folder !== false) h.w.put(`${session.cwd}/README`, '')
   h.w.agents.json = AGENT_ROWS([DEAD_ROW])
+  o.setup?.(h.w) // before the page draws, so what it reads from git is in place
   const ui = await mount($)
   await ui.redraw()
   if (o.row === 'command') {

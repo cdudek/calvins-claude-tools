@@ -1,15 +1,18 @@
 import { describe, expect, test } from 'claude-code/testing'
 import type { Engine } from 'claude-code/testing'
 
-import { sessionModel, taskItems } from '../hooks/tracker/core'
-import type { Block, Local, PaneModel, SessionCtx } from '../hooks/tracker/core'
+import { IDLE, sessionModel, taskItems } from '../hooks/tracker/core'
+import type { Block, Local, PaneModel, SessionCtx, WorktreeFact } from '../hooks/tracker/core'
 import type { SessionRecord } from '../hooks/tracker/types'
 import { NOON, SELF, at, sess, snapAt } from './fixtures/pane'
 import { CLEANUP, DEAD, DEAD_ROW, FOLDER, LISTED, UNLISTED, AGENT_ROWS, THIS, dead, focused, keys, open, page, press, settings, withSnap } from './fixtures/ui'
+import { TREE, inTree, isWorktreeRead, openTree } from './fixtures/git'
 import { settle } from './fixtures/world'
 import type { World } from './fixtures/world'
 
 // The Session page of an ended session: Clear, its confirm, its run and the lines it leaves. Every id and folder is invented.
+// The page reads git when it opens (row 3): nothing else may run before a press.
+const ran = (w: World) => w.procs.filter(p => !isWorktreeRead(p.argv))
 const rms = (w: World) => w.procs.filter(p => p.argv[1] === 'rm').map(p => p.argv)
 const reads = (w: World) => w.procs.filter(p => p.argv[1] === 'agents').length
 const NONE = ['clear', 'confirm-clear', 'cancel-clear', 'reopen']
@@ -23,7 +26,7 @@ const modelOf = (r: SessionRecord, ctx: Partial<SessionCtx>, listing = LISTED, f
 }
 const actionsOf = (m: PaneModel) => m.blocks.flatMap(b => (b.kind === 'actions' ? b.items.map(i => i.key) : []))
 const linesOf = (m: PaneModel) => m.blocks.flatMap(textOf)
-const WORKTREE = { label: 'login', branch: 'fix-login', removable: true }
+const WORKTREE: WorktreeFact = { label: 'login', branch: 'fix-login', removable: true, failed: null, how: 'branch', ignored: { secret: [], other: [], more: 0, all: [] } }
 
 describe('Clear: when it is offered', () => {
   test(`@F8 ${CLEANUP} Clear is drawn for an ended session with something to clear`, async ($, on) => {
@@ -116,7 +119,7 @@ describe('Clear: when it is offered', () => {
   test(`@F14 ${CLEANUP} the resume button is drawn while the folder exists, and drawing runs nothing`, async ($, on) => {
     const here = await open($, on)
     expect(await keys(here.ui)).toContain('resume')
-    expect(here.w.procs.length).toBe(0) // the page draws without running anything
+    expect(ran(here.w)).toEqual([]) // the page draws without running anything but its git reads
     await here.ui.unmount()
   })
 
@@ -153,7 +156,7 @@ describe('Clear: the confirm', () => {
     expect(await keys(ui)).not.toContain('clear') // the confirm replaces the actions
     const buttons = await ui.findAll({ type: 'Button' })
     expect(buttons.filter(b => ['confirm-clear', 'cancel-clear'].includes(String(b.props.key))).map(b => b.props.label)).toEqual(['Clear session', 'Cancel'])
-    expect(w.procs.length).toBe(0)
+    expect(ran(w)).toEqual([])
     expect(w.writes).toEqual([])
     await ui.unmount()
   })
@@ -167,7 +170,7 @@ describe('Clear: the confirm', () => {
 
   test(`@F19 ${CLEANUP} the confirm lines for each combination of parts`, async () => {
     const confirm = (r: SessionRecord, ctx: Partial<SessionCtx>, listing = LISTED) => {
-      const m = modelOf(r, { clear: { step: 'confirm', left: false, outcome: null }, ...ctx }, listing)
+      const m = modelOf(r, { clear: { ...IDLE, step: 'confirm' }, ...ctx }, listing)
       const at = m.blocks.findIndex(b => b.kind === 'lines' && b.key === 'confirm')
       return textOf(m.blocks[at]!)
     }
@@ -194,7 +197,7 @@ describe('Clear: the confirm', () => {
     await press(ui, 'task:dead-1:1')
     expect(await page(ui)).not.toContain('Clear this session?')
     expect(await keys(ui)).toContain('clear')
-    expect(w.procs.length).toBe(0)
+    expect(ran(w)).toEqual([])
     expect(w.writes).toEqual([])
     await ui.unmount()
   })
@@ -217,7 +220,7 @@ describe('Clear: the run', () => {
     release()
     await settle()
     await ui.redraw()
-    expect(w.procs.map(p => p.argv.slice(0, 2).join(' '))).toEqual(['claude agents', 'claude rm'])
+    expect(ran(w).map(p => p.argv.slice(0, 2).join(' '))).toEqual(['claude agents', 'claude rm'])
     await ui.unmount()
   })
 
@@ -442,5 +445,120 @@ describe('Clear: the run', () => {
     expect(await keys(b.ui)).toContain('reopen')
     expect(await focused(b.ui)).toEqual(['crumb:0']) // no resume button: the Home crumb
     await b.ui.unmount()
+  })
+})
+
+// The worktree half of Clear, on the made-up repository of fixtures/git.ts: the offer-only Clear (F21), what Claude Code removed (F46),
+// the confirm's worktree line and the focus after a Clear (F73).
+const NO_LISTING = { listing: { ...UNLISTED } }
+const onlyTree = { session: inTree({ asks: [] }), extra: NO_LISTING, row: 'command' } as const
+const settled = async (ui: { redraw: () => Promise<void> }) => {
+  await settle()
+  await ui.redraw()
+}
+
+describe('Clear and the worktree', () => {
+  test(`@F8 ${CLEANUP} a removable worktree alone is work left: Clear is drawn and a line says Clear offers to remove it`, async ($, on) => {
+    const h = await openTree($, on, onlyTree)
+    expect(await keys(h.ui)).toContain('clear')
+    expect(await page(h.ui)).toContain('Clear offers to remove the worktree below.')
+    expect(await page(h.ui)).not.toContain('Nothing to clear')
+    await h.ui.unmount()
+  })
+
+  test(`@F8 ${CLEANUP} a worktree that stays is not work left: Clear is for the listing and the tasks alone`, async ($, on) => {
+    const h = await openTree($, on, { repo: { status: { [TREE]: [' M a'] } } })
+    await press(h.ui, 'clear')
+    expect(await page(h.ui)).toContain('Clear this session?')
+    expect(await page(h.ui)).not.toContain('Clear offers to remove the worktree below.')
+    await h.ui.unmount()
+  })
+
+  test(`@F21 ${CLEANUP} only a worktree left opens the offer, no confirm, and writes nothing`, async ($, on) => {
+    const h = await openTree($, on, onlyTree)
+    await press(h.ui, 'clear')
+    const all = await page(h.ui)
+    expect(all).not.toContain('Clear this session?')
+    expect(all).toContain('Worktree login is clean, pushed and merged.')
+    expect(await keys(h.ui)).toEqual(expect.arrayContaining(['remove-worktree', 'keep-worktree']))
+    expect(await keys(h.ui)).not.toContain('confirm-clear')
+    expect(h.w.procs.filter(p => !isWorktreeRead(p.argv) && p.argv[1] !== 'agents')).toEqual([])
+    expect(rms(h.w)).toEqual([])
+    expect(h.w.writes).toEqual([])
+    await h.ui.unmount()
+  })
+
+  test(`@F21 ${CLEANUP} a session that is still listed, or has open tasks, gets the confirm first even with a removable worktree`, async ($, on) => {
+    const h = await openTree($, on)
+    await press(h.ui, 'clear')
+    expect(await page(h.ui)).toContain('Clear this session?')
+    expect(await keys(h.ui)).not.toContain('remove-worktree')
+    await h.ui.unmount()
+  })
+
+  test(`@F19 ${CLEANUP} a listed session in a linked worktree gets the Claude Code line in its confirm`, async ($, on) => {
+    const h = await openTree($, on)
+    await press(h.ui, 'clear')
+    expect(await page(h.ui)).toContain('If it made the worktree login, Claude Code also removes it, when that is safe.')
+    await h.ui.unmount()
+  })
+
+  test(`@F46 ${CLEANUP} Claude Code removing its own worktree is named and no offer follows`, async ($, on) => {
+    const h = await openTree($, on, { setup: (w, r) => (w.onRm = () => void (r.trees = r.trees.filter(t => t.path !== TREE))) })
+    await press(h.ui, 'clear')
+    await press(h.ui, 'confirm-clear')
+    await settled(h.ui)
+    const all = await page(h.ui)
+    expect(all).toContain('✓ Claude Code also removed the worktree login.')
+    expect(all).toContain('To resume this conversation, make the worktree again from the branch first.')
+    expect(all.indexOf("✓ Left Claude Code's list.")).toBeGreaterThan(-1)
+    expect(all.indexOf("✓ Left Claude Code's list.")).toBeLessThan(all.indexOf('✓ Claude Code also removed')) // the order the steps ran: list, tasks, worktree
+    expect(await keys(h.ui)).not.toContain('remove-worktree')
+    expect(await keys(h.ui)).not.toContain('resume') // the folder is gone
+    expect(h.w.procs.filter(p => p.argv[0] === 'git' && p.argv.includes('remove'))).toEqual([]) // the tracker removed nothing itself
+    expect(await focused(h.ui)).toEqual(['crumb:0'])
+    await h.ui.unmount()
+  })
+
+  test(`@F46 ${CLEANUP} a worktree that is still there after claude rm is not claimed: the offer follows instead`, async ($, on) => {
+    const h = await openTree($, on)
+    await press(h.ui, 'clear')
+    await press(h.ui, 'confirm-clear')
+    await settled(h.ui)
+    expect(await page(h.ui)).not.toContain('Claude Code also removed')
+    expect(await keys(h.ui)).toEqual(expect.arrayContaining(['remove-worktree', 'keep-worktree']))
+    expect(rms(h.w)).toEqual([['claude', 'rm', 'bg-dead']])
+    await h.ui.unmount()
+  })
+
+  test(`@F46 ${CLEANUP} no claude rm, no claim: a session that was not listed says nothing about Claude Code and the worktree`, async ($, on) => {
+    const h = await openTree($, on, { session: inTree(), extra: NO_LISTING, setup: w => (w.agents.json = AGENT_ROWS()) }) // the press's read does not list it either
+    await press(h.ui, 'clear')
+    await press(h.ui, 'confirm-clear')
+    await settled(h.ui)
+    expect(rms(h.w)).toEqual([])
+    expect(await page(h.ui)).not.toContain('Claude Code also removed')
+    expect(await page(h.ui)).toContain('✓ 2 tasks closed.')
+    await h.ui.unmount()
+  })
+
+  test(`@F73 ${CLEANUP} focus after a Clear goes to Keep worktree when there is an offer, never Reopen tasks`, async ($, on) => {
+    const h = await openTree($, on)
+    await press(h.ui, 'clear')
+    await press(h.ui, 'confirm-clear')
+    await settled(h.ui)
+    expect(await keys(h.ui)).toEqual(expect.arrayContaining(['resume', 'reopen', 'keep-worktree']))
+    expect(await focused(h.ui)).toEqual(['keep-worktree'])
+    await h.ui.unmount()
+  })
+
+  test(`@F73 ${CLEANUP} after Keep worktree the focus is Copy resume command, never Clear or Reopen tasks`, async ($, on) => {
+    const h = await openTree($, on)
+    await press(h.ui, 'clear')
+    await press(h.ui, 'confirm-clear')
+    await settled(h.ui)
+    await press(h.ui, 'keep-worktree')
+    expect(await focused(h.ui)).toEqual(['resume'])
+    await h.ui.unmount()
   })
 })

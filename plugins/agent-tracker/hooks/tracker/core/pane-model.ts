@@ -30,8 +30,8 @@ export type Page =
 export type Local = { midnight: number; clock: (ms: number) => string; day: (ms: number) => string; date: (ms: number, withYear: boolean) => string }
 
 // A Button that does something other than open a page: mark notes seen, copy the reply to overrule one, copy a resume command,
-// keep or close a task (`keys` are the task keys), and the Session page's Clear: open its confirm, run it, cancel it, reopen the tasks it closed.
-export type ActionItem = { key: string; label: string; action: 'seen' | 'overrule' | 'resume' | 'keep' | 'close' | 'clear' | 'confirm-clear' | 'cancel-clear' | 'reopen'; keys?: string[] }
+// keep or close a task (`keys` are the task keys), and the Session page's Clear: open its confirm, run it, cancel it, reopen the tasks it closed, remove the worktree or keep it.
+export type ActionItem = { key: string; label: string; action: 'seen' | 'overrule' | 'resume' | 'keep' | 'close' | 'clear' | 'confirm-clear' | 'cancel-clear' | 'reopen' | 'remove-worktree' | 'keep-worktree'; keys?: string[] }
 
 // One item of an inline list: a Button when it has `to`, a Link when it has `href`, plain text otherwise.
 export type Item = { key: string; spans: Spans; to?: Page; href?: string; joined?: boolean } // joined: no separator before it

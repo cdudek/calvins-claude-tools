@@ -11,6 +11,7 @@ import type { Span, Spans } from './paint'
 import { GLYPH, clamp, firstKey, heading, hint, tidy, when } from './pane-model'
 import type { Block, Item, Local, PaneModel, Page } from './pane-model'
 import { HEADINGS, NO_PRS, PRS_NOT_SHOWN, UNTITLED } from './words'
+import { worktreeLabel } from './worktree'
 
 export const ASKS_SHOWN = 6
 export const WORKTREES_SHOWN = 8
@@ -100,7 +101,7 @@ const worktreeItems = (inRepo: SessionRecord[], snap: Snapshot, path: string, no
       const mine = inRepo.filter(r => treeOf(r.cwd)?.path === w.path).sort((a, b) => b.lastActivityAt - a.lastActivityAt)
       const live = mine.filter(isLive)
       const top = live.find(r => r.state === 'needs-you') ?? live.find(r => r.state === 'running') ?? live[0] ?? mine[0]
-      const label = w.path === path ? 'main checkout' : w.path.startsWith(`${path}/`) ? w.path.slice(path.length + 1).replace(/^\.worktrees\//, '') : (w.path.split('/').pop() ?? w.path)
+      const label = worktreeLabel(w.path, path)
       const at = Math.max(0, ...mine.map(r => Math.max(r.lastActivityAt, r.endedAt ?? 0)))
       return { w, top, label, live: live.length > 0, at, mine }
     })
