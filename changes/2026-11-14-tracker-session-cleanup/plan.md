@@ -173,10 +173,10 @@ and `python3 -m unittest discover -s tests`, then commits with a Conventional Co
 - [x] 1. Feature 1, fixtures: a scrubbed `claude agents --json`. It holds a live background row with `pid`, an exited background row with none, and an interactive row with neither `pid` nor `id`. This gates R2-01 and the interactive half of F1. Proof: `git grep -nE '/Users/|/home/' plugins/agent-tracker/tests/fixtures` prints nothing.
 - [x] 2. Feature 1, tests first, then `AgentRow.pid`, `parseAgents`, `resolveState` and the pid-known flag in `merge.ts`. Proof: F1, F2, F4 and F72 pass in `collector.test.ts`; F3 passes in `band.test.ts`.
 - [x] 3. Feature 1, `core/activity.ts`, `lastline.ts`, `Local.date` and the Session header and facts line. Proof: F5, F6, F7 and F71 pass in `pane.test.ts` and `collector.test.ts`.
-- [ ] 4. Feature 2, tests first, then `core/clear.ts` and the Session page states: Ended, Live, Nothing to clear, Pid not reported, List unreadable, Confirming. Proof: F8 to F20 pass in `clear.test.ts` and `pane.test.ts`.
-- [ ] 5. Feature 2, `clear.ts` and the Clearing, Refused, Cleared, Failed and PartlyCleared states, `store.ts` `unmarkTask` and Reopen tasks. Proof: F22 to F34 pass in `clear.test.ts`, `tasks.test.ts` and `pane.test.ts`.
-- [ ] 6. Feature 2, the `claude rm` boundary on a fake `claude` binary first on `PATH`: a hang, a refusal and a success, with closed stdin. The build never runs `claude rm` on a real session. Proof: F28 passes against the fake, and the defaults taken are in `questions.md`. The one real run is the owner's press at the render check.
-- [ ] 7. Feature 2, the band guard. Proof: F70 passes in `band.test.ts`.
+- [x] 4. Feature 2, tests first, then `core/clear.ts` and the Session page states: Ended, Live, Nothing to clear, Pid not reported, List unreadable, Confirming. Proof: F8 to F20 pass in `clear.test.ts` and `pane.test.ts`.
+- [x] 5. Feature 2, `clear.ts` and the Clearing, Refused, Cleared, Failed and PartlyCleared states, `store.ts` `unmarkTask` and Reopen tasks. Proof: F22 to F34 pass in `clear.test.ts`, `tasks.test.ts` and `pane.test.ts`.
+- [x] 6. Feature 2, the `claude rm` boundary on a fake `claude` binary first on `PATH`: a hang, a refusal and a success, with closed stdin. The build never runs `claude rm` on a real session. Proof: F28 passes against the fake, and the defaults taken are in `questions.md`. The one real run is the owner's press at the render check.
+- [x] 7. Feature 2, the band guard. Proof: F70 passes in `band.test.ts`.
 - [ ] 8. Feature 3, git fixtures, tests first, then `core/worktree.ts` and `worktrees.ts` gathering. Proof: F35 to F38 and F41 pass in `worktree.test.ts`.
 - [ ] 9. Feature 3, the offer, Remove, Keep, the result states and the focus rule. Proof: F39, F40, F42 to F45, F47 and F73 pass.
 - [ ] 10. Feature 3, the post-`claude rm` re-check and the offer-only Clear. Proof: F21 and F46 pass in `clear.test.ts` against the git fixtures.
