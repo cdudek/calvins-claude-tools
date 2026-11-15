@@ -97,7 +97,9 @@ export type Settings = { v: 1; view: 'compact' | 'details'; bandHidden: boolean;
 // What the band and the pane read: every session merged, and whether the list read was good.
 // `okAt` is the time of the last good list read (0: none yet) and `failedReads` the failed reads in a row: two or
 // more is stale (F52, F123). `at` 0 is the untouched value: the first read is still pending (F53).
-export type Snapshot = { at: number; agentsOk: boolean; okAt: number; failedReads: number; sessions: SessionRecord[] }
+// `listing` is the last good read's rows by session id (the job `id` and `pid`), for the Session page's Clear; absent: none read yet.
+export type Listing = Record<string, { id?: string; pid?: number }>
+export type Snapshot = { at: number; agentsOk: boolean; okAt: number; failedReads: number; sessions: SessionRecord[]; listing?: Listing }
 
 declare module 'claude-code' {
   interface PluginState {

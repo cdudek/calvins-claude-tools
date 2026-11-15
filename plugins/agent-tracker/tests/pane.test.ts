@@ -2,10 +2,11 @@ import { describe, expect, test } from 'claude-code/testing'
 import type { On } from 'claude-code'
 import type { Engine } from 'claude-code/testing'
 
-import { REPLY_COPIED, resumeCommand } from '../hooks/tracker/core'
+import { COMMAND_HELP, COMMAND_HINT, REPLY_COPIED, resumeCommand } from '../hooks/tracker/core'
 import type { Note, SessionRecord, Settings, Snapshot } from '../hooks/tracker/types'
 import { NOON, SELF, aloneTown, at, paneTown, sess, snapAt, use } from './fixtures/pane'
-import { taskTown } from './fixtures/tasks'
+import { ask, taskTown } from './fixtures/tasks'
+import { dead, keys as uiKeys, open as openEnded, page as uiPage } from './fixtures/ui'
 import { world } from './fixtures/world'
 import type { World } from './fixtures/world'
 
@@ -448,9 +449,19 @@ describe('Session detail', () => {
     await ui.unmount()
   })
 
-  test(`@F49 ${TAG} Copy resume command, for any session with a plain id; the folder single-quoted`, async ($, on) => {
-    const odd = waiting({ cwd: "/work/my web-app's copy" })
-    const { ui, w } = await sessionPage($, on, [...paneTown(), odd], 'web-9')
+  // An ended session's page, opened by its title (an ended session has no Home row): Copy resume command is for ended sessions
+  // whose folder exists (@F9, @F14 of change 2026-11-14-tracker-session-cleanup correct milestone 1's "any session").
+  const endedPage = async ($: Engine, on: On, extra: Partial<SessionRecord>) => {
+    const h = withSnap(on, [...paneTown(), waiting({ title: 'zebra work', state: 'ended', endedAt: at(0), reason: null, ...extra })])
+    h.w.put(`${extra.cwd ?? '/work/web-app'}/README`, '')
+    const ui = await mount($, 70)
+    await run($, 'session zebra')
+    await ui.redraw()
+    return { ...h, ui }
+  }
+
+  test(`@F49 ${TAG} Copy resume command, for an ended session with a plain id; the folder single-quoted`, async ($, on) => {
+    const { ui, w } = await endedPage($, on, { cwd: "/work/my web-app's copy" })
     const resume = (await ui.find({ key: 'resume' }))!
     expect([resume.props.label, resume.props.hotkey, resume.props.plain]).toEqual(['Copy resume command', undefined, true])
     await go(ui, 'resume')
@@ -468,7 +479,7 @@ describe('Session detail', () => {
     expect(resumeCommand('/work/web-app', '')).toBeNull()
     expect(resumeCommand('/work/web-app', 'a'.repeat(65))).toBeNull()
     expect(resumeCommand("/work/it's", 'Ab_9-z')).toBe("cd '/work/it'\\''s' && claude --resume Ab_9-z")
-    const { ui, w } = await sessionPage($, on, [...paneTown(), waiting({ sessionId: 'x; rm -rf ~' })], 'x; rm -rf ~')
+    const { ui, w } = await endedPage($, on, { sessionId: 'x; rm -rf ~' })
     expect(await ui.find({ key: 'resume' })).toBeUndefined()
     expect(w.copies).toEqual([])
     await ui.unmount()
@@ -540,6 +551,38 @@ describe('Session detail', () => {
     await go(ui, 'session:web-9')
     await go(ui, 'crumb:1') // web-app: the Repo page
     expect((await texts(ui)).slice(0, 3)).toEqual(['Home', ' › ', 'web-app'])
+    await ui.unmount()
+  })
+})
+
+describe('Clear on the Session page: its tasks and its words', () => {
+  test(`@F15 ${CLEANUP} the ended session's Tasks line matches Home's list`, async ($, on) => {
+    const r = dead({
+      asks: [
+        ask(1, 'Fix the login redirect', 180, { verdict: 'not-started' }),
+        ask(2, 'Add a retry on 401', 150, { verdict: 'replaced', replacedBy: 3 }),
+        ask(3, 'Fix both together', 100, { verdict: 'done' }),
+        ask(4, 'Rename the config keys', 90), // no verdict: Home does not list it
+        ask(5, 'Why is it slow?', 80, { kind: 'question' }),
+      ],
+    })
+    const { ui } = await openEnded($, on, r)
+    const line = (await uiPage(ui)).split('\n').find(l => l.startsWith('tasks ') && l.includes('forgotten'))!
+    expect(line).toBe('tasks Fix the login redirect ○ forgotten · Add a retry on 401 ? superseded?') // Home's order, glyph and word
+    for (const gone of ['Fix both together', 'Rename the config keys', 'Why is it slow?']) expect(await uiPage(ui)).not.toContain(gone)
+    expect((await colorOf(ui, /^○ forgotten/))?.color).toBe('error')
+    // Home lists exactly those two for the session.
+    await go(ui, 'crumb:0')
+    expect((await keys(ui, 'task:dead-1')).sort()).toEqual(['task:dead-1:1', 'task:dead-1:2'])
+    await ui.unmount()
+  })
+
+  test(`@F34 ${CLEANUP} no clear command exists; session text opens the page`, async ($, on) => {
+    const { ui } = await openEnded($, on, dead(), undefined, { row: 'command' })
+    expect(((await run($, 'clear')) as { text: string }).text).toBe(COMMAND_HELP) // the hint: not a command
+    expect(COMMAND_HELP).not.toMatch(/clear|tidy/i)
+    expect(COMMAND_HINT).not.toMatch(/clear|tidy/i)
+    expect(await uiKeys(ui)).toContain('clear') // `/tracker session <text>`, then Tab to Clear
     await ui.unmount()
   })
 })

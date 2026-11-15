@@ -25,3 +25,17 @@ Open questions from the build, each with the default taken. None blocks the buil
 - **Secret-looking names inside a collapsed ignored folder** (for example a `.env` inside `build/`) are not seen: git prints the folder, and the script lists the folder name. Default taken: accept; the folder is named in the offer.
 - **`allowed-tools` form:** `${CLAUDE_PLUGIN_ROOT}` was not verified to expand inside `allowed-tools`, so the frontmatter uses the glob form this repo already uses (`Bash(python3 */git-cleanup-run/scripts/cleanup.py list)`), and the body runs the script through `${CLAUDE_SKILL_DIR}`.
 - **`skills` key:** not needed. `claude plugin validate --strict plugins/agent-tracker` reads `skills/git-cleanup-run/SKILL.md` without a `skills` entry in `plugin.json`.
+
+## Feature 2, Clear
+
+- **Where the list rows come from:** the snapshot had no `pid` or job `id`, and the page reads only the snapshot. `Snapshot.listing` (optional, `types.d.ts`) holds the last good read's rows by session id, written by `collector.ts`. A failed read keeps the old rows, so one failed read does not flash "Nothing to clear"; two failed reads withhold Clear (F12). Outside the plan's file list for `types.d.ts`, but nothing else can carry the fact.
+- **Listed means a job id:** F25 says a row with no `id` is treated as not listed. So "listed" in F8, F10 and the confirm means a row with a plain job id and no `pid`. An interactive pid-less row alone shows "Nothing to clear".
+- **A job id that is not plain** (a leading "-", a space, over 64 characters) never reaches `claude rm`: it reads as not listed.
+- **No pid in the press's read:** F23 only names a `pid` on the session. A read at the press where no row carries a `pid` also refuses and changes nothing, with F11's line plus "Nothing was changed." (F65: the process fact is then unknown).
+- **A failed re-read after a failed `claude rm`:** the page shows the F28 line (the list could not say the session is gone), and closes nothing.
+- **Save failure with no `claude rm` run (F30):** the session was not listed, so the line drops "The session left Claude Code's list." and ends "Press Clear to try again." `writeSettings` gained a `strict` flag that puts the old settings back on a failed save; Keep, Close and Mark all seen behave as before.
+- **Reopen tasks failing to save:** no line; the button stays, nothing changed. The facts name no error for it.
+- **Confirm lines:** the three lines of the spec are what-happens, the worktree line and the kept line; "You can reopen the tasks afterwards." follows the kept sentence on the same line (or stands alone when the session is not listed).
+- **Milestone 1's @F49 tests:** F9 withdraws "Copy resume command" from live sessions and F14 from sessions whose folder is gone, so the two `@F49` tests in `pane.test.ts` now open an ended session whose folder exists. Their assertions are unchanged.
+- **Only four of the six new actions:** `clear`, `confirm-clear`, `cancel-clear` and `reopen`. `remove-worktree` and `keep-worktree` belong to row 3, with the seam `ctx.worktree` (`{ label, branch, removable } | null`, null until row 3 reads git).
+- **The real `claude rm`:** never run by the build. The fake `claude` in the test world proves a hang (cut by the 15-second timeout), a refusal and a success. The owner's press at the render check is the one real run (X3); its result goes here.

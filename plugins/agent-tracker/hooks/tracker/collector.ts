@@ -4,7 +4,7 @@ import type { EngineInterface, On } from 'claude-code'
 
 import { startBackfill } from './backfill'
 import { lastLines } from './lastline'
-import { LEASE_GEN, POLL_MS, agentsFresh, clean, deriveState, leaseState, mergeSessions, noteTool, parseAgents } from './core'
+import { LEASE_GEN, POLL_MS, agentsFresh, clean, deriveState, leaseState, listingOf, mergeSessions, noteTool, parseAgents } from './core'
 import { startScan } from './scan'
 import type { AgentRow, Lease, SessionRecord, Snapshot } from './types'
 import { dir, initOwn, readAgentsFile, readEntrypoints, readFolder, readLateChecks, readLease, saveOwn, where, writeJson } from './store'
@@ -79,7 +79,9 @@ async function tick($: Engine, s: State) {
       s.okAt = now
       s.seen = new Set(agents.map(a => a.sessionId))
     }
-    await update($, snapshot, () => ({ at: now, agentsOk: agents !== null, okAt: s.okAt, failedReads: s.failedReads, sessions }))
+    // The rows of the last good read stay while a read fails, so the page's Clear does not flicker; two failed reads withhold it.
+    const listing = agents !== null ? listingOf(agents) : (await read($, snapshot)).listing
+    await update($, snapshot, () => ({ at: now, agentsOk: agents !== null, okAt: s.okAt, failedReads: s.failedReads, sessions, ...(listing !== undefined ? { listing } : {}) }))
   } finally {
     s.isTicking = false
   }

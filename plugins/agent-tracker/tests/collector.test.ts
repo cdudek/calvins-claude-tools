@@ -350,6 +350,19 @@ describe('a session with no process is ended', () => {
     expect(stateOf(list, PID.exited)).toBe('ended') // `done` ends it as before, not by the pid rule
   })
 
+  test(`${CHANGE} an ended session that Claude Code still lists stays in the snapshot whatever its age, so Clear can reach it`, () => {
+    const day = 24 * 3_600_000
+    const old = (id: string) => record(id, { state: 'ended', endedAt: NOW - 13 * day, startedAt: NOW - 14 * day, lastActivityAt: NOW - 13 * day })
+    const ids = (list: SessionRecord[]) => list.map(r => r.sessionId)
+    // exited: a job id and no pid, still in the list: kept at 13 days. closedIdle: no job id, so Clear could not remove it: dropped.
+    const list = merged(pidRows, { files: [old(PID.exited), old(PID.closedIdle), old('unlisted-1')] })
+    expect(ids(list)).toContain(PID.exited)
+    expect(ids(list)).not.toContain(PID.closedIdle)
+    expect(ids(list)).not.toContain('unlisted-1') // not listed: old ended sessions still drop out after a week
+    // Inside the week every ended session stays, as before.
+    expect(ids(merged(pidRows, { files: [{ ...old('recent-1'), lastActivityAt: NOW - 2 * day }] }))).toContain('recent-1')
+  })
+
   test(`@F72 ${CHANGE} this session's own id is never ended; a background \`done\` row stays ended`, () => {
     // This session's row lost its pid: it keeps its state while the others still read ended.
     const ownNoPid = pidRows.map(r => (r.sessionId === PID.self ? { ...r, pid: undefined } : r))

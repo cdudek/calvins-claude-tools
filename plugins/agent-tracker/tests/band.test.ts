@@ -638,6 +638,21 @@ describe('the band on screen', () => {
     await ui.unmount()
   })
 
+  test(`@F70 ${CHANGE} the band's cells, buttons and words are unchanged`, async ($, on) => {
+    // An ended session Claude Code still lists, with no task: everything Clear works on. The band shows none of it.
+    const gone = inState('gone-1', 'ended', 120, 'api', 'old work', { endedAt: NOW - 2 * 3_600_000 })
+    await withTown($, on, [...town(), gone], { listing: { [SELF]: { pid: 1 }, 'gone-1': { id: 'bg-gone' } } })
+    const ui = await mount($, 'terminal', 115)
+    expect((await ui.findAll({ type: 'Button' })).map(b => [b.props.key, b.props.label, b.props.hotkey])).toEqual([['pane', 'Pane', undefined], ['board', 'Board', undefined], ['details', 'Details', undefined], ['hide', '[–]', undefined]])
+    expect(await row(ui)).toContain('agent tracker  agent-tracker-1 2/4 goal 14m · ● 2 need you  2 not done  ◐3  PRs 1✗ 2↓') // the cells and words of @F23, to the character
+    expect(await row(ui)).not.toMatch(/Clear|Reopen|worktree/i)
+    await run($, 'details')
+    await ui.redraw()
+    expect((await ui.findAll({ type: 'Button' })).map(b => [b.props.key, b.props.hotkey])).toEqual([['copy', undefined], ['pane', undefined], ['board', undefined], ['details', undefined], ['hide', undefined]])
+    expect(await row(ui)).not.toMatch(/Clear|Reopen|worktree/i)
+    await ui.unmount()
+  })
+
   test(`@F80 ${TAG} details buttons, no quick keys`, async ($, on) => {
     const w = await withTown($, on, town())
     const ui = await mount($, 'terminal')

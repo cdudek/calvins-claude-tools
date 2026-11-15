@@ -15,7 +15,7 @@ export type World = {
   clock: MockClock
   files: Map<string, string>
   writes: string[]
-  procs: { argv: readonly string[]; cwd?: string }[]
+  procs: { argv: readonly string[]; cwd?: string; init?: Record<string, unknown> }[]
   models: { op: 'classify' | 'complete' | 'fork'; text: string; labels?: readonly string[]; model?: string }[]
   net: string[]
   origins: string[] // who raised each prompt that reached the engine
@@ -34,6 +34,8 @@ export type World = {
   snapshot: () => Snapshot
   failWrite: (path: string) => boolean
   agents: { json: string | null }
+  rm: { mode: 'ok' | 'fail' | 'hang'; stderr: string; drops: boolean } // the fake `claude rm <id>`: hang ends in a refusal only when the call set a timeout; drops: the row leaves the list, even when it fails
+  hold: Promise<void> | null // while set, `claude agents --json` answers only after it settles, so a test can look at the page meanwhile
   git: Record<string, Git>
   worktrees: Record<string, string> // `git worktree list --porcelain` output by folder; none: exit 128
   gh: { json: string | null; missing: boolean } // `gh pr list` output; null: signed out (exit 1); missing: no gh binary
@@ -80,6 +82,8 @@ export function world(on: On, o: { id?: string; cwd?: string; now?: number; pane
     snapshot: () => w.states.get('agent-tracker/snapshot') as Snapshot,
     failWrite: () => false,
     agents: { json: '[]' },
+    rm: { mode: 'ok', stderr: 'could not remove', drops: true },
+    hold: null,
     git: {},
     worktrees: {},
     gh: { json: null, missing: false },
@@ -133,7 +137,7 @@ export function world(on: On, o: { id?: string; cwd?: string; now?: number; pane
     if (w.unreadable.has(e.path)) return { deny: `EACCES ${e.path}` }
     return (w.sizes.get(e.path) ?? w.files.get(e.path)!.length) > MAX_READ ? { deny: `EFBIG ${e.path}` } : { value: w.files.get(e.path)! }
   })
-  on('fs.exists', (_, e) => ({ value: w.files.has(e.path) }))
+  on('fs.exists', (_, e) => ({ value: w.files.has(e.path) || [...w.files.keys()].some(p => p.startsWith(`${e.path.replace(/\/$/, '')}/`)) })) // a folder exists when a file is under it
   on('fs.write', (_, e) => {
     w.writes.push(e.path)
     if (w.failWrite(e.path)) return { deny: `EACCES ${e.path}` }
@@ -155,9 +159,16 @@ export function world(on: On, o: { id?: string; cwd?: string; now?: number; pane
 
   on('process.run', (_, e) => {
     const { argv, init } = e
-    w.procs.push({ argv, cwd: init?.cwd })
+    w.procs.push({ argv, cwd: init?.cwd, init: init as Record<string, unknown> | undefined })
+    // The fake `claude rm <id>`: it never touches a real session. A hang is cut by the call's own timeout, or the test fails by hanging.
+    if (argv[0] === 'claude' && argv[1] === 'rm') {
+      if (w.rm.mode === 'hang') return init?.timeoutMs === undefined ? new Promise<never>(() => undefined) : { deny: `timed out after ${init.timeoutMs}ms` }
+      if (w.rm.drops && w.agents.json !== null) w.agents.json = JSON.stringify((JSON.parse(w.agents.json) as { id?: string }[]).filter(a => a.id !== argv[2]))
+      return w.rm.mode === 'fail' ? { value: { exitCode: 1, stdout: '', ...RUN, stderr: w.rm.stderr } } : { value: { exitCode: 0, stdout: `removed ${argv[2]}\n`, ...RUN } }
+    }
     if (argv[0] === 'claude' && argv[1] === 'agents') {
-      return w.agents.json === null ? { value: { exitCode: 1, stdout: '', ...RUN, stderr: 'failed' } } : { value: { exitCode: 0, stdout: w.agents.json, ...RUN } }
+      const answer = w.agents.json === null ? { value: { exitCode: 1, stdout: '', ...RUN, stderr: 'failed' } } : { value: { exitCode: 0, stdout: w.agents.json, ...RUN } }
+      return w.hold === null ? answer : w.hold.then(() => answer)
     }
     if (argv[0] === 'gh') {
       if (w.gh.missing) return { deny: 'ENOENT gh' }
