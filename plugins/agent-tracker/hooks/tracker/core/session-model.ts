@@ -11,7 +11,7 @@ import { DOT, bar, dim, join, sp } from './paint'
 import type { Spans } from './paint'
 import { REASON, TASK_STYLE, hint, tidy } from './pane-model'
 import type { ActionItem, Block, Local, PaneModel } from './pane-model'
-import { clearGate, confirmLines, outcomeLines, workOf } from './clear'
+import { clearGate, confirmLines, hasProcess, outcomeLines, workOf } from './clear'
 import type { ClearState, WorktreeFact } from './clear'
 import { TASK_LABEL } from './tasks'
 import type { TaskItem } from './tasks'
@@ -83,7 +83,7 @@ export const sessionModel = (snap: Snapshot, id: string, now: number, local: Loc
 
   // tasks: the session's task asks, newest first, each with its state; a question is not a task. An ended session shows only the
   // tasks Home lists for it, with Home's glyph and word: those are the tasks Clear closes (F15).
-  const ended = r.state === 'ended'
+  const ended = !hasProcess(r, snap)
   const tasks = [...r.asks].filter(x => x.kind === 'task').sort((x, y) => y.at - x.at)
   const homeTasks = [...ctx.tasks].filter(t => t.sessionId === r.sessionId && r.source !== 'transcript')
   const shown = ended ? homeTasks.length : tasks.length

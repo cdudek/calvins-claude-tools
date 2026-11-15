@@ -31,8 +31,10 @@ export type Gate = 'live' | 'unreadable' | 'pid-unknown' | 'nothing' | 'clear'
 
 // Whether Clear is drawn, and if not, which line takes its place. A session with a process is never cleared (F9); a list that
 // could not be read twice, or that names no process at all, says nothing about whether a process runs (F11, F12).
+export const hasProcess = (r: SessionRecord, snap: Snapshot) => r.state !== 'ended' || snap.listing?.[r.sessionId]?.pid !== undefined
+
 export const clearGate = (r: SessionRecord, snap: Snapshot, work: ClearWork): Gate => {
-  if (r.state !== 'ended') return 'live'
+  if (hasProcess(r, snap)) return 'live'
   if (snap.failedReads >= 2) return 'unreadable'
   if (!pidReported(snap.listing)) return 'pid-unknown'
   return work.id !== null || work.tasks.length > 0 || work.worktree?.removable === true ? 'clear' : 'nothing'

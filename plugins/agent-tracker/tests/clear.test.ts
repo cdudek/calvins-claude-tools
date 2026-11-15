@@ -63,6 +63,12 @@ describe('Clear: when it is offered', () => {
     await a.ui.unmount()
   })
 
+  test(`@F9 ${CLEANUP} a listed row with a pid is live even when the record says ended`, async () => {
+    const m = modelOf(dead(), {}, { ...LISTED, [DEAD]: { id: 'bg-dead', pid: 4004 } })
+    expect(linesOf(m)).toContain('Clear is for ended sessions. This one is still running. Resume comes back when it ends.')
+    expect(actionsOf(m)).toEqual([])
+  })
+
   test(`@F10 ${CLEANUP} nothing to clear draws the line and no Clear`, async ($, on) => {
     const { ui } = await open($, on, dead({ asks: [] }), { listing: UNLISTED }, { row: 'command' })
     expect(await page(ui)).toContain("Nothing to clear: it is not in Claude Code's list and has no open tasks.")
@@ -296,7 +302,7 @@ describe('Clear: the run', () => {
     await ui.unmount()
   })
 
-  test(`@F27 ${CLEANUP} a failed claude rm is treated as not listed when a fresh read no longer lists the session`, async ($, on) => {
+  test(`@F27 ${CLEANUP} a failed \`claude rm\` is treated as not listed when a fresh read no longer lists the session`, async ($, on) => {
     const { ui, w } = await open($, on)
     w.rm = { mode: 'fail', stderr: 'No job matching bg-dead', drops: true } // it failed, and yet the row is gone
     await press(ui, 'clear')
