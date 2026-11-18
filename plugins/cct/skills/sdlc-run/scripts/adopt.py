@@ -893,6 +893,12 @@ def main() -> int:
     if cfg_path.exists():
         cfg = json.loads(cfg_path.read_text(encoding="utf-8"))
         cfg_before = json.dumps(cfg, sort_keys=True)
+        if cfg.get("delivery") == "feature-prs" and (cfg.get("milestones") or {}).get("merge") == "local":
+            sys.exit(
+                'sdlc.json: delivery "feature-prs" needs a remote milestone branch, which '
+                'milestones.merge "local" never pushes. Use delivery "one-go" (the default) with '
+                'local milestones, or milestones.merge "pr" with feature PRs.'
+            )
         kept.append("sdlc.json")
         if not UPGRADE:
             cfg["kitTemplates"] = templates_hash()

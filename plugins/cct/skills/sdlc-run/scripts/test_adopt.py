@@ -456,6 +456,23 @@ def test_adopt_says_when_the_removed_coowner_step_was_in_use_F20(tmp_path: Path)
     assert not [m for m in _sections(_adopt(repo).stdout)["MANUAL"] if "SDLC_COOWNER" in m]
 
 
+def test_adopt_refuses_feature_prs_with_local_milestones_F12(tmp_path: Path) -> None:
+    repo = _repo(tmp_path, "node")
+    _adopt(repo)
+    cfg = json.loads((repo / "sdlc.json").read_text())
+    cfg.update({"delivery": "feature-prs", "milestones": {"merge": "local"}})
+    (repo / "sdlc.json").write_text(json.dumps(cfg))
+    res = _adopt(repo)
+    assert res.returncode != 0 and 'delivery "one-go"' in res.stderr + res.stdout
+
+
+def test_change_templates_name_the_local_route_F12() -> None:
+    tpl = Path(__file__).resolve().parents[1] / "templates" / "change"
+    for name in ("plan.md", "milestone.md"):
+        assert "local mode" in (tpl / name).read_text(), name
+    assert "no `origin/project/<slug>`" in (tpl / "plan.md").read_text()
+
+
 def test_keep_list_protects_a_generated_file(tmp_path: Path) -> None:
     repo = _repo(tmp_path, "node")
     _adopt(repo)

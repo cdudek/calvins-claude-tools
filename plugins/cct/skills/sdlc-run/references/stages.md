@@ -103,7 +103,8 @@ Worktree lifecycle commands follow the [shared worktree policy](../../../referen
      project/<slug>` rather than assuming. Then create or attach the tracker's milestone.
      **The milestone branch is not pushed here** (3.7.0): it is created locally in step 5 and
      pushed once, at the close, after `VERIFY PASS`; `pr-gate.sh` refuses an earlier push.
-     Only `delivery: "feature-prs"` pushes it now, because feature PRs need a remote base:
+     Only `delivery: "feature-prs"` pushes it now, because feature PRs need a remote base (not
+     supported with local milestones: `adopt` refuses that pair, use `one-go`):
      `git push origin <parent>:refs/heads/milestone/<slug>`. `<parent>` is
      `origin/project/<slug>` when the project has a branch, else `origin/<defaultBranch>`.
      `hotfix` cuts no milestone branch.
