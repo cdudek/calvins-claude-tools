@@ -66,7 +66,9 @@ def repo(tmp_path: Path) -> Path:
     change = repo / "changes" / ID
     change.mkdir(parents=True)
     (change / "decisions.json").write_text(
-        json.dumps({"size": "M", "kind": "feature", "milestone": {"kind": "single", "slug": "trial"}})
+        json.dumps(
+            {"size": "M", "kind": "feature", "milestone": {"kind": "single", "slug": "trial"}}
+        )
     )
     for name in ("intent.md", "facts.md"):
         (change / name).write_text("---\nstatus: approved\n---\n")
@@ -132,7 +134,9 @@ def _call(
     repo: Path, v: Variant, *, tool: str | None = None, session: str | None = "sess-1",
     cwd: str | None = None,
 ) -> subprocess.CompletedProcess[str]:  # fmt: skip
-    if _git(repo, "rev-parse", "--abbrev-ref", "HEAD") != v.branch:  # never write to a read-only .git
+    if (
+        _git(repo, "rev-parse", "--abbrev-ref", "HEAD") != v.branch
+    ):  # never write to a read-only .git
         try:
             _git(repo, "checkout", "-q", v.branch)
         except subprocess.CalledProcessError:
@@ -163,7 +167,9 @@ def _norm(text: str) -> str:
     return text.rstrip("\n")
 
 
-def _header(first: subprocess.CompletedProcess[str], second: subprocess.CompletedProcess[str]) -> str:
+def _header(
+    first: subprocess.CompletedProcess[str], second: subprocess.CompletedProcess[str]
+) -> str:
     """What the repeat adds before the original first-time message."""
     one, two = _norm(first.stderr), _norm(second.stderr)
     assert two.endswith("\n" + one), second.stderr

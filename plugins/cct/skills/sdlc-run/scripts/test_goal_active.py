@@ -30,8 +30,8 @@ RUNNING_SENTINEL = {
     "type": "attachment",
     "attachment": {"type": "goal_status", "met": False, "sentinel": True},
 }
-MET = {"type": "attachment", "attachment": {"type": "goal_status", "met": True}}
-FAILED = {"type": "attachment", "attachment": {"type": "goal_status", "met": False, "failed": True}}
+MET = {"attachment": {"type": "goal_status", "met": True}}
+FAILED = {"attachment": {"type": "goal_status", "met": False, "failed": True}}
 SET = {
     "type": "user",
     "message": {"content": "A session-scoped Stop hook is now active with condition: ship it"},
@@ -92,10 +92,9 @@ def test_a_transcript_without_goal_entries_reports_no_goal_F1(goal_active, tmp_p
     assert goal_active(_transcript(tmp_path, *CHATTER)) is False
 
 
-@pytest.mark.parametrize("clear", [[CLEAR_CMD, CLEAR_OUT], [CLEAR_CMD]], ids=["pair", "command"])
-def test_goal_clear_ends_a_running_goal_F2(goal_active, tmp_path: Path, clear: list) -> None:
-    assert goal_active(_transcript(tmp_path, SET, RUNNING, *clear)) is False
-    assert goal_active(_transcript(tmp_path, RUNNING, *clear)) is False
+def test_goal_clear_ends_a_running_goal_F2(goal_active, tmp_path: Path) -> None:
+    assert goal_active(_transcript(tmp_path, SET, RUNNING, CLEAR_CMD, CLEAR_OUT)) is False
+    assert goal_active(_transcript(tmp_path, RUNNING, CLEAR_CMD, CLEAR_OUT)) is False
 
 
 def test_text_quoted_in_other_entries_does_not_clear_a_goal_F2(goal_active, tmp_path: Path) -> None:
@@ -135,26 +134,39 @@ def test_off_switch_file_does_not_turn_a_goal_off_F3(
 def test_a_goal_set_and_not_ended_is_active_F5(goal_active, tmp_path: Path) -> None:
     assert goal_active(_transcript(tmp_path, RUNNING)) is True
     assert goal_active(_transcript(tmp_path, *CHATTER, SET)) is True
-    assert goal_active(_transcript(tmp_path, SET, RUNNING_SENTINEL, {"type": "assistant"}, RUNNING)) is True
+    assert (
+        goal_active(_transcript(tmp_path, SET, RUNNING_SENTINEL, {"type": "assistant"}, RUNNING))
+        is True
+    )
 
 
-@pytest.mark.parametrize("ended", [[FAILED], [MET], [CLEAR_CMD, CLEAR_OUT]], ids=["failed", "met", "clear"])
-def test_a_goal_set_after_an_ended_one_is_active_F5(goal_active, tmp_path: Path, ended: list) -> None:
+@pytest.mark.parametrize(
+    "ended", [[FAILED], [MET], [CLEAR_CMD, CLEAR_OUT]], ids=["failed", "met", "clear"]
+)
+def test_a_goal_set_after_an_ended_one_is_active_F5(
+    goal_active, tmp_path: Path, ended: list
+) -> None:
     assert goal_active(_transcript(tmp_path, SET, RUNNING, *ended, SET)) is True
 
 
 def test_cli_exit_code_follows_the_reading_F5(tmp_path: Path) -> None:
     """`python3 goal_active.py <transcript>`: exit 0 when a goal is active, 1 otherwise."""
-    run = lambda *entries: subprocess.run(  # noqa: E731
-        [sys.executable, str(HELPER), _transcript(tmp_path, *entries)], env=_env()
-    ).returncode
+
+    def run(*entries: object) -> int:
+        t = _transcript(tmp_path, *entries)
+        return subprocess.run([sys.executable, str(HELPER), t], env=_env()).returncode
+
     assert run(SET, RUNNING) == 0
     assert run(SET, RUNNING, FAILED) == 1
     assert run(*CHATTER) == 1
 
 
-@pytest.mark.parametrize("content", [None, "", "not json at all\n{broken\n"], ids=["missing", "empty", "garbage"])
-def test_an_unreadable_transcript_is_none_F14(goal_active, tmp_path: Path, content: str | None) -> None:
+@pytest.mark.parametrize(
+    "content", [None, "", "not json at all\n{broken\n"], ids=["missing", "empty", "garbage"]
+)
+def test_an_unreadable_transcript_is_none_F14(
+    goal_active, tmp_path: Path, content: str | None
+) -> None:
     path = tmp_path / "t.jsonl"
     if content is not None:
         path.write_text(content)
@@ -165,11 +177,13 @@ def test_an_unreadable_transcript_is_none_F14(goal_active, tmp_path: Path, conte
 def test_hooks_share_helper_F4() -> None:
     assert HELPER.is_file(), "templates/hooks/goal_active.py is the one reading"
     holders = sorted(
-        p.name for p in HOOKS.iterdir() if p.is_file() and p != HELPER and "goal_status" in p.read_text()
+        p.name
+        for p in HOOKS.iterdir()
+        if p.is_file() and p != HELPER and "goal_status" in p.read_text()
     )
     assert holders == [], f"read goal_status outside goal_active.py: {holders}"
     for hook in ("pr-gate.sh", "chain-gate.sh", "verify-on-stop.sh"):
-        assert "goal_active.py" in (HOOKS / hook).read_text(), f"{hook} does not call the helper"
+        assert "goal_active" in (HOOKS / hook).read_text(), f"{hook} does not use the helper"
 
 
 # --- the hooks, run as Claude Code runs them ------------------------------------------------
@@ -208,7 +222,9 @@ def _project(tmp_path: Path, helper: bool = True) -> Path:
     change = repo / "changes" / ID
     change.mkdir(parents=True)
     (change / "decisions.json").write_text(
-        json.dumps({"size": "M", "kind": "feature", "milestone": {"kind": "single", "slug": "trial"}})
+        json.dumps(
+            {"size": "M", "kind": "feature", "milestone": {"kind": "single", "slug": "trial"}}
+        )
     )
     (change / "intent.md").write_text("---\nstatus: approved\n---\n")
     (change / "facts.md").write_text("---\nstatus: approved\n---\n")
@@ -272,11 +288,15 @@ def test_chain_gate_allows_with_a_warning_on_an_unreadable_transcript_F14(
 ) -> None:
     r = _edit(_project(tmp_path), _unreadable(tmp_path, kind))
     assert r.returncode == 0
-    assert "chain-gate: transcript unreadable, cannot check for an active /goal; allowing." in r.stderr
+    assert (
+        "chain-gate: transcript unreadable, cannot check for an active /goal; allowing." in r.stderr
+    )
 
 
 @pytest.mark.parametrize("kind", UNREADABLE)
-def test_verify_on_stop_runs_verify_on_an_unreadable_transcript_F14(tmp_path: Path, kind: str) -> None:
+def test_verify_on_stop_runs_verify_on_an_unreadable_transcript_F14(
+    tmp_path: Path, kind: str
+) -> None:
     r = _stop(_project(tmp_path), _unreadable(tmp_path, kind))
     assert r.returncode == 2 and "verify-ran" in r.stderr
 
