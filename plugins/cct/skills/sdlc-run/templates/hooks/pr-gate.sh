@@ -277,9 +277,10 @@ def segments(text: str) -> list[list[str]]:
     lex.whitespace_split = True
     out: list[list[str]] = [[]]
     target = False  # the token after a bare `>` or `2>>` is a file, not an argument
-    for tok in lex:
-        if target and tok == "&":
-            continue  # `2>&1`: the lexer split the fd duplication at the `&`
+    toks = list(lex)
+    for i, tok in enumerate(toks):
+        if tok == "&" and (target or toks[i + 1 : i + 2] and toks[i + 1].startswith(">")):
+            continue  # `2>&1` and `&>file`: the lexer split a redirect at the `&`
         if tok and set(tok) <= set(";&|"):
             out.append([])
         elif target:
