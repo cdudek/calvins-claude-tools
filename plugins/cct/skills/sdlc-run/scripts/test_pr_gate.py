@@ -508,3 +508,39 @@ def test_a_switch_away_never_hides_the_real_project_branch(repo: Path, cmd: str)
     _git(repo, "checkout", "-q", "project/trial")
     r = _run(repo, cmd)
     assert r.returncode == 2 and "without a passing milestone gate" in r.stderr
+
+
+def test_local_merge_refuses_a_pass_gated_before_the_project_moved_F6(repo: Path) -> None:
+    """Two milestones cut from one project tip: after the first merges, the second's pass is old."""
+    _local(repo)
+    _git(repo, "checkout", "-q", "-b", "milestone/trial-2", "project/trial")
+    _commit(repo, "src/other.ts", "m2\n")
+    _pass(repo)  # the gate passed on M2 against the old project tip
+    _git(repo, "checkout", "-q", "milestone/trial-1")
+    _commit(repo, "src/m1.ts", "m1\n")
+    _git(repo, "checkout", "-q", "project/trial")
+    _git(repo, "merge", "-q", "--no-ff", "-m", "m1", "milestone/trial-1")
+    r = _run(repo, "git merge --no-ff milestone/trial-2")
+    assert r.returncode == 2 and "project/trial" in r.stderr and "older" in r.stderr
+    _git(repo, "checkout", "-q", "milestone/trial-2")
+    _git(repo, "merge", "-q", "project/trial")  # parent-sync, then gate again
+    _pass(repo)
+    _git(repo, "checkout", "-q", "project/trial")
+    assert _run(repo, "git merge --no-ff milestone/trial-2").returncode == 0
+
+
+def test_local_merge_refuses_another_projects_branch_F6(repo: Path) -> None:
+    _local(repo)
+    _pass(repo)
+    _git(repo, "branch", "project/other", "milestone/trial-1")
+    _git(repo, "checkout", "-q", "project/other")
+    r = _run(repo, "git merge --no-ff milestone/trial-1")
+    assert r.returncode == 2 and "belongs to project/trial" in r.stderr
+
+
+def test_a_pass_counts_after_a_year_month_archive_move_F10(repo: Path) -> None:
+    _pass(repo)
+    (repo / "changes" / "archive" / "2026" / "2026-11").mkdir(parents=True)
+    _git(repo, "mv", f"changes/{ID}", f"changes/archive/2026/2026-11/{ID}")
+    _git(repo, "commit", "-qm", "archive")
+    assert _run(repo, "git push -u origin milestone/trial-1").returncode == 0
