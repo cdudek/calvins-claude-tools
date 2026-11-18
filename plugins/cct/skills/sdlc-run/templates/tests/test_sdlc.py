@@ -319,6 +319,10 @@ def test_v3_approved_plan_has_spec_guardrails(change: Path, archived: bool) -> N
     assert decisions.get("size") in V3_SIZES, f"{change.name}: size"
     assert decisions.get("kind") in V3_KINDS, f"{change.name}: kind"
     skips = decisions.get("skips", {})
+    # spec/readiness.md; spec/validation.md only for a folder written before the rename
+    verdict_file = change / "spec" / "readiness.md"
+    if not verdict_file.exists() and (change / "spec" / "validation.md").exists():
+        verdict_file = change / "spec" / "validation.md"
     files = {
         "brief": change / "spec" / "brief.md",
         "ia": change / "spec" / "ia.md",
@@ -326,13 +330,13 @@ def test_v3_approved_plan_has_spec_guardrails(change: Path, archived: bool) -> N
         "screens": change / "spec" / "screens.md",
         "prototype": change / "spec" / "prototype" / "index.md",
         "conformance": change / "spec" / "conformance.md",
-        "validation": change / "spec" / "readiness.md",
+        "validation": verdict_file,
     }
     for activity in V3_ACTIVITIES:
         skipped = str(skips.get(activity, "")).startswith("skip")
         assert skipped or files[activity].exists(), f"{change.name}: {activity}"
     if not str(skips.get("validation", "")).startswith("skip"):
-        fm = _frontmatter(change / "spec" / "readiness.md")
+        fm = _frontmatter(verdict_file)
         assert fm.get("verdict") == "ready" and fm.get("status") == "approved"
     _assert_change_resources_stay_in_repo(REPO_ROOT, change)
     # A recorded intent skip means there is no intent.md to read, and the check above has
