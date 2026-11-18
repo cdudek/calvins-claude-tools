@@ -4,9 +4,9 @@ type: facts
 change: 2026-11-18-gate-loops
 design: none
 author: Claude for Calvin Dudek
-status: draft
-reviewed_by: null
-approved_at: null
+status: approved
+reviewed_by: Calvin Dudek
+approved_at: 2026-11-18
 created: 2026-11-18
 ---
 
