@@ -176,3 +176,8 @@ def test_stage_6_lists_the_assessment_once_and_lets_it_dispatch_the_specialists(
     assert stage6.count("cct:ux-assessment-run") == 1
     assert "Also run `cct:ux-assessment-run`" not in stage6
     assert "dispatches the responsive, accessibility and build QA passes" in stage6
+
+
+def test_the_quote_rule_is_one_message_of_at_least_eight_words_naming_the_item() -> None:
+    assert "at least eight words" in STEP4 and "names the item id" in STEP4
+    assert "SDLC_TRANSCRIPT" not in CONVERGENCE

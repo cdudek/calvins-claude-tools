@@ -226,7 +226,8 @@ def approval_blockers(change: Path) -> list[str]:
 
 
 SETTLED = ("accepted", "deferred")  # `fixed` is the ticked box; `blocked` is terminal
-REASON_WORDS = 3  # a reason, and the owner's quote, are a few words, not one
+REASON_WORDS = 3  # a reason is a few words, not one
+QUOTE_WORDS = 8  # a generic "ok go on" never settles a finding
 
 
 def item_id(item: str) -> str:
@@ -236,21 +237,26 @@ def item_id(item: str) -> str:
     return m.group(1) if m else ""
 
 
-def owner_words(repo: Path) -> str:
-    """What the engineer said in the session, whitespace-normalised: the text of user messages
-    only (never an assistant message, a tool result or a subagent's). The transcript is
-    SDLC_TRANSCRIPT (a file or a folder of .jsonl), else Claude Code's folder for this repo; none
-    readable is "", so nothing settles."""
-    env = os.environ.get("SDLC_TRANSCRIPT")
-    base = (
-        Path(env)
-        if env
-        else Path.home() / ".claude/projects" / re.sub(r"[^A-Za-z0-9]", "-", str(repo.resolve()))
-    )
-    files = [base] if base.is_file() else sorted(base.glob("*.jsonl")) if base.is_dir() else []
+# Text Claude Code or a hook injects into a user turn; never the engineer's own words.
+NOT_OWNER = (
+    "<system-reminder", "<task-notification", "<local-command", "<command-name",
+    "<command-message", "<command-args", "[Image", "[Pasted",
+)  # fmt: skip
+
+
+def owner_messages(repo: Path) -> list[str]:
+    """The engineer's genuine messages in this session, one string each, whitespace-normalised.
+    Only `~/.claude/projects/<repo slug>/*.jsonl` is read (never a path a caller names, and a
+    symlink out of it is skipped). A message counts only if it is a user turn that is not
+    sidechain or meta, holds plain text only (a tool result or attachment block drops it), and
+    carries none of the NOT_OWNER wrappers. None readable gives [], so nothing settles."""
+    base = Path.home() / ".claude/projects" / re.sub(r"[^A-Za-z0-9]", "-", str(repo.resolve()))
+    root = base.resolve()
     said: list[str] = []
-    for path in files:
+    for path in sorted(base.glob("*.jsonl")) if base.is_dir() else []:
         try:
+            if not path.resolve().is_relative_to(root):
+                continue
             lines = path.read_text(encoding="utf-8").splitlines()
         except (OSError, ValueError):
             continue
@@ -263,19 +269,19 @@ def owner_words(repo: Path) -> str:
                 not isinstance(entry, dict)
                 or entry.get("type") != "user"
                 or entry.get("isSidechain")
+                or entry.get("isMeta")
+                or "toolUseResult" in entry
             ):
                 continue
             message = entry.get("message")
             content = message.get("content") if isinstance(message, dict) else None
             if isinstance(content, list):
-                content = " ".join(
-                    b.get("text", "")
-                    for b in content
-                    if isinstance(b, dict) and b.get("type") == "text"
-                )
-            if isinstance(content, str):
-                said.append(content)
-    return " ".join(" ".join(said).split())
+                if any(not (isinstance(b, dict) and b.get("type") == "text") for b in content):
+                    continue
+                content = " ".join(b.get("text", "") for b in content)
+            if isinstance(content, str) and not any(w in content for w in NOT_OWNER):
+                said.append(" ".join(content.split()))
+    return said
 
 
 def placeholder(cell: str) -> bool:
@@ -283,10 +289,11 @@ def placeholder(cell: str) -> bool:
     return not cell or cell[0] == "<"
 
 
-def dispositions(findings: str, said: str) -> dict[str, str]:
+def dispositions(findings: str, said: list[str]) -> dict[str, str]:
     """item id -> kind from `## Dispositions` rows `| item | disposition | owner | reason | quote |`.
-    accepted and deferred count only with a real owner, a reason of a few words and a quote the
-    engineer said in the session (`said`); blocked needs none. An id with two rows, or any row
+    accepted and deferred count only with a real owner, a reason of a few words and a quote of at
+    least QUOTE_WORDS words that sits inside ONE message of the engineer's (`said`) which also
+    names the item id; blocked needs none. An id with two rows, or any row
     that fails, settles nothing."""
     rows: dict[str, list[str]] = {}
     for row in table_rows(section(findings, "Dispositions"))[1:]:
@@ -304,8 +311,11 @@ def dispositions(findings: str, said: str) -> dict[str, str]:
             kind in SETTLED
             and not any(placeholder(c) for c in (owner, reason, quote))
             and len(reason.split()) >= REASON_WORDS
-            and len(quote.split()) >= REASON_WORDS
-            and " ".join(quote.split()).lower() in said.lower()
+            and len(quote.split()) >= QUOTE_WORDS
+            and any(
+                " ".join(quote.split()).lower() in m.lower() and re.search(rf"\b{key}\b", m)
+                for m in said
+            )
         ):
             out[key] = kind
     return out
@@ -321,7 +331,7 @@ def milestone_blockers(change: Path) -> tuple[str, list[str]] | None:
     advisory = section(findings, "Advisory")
     open_items = re.findall(r"^\s*[-*] \[ \] (.*)$", findings.replace(advisory, ""), re.M)
     ids = [item_id(i) for i in open_items]
-    settled = dispositions(findings, owner_words(Path.cwd()))
+    settled = dispositions(findings, owner_messages(Path.cwd()))
     # a row binds to exactly one open item: an id shared by two open items settles neither
     bound = {k: v for k, v in settled.items() if ids.count(k) == 1}
     blocked = [i for i, k in zip(open_items, ids) if k and bound.get(k) == "blocked"]
