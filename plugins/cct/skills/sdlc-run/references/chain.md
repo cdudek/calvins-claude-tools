@@ -72,6 +72,7 @@ Two words used to collide, so they are fixed here: the playbook's `spec.md` is o
 | `size` | `none`, `S`, `M` or `L`. Its presence marks a v3 folder. |
 | `kind` | `feature`, `bug`, `refactor`, `docs` or `chore`. |
 | `skips` | activity id to `skip -- <reason>`. Ids: `brief`, `ia`, `interaction`, `screens`, `prototype`, `conformance`, `validation`. |
+| `visualSource` | `{"kind": "export-bundle", "canvas", "figma" or "image", "path"}`: the one design the build is checked against; every other input is a reference. Optional, omitted or `"none"` when the change has no interface. See `design-inputs.md`. |
 | `testLocked` | only for bugs. Set true after the failing test is committed. |
 | `testEdit` | user words that allow a locked test edit. |
 | `milestone` | `{"kind": "new"\|"existing"\|"single"\|"hotfix", "slug"}`. Its presence marks a folder on the milestone process. |

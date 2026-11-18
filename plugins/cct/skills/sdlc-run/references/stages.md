@@ -87,6 +87,9 @@ Worktree lifecycle commands follow the [shared worktree policy](../../../referen
      (`true` only on the engineer's words; a project written before 3.7.0 has no `branch` key
      and keeps its branch). `design` is
      the design file's path or `"none"`. The `milestone` key marks a folder on this process.
+     Also write `"visualSource": {"kind", "path"}`, the one design the build is checked against
+     (omit it or write `"none"` when the change has no interface); every other input is a
+     reference. Kinds, precedence and the challenge rule: [design-inputs](design-inputs.md).
 - **Failure modes:** asking before searching the tracker; deciding a fork yourself; opening a
   project branch nobody asked for, which holds finished milestones back from the default branch.
 
@@ -136,7 +139,9 @@ Worktree lifecycle commands follow the [shared worktree policy](../../../referen
      `session.md`, `img/`, and any PDF or zip. Never re-encode the images.
      Run `python3 scripts/marks.py init <id>`. Every numbered note becomes an `A<n>`, quoting
      the owner's words with its mark id. Every ask still lands in a fact or `## Out of scope`.
-  3. The same command inventories reference images in `asks/` and `spec/prototype/`.
+  3. The same command inventories reference images in `asks/` and `spec/prototype/`, and an
+     export bundle (a folder with `index.html`) as one input to render
+     ([design-inputs](design-inputs.md)).
      Rerun it when sources arrive; keep filled rows and resolve reported orphans.
 - **Failure modes:** a dropped or paraphrased ask; a link to `/Users/`, `~/` or `file://`.
 

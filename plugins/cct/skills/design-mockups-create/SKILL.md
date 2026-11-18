@@ -19,7 +19,7 @@ Codex generates the images from the design system and reference screenshots, and
 
 The owner decided (2026-10-06): mockups are **generated images**, made with Codex's
 `image_generation` tool (`codex features list` shows it on). Not Codex-written HTML rendered
-to PNG, not screens built from product code, not Figma, not low-fi.
+to PNG, not screens built from product code, not Figma, not low-fi (this bans mockups the agent makes, not designs the team supplies).
 
 What keeps an image inside the system is what goes in:
 

@@ -346,3 +346,60 @@ def test_table_renders_literal_words_paths_and_acceptance(repo: Path) -> None:
     assert "&lt;toolbar&gt;" in result.stdout
     assert "accepted: Ship the gap" in result.stdout
     assert "docs/designs/choice" in result.stdout and "verify/shots/fresh" in result.stdout
+
+
+def bundle(repo: Path) -> Path:
+    folder = change(repo) / "asks/2026-11-01-export"
+    write(folder / "index.html", "<html>screen</html>")
+    write(folder / "assets/logo.png")
+    return folder
+
+
+def test_export_bundle_is_one_input_and_its_files_are_not_references(repo: Path) -> None:
+    bundle(repo)
+    assert run(repo, "init").returncode == 0
+    by_id = {row["id"]: row for row in rows(repo)}
+    row = by_id["bundle:asks/2026-11-01-export"]
+    assert row["kind"] == "bundle" and len(row["hash"]) == 64 and row["rendered"] == ""
+    assert not any("logo.png" in rid for rid in by_id)
+
+
+def test_bundle_needs_rendering_until_images_exist_and_stays_pinned(repo: Path) -> None:
+    resolved(repo)  # the sample rows pass; the bundle is not in marks.json yet
+    folder = bundle(repo)
+    assert run(repo, "init").returncode == 0
+    result = run(repo, "check")
+    assert (
+        result.returncode == 1 and "bundle:asks/2026-11-01-export: needs rendering" in result.stdout
+    )
+    write(change(repo) / "asks/2026-11-01-export-render/home.png")
+    run(repo, "init")
+    data = rows(repo)
+    for row in data:
+        if row["kind"] == "bundle":
+            row["rendered"] = "asks/2026-11-01-export-render"
+        elif row["kind"] == "reference":
+            row.update(expected="Home matches.", shot="verify/shots/fresh.png", status="match")
+    save(repo, data)
+    assert run(repo, "check").returncode == 0, run(repo, "check").stdout
+    write(folder / "index.html", "<html>edited</html>")
+    result = run(repo, "check")
+    assert result.returncode == 1 and "source fields differ" in result.stdout
+
+
+def test_bundle_render_folder_must_hold_an_image_under_asks(repo: Path) -> None:
+    bundle(repo)
+    run(repo, "init")
+    data = rows(repo)
+    (change(repo) / "empty").mkdir()
+    for row in data:
+        if row["kind"] == "bundle":
+            row["rendered"] = "empty"
+    save(repo, data)
+    assert "rendered must be a folder under asks/" in run(repo, "check").stdout
+
+
+def test_table_reports_bundle_as_needs_rendering(repo: Path) -> None:
+    bundle(repo)
+    run(repo, "init")
+    assert "needs rendering" in run(repo, "table").stdout

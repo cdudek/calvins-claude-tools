@@ -5,6 +5,15 @@ version warning, the **Mechanical** lines are what `adopt` does for you (it adds
 with the stack's defaults and never overwrites a value), the **Manual** lines are printed for
 the engineer. A version with no migration lines needs nothing but a re-run of `adopt`.
 
+## 3.19.0 — one visual source of truth, clear rules for each kind of design input
+
+- **Stage 1 records one visual source of truth.** `decisions.json` gets an optional `visualSource` (`kind` and `path`); a change with no interface leaves it out. Every other input is a reference.
+- **New `references/design-inputs.md`.** A table for each kind of input (export bundle, design-tool canvas, Figma file, image only, annotated screenshot, generated mockup): where it is stored, what is extracted, which checks apply. It also states what wins when inputs disagree (the owner's words and decisions, the declared source, the spec, the design system, then images) and the challenge rule: quote both sides, say what it means for the user, recommend one; ask outside a goal run, take the safer option and list it for review inside one.
+- **The prototype ban is scoped.** The "no HTML, no Figma" rules in `ux-design-run` and `design-mockups-create` now say they cover prototypes the agent makes, not designs the team supplies.
+- **`marks.py` sees export bundles.** A folder under `asks/` with an `index.html` is one input (kind `bundle`) with the hash of its files; a changed hash fails the check. It shows as "needs rendering" and fails until its screens are rendered to images in a folder under asks/ and the row's `rendered` names that folder; the images then become reference rows.
+- Mechanical: re-running `adopt` refreshes `scripts/marks.py`. Nothing is written to `sdlc.json`.
+- Manual: none. A change with an export bundle renders it once and sets `rendered`.
+
 ## 3.18.0 — fast hooks, cheapest-first gates, local milestones, one build-validation name
 
 - **The build comparison is `cct:ux-build-validate`.** Six places (the sdlc-run stages, chain, playbook and Stage 6 row, the design-mockups skill, `ux-run`, the dispatch reference) called a "build mode" of `cct:ux-spec-validate` that never existed. They name the skill that writes `qa.md` now, and a test fails if the old phrase comes back.
