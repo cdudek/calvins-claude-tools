@@ -382,7 +382,8 @@ while a dependency PR's CI ran. Four rules, for every stack.
   does depend, merge the PR's branch into the milestone branch locally
   (`git merge origin/<dependency-branch>`) and build on top; that PR merges when its CI is green.
   When it has merged, the next sync row merges the parent, which already holds those commits.
-- **Never idle on CI.** After the milestone push: arm auto-merge (`gh pr merge <n> --merge --auto`), watch
+- **Never idle on CI.** After the milestone push and after the owner and visual dispositions are
+  recorded (see Stage 6 step 6): arm auto-merge (`gh pr merge <n> --merge --auto`), watch
   the PR in the background (`gh pr checks <n> --watch` as a background command, or `Monitor`),
   and start the next independent row at once. The supervisor watches, not the builder; a
   builder returns when it has pushed. A red check interrupts: dispatch a builder to the PR's
@@ -576,8 +577,11 @@ person's own browser session. Never use Claude in Chrome or any tool driving tha
    once. A red CI check: read the exact failed job/test and reason, reproduce locally,
    fix and rerun that test plus the directly affected suite until green, then the full local
    gate once and one batched push. Never rerun the pipeline or push a speculative fix.
-   Into a project it is an interior PR:
-   no tier, auto-merge armed on green. Into the default branch the tier
+   **Arm only after** every required disposition is recorded: the owner's acceptance or Hold
+   when the dialog below applies, and the owner or visual disposition of each residual finding
+   (`## Dispositions`). Status never recommends arming a PR that is waiting on one: never arm an
+   `ask`-labelled or a closed PR. Into a project it is an interior PR:
+   no tier, auto-merge armed on green once those are recorded. Into the default branch the tier
    decides. **The engineer accepts the milestone** in one `AskUserQuestion`: "Accept
    (Recommended)" with the one-line reason, or "Hold" with what is left. One go: no dialog;
    auto-merge is armed on green and the engineer reads `validation.md` in the PR. The dialog

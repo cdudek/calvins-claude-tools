@@ -106,3 +106,12 @@ def test_no_text_still_says_three_fix_rounds() -> None:
     assert "up to three fix rounds" not in BUILD
     assert "two or three rounds" not in BUILD
     assert "two fix rounds per screen per design-system release" in CONVERGENCE.lower()
+
+
+# 6. Auto-merge only after the owner or visual disposition
+def test_nothing_is_armed_before_the_required_disposition() -> None:
+    assert "Arm only after" in STAGES
+    assert "never arm an `ask`-labelled or a closed PR" in STAGES
+    assert "never arm an `ask`-labelled or a closed PR" in SKILL_MD
+    before_push = STAGES.split("**Never idle on CI.**", 1)[1].split("Agents run", 1)[0]
+    assert "after the owner and visual dispositions" in before_push

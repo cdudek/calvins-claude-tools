@@ -170,8 +170,9 @@ before any check or push: it owns local iteration, failures and the final full c
   review. What the round leaves gets a row under `## Dispositions` (accepted or deferred by a named
   owner with a reason, or blocked). Keep building the next milestone where it does not depend on this one.
 - **Publish:** only on `VERIFY PASS milestone {{CHANGE}} <sha>` with `<sha>` equal to the local
-  head: one push, one PR `milestone/<slug>-<n>` to its parent, auto-merge armed with a merge
-  commit (`gh pr merge <n> --merge --auto`). Ask first when a Critical or High is deferred. A
+  head: one push, one PR `milestone/<slug>-<n>` to its parent, then auto-merge with a merge
+  commit (`gh pr merge <n> --merge --auto`) only after the owner and visual dispositions are
+  recorded (never on an `ask`-labelled or a closed PR). Ask first when a Critical or High is deferred. A
   milestone that needs another opens its PR after that one merges. In local mode with a project
   branch there is no push and no PR: after the pass, `git switch project/<slug> && git merge
   --no-ff milestone/<slug>-<n>`; the project's one push and PR come at its close (Stage 6p).

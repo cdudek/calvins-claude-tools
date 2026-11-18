@@ -235,7 +235,7 @@ the one fix round and `verify_gate.py milestone`, the only runner of the full su
 E2E at the close, while the supervisor dispatches the reviews and the validation. With
 `builders: "codex"` the close builder implements nothing: the fix parts go to `codex-build.sh`,
 then the close builder runs the gate once. Only its
-`VERIFY PASS` head is pushed, once, with one PR and auto-merge armed, while the supervisor builds
+`VERIFY PASS` head is pushed, once, with one PR; auto-merge is armed only after the owner and visual dispositions are recorded (never arm an `ask`-labelled or a closed PR), while the supervisor builds
 the next independent milestone (at most 4 builders). CI is the last check, never the test loop:
 a red check uses the exact-test local failure loop in `references/local-first.md`, then the full suite once and one batched push. Another repository follows
 the same rule on its own milestone branch; an exception needs the engineer's words in
