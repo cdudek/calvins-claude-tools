@@ -313,7 +313,7 @@ for seg in parts:
         rest, here = seg[1:], where
         while rest and rest[0] in ("-C", "-c"):
             if rest[0] == "-C" and len(rest) > 1:
-                here = (where / os.path.expanduser(rest[1])).resolve()
+                here = (here / os.path.expanduser(rest[1])).resolve()
             rest = rest[2:]
         if rest and rest[0] == "push":
             check_push(Repo(here), rest[1:])
