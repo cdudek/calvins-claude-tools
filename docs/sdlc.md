@@ -95,7 +95,7 @@ from the change folder's files.
 | `PostToolUse Edit\|Write` | `lint-on-edit.sh` | runs matching file-scoped lint/format command |
 | `Stop` | `verify-on-stop.sh` | runs `python3 -m unittest discover -s tests` (falling back to `verify`) only when the turn changed source and that state was not verified before |
 
-Set `SDLC_GOAL_OFF=1` in the environment Claude starts with (`SDLC_GOAL_OFF=1 claude`) and no hook treats a goal as running. An agent's Bash `export` never reaches a hook, and there is no file switch.
+Set `SDLC_GOAL_OFF=1` in the environment Claude starts with (`SDLC_GOAL_OFF=1 claude`) and no hook treats a goal as running. An agent's Bash `export` never reaches a hook, and there is no file switch. With it set, chain-gate also allows milestone build edits without a goal.
 
 ## Build and test
 

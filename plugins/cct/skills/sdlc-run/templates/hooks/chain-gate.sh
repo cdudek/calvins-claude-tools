@@ -371,7 +371,7 @@ if is_milestone(decisions):
     active = goal_active(transcript)
     if active is None:
         print("chain-gate: transcript unreadable, cannot check for an active /goal; allowing.", file=sys.stderr)
-    elif not active:
+    elif not active and os.environ.get("SDLC_GOAL_OFF") != "1":  # the off switch lets build edits through
         deny(
             "building happens inside /goal. Start it with the condition in "
             f"{changes}/{change_id}/plan.md ## Goal handover, then edit again.",
