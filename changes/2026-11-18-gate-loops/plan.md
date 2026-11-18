@@ -55,7 +55,7 @@ none — no design file covers the hooks. `docs/sdlc.md` (template `templates/do
 | # | Feature | Facts | Branch | State |
 |---|---|---|---|---|
 | 0 | sync: `git fetch origin && git merge origin/main` | — | `milestone/gate-loops-1` | todo |
-| 1 | Shared goal helper; `pr-gate.sh`, `chain-gate.sh`, `verify-on-stop.sh` call it; `adopt` copies it | F1–F5 | `milestone/gate-loops-1` | todo |
+| 1 | Shared goal helper; `pr-gate.sh`, `chain-gate.sh`, `verify-on-stop.sh` call it; `adopt` copies it | F1–F5, F14, F15 | `milestone/gate-loops-1` | todo |
 | 2 | `pr-gate.sh`: redirects are not refspecs, goal scoped to the session repo, session-repo `prExceptions` | F6–F8 | `milestone/gate-loops-1` | todo |
 | 3 | Block state and the repeat stop in `pr-gate.sh`, `chain-gate.sh`, `gate-bash.sh`; `adopt` copies it | F9–F13, N1 | `milestone/gate-loops-1` | todo |
 | 4 | Release: changelog 3.16.0, plugin 0.13.0, docs off switch, `adopt` refresh of `.claude/hooks/` | all | `milestone/gate-loops-1` | todo |
@@ -72,7 +72,8 @@ Features 1 and 2 both edit `pr-gate.sh`; 3 edits the same hooks. Build them in o
 | `plugins/cct/skills/sdlc-run/templates/hooks/chain-gate.sh` | helper, block state |
 | `plugins/cct/skills/sdlc-run/templates/hooks/gate-bash.sh` | block state |
 | `plugins/cct/skills/sdlc-run/templates/hooks/verify-on-stop.sh` | helper |
-| `plugins/cct/skills/sdlc-run/scripts/adopt.py` | copy `*.py` from `templates/hooks/` too |
+| `plugins/cct/skills/sdlc-run/scripts/adopt.py` | copy `*.py` from `templates/hooks/` too, and let the repo's ignore rules keep them |
+| `plugins/cct/skills/sdlc-run/SKILL.md` | `version: 3.16.0` |
 | `plugins/cct/skills/sdlc-run/scripts/test_goal_active.py` | new |
 | `plugins/cct/skills/sdlc-run/scripts/test_block_repeat.py` | new |
 | `plugins/cct/skills/sdlc-run/scripts/test_pr_gate.py`, `test_chain_gate.py`, `test_gate_bash.py`, `test_adopt.py` | updated for the above |
@@ -85,7 +86,7 @@ Features 1 and 2 both edit `pr-gate.sh`; 3 edits the same hooks. Build them in o
 ## Order of work
 
 - [ ] 0. Sync — proof: `git merge-base --is-ancestor origin/main HEAD` exits 0.
-- [ ] 1. Goal helper — proof: `test_goal_active.py` F1–F5 pass; `grep -l goal_status templates/hooks/*.sh` prints nothing.
+- [ ] 1. Goal helper — proof: `test_goal_active.py` F1–F5, F14, F15 pass; `grep -l goal_status templates/hooks/*.sh` prints nothing.
 - [ ] 2. pr-gate fixes — proof: `test_pr_gate.py` F6–F8 pass.
 - [ ] 3. Block state — proof: `test_block_repeat.py` F9–F13 and N1 pass.
 - [ ] 4. Release — proof: `python3 -m unittest discover -s tests && scripts/run-plugin-tests.sh` exits 0; `adopt` leaves no diff on a second run.
@@ -94,15 +95,15 @@ Features 1 and 2 both edit `pr-gate.sh`; 3 edits the same hooks. Build them in o
 
 | Milestone | Features | needs |
 |-----------|----------|-------|
-| M1 gate-loops | F1–F13, N1 | none |
+| M1 gate-loops | F1–F15, N1 | none |
 
 ## Risks
 
 | Risk | What we do | Where it lands |
 |------|------------|----------------|
 | The transcript shapes for a failed goal and `/goal clear` are undocumented and may change | pin each shape in a fixture; an unreadable transcript keeps today's fail-open warning | step 1, `test_goal_active.py` |
-| The off switch lets an agent skip the gate on its own | the repeat message offers it as an owner command only; `gate-bash.sh` blocks an agent `touch …sdlc-goal-off` | step 3, `test_block_repeat.py` |
-| A hook gets slower | block state is one append and one read of a small file; `test_hook_spawns` limit stays | step 3 |
+| The off switch lets an agent skip the gate on its own | env only, read from the environment Claude starts with; no file the agent can write | step 1, F3 |
+| A hook gets slower | block state is one append and one read of a small file; each hook stays under its 5 s timeout | step 3 |
 | The seed's names leak into cct | builders get the ideas in the context pack, never the seed's paths; `tests/test_plugin.py` greps | step 4 |
 
 ## Out of scope
@@ -114,7 +115,7 @@ Features 1 and 2 both edit `pr-gate.sh`; 3 edits the same hooks. Build them in o
 
 - `python3 scripts/verify_gate.py milestone 2026-11-18-gate-loops` ends `VERIFY PASS` once, on the milestone.
 - `plugins/cct/skills/sdlc-run/templates/hooks/goal_active.py` and `block_state.py` exist.
-- F1 to F13 and N1 pass by their named tests.
+- F1 to F15 and N1 pass by their named tests.
 - Nothing outside `## Files that change` is edited.
 - Stop and report as soon as a step cannot proceed. Never work around a blocker.
 - Stop after 150 turns if not met. Report what is missing.
@@ -130,6 +131,7 @@ before any check or push.
 - **Sync:** row 0 is a local `git fetch origin && git merge origin/main`. Repeat it right before the close. Never a PR.
 - **Features:** in order 1 to 4, never in parallel (they share files). Write the tests for the feature's facts first, then build in the folders of `## Where things go`, commit with a Conventional Commit subject. Between features run the touched tests only, then start the next feature at once.
 - **Builders:** each feature goes to one `cct:sdlc-feature-builder` (sonnet, high). Its context pack holds the facts, plan rows, cited rules and, for 1 and 2, the seed idea. Dispatch with isolation `worktree` and `Base: <milestone head sha>`; merge back one at a time.
+- **Tests found:** `scripts/run-plugin-tests.sh` runs every `test_*.py` under `plugins/cct/skills`, so new tests need no wiring.
 - **Bug lock:** after feature 1's failing tests are committed, set `testLocked: true` in `decisions.json` (`docs/sdlc.md`, bugs).
 - **Records:** findings, validation, gate output and every fix are commits on the milestone branch. No other PR or push.
 - **Questions:** never stop the build; write them to `questions.md` with the default taken.

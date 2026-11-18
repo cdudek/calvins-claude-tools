@@ -107,6 +107,22 @@
       ]
     },
     {
+      "id": "F14",
+      "tag": "@F14",
+      "screen": "none",
+      "states": [
+        "transcript unreadable"
+      ]
+    },
+    {
+      "id": "F15",
+      "tag": "@F15",
+      "screen": "none",
+      "states": [
+        "helper missing"
+      ]
+    },
+    {
       "id": "N1",
       "tag": "@N1",
       "screen": "none",
