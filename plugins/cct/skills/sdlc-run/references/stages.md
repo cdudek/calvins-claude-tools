@@ -174,6 +174,10 @@ Skipped for size `none` and for `sdlc.json` `ux: off`, with one printed line.
      `plan.md` (a fix in the spec now, or a Risk row), and the run continues.
   6. Prototype images only when the plan marks the UI risky (a new pattern, a dense screen, a
      flow nobody has drawn): `cct:design-mockups-create spec <change>`. Otherwise none.
+  7. A UI change over about 20 screens adds a design-system component audit first: every reference
+     screen's parts against the design system, one release with all the gaps, then freeze it. A
+     screen done in the app that waits only on the design system gets the status
+     `waits-on-design-system`, which is not a failure ([convergence](convergence.md)).
 - **Output:** `spec/*`. **Gate:** none.
 - **Failure modes:** a validation loop (the old process's cost), images drawn by default.
 
@@ -478,7 +482,8 @@ person's own browser session. Never use Claude in Chrome or any tool driving tha
    and line-format rules in `../../test-e2e-policy/references/suite-speed-and-reliability.md`
    section G. Send inconsistent results to `test-flake-fix`. Also run `cct:ux-assessment-run` only
    when the change adds a screen,
-   `cct:ux-build-validate`, the `cct:test-behavior-verifier` and `cct:review-criteria-auditor` agents for job
+   `cct:ux-build-validate` (six layers, one frozen defect list per screen, two fix rounds, capture
+   from one pinned commit: [convergence](convergence.md)), the `cct:test-behavior-verifier` and `cct:review-criteria-auditor` agents for job
    stories and facts. `cct:review-security-run` runs only on the goal's last milestone, on the whole
    goal diff (`git diff origin/<defaultBranch>...milestone/<slug>-<last>`), and only when auth, money or
    consent is touched anywhere in it; in a project it waits for Stage 6p. Never on earlier milestones.

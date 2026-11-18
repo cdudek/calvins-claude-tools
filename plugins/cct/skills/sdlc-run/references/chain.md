@@ -140,7 +140,9 @@ is a repo-relative ADR path under `designsDir` (default `docs/designs`), or null
 Fill `expected` with one sentence describing what must now be visible after that decision,
 `shot` with a fresh headless screenshot, `status`, and `differs` with what still differs.
 Notes use `fixed`, `partly`, `not-fixed`, `contradicted`, `ruled-out` or `cant-see`;
-references use `match` or `differs`. `fixed` and `match` must have no `differs`.
+references use `match`, `differs` or `waits-on-design-system` (done in the app, only a
+design-system part is missing; `differs` names it, no accepted words needed, not a failure).
+`fixed` and `match` must have no `differs`.
 Only `ruled-out` omits `expected` and `shot`, and it requires an existing ADR.
 Every other decision also requires an existing file under `designsDir`.
 Non-fixed or unset statuses block unless `accepted` quotes the engineer's acceptance;

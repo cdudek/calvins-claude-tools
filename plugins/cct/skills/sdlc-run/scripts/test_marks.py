@@ -273,6 +273,19 @@ def test_reference_status_rules(repo: Path) -> None:
         assert "invalid status" in run(repo, "check").stdout
 
 
+def test_waits_on_design_system_is_not_a_failure_but_names_the_gap(repo: Path) -> None:
+    write(change(repo) / "asks/reference.png")
+    data = resolved(repo)
+    row = data[-1]
+    row["status"] = "waits-on-design-system"
+    row["differs"] = ""
+    save(repo, data)
+    assert "must name the missing design-system parts" in run(repo, "check").stdout
+    row["differs"] = "Date range picker is not in the design system yet."
+    save(repo, data)
+    assert run(repo, "check").returncode == 0
+
+
 def test_decisions_and_ruled_out_pass_with_an_adr(repo: Path) -> None:
     data = resolved(repo)
     write(repo / "docs/designs/choice.md", "# Decision\n")

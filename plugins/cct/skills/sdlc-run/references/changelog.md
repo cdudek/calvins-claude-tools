@@ -5,6 +5,18 @@ version warning, the **Mechanical** lines are what `adopt` does for you (it adds
 with the stack's defaults and never overwrites a value), the **Manual** lines are printed for
 the engineer. A version with no migration lines needs nothing but a re-run of `adopt`.
 
+## 3.20.0 — UI review rounds that end
+
+- **Six layers with written tolerances.** A screen passes on structure, copy, tokens, geometry, rules and access, and review. The defaults are in `ux-build-validate` (the Measurements table gains a tolerance column) and the shared visual pass. A repo may tighten them, never loosen them without a decision record.
+- **A pixel diff is advisory only**, because sample data in designs is meant to differ.
+- **Severity for visual defects.** High blocks a task or fails contrast, Medium is noticed at a glance, Low is only visible when measuring and does not fail. These are the existing levels (P1, P2, P3) with examples, not a new scale; the build gate already failed only on P0 to P2.
+- **One frozen defect list per screen and a budget.** Later reviews tick items off and add only High items or regressions. After two fix rounds per screen per design-system release, the owner gets a side-by-side list to accept or send back.
+- **Design-system audit for big UI changes.** Over about 20 screens, stage 2 audits every reference screen against the design system, ships one release with all gaps, then freezes it. `marks.py` has a new reference status, `waits-on-design-system`, for a screen done in the app that waits only on the design system; it is not a failure.
+- **Capture from one pinned commit.** Visual evidence comes from one build per milestone version, from a worktree pinned to one commit, never the live milestone branch. Each screen is captured in one batch, twice.
+- New `references/convergence.md` holds the detail.
+- Mechanical: re-running `adopt` refreshes `scripts/marks.py`. Nothing is written to `sdlc.json`.
+- Manual: none.
+
 ## 3.19.0 — one visual source of truth, clear rules for each kind of design input
 
 - **Stage 1 records one visual source of truth.** `decisions.json` gets an optional `visualSource` (`kind` and `path`); a change with no interface leaves it out. Every other input is a reference.
