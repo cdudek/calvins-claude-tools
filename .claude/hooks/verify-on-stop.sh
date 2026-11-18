@@ -19,6 +19,7 @@
 set -uo pipefail
 set -f # verifyDirty globs go to git as patterns, never expanded against cwd
 . "$(dirname "$0")/sdlc-config.sh"
+: "${SDLC_PY:=python3}" # an older sdlc-config.sh (one-file upgrade) does not set it
 
 # One interpreter start for the whole hot path: the payload and sdlc.json are read together and
 # come back as NUL-separated fields -- stop_hook_active, transcript_path, verify, verifyDirty globs.

@@ -1,19 +1,50 @@
 """The verify contract of the SDLC chain: one command, one last line.
 
     python3 scripts/verify_gate.py approve <id>              # lock the criteria at approval
-    python3 scripts/verify_gate.py lint <id>                 # plain-language lint of the docs
-    python3 scripts/verify_gate.py feature|milestone <id>    # run sdlc.json checks.<scope>
+    python3 scripts/verify_gate.py lint <id> [--pr-body FILE|-]  # plain language: short sentences, ids only in brackets; the PR body you publish
+    python3 scripts/verify_gate.py feature|milestone <id> [--keep-going]   # run sdlc.json checks.<scope>
+    python3 scripts/verify_gate.py project <slug>            # local milestones: checks.milestone on project/<slug>
+    python3 scripts/verify_gate.py audit [--no-evidence]     # read-only: is every gate enforced?
     # After UX review, also require each visual run:
     # ... --visual-check <ux visual-check.py> --visual-run <run> [--visual-run <run> ...]
 
 Written by `sdlc-run adopt` from the kit; edit the kit, not this copy. stdlib only.
 
+`audit` changes nothing. For every sdlc.json check and every installed hook it reports four
+states apart: installed (the checker or script exists), configured (which gate scope, CI job or
+hook event invokes it), executed (the newest verify/report.json that ran it) and passed. For a
+check run by a CI job it also reports whether that job is a required status on the default
+branch (read with `gh api`; `unknown` when gh or the API is unavailable, `local` when no CI job
+runs it). Last line `AUDIT PASS|FAIL problems=<n> unknown=<m>`, exit 1 on a problem: a missing
+checker, a check that never ran (`--no-evidence` skips that test, for a CI runner without reports), a CI-run check that is not required, a hook file that is not
+registered or a registered one that is missing.
+
 `approve` writes <changesDir>/<id>/lock.json: the hash of facts.md, done.json and
 sdlc.json `checks`, taken when the engineer approved the plan. `feature`/`milestone` refuse to
-run against criteria that moved since. `milestone` also fails with check=parent-sync while
+run against criteria that moved since. `approve` refuses (APPROVE FAIL) an unchecked
+`checklist.md` item, an open CRITICAL in `analyze.md` or `challenge.md` and a plan violation without a justification.
+`milestone` blocks on a `not met` or `partly` row in `validation.md`
+(validation-not-met), an unchecked item in `findings.md` outside `## Advisory` (findings-open) and
+a `## Converge` section without a `Converged:` line (not-converged). `milestone` also fails with check=parent-sync while
 origin's default branch, or project/<slug> in a project, has commits HEAD lacks: merge them in
-locally first. Then it runs the checks in order (cheapest first, the first
-failure stops the run), and write <changesDir>/<id>/verify/report.json + report.md.
+locally first. With `milestones.merge: "local"` the local project/<slug> must also be an ancestor
+of HEAD, so a milestone cannot skip an earlier one merged locally. Then it runs the checks cheapest first and the first
+failure stops the run (`--keep-going` runs them all and reports the first failure's verdict), and
+writes <changesDir>/<id>/verify/report.json + report.md (a milestone on branch milestone/<slug>-<n> also milestone-<n>.json, never overwritten by another scope).
+
+Cheapest first: a check that passed takes its seconds into verify/durations.json (keyed by command)
+and the next run sorts by them; a check with no record yet sorts by a static guess from its
+command (lint, format, typecheck, secrets and docs first, a build, e2e or docker run last, the
+rest between). Equal costs keep their order in sdlc.json. A check that depends on an earlier
+one's output sets `"serial": true`: it never moves, and nothing moves across it, or
+`"after": ["<check name>"]`: it runs behind the named checks and moves freely otherwise. An approval
+made before 3.18.0 (its lock.json has no `"order": "cost"`) keeps the declared order.
+
+`project <slug>` (local milestones, stage 6p) runs `checks.milestone` on the checked-out
+project/<slug>, which must contain origin's default branch, and records `VERIFY PASS project
+<slug> <sha>`. It has no lock or change folder: the report lives in the common git dir
+(`sdlc/projects/<slug>/verify/`), so every worktree sees it and `pr-gate.sh` reads it before the
+one push of project/<slug>. `{id}` in a check is the slug.
 
 Stdout is capped. The last line is exactly one of:
     VERIFY PASS <scope> <id> <sha>         exit 0
@@ -40,14 +71,16 @@ import argparse
 import datetime as dt
 import hashlib
 import json
+import os
 import re
 import shlex
+import shutil
 import subprocess
 import sys
 import time
 from pathlib import Path
 
-from marks import sessions
+from marks import bundles, sessions
 from sdlc_version import kit_version, message
 
 REASONS = {
@@ -63,12 +96,29 @@ REASONS = {
     "spec-conflict",
     "env",
     "test-proves-nothing",
+    "validation-not-met",  # a `not met` or `partly` row in validation.md
+    "findings-open",  # an unchecked item in findings.md outside ## Advisory
+    "not-converged",  # findings.md ## Converge has no `Converged:` line
 }
 LOCKED = ("facts.md", "done.json")
 TAIL = 60  # stdout lines of a failing check
 BREAKER = 3
 ATTEMPTS = 3
 SENTENCE_WORDS = 25
+# What the owner reads. Facts, analyze, findings and the like are data tables of ids, not prose.
+OWNER_FILES = ("intent.md", "plan.md", "milestone.md", "questions.md", "pr-body.md")
+# The id families the chain defines: asks, bugs, facts, challenge findings, job stories,
+# non-functional facts, questions, review findings, analyze findings (`references/readability.md`).
+ID_TOKEN = r"[ABFHJNQRX]\d+"
+BARE_ID = re.compile(rf"(?<![\w@/.#-]){ID_TOKEN}\b")
+# A definition label opens a line: `**F3**`, `**F3:**`, `**Q1 (date) the question?**`. The id then
+# stands alone; `**B19 blocks the build.**` is a sentence, not a label.
+LABEL = re.compile(
+    rf"^\s*(?:>\s*)?(?:(?:[-*]|\d+\.)\s+(?:\[[ x]\]\s+)?)?\*\*({ID_TOKEN})(?=\*\*|:|\s*\(|\s*$)"
+)
+TABLE_ID = re.compile(rf"^\s*\|\s*({ID_TOKEN})\s*\|")
+IDS_ONLY = re.compile(rf"[\s,;/&+-]*(?:{ID_TOKEN}[\s,;/&+-]*)*")
+BRACKETS = re.compile(r"\([^()]*\)|\[[^\[\]]*\]")  # may span a line wrap, never a blank line
 
 
 def sh(*cmd: str) -> str:
@@ -92,18 +142,39 @@ def criteria_hash(change: Path, checks: object) -> dict[str, str]:
     return hashes
 
 
-def parent_tips(change: Path, cfg: dict) -> list[tuple[str, str]]:
-    """(branch, sha) on origin of every branch a milestone must contain: the default branch,
-    and project/<slug> too when the change has a project. A branch origin lacks (no remote,
-    offline, project not created yet) is left out."""
-    names = [cfg.get("defaultBranch") or "main"]
+def merges_locally(cfg: dict) -> bool:
+    """`milestones.merge: "local"`: milestones merge into project/<slug> on this machine."""
+    return (cfg.get("milestones") or {}).get("merge") == "local"
+
+
+def project_record(slug: str, repo: Path | None = None) -> Path:
+    """Where `project <slug>` writes its report: the common git dir, shared by all worktrees."""
+    common = sh(
+        "git", "-C", str(repo or "."), "rev-parse", "--path-format=absolute", "--git-common-dir"
+    )
+    return Path(common or ".git") / "sdlc" / "projects" / slug
+
+
+def project_branch(change: Path, cfg: dict) -> str:
+    """project/<slug> of the change's project when it has a branch, else "". A project without
+    `branch: true` is planning only (3.7.0), but one written before 3.7.0 has no `branch` key
+    and keeps its branch."""
     try:
         project = json.loads((change / "decisions.json").read_text(encoding="utf-8")).get("project")
     except (OSError, ValueError, AttributeError):
         project = None
-    if isinstance(project, dict) and project.get("slug"):
-        prefix = (cfg.get("projects") or {}).get("branchPrefix", "project/")
-        names.insert(0, f"{prefix}{project['slug']}")
+    if isinstance(project, dict) and project.get("slug") and project.get("branch", True):
+        return f"{(cfg.get('projects') or {}).get('branchPrefix', 'project/')}{project['slug']}"
+    return ""
+
+
+def parent_tips(change: Path, cfg: dict) -> list[tuple[str, str]]:
+    """(branch, sha) on origin of every branch a milestone must contain: the default branch,
+    and project/<slug> too when the change's project has a branch. A branch origin lacks
+    (no remote, offline, project not created yet, or never pushed in local mode) is left out."""
+    names = [cfg.get("defaultBranch") or "main"]
+    if branch := project_branch(change, cfg):
+        names.insert(0, branch)
     tips = []
     for name in names:
         sh("git", "fetch", "--quiet", "origin", name)  # offline: the last fetched tip still counts
@@ -113,16 +184,77 @@ def parent_tips(change: Path, cfg: dict) -> list[tuple[str, str]]:
     return tips
 
 
+def read(path: Path) -> str:
+    return path.read_text(encoding="utf-8") if path.exists() else ""
+
+
+def table_rows(text: str) -> list[list[str]]:
+    """Cells of every markdown table row, separator rows dropped; the header is the first row."""
+    return [
+        [c.strip() for c in line.strip().strip("|").split("|")]
+        for line in text.splitlines()
+        if line.lstrip().startswith("|") and not re.fullmatch(r"\s*\|[\s:|-]+\|\s*", line)
+    ]
+
+
+def section(text: str, heading: str) -> str:
+    m = re.search(rf"^#{{2,3}} {re.escape(heading)}\s*$(.*?)(?=^#{{1,3}} |\Z)", text, re.M | re.S)
+    return m.group(1) if m else ""
+
+
+def open_criticals(change: Path, name: str) -> list[str]:
+    """CRITICAL rows still `open` in analyze.md or challenge.md; an absent file has none."""
+    return [
+        f"{name}: open CRITICAL: {row[0]} {' '.join(row[3:5])[:80]}"
+        for row in table_rows(read(change / name))
+        if "CRITICAL" in row and row[-1].lower() == "open"
+    ]
+
+
+def approval_blockers(change: Path) -> list[str]:
+    """What stops the plan gate: the checklist, the analyze and challenge passes and the plan's unjustified rule
+    violations. A file that does not exist blocks nothing."""
+    out = []
+    open_items = re.findall(r"^\s*[-*] \[ \] (.*)$", read(change / "checklist.md"), re.M)
+    out += [f"checklist.md: unchecked: {i[:80]}" for i in open_items]
+    out += open_criticals(change, "analyze.md") + open_criticals(change, "challenge.md")
+    for row in table_rows(section(read(change / "plan.md"), "Justified violations"))[1:]:
+        if row[0].lower() != "none" and (len(row) < 3 or any(not c or c[0] == "<" for c in row)):
+            out.append(f"plan.md: unjustified violation: {row[0][:80]}")
+    return out
+
+
+def milestone_blockers(change: Path) -> tuple[str, list[str]] | None:
+    """The records a milestone must close before it passes: (reason, offending lines) or None."""
+    rows = table_rows(read(change / "validation.md"))
+    bad = [r for r in rows if any(c.lower() in ("not met", "partly") for c in r)]
+    if bad:
+        return "validation-not-met", [f"validation.md: {r[0]} {r[-1]}" for r in bad]
+    findings = read(change / "findings.md")
+    advisory = section(findings, "Advisory")
+    open_items = re.findall(r"^\s*[-*] \[ \] (.*)$", findings.replace(advisory, ""), re.M)
+    if open_items:
+        return "findings-open", [f"findings.md: open: {i[:80]}" for i in open_items]
+    if section(findings, "Converge") and "Converged:" not in findings:
+        return "not-converged", ["findings.md: ## Converge has no `Converged: round <n>` line"]
+    return None
+
+
 def end(line: str, code: int) -> int:
     print(line)
     return code
 
 
 def approve(change: Path, cfg: dict) -> int:
+    problems = lint_problems(change) + approval_blockers(change)  # the cheap pure check first
+    if problems:
+        print("\n".join(problems[:TAIL]))
+        return end(f"APPROVE FAIL {change.name} problems={len(problems)}", 1)
     lock = {
         "approved_at": dt.datetime.now(dt.timezone.utc).isoformat(timespec="seconds"),  # noqa: UP017 -- runs on macOS python3 3.9
         "sha": sh("git", "rev-parse", "HEAD"),
         "criteria": criteria_hash(change, cfg.get("checks", {})),
+        "order": "cost",  # a lock without this key keeps the declared order (before 3.18.0)
     }
     (change / "lock.json").write_text(json.dumps(lock, indent=2) + "\n", encoding="utf-8")
     print(f"locked {', '.join(lock['criteria'])} in {change.name}/lock.json -- commit it")
@@ -141,9 +273,72 @@ def prose(text: str) -> list[str]:
     return [s for line in lines for s in re.split(r"(?<=[.!?])\s+", line) if s.strip()]
 
 
-def lint(change: Path) -> int:
-    """Plain language: no sentence over SENTENCE_WORDS words, no leftover template prompts."""
+def defined_ids(change: Path) -> set[str]:
+    """The ids this change defines: a table row that opens with the id, or a definition label.
+    An id defined nowhere ("Press F5", "before Q4") is ordinary text and never flagged."""
+    found = set()
+    for path in change.rglob("*.md"):
+        if path.name == "README.md" or {"asks", "verify"} & set(path.relative_to(change).parts):
+            continue
+        for line in path.read_text(encoding="utf-8").splitlines():
+            if m := TABLE_ID.match(line) or LABEL.match(line):
+                found.add(m.group(1))
+    return found
+
+
+def bare_ids(text: str, defined: set[str]) -> list[tuple[str, str]]:
+    """(id, context) for every defined id in running text that is not inside brackets: "plain words
+    first, the id in brackets after". Headings, code, the first cell of a table row, a cell that
+    holds only ids and a definition label are structure; every other table cell is prose."""
+    text = re.sub(r"\A---\n.*?\n---\n", "", text, flags=re.S)
+    text = re.sub(r"```.*?```|<!--.*?-->", "", text, flags=re.S)
+    found: list[tuple[str, str]] = []
+    para: list[str] = []
+
+    def flush() -> None:
+        body = "\n".join(para)
+        para.clear()
+        for _ in range(3):  # nested brackets: (A1; see [F2])
+            body = BRACKETS.sub("", body)
+        for m in BARE_ID.finditer(body):
+            if m.group(0) in defined:
+                around = " ".join(body[max(0, m.start() - 30) : m.end() + 30].split())
+                found.append((m.group(0), around))
+
+    for line in text.splitlines():
+        s = line.strip()
+        if not s or s.startswith("#"):
+            flush()
+        elif s.startswith("|"):
+            flush()
+            for cell in [c.strip() for c in s.strip("|").split("|")][1:]:
+                if not IDS_ONLY.fullmatch(cell):
+                    para.append(cell)
+                    flush()
+        else:
+            if re.match(r"(?:[-*]|\d+\.)\s", s):
+                flush()  # a new list item never shares a bracket with the one before
+            para.append(re.sub(r"`[^`]*`", "", LABEL.sub("", line)))
+    flush()
+    return found
+
+
+def lint_problems(change: Path, body: str | None = None) -> list[str]:
+    """Plain language: no sentence over SENTENCE_WORDS words, no leftover template prompts, and
+    in the files the owner reads no id outside brackets. With `body`, only that text (the PR body
+    about to be published) is checked, for ids. Pure file reads."""
+    defined = defined_ids(change)
+    if body is not None:
+        return [
+            f"pr-body: id {bare} outside brackets, words first: {ctx}"
+            for bare, ctx in bare_ids(body, defined)
+        ]
     problems = []
+    for name in OWNER_FILES:
+        path = change / name
+        if path.exists():
+            for bare, ctx in bare_ids(path.read_text(encoding="utf-8"), defined):
+                problems.append(f"{name}: id {bare} outside brackets, words first: {ctx}")
     for name in ("intent.md", "facts.md", "plan.md"):
         path = change / name
         if not path.exists():
@@ -154,6 +349,11 @@ def lint(change: Path) -> int:
                 problems.append(f"{name}: {len(s.split())} words: {s[:90]}...")
         if "[NEEDS CLARIFICATION" in text:
             problems.append(f"{name}: an open [NEEDS CLARIFICATION] remains")
+    return problems
+
+
+def lint(change: Path, body: str | None = None) -> int:
+    problems = lint_problems(change, body)
     for p in problems[:TAIL]:
         print(p)
     print(f"LINT {'FAIL' if problems else 'PASS'} {change.name} problems={len(problems)}")
@@ -192,6 +392,78 @@ def classify_e2e(cmd: str, repo: Path) -> str:
     return "reproduced (real)" if again.returncode else "did not reproduce (flaky)"
 
 
+def metrics(change: Path, report: dict, retries: int, started: float) -> dict:
+    """The operational numbers of one gate run, for the report: what ran and how it ended,
+    how many earlier runs of this scope failed, review rounds, seconds, findings still open."""
+    checks = report["checks"]
+    findings = read(change / "findings.md")
+    advisory = section(findings, "Advisory")
+    open_findings = re.findall(r"^\s*[-*] \[ \] ", findings.replace(advisory, ""), re.M)
+    rounds = [int(n) for n in re.findall(r"Converged: round (\d+)", findings)]
+    return {
+        "checks_run": sum(1 for c in checks if not c.get("cached")),
+        "checks_cached": sum(1 for c in checks if c.get("cached")),
+        "checks_passed": sum(1 for c in checks if c["status"] == "pass"),
+        "checks_failed": sum(1 for c in checks if c["status"] != "pass"),
+        "retries": retries,
+        "review_rounds": max(rounds, default=0),
+        "elapsed_s": round(time.monotonic() - started, 1),
+        "open_findings": len(open_findings)
+        + len(open_criticals(change, "analyze.md"))
+        + len(open_criticals(change, "challenge.md")),
+    }
+
+
+# What a check with no recorded duration probably costs, by its name and command: first match wins.
+COST_HINTS = (
+    (
+        re.compile(
+            r"format|fmt|lint|ruff|eslint|prettier|biome|oxlint|stylelint|typecheck|tsc|mypy"
+            r"|secret|gitleaks|actionlint|shellcheck|docs"
+        ),
+        5.0,
+    ),
+    (re.compile(r"e2e|playwright|cypress|smoke|docker|build|integration|migrat"), 600.0),
+)
+DEFAULT_COST = 60.0  # unit tests and anything unrecognised
+
+
+def order_checks(checks: list[dict], durations: dict[str, float], change_id: str) -> list[dict]:
+    """Cheapest first: recorded seconds when there are any, else a guess from the command. Stable,
+    so ties keep their sdlc.json order; a `serial` check is a wall that nothing moves across, and
+    `"after": [<check name>]` keeps a check behind the ones it needs (codegen before tsc)."""
+
+    def cost(check: dict) -> float:
+        cmd = check["run"].replace("{id}", change_id)
+        if cmd in durations:
+            return durations[cmd]
+        text = f"{check['name']} {cmd}".lower()
+        return next((c for rx, c in COST_HINTS if rx.search(text)), DEFAULT_COST)
+
+    ordered: list[dict] = []
+    segment: list[dict] = []
+    for check in checks:
+        if check.get("serial"):
+            ordered += sorted(segment, key=cost) + [check]
+            segment = []
+        else:
+            segment.append(check)
+    ordered += sorted(segment, key=cost)
+    done: set[str] = set()
+    names = {c["name"] for c in ordered}
+    result: list[dict] = []
+    while ordered:
+        # the first check whose named predecessors have run; a cycle or unknown name never blocks
+        nxt = next(
+            (c for c in ordered if all(a in done or a not in names for a in c.get("after") or [])),
+            ordered[0],
+        )
+        ordered.remove(nxt)
+        done.add(nxt["name"])
+        result.append(nxt)
+    return result
+
+
 def run(
     scope: str,
     change: Path,
@@ -199,10 +471,16 @@ def run(
     repo: Path,
     visual_check: str | None = None,
     visual_runs: list[str] | None = None,
+    keep_going: bool = False,
 ) -> int:
     out_dir = change / "verify"
     out_dir.mkdir(exist_ok=True)
     report: dict = {"scope": scope, "id": change.name, "checks": []}
+    started_run = time.monotonic()
+    try:
+        retries = json.loads((out_dir / "state.json").read_text()).get("attempts", {}).get(scope, 0)
+    except (OSError, ValueError):
+        retries = 0
     kit, changelog = kit_version()
     notice = message(cfg.get("sdlcVersion"), kit, changelog)
     if notice:
@@ -211,33 +489,53 @@ def run(
     def finish(line: str, code: int) -> int:
         report["result"] = line
         report["sha"] = sh("git", "rev-parse", "HEAD")
-        (out_dir / "report.json").write_text(json.dumps(report, indent=2) + "\n", encoding="utf-8")
+        report["metrics"] = metrics(change, report, retries, started_run)
+        text = json.dumps(report, indent=2) + "\n"
+        (out_dir / "report.json").write_text(text, encoding="utf-8")
+        # report.json holds the last scope run only: a milestone also keeps its own receipt, which
+        # `sdlc_status.py goal` reads, so a deleted merged branch does not undo a finished milestone
+        on = re.fullmatch(r"milestone/.+-(\d+)", sh("git", "rev-parse", "--abbrev-ref", "HEAD"))
+        if scope == "milestone" and on:
+            (out_dir / f"milestone-{on[1]}.json").write_text(text, encoding="utf-8")
         rows = "\n".join(
             f"| {c['name']} | {c['status']} | {c['seconds']} |" for c in report["checks"]
         )
         failed = next((c for c in report["checks"] if c["status"] != "pass"), None)
         detail = f"\n\n## {failed['name']}\n\n```\n{failed['tail']}\n```\n" if failed else ""
+        stats = "\n".join(f"- {k.replace('_', ' ')}: {v}" for k, v in report["metrics"].items())
         (out_dir / "report.md").write_text(
             f"# verify {scope} {change.name}\n\n| check | status | s |\n|---|---|---|\n{rows}\n"
-            f"{detail}\n`{line}`\n",
+            f"{detail}\n## Metrics\n\n{stats}\n\n`{line}`\n",
             encoding="utf-8",
         )
         if code == 0:
             (out_dir / "state.json").unlink(missing_ok=True)
         return end(line, code)
 
-    lock_path = change / "lock.json"
-    if not lock_path.exists():
-        print(f"{change.name}/lock.json is missing: run `verify_gate.py approve {change.name}`")
-        print("at the plan gate, when the engineer approves.")
-        return finish("VERIFY BLOCKED reason=not-approved", 3)
-    locked = json.loads(lock_path.read_text(encoding="utf-8"))["criteria"]
-    now = criteria_hash(change, cfg.get("checks", {}))
-    moved = sorted(k for k in set(locked) | set(now) if locked.get(k) != now.get(k))
-    if moved:
-        print(f"changed since approval: {', '.join(moved)}. The engineer decides; never re-lock.")
-        report["moved"] = moved
-        return finish("VERIFY BLOCKED reason=protected-path", 3)
+    declared = False  # an approval from before 3.18.0 keeps the order its checks were written in
+    now: dict[str, str] = {}  # a project has no lock: its checks are the milestones' locked ones
+    if scope == "project":
+        branch = f"{(cfg.get('projects') or {}).get('branchPrefix', 'project/')}{change.name}"
+        if sh("git", "rev-parse", "--abbrev-ref", "HEAD") != branch:
+            print(f"check out {branch} (the project head) and run the gate there.")
+            return finish("VERIFY BLOCKED reason=env", 3)
+    else:
+        lock_path = change / "lock.json"
+        if not lock_path.exists():
+            print(f"{change.name}/lock.json is missing: run `verify_gate.py approve {change.name}`")
+            print("at the plan gate, when the engineer approves.")
+            return finish("VERIFY BLOCKED reason=not-approved", 3)
+        lock = json.loads(lock_path.read_text(encoding="utf-8"))
+        locked = lock["criteria"]
+        declared = lock.get("order") != "cost"
+        now = criteria_hash(change, cfg.get("checks", {}))
+        moved = sorted(k for k in set(locked) | set(now) if locked.get(k) != now.get(k))
+        if moved:
+            print(
+                f"changed since approval: {', '.join(moved)}. The engineer decides; never re-lock."
+            )
+            report["moved"] = moved
+            return finish("VERIFY BLOCKED reason=protected-path", 3)
 
     dirty = [
         line
@@ -249,29 +547,49 @@ def run(
         print("\n".join(dirty[:TAIL]))
         return finish(f"VERIFY FAIL {scope} {change.name} check=uncommitted", 1)
 
-    if scope == "milestone":
+    if scope in ("milestone", "project"):
+        tips = [(f"origin/{name}", tip) for name, tip in parent_tips(change, cfg)]
+        local = project_branch(change, cfg) if merges_locally(cfg) else ""
+        if local and (tip := sh("git", "rev-parse", "--verify", "--quiet", f"{local}^{{commit}}")):
+            tips.append((local, tip))
         behind = [
             name
-            for name, tip in parent_tips(change, cfg)
+            for name, tip in tips
             if subprocess.run(
                 ["git", "merge-base", "--is-ancestor", tip, "HEAD"], capture_output=True
             ).returncode
         ]
         if behind:
-            print(f"{', '.join('origin/' + b for b in behind)} has commits this milestone lacks.")
+            print(f"{', '.join(behind)} has commits this {scope} lacks.")
             print("Merge in locally, then run the gate again (a commit here, never a PR):")
-            print("  git fetch origin && " + " && ".join(f"git merge origin/{b}" for b in behind))
+            print("  git fetch origin && " + " && ".join(f"git merge {b}" for b in behind))
             return finish(f"VERIFY FAIL {scope} {change.name} check=parent-sync", 1)
 
-    checks = cfg.get("checks", {}).get(scope, [])
+    if scope == "milestone" and (blocker := milestone_blockers(change)):
+        print("\n".join(blocker[1][:TAIL]))
+        return finish(f"VERIFY BLOCKED reason={blocker[0]}", 3)
+
+    suite = "milestone" if scope == "project" else scope
+    checks = cfg.get("checks", {}).get(suite, [])
     if not checks:
-        print(f"sdlc.json checks.{scope} is empty: nothing would prove this change.")
+        print(f"sdlc.json checks.{suite} is empty: nothing would prove this change.")
         return finish("VERIFY BLOCKED reason=env", 3)
 
     # Runtime evidence is additional to the locked checks; never weaken or re-lock them.
     # It depends on more than the tree (sessions, visual runs), so it is never cached.
     checks = [c if isinstance(c, dict) else {"run": c} for c in checks]
-    if scope == "milestone" and ((change / "marks.json").exists() or sessions(change)):
+    for i, check in enumerate(checks, 1):  # default names count from sdlc.json, not from the sort
+        check["name"] = check.get("name") or f"check-{i}"
+    durations_path = out_dir / "durations.json"
+    try:
+        durations = json.loads(durations_path.read_text(encoding="utf-8"))
+    except (OSError, ValueError):
+        durations = {}
+    if not declared:
+        checks = order_checks(checks, durations, change.name)
+    if scope == "milestone" and (
+        (change / "marks.json").exists() or sessions(change) or bundles(change)
+    ):
         checks.append(
             {
                 "name": "owner-marks",
@@ -306,9 +624,32 @@ def run(
     cache_path = out_dir / "cache.json"
     cache = json.loads(cache_path.read_text()) if cache_path.exists() else {}
     tree = sh("git", "rev-parse", "HEAD^{tree}")
+    head = sh("git", "rev-parse", "HEAD")
 
-    for i, check in enumerate(checks, 1):
-        name = check.get("name") or f"check-{i}"
+    def failed(name: str, output: str) -> int:
+        """The breaker and the attempt count, for the run's first failing check."""
+        state_path = out_dir / "state.json"
+        state = json.loads(state_path.read_text()) if state_path.exists() else {}
+        sig = signature(name, output)
+        count = state.get("count", 0) + 1 if state.get("signature") == sig else 1
+        attempts = {**state.get("attempts", {}), scope: state.get("attempts", {}).get(scope, 0) + 1}
+        state_path.write_text(
+            json.dumps({"signature": sig, "count": count, "attempts": attempts}) + "\n"
+        )
+        if count >= BREAKER:
+            print(f"the same failure {count} runs in a row: the loop is not making progress.")
+            return finish("VERIFY BLOCKED reason=no-progress", 3)
+        if attempts[scope] >= ATTEMPTS:
+            print(
+                f"{attempts[scope]} failed {scope} runs of {change.name}: "
+                "stop and ask the engineer."
+            )
+            return finish("VERIFY BLOCKED reason=attempts", 3)
+        return finish(f"VERIFY FAIL {scope} {change.name} check={name}", 1)
+
+    first_failure: tuple[str, str, str] | None = None  # --keep-going: the verdict names the first
+    for check in checks:
+        name = check["name"]
         cmd = check["run"].replace("{id}", change.name)
         key = cache_key(tree, cmd, now) if check.get("cache", True) and tree else ""
         if key in cache:
@@ -340,11 +681,16 @@ def run(
             if key:
                 cache[key] = name
                 cache_path.write_text(json.dumps(cache, indent=2) + "\n", encoding="utf-8")
+            durations[cmd] = report["checks"][-1]["seconds"]
+            durations_path.write_text(json.dumps(durations, indent=2) + "\n", encoding="utf-8")
             continue
         print(tail)
         blocked = re.search(r"VERIFY BLOCKED reason=([\w-]+)\s*\Z", output.strip())
         if blocked:
             reason = blocked.group(1) if blocked.group(1) in REASONS else "unknown-verdict"
+            if keep_going:  # the rest still runs; the first verdict, blocked or failed, stands
+                first_failure = first_failure or (name, output, reason)
+                continue
             return finish(f"VERIFY BLOCKED reason={reason}", 3)
         if is_e2e(cmd):
             verdict = classify_e2e(cmd, repo)
@@ -352,32 +698,211 @@ def run(
                 print(f"--last-failed re-run: the failures {verdict}")
                 report["checks"][-1]["rerun"] = verdict
                 report["checks"][-1]["tail"] += f"\n--last-failed re-run: the failures {verdict}"
-        state_path = out_dir / "state.json"
-        state = json.loads(state_path.read_text()) if state_path.exists() else {}
-        sig = signature(name, output)
-        count = state.get("count", 0) + 1 if state.get("signature") == sig else 1
-        attempts = {**state.get("attempts", {}), scope: state.get("attempts", {}).get(scope, 0) + 1}
-        state_path.write_text(
-            json.dumps({"signature": sig, "count": count, "attempts": attempts}) + "\n"
-        )
-        if count >= BREAKER:
-            print(f"the same failure {count} runs in a row: the loop is not making progress.")
-            return finish("VERIFY BLOCKED reason=no-progress", 3)
-        if attempts[scope] >= ATTEMPTS:
-            print(
-                f"{attempts[scope]} failed {scope} runs of {change.name}: "
-                "stop and ask the engineer."
-            )
-            return finish("VERIFY BLOCKED reason=attempts", 3)
-        return finish(f"VERIFY FAIL {scope} {change.name} check={name}", 1)
+        if keep_going:
+            first_failure = first_failure or (name, output, "")
+            continue
+        return failed(name, output)
+    if first_failure:
+        names = ", ".join(c["name"] for c in report["checks"] if c["status"] != "pass")
+        print(f"failed: {names}")
+        if first_failure[2]:
+            return finish(f"VERIFY BLOCKED reason={first_failure[2]}", 3)
+        return failed(*first_failure[:2])
 
-    return finish(f"VERIFY PASS {scope} {change.name} {sh('git', 'rev-parse', 'HEAD')}", 0)
+    # A PASS names one frozen head: a merge or an edit during the checks means they tested
+    # something other than the commit the line would name.
+    still_dirty = [
+        line
+        for line in sh("git", "status", "--porcelain").splitlines()
+        if f"{change.name}/verify/" not in line
+    ]
+    if sh("git", "rev-parse", "HEAD") != head or still_dirty:
+        print(
+            "HEAD or the tree changed while the checks ran: nothing may merge or edit during a gate."
+        )
+        return finish(f"VERIFY FAIL {scope} {change.name} check=moved", 1)
+    return finish(f"VERIFY PASS {scope} {change.name} {head}", 0)
+
+
+def checker_exists(cmd: str, repo: Path) -> bool:
+    """The program a check runs exists. shortcut: reads only the first command of a `a && b`
+    line, so a broken second command is not seen; split it into two checks to audit both."""
+    try:
+        words = shlex.split(cmd)
+    except ValueError:
+        return False
+    while words and re.fullmatch(r"\w+=\S*", words[0]):  # leading VAR=value
+        words.pop(0)
+    if not words:
+        return False
+    if words[0] in ("python3", "python", "bash", "sh") and len(words) > 1:
+        return (repo / words[1]).exists() or words[1].startswith("-")
+    return (repo / words[0]).exists() if "/" in words[0] else shutil.which(words[0]) is not None
+
+
+def ci_jobs(repo: Path) -> list[dict]:
+    """Jobs of .github/workflows/*.yml as {key, name, needs, body}. shortcut: a line scan for the
+    two-space `jobs:` layout (no YAML parser, stdlib only); an anchored or flow-style file shows
+    up as no jobs, so the check reads `local`, never a false `yes`."""
+    jobs: list[dict] = []
+    for path in sorted((repo / ".github" / "workflows").glob("*.y*ml")):
+        in_jobs = in_needs = False
+        for line in path.read_text(encoding="utf-8").splitlines():
+            if re.match(r"^jobs:\s*$", line):
+                in_jobs = True
+            elif in_jobs and (m := re.match(r"^  ([\w-]+):\s*$", line)):
+                jobs.append({"key": m[1], "name": m[1], "needs": [], "body": "", "file": path.name})
+            elif in_jobs and line and not line.startswith(" "):
+                in_jobs = False
+            elif in_jobs and jobs:
+                jobs[-1]["body"] += line + "\n"
+                if m := re.match(r"^    name:\s*(.+?)\s*$", line):
+                    jobs[-1]["name"] = m[1].strip("'\"")
+                if m := re.match(r"^    needs:\s*(.*)$", line):
+                    jobs[-1]["needs"] += re.findall(r"[\w-]+", m[1])
+                    in_needs = not m[1]
+                elif in_needs and (m := re.match(r"^\s+- ([\w-]+)\s*$", line)):
+                    jobs[-1]["needs"].append(m[1])
+                elif re.match(r"^    \S", line):
+                    in_needs = False
+    return jobs
+
+
+def required_contexts(branch: str) -> set[str] | None:
+    """Required status checks of the default branch via `gh api` (rulesets first, then classic
+    branch protection); None when gh or the API cannot say."""
+    for path in (
+        f"repos/{{owner}}/{{repo}}/rules/branches/{branch}",
+        f"repos/{{owner}}/{{repo}}/branches/{branch}/protection/required_status_checks",
+    ):
+        try:
+            data = json.loads(sh("gh", "api", path))
+        except ValueError:
+            continue
+        if isinstance(data, list):
+            return {
+                c["context"]
+                for rule in data
+                if rule.get("type") == "required_status_checks"
+                for c in rule.get("parameters", {}).get("required_status_checks", [])
+            }
+        if isinstance(data, dict):
+            return set(data.get("contexts", [])) | {c["context"] for c in data.get("checks", [])}
+    return None
+
+
+def required_job_keys(jobs: list[dict], contexts: set[str]) -> set[str]:
+    """Jobs whose name is a required context, plus everything they `needs`, transitively."""
+    wanted = {c.rsplit(" / ", 1)[-1] for c in contexts}
+    keys = {j["key"] for j in jobs if {j["key"], j["name"]} & wanted}
+    while extra := {n for j in jobs if j["key"] in keys for n in j["needs"]} - keys:
+        keys |= extra
+    return keys
+
+
+def last_runs(repo: Path, cfg: dict) -> dict[str, tuple[float, str, str]]:
+    """run command -> (mtime, status, sha) from the newest verify/report.json that ran it."""
+    found: dict[str, tuple[float, str, str]] = {}
+    for path in (repo / cfg.get("changesDir", "changes")).rglob("verify/report.json"):
+        try:
+            data = json.loads(path.read_text(encoding="utf-8"))
+        except (OSError, ValueError):
+            continue
+        for c in data.get("checks", []):
+            if path.stat().st_mtime > found.get(c["run"], (0.0, "", ""))[0]:
+                found[c["run"]] = (path.stat().st_mtime, c["status"], str(data.get("sha", ""))[:7])
+    return found
+
+
+def audit(cfg: dict, repo: Path, evidence: bool = True) -> int:
+    """Read-only: installed, configured, executed and passed are four separate answers."""
+    problems, unknown = [], 0
+    jobs = ci_jobs(repo)
+    branch = cfg.get("defaultBranch") or "main"
+    contexts = required_contexts(branch)
+    needed = required_job_keys(jobs, contexts) if contexts is not None else set()
+    runs = last_runs(repo, cfg)
+    print(
+        f"default branch {branch}: required statuses "
+        + (
+            ", ".join(sorted(contexts)) or "none"
+            if contexts is not None
+            else "unknown (gh api failed)"
+        )
+    )
+    for scope, checks in (cfg.get("checks") or {}).items():
+        for i, check in enumerate(checks, 1):
+            check = check if isinstance(check, dict) else {"run": check}
+            cmd, name = check["run"], check.get("name") or f"check-{i}"
+            prefix = cmd.split("{id}")[0].strip()
+            mine = [j for j in jobs if prefix and prefix in j["body"]]
+            when = next((v for k, v in sorted(runs.items()) if k.startswith(prefix)), None)
+            if not mine:
+                required = "local"
+            elif contexts is None:
+                required = "unknown"
+            else:
+                required = "yes" if any(j["key"] in needed for j in mine) else "no"
+            unknown += required == "unknown"
+            invoked = ", ".join([f"gate {scope}"] + [f"ci {j['file']}:{j['key']}" for j in mine])
+            ran = (
+                "never" if not when else
+                f"{when[1]} @{when[2]} {dt.datetime.fromtimestamp(when[0]):%Y-%m-%d}"
+            )  # fmt: skip
+            installed = checker_exists(cmd, repo)
+            print(
+                f"check {scope}/{name}: installed={'yes' if installed else 'NO'} "
+                f"invoked by [{invoked}] required={required} last run: {ran}"
+            )
+            if not installed:
+                problems.append(f"{scope}/{name}: the checker `{cmd.split()[0]}` does not exist")
+            if evidence and not when:
+                problems.append(f"{scope}/{name}: never ran (no verify/report.json has it)")
+            if required == "no":
+                problems.append(f"{scope}/{name}: a CI job runs it but it is not a required status")
+    settings = repo / ".claude" / "settings.json"
+    registered: dict[str, str] = {}
+    if settings.exists():
+        for event, groups in (
+            json.loads(settings.read_text(encoding="utf-8")).get("hooks", {}).items()
+        ):
+            for g in groups:
+                for h in g.get("hooks", []):
+                    if m := re.search(r"\.claude/hooks/([\w.-]+\.sh)", h.get("command", "")):
+                        registered[m[1]] = f"{event} {g.get('matcher', '*')}"
+    on_disk = {
+        p.name: p for p in (repo / ".claude" / "hooks").glob("*.sh") if p.name != "sdlc-config.sh"
+    }  # sdlc-config.sh is sourced by the others, never registered
+    for hook in sorted(set(registered) | set(on_disk)):
+        path = on_disk.get(hook)
+        installed = path is not None and os.access(path, os.X_OK)
+        print(
+            f"hook {hook}: installed={'yes' if installed else 'NO'} "
+            f"invoked by [{registered.get(hook, 'NOT REGISTERED')}] "
+            "last run: no record (a hook leaves no log)"
+        )
+        if not installed:
+            problems.append(f"{hook}: registered but missing or not executable")
+        if hook not in registered:
+            problems.append(f"{hook}: installed but not registered in .claude/settings.json")
+    print("\n".join(f"PROBLEM {p}" for p in problems[:TAIL]))
+    verdict = "FAIL" if problems else "PASS"
+    return end(f"AUDIT {verdict} problems={len(problems)} unknown={unknown}", 1 if problems else 0)
 
 
 def main(argv: list[str]) -> int:
     parser = argparse.ArgumentParser(description=__doc__)
-    parser.add_argument("scope", choices=("approve", "lint", "feature", "milestone"))
-    parser.add_argument("id")
+    parser.add_argument(
+        "scope", choices=("approve", "lint", "feature", "milestone", "project", "audit")
+    )
+    parser.add_argument("id", nargs="?")
+    parser.add_argument("--no-evidence", action="store_true", help="audit: skip the never-ran test")
+    parser.add_argument(
+        "--keep-going",
+        action="store_true",
+        help="run every check, not only up to the first failure",
+    )
+    parser.add_argument("--pr-body", metavar="FILE", help="lint: check this PR body ('-' = stdin)")
     parser.add_argument("--visual-check")
     parser.add_argument("--visual-run", action="append", default=[])
     args = parser.parse_args(argv[1:])
@@ -385,8 +910,16 @@ def main(argv: list[str]) -> int:
         parser.error("--visual-check and at least one --visual-run must be supplied together")
     if args.visual_run and args.scope not in ("feature", "milestone"):
         parser.error("visual checks apply only to feature and milestone gates")
+    if args.scope != "audit" and not args.id:
+        parser.error(f"{args.scope} needs a change id")
     repo = root()
     cfg = json.loads((repo / "sdlc.json").read_text(encoding="utf-8"))
+    if args.scope == "audit":
+        return audit(cfg, repo, not args.no_evidence)
+    if args.scope == "project":
+        change = project_record(args.id, repo)
+        change.mkdir(parents=True, exist_ok=True)
+        return run(args.scope, change, cfg, repo, keep_going=args.keep_going)
     change = repo / cfg.get("changesDir", "changes") / args.id
     if not change.is_dir():
         print(f"no change folder {change.relative_to(repo)}")
@@ -394,8 +927,11 @@ def main(argv: list[str]) -> int:
     if args.scope == "approve":
         return approve(change, cfg)
     if args.scope == "lint":
-        return lint(change)
-    return run(args.scope, change, cfg, repo, args.visual_check, args.visual_run)
+        body = None
+        if args.pr_body:
+            body = sys.stdin.read() if args.pr_body == "-" else Path(args.pr_body).read_text("utf-8")
+        return lint(change, body)
+    return run(args.scope, change, cfg, repo, args.visual_check, args.visual_run, args.keep_going)
 
 
 if __name__ == "__main__":

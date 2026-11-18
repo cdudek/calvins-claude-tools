@@ -22,7 +22,7 @@ with `npm test` and one E2E config next to a CI script with another list and ano
 slow checks twice and still passes one and fails the other. When a script already holds the list,
 set `checks.milestone` to just that script. `verify_gate.py` runs the list cheapest first and
 stops at the first failure (`--keep-going` runs them all); a check that needs an earlier one's
-output sets `"serial": true`. A check passes the gate cached per tree, so a retry runs only what
+output declares `"after": ["<check name>"]` (it runs behind that check; codegen before the typecheck) or sets `"serial": true`. An approval made before 3.18.0 keeps the declared order; a new one records `"order": "cost"` in `lock.json`. A check passes the gate cached per tree, so a retry runs only what
 failed.
 
 ## When a check fails

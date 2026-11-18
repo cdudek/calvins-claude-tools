@@ -4,10 +4,12 @@ Usage: python3 scripts/marks.py init|check|table <change-id>
 Run from the repo root. Output: init additions/orphans; check problems and a summary;
 table a Markdown report. Written by `sdlc-run adopt`; edit the kit, not this copy.
 
-A design export bundle (a folder under asks/ with an index.html, from a code tool) is one row,
-kind bundle, with the hash of every file in it. It is never edited: a changed hash fails the
-check. Its row says "needs rendering" until `rendered` names a folder under asks/ holding the
-screens rendered to images; those images are then inventoried as reference rows like any other.
+A design export bundle (a folder under asks/ with an index.html, or the folder decisions.json
+names as visualSource.path) is one row, kind bundle, with the hash of every file in it. It is
+never edited: a changed hash fails the check. Its row says "needs rendering" until `rendered`
+names a separate folder under asks/ holding at least one image per screen; those images are then
+inventoried as reference rows like any other. Generated mockups (spec/prototype) are advisory
+and never rows.
 
 marks.json holds {"rows": [...]}. Source paths and shots are change-relative; decision
 paths are repo-relative. IDs use the session folder relative to asks, or ref:<image path>.
@@ -50,15 +52,24 @@ BUNDLE_FILLED = {"rendered": ""}
 
 
 def bundles(change: Path) -> dict[Path, str]:
-    """Export bundle folders under asks/ (any folder holding index.html), with their hash."""
+    """Export bundle folders under asks/, with their hash: any folder holding index.html, plus
+    the folder decisions.json names as visualSource.path (a React export has no index.html)."""
+    folders = {index.parent for index in (change / "asks").rglob("index.html")}
+    try:
+        declared = json.loads((change / "decisions.json").read_text(encoding="utf-8"))
+        path = (change / declared["visualSource"]["path"]).resolve()
+        if path.is_dir() and path.is_relative_to((change / "asks").resolve()):
+            folders.add(path)
+    except (OSError, ValueError, KeyError, TypeError, AttributeError):
+        pass  # no decisions.json, no visualSource, or a URL: nothing declared
     found = {}
-    for index in sorted((change / "asks").rglob("index.html")):
-        folder = index.parent
+    for folder in sorted(folders):
         if any(parent in found for parent in folder.parents):
             continue
         digest = hashlib.sha256()
         for path in sorted(p for p in folder.rglob("*") if p.is_file()):
-            if path.name == ".DS_Store" or any(part in SKIP for part in path.parts):
+            parts = path.relative_to(folder).parts  # the repo itself may sit under .worktrees
+            if path.name == ".DS_Store" or any(part in SKIP for part in parts):
                 continue
             digest.update(path.relative_to(folder).as_posix().encode() + b"\0")
             digest.update(path.read_bytes() + b"\0")
@@ -107,16 +118,16 @@ def inventory(change: Path) -> list[dict]:
     for folder, digest in found.items():
         rel = folder.relative_to(change).as_posix()
         rows.append({"id": f"bundle:{rel}", "kind": "bundle", "path": rel, "hash": digest})
-    for folder in (change / "asks", change / "spec" / "prototype"):
-        for path in sorted(folder.rglob("*")):
-            if (
-                path.is_file()
-                and path.suffix.lower() in IMAGES
-                and path.resolve() not in mark_images
-                and not any(b in path.parents for b in found)
-            ):
-                image = path.relative_to(change).as_posix()
-                rows.append({"id": f"ref:{image}", "kind": "reference", "image": image})
+    # Generated mockups (spec/prototype) are advisory: only what the owner supplied is a reference.
+    for path in sorted((change / "asks").rglob("*")):
+        if (
+            path.is_file()
+            and path.suffix.lower() in IMAGES
+            and path.resolve() not in mark_images
+            and not any(b in path.parents for b in found)
+        ):
+            image = path.relative_to(change).as_posix()
+            rows.append({"id": f"ref:{image}", "kind": "reference", "image": image})
     ids = [row["id"] for row in rows]
     if len(ids) != len(set(ids)):
         raise ValueError("duplicate source IDs: check session mark and note numbers")
@@ -218,10 +229,20 @@ def check(change: Path, sources: list[dict], repo: Path, designs: Path, globs: l
                     "needs rendering: render the bundle to images in a folder under asks/ "
                     "and set rendered to it"
                 )
-            elif not inside_dir(change / "asks", change / rendered) or not any(
-                p.suffix.lower() in IMAGES for p in (change / rendered).rglob("*")
+            elif not inside_dir(change / "asks", change / rendered):
+                problem("rendered must be a folder under asks/")
+            elif source and (
+                inside_dir(change / source["path"], change / rendered)
+                or inside_dir(change / rendered, change / source["path"])
             ):
-                problem("rendered must be a folder under asks/ holding at least one image")
+                problem("rendered must be separate from the bundle (render a copy, not the bundle)")
+            elif source:
+                screens = [
+                    h for h in (change / source["path"]).rglob("*.html") if h.name != "gallery.html"
+                ]
+                images = [p for p in (change / rendered).rglob("*") if p.suffix.lower() in IMAGES]
+                if len(images) < max(len(screens), 1):
+                    problem(f"rendered holds {len(images)} image for {len(screens)} screens")
             continue
         statuses = NOTE_STATUSES if kind == "note" else REFERENCE_STATUSES
         if kind not in ("note", "reference"):

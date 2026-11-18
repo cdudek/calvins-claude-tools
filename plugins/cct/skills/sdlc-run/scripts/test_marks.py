@@ -5,6 +5,7 @@ Exercise owner-mark inventory, retained decisions, evidence checks and report ou
 
 from __future__ import annotations
 
+import hashlib
 import json
 import subprocess
 import sys
@@ -132,20 +133,16 @@ def test_init_preserves_filled_fields_adds_notes_and_reports_orphans(repo: Path)
 def test_inventory_references_and_only_snapmark_shaped_sessions(repo: Path) -> None:
     root = change(repo)
     write(root / "asks/wireframe.PNG")
-    write(root / "spec/prototype/mobile/screen.webp")
+    write(root / "spec/prototype/mobile/screen.webp")  # generated mockup: advisory, no row
     write(root / "asks/ordinary/session.md", "# Session\n\n## Notes\n\n1. Not a mark.\n")
     write(root / "asks/no-title/session.md", "## 001 · 12:00\n1. Not a session.\n")
     write(root / "asks/ordinary/reference.jpg")
     write(root / "spec/not-a-prototype.png")
     write(root / "asks/export.pdf")
     data = resolved(repo)
-    assert len(data) == 7
+    assert len(data) == 6
     refs = [row["image"] for row in data if row["kind"] == "reference"]
-    assert refs == [
-        "asks/ordinary/reference.jpg",
-        "asks/wireframe.PNG",
-        "spec/prototype/mobile/screen.webp",
-    ]
+    assert refs == ["asks/ordinary/reference.jpg", "asks/wireframe.PNG"]
     assert run(repo, "check").returncode == 0
 
 
@@ -416,3 +413,61 @@ def test_table_reports_bundle_as_needs_rendering(repo: Path) -> None:
     bundle(repo)
     run(repo, "init")
     assert "needs rendering" in run(repo, "table").stdout
+
+
+def test_bundle_hash_covers_files_when_the_repo_sits_under_a_worktrees_folder(
+    tmp_path: Path,
+) -> None:
+    repo = tmp_path / ".worktrees" / "feature"
+    write(repo / "sdlc.json", "{}")
+    folder = repo / "changes" / ID / "asks/export"
+    write(folder / "index.html", "<html>one</html>")
+    assert run(repo, "init").returncode == 0
+    first = rows(repo)[0]["hash"]
+    assert first != hashlib.sha256(b"").hexdigest()
+    write(folder / "index.html", "<html>two</html>")
+    assert "source fields differ" in run(repo, "check").stdout
+
+
+def test_generated_mockups_are_advisory_not_reference_rows(repo: Path) -> None:
+    write(change(repo) / "spec/prototype/home.png")
+    assert run(repo, "init").returncode == 0
+    assert not any("prototype" in row["id"] for row in rows(repo))
+
+
+def render_row(repo: Path, rendered: str) -> None:
+    run(repo, "init")
+    data = rows(repo)
+    for row in data:
+        if row["kind"] == "bundle":
+            row["rendered"] = rendered
+    save(repo, data)
+
+
+def test_render_folder_must_be_separate_from_the_bundle(repo: Path) -> None:
+    folder = bundle(repo)
+    write(folder / "shots/index--desktop@2x.png")
+    render_row(repo, "asks/2026-11-01-export/shots")
+    assert "must be separate from the bundle" in run(repo, "check").stdout
+    render_row(repo, "asks/2026-11-01-export")
+    assert "must be separate from the bundle" in run(repo, "check").stdout
+
+
+def test_render_folder_must_cover_every_bundle_screen(repo: Path) -> None:
+    folder = bundle(repo)
+    write(folder / "about.html", "<html>about</html>")
+    write(change(repo) / "asks/export-render/index.png")
+    render_row(repo, "asks/export-render")
+    assert "1 image for 2 screens" in run(repo, "check").stdout
+
+
+def test_bundle_without_index_html_is_found_through_visual_source(repo: Path) -> None:
+    folder = change(repo) / "asks/react-export"
+    write(folder / "src/App.tsx", "export default 1")
+    write(
+        change(repo) / "decisions.json",
+        json.dumps({"visualSource": {"kind": "export-bundle", "path": "asks/react-export"}}),
+    )
+    assert run(repo, "init").returncode == 0
+    row = {r["id"]: r for r in rows(repo)}["bundle:asks/react-export"]
+    assert row["kind"] == "bundle" and len(row["hash"]) == 64

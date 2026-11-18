@@ -72,7 +72,7 @@ Two words used to collide, so they are fixed here: the playbook's `spec.md` is o
 | `size` | `none`, `S`, `M` or `L`. Its presence marks a v3 folder. |
 | `kind` | `feature`, `bug`, `refactor`, `docs` or `chore`. |
 | `skips` | activity id to `skip -- <reason>`. Ids: `brief`, `ia`, `interaction`, `screens`, `prototype`, `conformance`, `validation`. |
-| `visualSource` | `{"kind": "export-bundle", "canvas", "figma" or "image", "path"}`: the one design the build is checked against; every other input is a reference. Optional, omitted or `"none"` when the change has no interface. See `design-inputs.md`. |
+| `visualSource` | `{"kind", "path"}`, the design the build is checked against; optional. See `design-inputs.md`. |
 | `testLocked` | only for bugs. Set true after the failing test is committed. |
 | `testEdit` | user words that allow a locked test edit. |
 | `milestone` | `{"kind": "new"\|"existing"\|"single"\|"hotfix", "slug"}`. Its presence marks a folder on the milestone process. |
@@ -124,13 +124,13 @@ silently after the dialog. Adding one needs the user's yes and the reason.
 | `analyze.md` | analyze pass | sdlc-run, read-only | `approve` refuses an open CRITICAL | from 3.8.0 |
 | `challenge.md` | challenge pass | a reviewer in a fresh context, read-only | `approve` refuses an open CRITICAL | from 3.9.0, absent blocks nothing |
 | `reflection.md` | reflection | sdlc-run at Stage 7 | none; the owner promotes repeated lessons | from 3.9.0 |
-| `spec/qa.md` | build validation | `cct:ux-build-validate` | PR evidence | when prototype exists |
+| `spec/qa.md` | build validation | `cct:ux-build-validate` | PR evidence | when a visual source or prototype exists |
 | `handover.md` | — | a session that stops mid-build | none | no |
 | `marks.json` | owner feedback comparison | `marks.py init`, then the agent | milestone `owner-marks` | when marks or reference images exist |
 | `verify/shots/` | build evidence | headless capture | owner comparison and shared UX visual pass | for every row except `ruled-out` |
 
 `python3 scripts/marks.py init <id>` inventories Snapmark notes under `asks/` and reference
-images under `asks/` or `spec/prototype/`, excluding mark images from reference rows.
+images under `asks/`, excluding mark images from reference rows. Generated mockups are advisory and not rows (`design-inputs.md`).
 `marks.json` holds a `rows` array. Note rows have `id`, `kind: note`, `session`, `mark`, `note`,
 `words` (verbatim) and `image`; reference rows have `id`, `kind: reference` and `image`.
 Note IDs use the session folder relative to `asks/`, then the mark and note (`2026-09-26/002.3`);

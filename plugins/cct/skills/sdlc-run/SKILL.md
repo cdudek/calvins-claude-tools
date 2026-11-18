@@ -51,8 +51,9 @@ Designs and decisions outlive a change: one file each in `designsDir`, never an 
 `python3 scripts/design_index.py write` after adding or changing one (`references/chain.md`).
 
 Every change folder starts with a generated `README.md`, the reading map: three entry points
-(understand, review, pick up) and one row per document. Regenerate it after each stage commit
-with `sdlc_status.py readme <id>`. Write plain words first and the id in brackets after ("Designs
+(understand, review, pick up) and one row per document. Regenerate it just before each stage commit, so the commit carries it
+(`sdlc_status.py readme <id>`; it writes only when the content changed, only over a README it
+generated, and `status` never writes it). Write plain words first and the id in brackets after ("Designs
 win over today's app (Q202)"); `verify_gate.py lint` flags a bare id in what the owner reads, and
 `sdlc_status.py ids <id>` says what each id means. `references/readability.md` has the rest.
 
@@ -88,7 +89,7 @@ carry on: it never blocks. `references/changelog.md` lists what each version cha
 | Input | Do |
 |---|---|
 | `adopt [--dry-run] [--upgrade [--apply --replace FILE]] [--preset node\|python]` | Install or refresh the chain → `references/adopt.md`. `--upgrade` never overwrites or moves anything: it adds missing `sdlc.json` keys, stamps `sdlcVersion`, lists every differing file as `review diff` and the changelog's manual migrations; `--upgrade --apply --replace <file>` replaces one kit-owned file after showing its diff. First ask "Use Ship/Show/Ask?" (that file, "Ask first"), on the first adopt and on every upgrade. |
-| `status [<id>]` · `status --shipped [n]` | `bash ${CLAUDE_SKILL_DIR}/scripts/status.sh …`, then `python3 ${CLAUDE_SKILL_DIR}/scripts/sdlc_status.py map` for every milestone and this one's features, then `… sdlc_status.py readme <id>` to refresh the folder's reading map. |
+| `status [<id>]` · `status --shipped [n]` | `bash ${CLAUDE_SKILL_DIR}/scripts/status.sh …`, then `python3 ${CLAUDE_SKILL_DIR}/scripts/sdlc_status.py map` for every milestone and this one's features. `status` is read-only. |
 | `<title>` or a ticket id | Start at Stage 1.0. |
 | `tracker` | Choose or set up the tracker → `references/trackers.md`. |
 | empty | `status.sh --current` finds this branch's change; continue from its state. |
@@ -279,7 +280,7 @@ debug failures locally, not through remote CI. Commands:
 ## References
 
 - `references/convergence.md` — six-layer pass rule, severity, frozen defect list, fix-round budget, design-system audit, pinned capture.
-- `references/design-inputs.md` — the visual source of truth, each kind of design input, what wins, the challenge rule.
+- `references/design-inputs.md` — the visual source of truth, the six layers, each kind of input, bundles and rendering, what wins, questioning the design.
 - `references/stages.md` — every step, input, output, skip and failure mode.
 - `references/trackers.md` — Linear, GitHub, Beads: choosing, setting up, the four levels in each.
 - `references/chain.md` — folder layout, decisions, frontmatter, `sdlc.json` keys, history.

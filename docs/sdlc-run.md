@@ -38,6 +38,7 @@ The two touchpoints are the intent and the plan. After the plan is approved, `lo
 - **You get:** `intent.md` with your asks word for word, job stories, the success measure and the rules that apply.
 - **Who acts:** the agent drafts after one dialog (ticket, design, size, kind, milestone, project); **you confirm**.
 - **Typical time:** 10 to 20 minutes.
+- **Your design:** If you have a design (Figma, an export bundle, an image), say so; it becomes the one source the build is checked against ([design inputs](../plugins/cct/skills/sdlc-run/references/design-inputs.md)).
 - **Example:** your words "I can't find the newest invoice" become the ask A1, the job story "when I open the list I want newest first", and the measure "support questions about finding invoices drop by half in a month".
 
 ### 2 UX plan
@@ -90,7 +91,7 @@ A project, work that spans several milestones, adds stage 6p: after the last mil
 
 `delivery: "feature-prs"` keeps the older shape: one PR per feature, auto-merged into the milestone branch. It suits teams building features in parallel.
 
-Builders are `cct:sdlc-feature-builder` agents, at most four at once, each in its own worktree and test slot. Each gets a `Base: <sha>` line, the milestone head, and resets to it before any edit, because a worktree hook cuts from the default branch. The supervisor commits its records first, edits no code, runs no test suite, and merges builder branches back one at a time. The close is one `cct:builder` with `Mode: close`; nothing merges while it runs.
+Builders are `cct:sdlc-feature-builder` agents, at most four at once, each in its own worktree and test slot. Each gets a `Base: <sha>` line, the milestone head, and resets to it before any edit, because a worktree hook cuts from the default branch. The supervisor commits its records first, edits no code, runs no test suite, and merges builder branches back one at a time. The close is one `cct:sdlc-feature-builder` with `Mode: close`; nothing merges while it runs.
 
 ## Branches, commits and PRs
 

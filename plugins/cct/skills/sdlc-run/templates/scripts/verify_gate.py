@@ -1,7 +1,7 @@
 """The verify contract of the SDLC chain: one command, one last line.
 
     python3 scripts/verify_gate.py approve <id>              # lock the criteria at approval
-    python3 scripts/verify_gate.py lint <id>                 # plain-language lint: short sentences, ids only in brackets
+    python3 scripts/verify_gate.py lint <id> [--pr-body FILE|-]  # plain language: short sentences, ids only in brackets; the PR body you publish
     python3 scripts/verify_gate.py feature|milestone <id> [--keep-going]   # run sdlc.json checks.<scope>
     python3 scripts/verify_gate.py project <slug>            # local milestones: checks.milestone on project/<slug>
     python3 scripts/verify_gate.py audit [--no-evidence]     # read-only: is every gate enforced?
@@ -30,13 +30,15 @@ origin's default branch, or project/<slug> in a project, has commits HEAD lacks:
 locally first. With `milestones.merge: "local"` the local project/<slug> must also be an ancestor
 of HEAD, so a milestone cannot skip an earlier one merged locally. Then it runs the checks cheapest first and the first
 failure stops the run (`--keep-going` runs them all and reports the first failure's verdict), and
-writes <changesDir>/<id>/verify/report.json + report.md.
+writes <changesDir>/<id>/verify/report.json + report.md (a milestone on branch milestone/<slug>-<n> also milestone-<n>.json, never overwritten by another scope).
 
 Cheapest first: a check that passed takes its seconds into verify/durations.json (keyed by command)
 and the next run sorts by them; a check with no record yet sorts by a static guess from its
 command (lint, format, typecheck, secrets and docs first, a build, e2e or docker run last, the
 rest between). Equal costs keep their order in sdlc.json. A check that depends on an earlier
-one's output sets `"serial": true`: it never moves, and nothing moves across it.
+one's output sets `"serial": true`: it never moves, and nothing moves across it, or
+`"after": ["<check name>"]`: it runs behind the named checks and moves freely otherwise. An approval
+made before 3.18.0 (its lock.json has no `"order": "cost"`) keeps the declared order.
 
 `project <slug>` (local milestones, stage 6p) runs `checks.milestone` on the checked-out
 project/<slug>, which must contain origin's default branch, and records `VERIFY PASS project
@@ -78,7 +80,7 @@ import sys
 import time
 from pathlib import Path
 
-from marks import sessions
+from marks import bundles, sessions
 from sdlc_version import kit_version, message
 
 REASONS = {
@@ -107,7 +109,16 @@ SENTENCE_WORDS = 25
 OWNER_FILES = ("intent.md", "plan.md", "milestone.md", "questions.md", "pr-body.md")
 # The id families the chain defines: asks, bugs, facts, challenge findings, job stories,
 # non-functional facts, questions, review findings, analyze findings (`references/readability.md`).
-BARE_ID = re.compile(r"(?<![\w@/.#-])[ABFHJNQRX]\d{1,3}\b")
+ID_TOKEN = r"[ABFHJNQRX]\d+"
+BARE_ID = re.compile(rf"(?<![\w@/.#-]){ID_TOKEN}\b")
+# A definition label opens a line: `**F3**`, `**F3:**`, `**Q1 (date) the question?**`. The id then
+# stands alone; `**B19 blocks the build.**` is a sentence, not a label.
+LABEL = re.compile(
+    rf"^\s*(?:>\s*)?(?:(?:[-*]|\d+\.)\s+(?:\[[ x]\]\s+)?)?\*\*({ID_TOKEN})(?=\*\*|:|\s*\(|\s*$)"
+)
+TABLE_ID = re.compile(rf"^\s*\|\s*({ID_TOKEN})\s*\|")
+IDS_ONLY = re.compile(rf"[\s,;/&+-]*(?:{ID_TOKEN}[\s,;/&+-]*)*")
+BRACKETS = re.compile(r"\([^()]*\)|\[[^\[\]]*\]")  # may span a line wrap, never a blank line
 
 
 def sh(*cmd: str) -> str:
@@ -235,7 +246,7 @@ def end(line: str, code: int) -> int:
 
 
 def approve(change: Path, cfg: dict) -> int:
-    problems = approval_blockers(change)
+    problems = lint_problems(change) + approval_blockers(change)  # the cheap pure check first
     if problems:
         print("\n".join(problems[:TAIL]))
         return end(f"APPROVE FAIL {change.name} problems={len(problems)}", 1)
@@ -243,6 +254,7 @@ def approve(change: Path, cfg: dict) -> int:
         "approved_at": dt.datetime.now(dt.timezone.utc).isoformat(timespec="seconds"),  # noqa: UP017 -- runs on macOS python3 3.9
         "sha": sh("git", "rev-parse", "HEAD"),
         "criteria": criteria_hash(change, cfg.get("checks", {})),
+        "order": "cost",  # a lock without this key keeps the declared order (before 3.18.0)
     }
     (change / "lock.json").write_text(json.dumps(lock, indent=2) + "\n", encoding="utf-8")
     print(f"locked {', '.join(lock['criteria'])} in {change.name}/lock.json -- commit it")
@@ -261,35 +273,72 @@ def prose(text: str) -> list[str]:
     return [s for line in lines for s in re.split(r"(?<=[.!?])\s+", line) if s.strip()]
 
 
-def bare_ids(text: str) -> list[tuple[str, str]]:
-    """(id, line) for every id in running text that is not inside brackets: "plain words first,
-    the id in brackets after". Tables, headings, code and a bold label that opens a line are data."""
-    text = re.sub(r"\A---\n.*?\n---\n", "", text, flags=re.S)
-    text = re.sub(r"```.*?```|<!--.*?-->", "", text, flags=re.S)
-    found = []
-    for line in text.splitlines():
-        if line.lstrip().startswith(("|", "#")):
+def defined_ids(change: Path) -> set[str]:
+    """The ids this change defines: a table row that opens with the id, or a definition label.
+    An id defined nowhere ("Press F5", "before Q4") is ordinary text and never flagged."""
+    found = set()
+    for path in change.rglob("*.md"):
+        if path.name == "README.md" or {"asks", "verify"} & set(path.relative_to(change).parts):
             continue
-        label = (
-            r"^\s*(?:>\s*)?(?:(?:[-*]|\d+\.)\s+(?:\[[ x]\]\s+)?)?\*\*[ABFHJNQRX]\d{1,3}\**(?=\W|$)"
-        )
-        line = re.sub(label, "", line)
-        line = re.sub(r"`[^`]*`", "", line)
-        for _ in range(3):  # nested brackets: (A1; see [F2])
-            line = re.sub(r"\([^()]*\)|\[[^\[\]]*\]", "", line)
-        found += [(m.group(0), line.strip()) for m in BARE_ID.finditer(line)]
+        for line in path.read_text(encoding="utf-8").splitlines():
+            if m := TABLE_ID.match(line) or LABEL.match(line):
+                found.add(m.group(1))
     return found
 
 
-def lint(change: Path) -> int:
+def bare_ids(text: str, defined: set[str]) -> list[tuple[str, str]]:
+    """(id, context) for every defined id in running text that is not inside brackets: "plain words
+    first, the id in brackets after". Headings, code, the first cell of a table row, a cell that
+    holds only ids and a definition label are structure; every other table cell is prose."""
+    text = re.sub(r"\A---\n.*?\n---\n", "", text, flags=re.S)
+    text = re.sub(r"```.*?```|<!--.*?-->", "", text, flags=re.S)
+    found: list[tuple[str, str]] = []
+    para: list[str] = []
+
+    def flush() -> None:
+        body = "\n".join(para)
+        para.clear()
+        for _ in range(3):  # nested brackets: (A1; see [F2])
+            body = BRACKETS.sub("", body)
+        for m in BARE_ID.finditer(body):
+            if m.group(0) in defined:
+                around = " ".join(body[max(0, m.start() - 30) : m.end() + 30].split())
+                found.append((m.group(0), around))
+
+    for line in text.splitlines():
+        s = line.strip()
+        if not s or s.startswith("#"):
+            flush()
+        elif s.startswith("|"):
+            flush()
+            for cell in [c.strip() for c in s.strip("|").split("|")][1:]:
+                if not IDS_ONLY.fullmatch(cell):
+                    para.append(cell)
+                    flush()
+        else:
+            if re.match(r"(?:[-*]|\d+\.)\s", s):
+                flush()  # a new list item never shares a bracket with the one before
+            para.append(re.sub(r"`[^`]*`", "", LABEL.sub("", line)))
+    flush()
+    return found
+
+
+def lint_problems(change: Path, body: str | None = None) -> list[str]:
     """Plain language: no sentence over SENTENCE_WORDS words, no leftover template prompts, and
-    in the files the owner reads no id outside brackets."""
+    in the files the owner reads no id outside brackets. With `body`, only that text (the PR body
+    about to be published) is checked, for ids. Pure file reads."""
+    defined = defined_ids(change)
+    if body is not None:
+        return [
+            f"pr-body: id {bare} outside brackets, words first: {ctx}"
+            for bare, ctx in bare_ids(body, defined)
+        ]
     problems = []
     for name in OWNER_FILES:
         path = change / name
         if path.exists():
-            for bare, line in bare_ids(path.read_text(encoding="utf-8")):
-                problems.append(f"{name}: id {bare} outside brackets, words first: {line[:70]}")
+            for bare, ctx in bare_ids(path.read_text(encoding="utf-8"), defined):
+                problems.append(f"{name}: id {bare} outside brackets, words first: {ctx}")
     for name in ("intent.md", "facts.md", "plan.md"):
         path = change / name
         if not path.exists():
@@ -300,6 +349,11 @@ def lint(change: Path) -> int:
                 problems.append(f"{name}: {len(s.split())} words: {s[:90]}...")
         if "[NEEDS CLARIFICATION" in text:
             problems.append(f"{name}: an open [NEEDS CLARIFICATION] remains")
+    return problems
+
+
+def lint(change: Path, body: str | None = None) -> int:
+    problems = lint_problems(change, body)
     for p in problems[:TAIL]:
         print(p)
     print(f"LINT {'FAIL' if problems else 'PASS'} {change.name} problems={len(problems)}")
@@ -376,7 +430,8 @@ DEFAULT_COST = 60.0  # unit tests and anything unrecognised
 
 def order_checks(checks: list[dict], durations: dict[str, float], change_id: str) -> list[dict]:
     """Cheapest first: recorded seconds when there are any, else a guess from the command. Stable,
-    so ties keep their sdlc.json order; a `serial` check is a wall that nothing moves across."""
+    so ties keep their sdlc.json order; a `serial` check is a wall that nothing moves across, and
+    `"after": [<check name>]` keeps a check behind the ones it needs (codegen before tsc)."""
 
     def cost(check: dict) -> float:
         cmd = check["run"].replace("{id}", change_id)
@@ -393,7 +448,20 @@ def order_checks(checks: list[dict], durations: dict[str, float], change_id: str
             segment = []
         else:
             segment.append(check)
-    return ordered + sorted(segment, key=cost)
+    ordered += sorted(segment, key=cost)
+    done: set[str] = set()
+    names = {c["name"] for c in ordered}
+    result: list[dict] = []
+    while ordered:
+        # the first check whose named predecessors have run; a cycle or unknown name never blocks
+        nxt = next(
+            (c for c in ordered if all(a in done or a not in names for a in c.get("after") or [])),
+            ordered[0],
+        )
+        ordered.remove(nxt)
+        done.add(nxt["name"])
+        result.append(nxt)
+    return result
 
 
 def run(
@@ -422,7 +490,13 @@ def run(
         report["result"] = line
         report["sha"] = sh("git", "rev-parse", "HEAD")
         report["metrics"] = metrics(change, report, retries, started_run)
-        (out_dir / "report.json").write_text(json.dumps(report, indent=2) + "\n", encoding="utf-8")
+        text = json.dumps(report, indent=2) + "\n"
+        (out_dir / "report.json").write_text(text, encoding="utf-8")
+        # report.json holds the last scope run only: a milestone also keeps its own receipt, which
+        # `sdlc_status.py goal` reads, so a deleted merged branch does not undo a finished milestone
+        on = re.fullmatch(r"milestone/.+-(\d+)", sh("git", "rev-parse", "--abbrev-ref", "HEAD"))
+        if scope == "milestone" and on:
+            (out_dir / f"milestone-{on[1]}.json").write_text(text, encoding="utf-8")
         rows = "\n".join(
             f"| {c['name']} | {c['status']} | {c['seconds']} |" for c in report["checks"]
         )
@@ -438,6 +512,7 @@ def run(
             (out_dir / "state.json").unlink(missing_ok=True)
         return end(line, code)
 
+    declared = False  # an approval from before 3.18.0 keeps the order its checks were written in
     now: dict[str, str] = {}  # a project has no lock: its checks are the milestones' locked ones
     if scope == "project":
         branch = f"{(cfg.get('projects') or {}).get('branchPrefix', 'project/')}{change.name}"
@@ -450,7 +525,9 @@ def run(
             print(f"{change.name}/lock.json is missing: run `verify_gate.py approve {change.name}`")
             print("at the plan gate, when the engineer approves.")
             return finish("VERIFY BLOCKED reason=not-approved", 3)
-        locked = json.loads(lock_path.read_text(encoding="utf-8"))["criteria"]
+        lock = json.loads(lock_path.read_text(encoding="utf-8"))
+        locked = lock["criteria"]
+        declared = lock.get("order") != "cost"
         now = criteria_hash(change, cfg.get("checks", {}))
         moved = sorted(k for k in set(locked) | set(now) if locked.get(k) != now.get(k))
         if moved:
@@ -508,8 +585,11 @@ def run(
         durations = json.loads(durations_path.read_text(encoding="utf-8"))
     except (OSError, ValueError):
         durations = {}
-    checks = order_checks(checks, durations, change.name)
-    if scope == "milestone" and ((change / "marks.json").exists() or sessions(change)):
+    if not declared:
+        checks = order_checks(checks, durations, change.name)
+    if scope == "milestone" and (
+        (change / "marks.json").exists() or sessions(change) or bundles(change)
+    ):
         checks.append(
             {
                 "name": "owner-marks",
@@ -567,7 +647,7 @@ def run(
             return finish("VERIFY BLOCKED reason=attempts", 3)
         return finish(f"VERIFY FAIL {scope} {change.name} check={name}", 1)
 
-    first_failure: tuple[str, str] | None = None  # --keep-going: the verdict names the first
+    first_failure: tuple[str, str, str] | None = None  # --keep-going: the verdict names the first
     for check in checks:
         name = check["name"]
         cmd = check["run"].replace("{id}", change.name)
@@ -608,6 +688,9 @@ def run(
         blocked = re.search(r"VERIFY BLOCKED reason=([\w-]+)\s*\Z", output.strip())
         if blocked:
             reason = blocked.group(1) if blocked.group(1) in REASONS else "unknown-verdict"
+            if keep_going:  # the rest still runs; the first verdict, blocked or failed, stands
+                first_failure = first_failure or (name, output, reason)
+                continue
             return finish(f"VERIFY BLOCKED reason={reason}", 3)
         if is_e2e(cmd):
             verdict = classify_e2e(cmd, repo)
@@ -616,13 +699,15 @@ def run(
                 report["checks"][-1]["rerun"] = verdict
                 report["checks"][-1]["tail"] += f"\n--last-failed re-run: the failures {verdict}"
         if keep_going:
-            first_failure = first_failure or (name, output)
+            first_failure = first_failure or (name, output, "")
             continue
         return failed(name, output)
     if first_failure:
         names = ", ".join(c["name"] for c in report["checks"] if c["status"] != "pass")
         print(f"failed: {names}")
-        return failed(*first_failure)
+        if first_failure[2]:
+            return finish(f"VERIFY BLOCKED reason={first_failure[2]}", 3)
+        return failed(*first_failure[:2])
 
     # A PASS names one frozen head: a merge or an edit during the checks means they tested
     # something other than the commit the line would name.
@@ -817,6 +902,7 @@ def main(argv: list[str]) -> int:
         action="store_true",
         help="run every check, not only up to the first failure",
     )
+    parser.add_argument("--pr-body", metavar="FILE", help="lint: check this PR body ('-' = stdin)")
     parser.add_argument("--visual-check")
     parser.add_argument("--visual-run", action="append", default=[])
     args = parser.parse_args(argv[1:])
@@ -841,7 +927,10 @@ def main(argv: list[str]) -> int:
     if args.scope == "approve":
         return approve(change, cfg)
     if args.scope == "lint":
-        return lint(change)
+        body = None
+        if args.pr_body:
+            body = sys.stdin.read() if args.pr_body == "-" else Path(args.pr_body).read_text("utf-8")
+        return lint(change, body)
     return run(args.scope, change, cfg, repo, args.visual_check, args.visual_run, args.keep_going)
 
 
