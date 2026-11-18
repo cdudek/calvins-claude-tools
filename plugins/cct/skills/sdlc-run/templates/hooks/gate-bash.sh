@@ -17,7 +17,10 @@ docs=$(sdlc_get 'cfg["docs"]' || echo "docs/sdlc.md")
 while IFS=$'\t' read -r match message; do
   [ -n "$match" ] || continue
   if printf '%s' "$cmd" | grep -Eq -- "$match"; then
-    printf 'BLOCKED: %s\n(%s, "Hooks")\n' "$message" "$docs" >&2
+    text=$(printf 'BLOCKED: %s\n(%s, "Hooks")' "$message" "$docs")
+    # a repeat of this block says STOP (block_state.py); without the helper the text is plain
+    out=$(printf '%s' "$payload" | python3 "$(dirname "$0")/block_state.py" gate-bash.sh "sdlc.json blocked[]" "$message" "$text" 2>/dev/null) && [ -n "$out" ] && text=$out
+    printf '%s\n' "$text" >&2
     exit 2
   fi
 done < <(printf '%s' "$blocked" | python3 -c 'import json,sys; [print(r["match"]+"\t"+r["message"]) for r in json.load(sys.stdin)]')
