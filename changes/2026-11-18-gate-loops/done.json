@@ -1,0 +1,127 @@
+{
+  "_comment": "The approved criteria as data. Locked by verify_gate.py approve; checks read it.",
+  "facts": [
+    {
+      "id": "F1",
+      "tag": "@F1",
+      "screen": "none",
+      "states": [
+        "goal failed"
+      ]
+    },
+    {
+      "id": "F2",
+      "tag": "@F2",
+      "screen": "none",
+      "states": [
+        "goal cleared"
+      ]
+    },
+    {
+      "id": "F3",
+      "tag": "@F3",
+      "screen": "none",
+      "states": [
+        "off switch env",
+        "off switch file"
+      ]
+    },
+    {
+      "id": "F4",
+      "tag": "@F4",
+      "screen": "none",
+      "states": [
+        "shared helper"
+      ]
+    },
+    {
+      "id": "F5",
+      "tag": "@F5",
+      "screen": "none",
+      "states": [
+        "goal running"
+      ]
+    },
+    {
+      "id": "F6",
+      "tag": "@F6",
+      "screen": "none",
+      "states": [
+        "push with redirect"
+      ]
+    },
+    {
+      "id": "F7",
+      "tag": "@F7",
+      "screen": "none",
+      "states": [
+        "push in another repo"
+      ]
+    },
+    {
+      "id": "F8",
+      "tag": "@F8",
+      "screen": "none",
+      "states": [
+        "session prExceptions"
+      ]
+    },
+    {
+      "id": "F9",
+      "tag": "@F9",
+      "screen": "none",
+      "states": [
+        "block recorded"
+      ]
+    },
+    {
+      "id": "F10",
+      "tag": "@F10",
+      "screen": "none",
+      "states": [
+        "second identical block"
+      ]
+    },
+    {
+      "id": "F11",
+      "tag": "@F11",
+      "screen": "none",
+      "states": [
+        "second identical block"
+      ]
+    },
+    {
+      "id": "F12",
+      "tag": "@F12",
+      "screen": "none",
+      "states": [
+        "replay test"
+      ]
+    },
+    {
+      "id": "F13",
+      "tag": "@F13",
+      "screen": "none",
+      "states": [
+        "second identical block"
+      ]
+    },
+    {
+      "id": "N1",
+      "tag": "@N1",
+      "screen": "none",
+      "states": [
+        "state file unwritable"
+      ]
+    }
+  ],
+  "pages": [],
+  "widths": {
+    "feature": [],
+    "milestone": "none"
+  },
+  "turns": {
+    "feature": 40,
+    "milestone": 30
+  }
+}
