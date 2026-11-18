@@ -156,3 +156,23 @@ def test_dispositions_are_bound_to_the_engineers_own_words() -> None:
     assert "| item | disposition | owner | reason | quote |" in STEP4
     assert "user message of the session transcript" in STEP4
     assert "words only the agent wrote never count" in CONVERGENCE
+
+
+# 3. One capture manifest
+VISUAL = flat(CCT / "references/visual-pass.md")
+KEY = "build SHA, reference revision, screen, state, width and zoom"
+
+
+def test_one_assessment_owns_the_captures_in_one_manifest() -> None:
+    for name, text in (("convergence", CONVERGENCE), ("visual-pass", VISUAL), ("ux", UX)):
+        assert "verify/shots/manifest.json" in text, name
+        assert KEY in text, name
+    assert "only the affected cells are captured again" in CONVERGENCE
+    assert "stale `qa.md`" in CONVERGENCE
+
+
+def test_stage_6_lists_the_assessment_once_and_lets_it_dispatch_the_specialists() -> None:
+    stage6 = STAGES.split("## Stage 6 — Milestone", 1)[1].split("2a.", 1)[0]
+    assert stage6.count("cct:ux-assessment-run") == 1
+    assert "Also run `cct:ux-assessment-run`" not in stage6
+    assert "dispatches the responsive, accessibility and build QA passes" in stage6

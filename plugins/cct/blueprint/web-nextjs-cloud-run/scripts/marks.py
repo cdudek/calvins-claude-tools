@@ -17,6 +17,13 @@ A fixed note names its proof in `test` (a tag such as @F1) found in a testGlobs 
 Init preserves existing rows and fields. Check inventories sources again, so missing,
 duplicate, changed and orphaned rows cannot silently pass. This checks coverage, not pixels:
 the reviewer must inspect each pair using the existing UX visual pass and ledger.
+
+Captures have one owner: verify/shots/manifest.json, {"entries": [{shot, build, reference,
+screen, state, width, zoom}], "qa": {"build": <sha>}}. `build` is the commit captured, `reference`
+the sha256 of the reference image. When the file exists, check refuses a shot that is not in it,
+one cell (screen, state, width, zoom) captured twice, a capture or `qa.md` whose build differs
+from HEAD in any file outside the changes folder, and a reference whose bytes changed since
+capture, so a stale capture is invalidated by its inputs, never reused because it exists.
 """
 
 from __future__ import annotations
@@ -27,6 +34,7 @@ import hashlib
 import html
 import json
 import re
+import subprocess
 import sys
 from pathlib import Path
 
@@ -201,6 +209,60 @@ def init(change: Path, sources: list[dict]) -> int:
     return 0
 
 
+def stale_build(repo: Path, change: Path, build: object) -> str:
+    """Why a capture of commit `build` no longer describes HEAD, or "" when it still does: only
+    records under the changes folder may differ."""
+    if not filled(build):
+        return "no build commit recorded"
+    records = change.parent.relative_to(repo.resolve()).as_posix()
+    done = subprocess.run(
+        ["git", "-C", str(repo), "diff", "--name-only", build, "HEAD", "--", ".", f":!{records}"],
+        capture_output=True,
+        text=True,
+    )
+    if done.returncode:
+        return f"build {build[:12]} is not a commit here"
+    files = done.stdout.split()
+    return f"{files[0]} changed since build {build[:12]}" if files else ""
+
+
+def manifest_problems(change: Path, rows: list[dict], repo: Path) -> list[str]:
+    """Problems with verify/shots/manifest.json against the rows; none when the file is absent."""
+    path = change / "verify/shots/manifest.json"
+    if not path.exists():
+        return []
+    try:
+        data = json.loads(path.read_text(encoding="utf-8"))
+        entries = [e for e in data["entries"] if isinstance(e, dict)]
+    except (OSError, ValueError, KeyError, TypeError):
+        return ["capture manifest: unreadable; it needs an entries list"]
+    problems = []
+    cells = [(e.get("screen"), e.get("state"), e.get("width"), e.get("zoom")) for e in entries]
+    problems += [f"capture manifest: cell {c} captured twice" for c in sorted(set(
+        c for c in cells if cells.count(c) > 1), key=str)]  # fmt: skip
+    for entry in entries:
+        if why := stale_build(repo, change, entry.get("build")):
+            problems.append(f"capture {entry.get('shot')}: stale: {why}")
+    qa = data.get("qa")
+    if isinstance(qa, dict) and (why := stale_build(repo, change, qa.get("build"))):
+        problems.append(f"qa.md is stale: {why}")
+    for row in rows:
+        shot = row.get("shot")
+        if not filled(shot):
+            continue
+        mine = [e for e in entries if e.get("shot") == shot]
+        if not mine:
+            problems.append(f"{row['id']}: shot {shot} is not in the capture manifest")
+            continue
+        image = row.get("image")
+        if filled(image) and (change / image).is_file():
+            digest = hashlib.sha256((change / image).read_bytes()).hexdigest()
+            known = [e["reference"] for e in mine if filled(e.get("reference"))]
+            if known and digest not in known:
+                problems.append(f"{row['id']}: reference changed since capture; capture again")
+    return problems
+
+
 def check(change: Path, sources: list[dict], repo: Path, designs: Path, globs: list[str]) -> int:
     rows = read_rows(change / "marks.json")
     problems = []
@@ -277,6 +339,7 @@ def check(change: Path, sources: list[dict], repo: Path, designs: Path, globs: l
                 problem(f"test tag {tag} appears in no spec or test file")
         if status in ("fixed", "match") and row.get("differs") not in (None, ""):
             problem("fixed/match must have no differs")
+    problems += manifest_problems(change, rows, repo)
     for rid in wanted.keys() - seen:
         problems.append(f"{rid}: missing row; run marks.py init {change.name}")
     for problem in sorted(problems):

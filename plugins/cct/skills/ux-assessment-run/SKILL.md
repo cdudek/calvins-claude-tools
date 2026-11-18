@@ -232,7 +232,7 @@ commentary minimal: the deliverable is the consolidated findings.
 
 Build the PR's head (local form: `head` in the given worktree) in its own worktree with the test
 data and fakes from `setup.md`. This assessment owns the captures: it writes the capture manifest
-(`verify/shots/manifest.json`, keyed by build, reference revision, screen, state, width and zoom)
+(`verify/shots/manifest.json`, keyed by build SHA, reference revision, screen, state, width and zoom)
 and every specialist reuses those captures instead of capturing again. Screenshot
 every changed screen, and every changed dialog, menu, popover or select open, into `$run/shots/`,
 then run the visual pass (shared steps) with `$run` as the run folder. If the app cannot be run,

@@ -485,17 +485,19 @@ person's own browser session. Never use Claude in Chrome or any tool driving tha
    head and worktree to every child pass), `cct:review-code-run changes
    <parent> --codex` (Claude and Codex; call it with this explicit command, a bare call has none; it reads the repo's `REVIEW.md` when there is one, the only code review the
    change gets, since 3.7.0 nothing reviews in CI),
-   `cct:ux-responsive-audit` (the `responsiveTier` matrix, nothing overflows; reflow at
-   320 × 640, WCAG 1.4.10 as written, never a 320 × 256 window), the states of
-   every changed page, `cct:ux-accessibility-audit`. The full E2E suite is not in this list:
+   The assessment owns the builds and captures, and dispatches the responsive, accessibility and
+   build QA passes itself from its one capture manifest, so none of them is run again on its own:
+   responsive uses the `responsiveTier` matrix, nothing overflows, reflow at 320 × 640, WCAG 1.4.10
+   as written, never a 320 × 256 window; the states of every changed page are in the same
+   captures. The full E2E suite is not in this list:
    `verify_gate.py milestone` is the only runner of the full suite and the full E2E at the close
    (step 5). Changed and flaky specs run ×3 on the final integrated build; use the committed
    `e2e/flaky-specs.txt` list and the selection and line-format rules in
    `../../test-e2e-policy/references/suite-speed-and-reliability.md` section G. Send inconsistent
-   results to `test-flake-fix`. Also run `cct:ux-assessment-run` only
-   when the change adds a screen,
-   `cct:ux-build-validate` (report-only at the close: six layers, one frozen defect list per
-   screen, capture from one pinned commit; [convergence](convergence.md)), the `cct:test-behavior-verifier` and `cct:review-criteria-auditor` agents for job
+   results to `test-flake-fix`. Build QA (`cct:ux-build-validate`, report-only at the
+   close: six layers, one frozen defect list per screen, capture from one pinned commit;
+   [convergence](convergence.md)) runs inside the assessment for a change with a spec folder, and
+   only when its `qa.md` is missing or stale. Run the `cct:test-behavior-verifier` and `cct:review-criteria-auditor` agents for job
    stories and facts. `cct:review-security-run` runs only on the goal's last milestone, on the whole
    goal diff (`git diff origin/<defaultBranch>...milestone/<slug>-<last>`), and only when auth, money or
    consent is touched anywhere in it; in a project it waits for Stage 6p. Never on earlier milestones.

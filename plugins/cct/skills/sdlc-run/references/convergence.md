@@ -80,7 +80,16 @@ A screen that is done in the app and waits only on a missing design-system part 
 It is not a failure and needs no accepted words. When the release ships, the row is checked again
 and set to `match` or `differs`.
 
-## Capture: one build, one pinned commit
+## Capture: one owner, one manifest, one pinned commit
+
+One assessment (`cct:ux-assessment-run`) owns every capture of a milestone, in
+`verify/shots/manifest.json`, keyed by build SHA, reference revision, screen, state, width and
+zoom. Responsive, accessibility, build QA and the reviewer read those captures; none takes its
+own. After a fix, only the affected cells are captured again, from the new build. A stale `qa.md`
+is invalidated by its inputs (its recorded build against HEAD, the reference bytes), never reused
+because the file exists. `marks.py check` enforces it: a capture or `qa.md` whose build differs
+from HEAD in any file outside the changes folder, a changed reference, a shot missing from the
+manifest, or one cell captured twice is a problem.
 
 Capture all visual evidence from one build per milestone version, from a worktree pinned to one
 commit. Never capture from the live milestone branch: merges moved the branch in the middle of a

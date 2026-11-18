@@ -471,3 +471,95 @@ def test_bundle_without_index_html_is_found_through_visual_source(repo: Path) ->
     assert run(repo, "init").returncode == 0
     row = {r["id"]: r for r in rows(repo)}["bundle:asks/react-export"]
     assert row["kind"] == "bundle" and len(row["hash"]) == 64
+
+
+# 3.21.0: one capture manifest; a capture is reused only while its inputs are unchanged.
+def git(repo: Path, *args: str) -> str:
+    done = subprocess.run(
+        ["git", "-c", "user.name=t", "-c", "user.email=t@t", *args],
+        cwd=repo,
+        check=True,
+        capture_output=True,
+        text=True,
+    )
+    return done.stdout.strip()
+
+
+def with_manifest(repo: Path, **tweak: object) -> dict:
+    """A resolved change, committed, with a manifest whose cells all match the current build."""
+    data = resolved(repo)
+    write(repo / "src/app.ts", "v1")
+    git(repo, "init", "-q")
+    git(repo, "add", ".")
+    git(repo, "commit", "-qm", "build")
+    sha = git(repo, "rev-parse", "HEAD")
+    entries = []
+    for i, row in enumerate(data):
+        reference = hashlib.sha256((change(repo) / row["image"]).read_bytes()).hexdigest()
+        entries.append(
+            {
+                "shot": row["shot"], "build": sha, "reference": reference,
+                "screen": f"s{i}", "state": "open", "width": 1280, "zoom": 100,
+            }
+        )  # fmt: skip
+    manifest = {"entries": entries, "qa": {"build": sha}} | tweak
+    write(change(repo) / "verify/shots/manifest.json", json.dumps(manifest))
+    return manifest
+
+
+def test_a_manifest_whose_inputs_are_unchanged_passes(repo: Path) -> None:
+    with_manifest(repo)
+    assert run(repo, "check").returncode == 0
+
+
+def test_a_records_only_commit_keeps_the_captures_valid(repo: Path) -> None:
+    with_manifest(repo)
+    write(change(repo) / "findings.md", "records")
+    git(repo, "add", ".")
+    git(repo, "commit", "-qm", "records")
+    assert run(repo, "check").returncode == 0
+
+
+def test_a_code_change_after_the_capture_makes_it_stale(repo: Path) -> None:
+    with_manifest(repo)
+    write(repo / "src/app.ts", "v2")
+    git(repo, "add", ".")
+    git(repo, "commit", "-qm", "fix")
+    result = run(repo, "check")
+    assert result.returncode == 1 and "stale: src/app.ts changed since build" in result.stdout
+
+
+def test_a_changed_reference_makes_the_capture_stale(repo: Path) -> None:
+    manifest = with_manifest(repo)
+    first = rows(repo)[0]["image"]
+    write(change(repo) / first, "a new reference revision")
+    result = run(repo, "check")
+    assert result.returncode == 1 and "reference changed since capture" in result.stdout
+    assert manifest["entries"]
+
+
+def test_a_shot_missing_from_the_manifest_is_a_problem(repo: Path) -> None:
+    with_manifest(repo, entries=[])
+    assert "not in the capture manifest" in run(repo, "check").stdout
+
+
+def test_one_cell_captured_twice_is_a_problem(repo: Path) -> None:
+    manifest = with_manifest(repo)
+    manifest["entries"][1].update(manifest["entries"][0] | {"shot": manifest["entries"][1]["shot"]})
+    write(change(repo) / "verify/shots/manifest.json", json.dumps(manifest))
+    assert "captured twice" in run(repo, "check").stdout
+
+
+def test_a_qa_verdict_is_stale_when_its_build_is(repo: Path) -> None:
+    manifest = with_manifest(repo)
+    write(repo / "src/app.ts", "v2")
+    git(repo, "add", ".")
+    git(repo, "commit", "-qm", "fix")
+    manifest["entries"] = [e | {"build": git(repo, "rev-parse", "HEAD")} for e in manifest["entries"]]
+    write(change(repo) / "verify/shots/manifest.json", json.dumps(manifest))
+    assert "qa.md is stale" in run(repo, "check").stdout
+
+
+def test_no_manifest_means_the_old_behaviour(repo: Path) -> None:
+    resolved(repo)
+    assert run(repo, "check").returncode == 0
