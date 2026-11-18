@@ -81,7 +81,7 @@ dec = json.load(open(sys.argv[1], encoding="utf-8"))
 d = pathlib.Path(sys.argv[2])
 if "size" not in dec or str(dec.get("skips", {}).get("validation", "")).startswith("skip"):
     sys.exit(1)
-val = d / "spec" / "validation.md"
+val = d / "spec" / "readiness.md"
 if not val.exists():
     sys.exit(0)
 front = {}

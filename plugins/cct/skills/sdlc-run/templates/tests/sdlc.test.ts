@@ -332,14 +332,14 @@ function checkChange(parent: string, id: string, archived: boolean) {
       screens: join(dir, "spec", "screens.md"),
       prototype: join(dir, "spec", "prototype", "index.md"),
       conformance: join(dir, "spec", "conformance.md"),
-      validation: join(dir, "spec", "validation.md"),
+      validation: join(dir, "spec", "readiness.md"),
     };
     for (const activity of V3_ACTIVITIES) {
       const skipped = String(skips[activity] ?? "").startsWith("skip");
       expect(skipped || existsSync(files[activity]), `${id}: ${activity}`).toBe(true);
     }
     if (!String(skips.validation ?? "").startsWith("skip")) {
-      const fm = frontmatter(join(dir, "spec", "validation.md"));
+      const fm = frontmatter(join(dir, "spec", "readiness.md"));
       expect(fm.verdict).toBe("ready");
       expect(fm.status).toBe("approved");
     }
@@ -697,7 +697,7 @@ function chainRepo(
     mkdirSync(join(cdir, "spec", "prototype"));
     writeFileSync(join(cdir, "spec", "prototype", "index.md"), "# prototype\n");
   }
-  if (opts.validation) writeFileSync(join(cdir, "spec", "validation.md"), opts.validation);
+  if (opts.validation) writeFileSync(join(cdir, "spec", "readiness.md"), opts.validation);
   writeFileSync(
     join(cdir, "facts.md"),
     `---\ntype: facts\nstatus: ${opts.factsStatus ?? "approved"}\n---\n\n# Facts\n\n- [ ] **F1** (A1) When x, the system shall y.\n`,
@@ -733,7 +733,7 @@ describe("chain-gate v3", () => {
     const [repo, change] = chainRepo(
       "validation",
       { size: "M", kind: "feature", skips: {} },
-      { designDone: true, validation: "---\ntype: validation\nverdict: not-ready\nstatus: draft\n---\n" },
+      { designDone: true, validation: "---\ntype: readiness\nverdict: not-ready\nstatus: draft\n---\n" },
     );
     const r = runChain(repo, `changes/${change}/plan.md`);
     expect(r.status).toBe(2);

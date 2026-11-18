@@ -326,13 +326,13 @@ def test_v3_approved_plan_has_spec_guardrails(change: Path, archived: bool) -> N
         "screens": change / "spec" / "screens.md",
         "prototype": change / "spec" / "prototype" / "index.md",
         "conformance": change / "spec" / "conformance.md",
-        "validation": change / "spec" / "validation.md",
+        "validation": change / "spec" / "readiness.md",
     }
     for activity in V3_ACTIVITIES:
         skipped = str(skips.get(activity, "")).startswith("skip")
         assert skipped or files[activity].exists(), f"{change.name}: {activity}"
     if not str(skips.get("validation", "")).startswith("skip"):
-        fm = _frontmatter(change / "spec" / "validation.md")
+        fm = _frontmatter(change / "spec" / "readiness.md")
         assert fm.get("verdict") == "ready" and fm.get("status") == "approved"
     _assert_change_resources_stay_in_repo(REPO_ROOT, change)
     # A recorded intent skip means there is no intent.md to read, and the check above has
@@ -613,7 +613,7 @@ def _chain_repo(
         (d / "spec" / "prototype").mkdir()
         (d / "spec" / "prototype" / "index.md").write_text("# prototype\n")
     if validation:
-        (d / "spec" / "validation.md").write_text(validation)
+        (d / "spec" / "readiness.md").write_text(validation)
     (d / "facts.md").write_text(
         f"---\ntype: facts\nstatus: {facts_status}\n---\n\n"
         "# Facts\n\n- [ ] **F1** (A1) When x, the system shall y.\n"
@@ -790,7 +790,7 @@ def test_chain_gate_v3_refuses_plan_before_validation_approval(tmp_path: Path) -
         tmp_path,
         {"size": "M", "kind": "feature", "skips": {}},
         design_done=True,
-        validation="---\ntype: validation\nverdict: not-ready\nstatus: draft\n---\n",
+        validation="---\ntype: readiness\nverdict: not-ready\nstatus: draft\n---\n",
     )
     result = _run_chain(repo, f"changes/{change}/plan.md")
     assert result.returncode == 2 and "cct:ux-spec-validate spec" in result.stderr

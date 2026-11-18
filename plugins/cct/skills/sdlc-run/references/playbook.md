@@ -9,7 +9,7 @@ stage ends by committing an artifact, the commit starts the next stage, humans s
 | Stage | Play | What implements it now | Gate | Leading metric | Lagging metric |
 |---|---|---|---|---|---|
 | Plan | Capture as intent.md | `intent.md` with `## Asks`, plus `decisions.json` for ticket, intent, design, size and kind | originator or named reviewer | conversation → committed intent | asks dropped after commit |
-| Design | Requirements and design | `spec/` via `cct:ux-design-run`, `cct:ux-rules-validate spec`, `facts.md` citing asks and screens, `cct:ux-spec-validate spec` | owner reads `spec/validation.md`; facts and validation approved together | intent commit → approved spec | rework because screen/state was missing |
+| Design | Requirements and design | `spec/` via `cct:ux-design-run`, `cct:ux-rules-validate spec`, `facts.md` citing asks and screens, `cct:ux-spec-validate spec` | owner reads `spec/readiness.md`; facts and validation approved together | intent commit → approved spec | rework because screen/state was missing |
 | Build | Plan mode default | `plan.md` visible slices, proof per slice, `planGate` owner or allowed self-check | plan gate | share merged first pass | merged diff matches plan |
 | Build | CLAUDE.md | generated `CLAUDE.md` section plus repo rules | reviewed like code | repeated mistakes recorded | time to first merged PR for a new joiner |
 | Build | Skills | this kit, especially `cct:sdlc-run` and the cct UX skills | policy owner | policy change → merged skill | review findings citing policy → 0 |

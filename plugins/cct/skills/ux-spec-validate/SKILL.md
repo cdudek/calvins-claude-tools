@@ -1,6 +1,6 @@
 ---
 name: ux-spec-validate
-description: "Returns a spec-readiness verdict (ready or not-ready) for one design spec from completed specialist evidence: three independent reviewers (Nielsen heuristics, every Laws of UX check, and a screen critique against the audience and job stories), a definition of ready and one owner gate. Writes validation.md into the spec folder. Use when the user says 'validate the spec', 'is the design ready', 'is this spec ready for approval', 'write validation.md'. Skip for: comparing the built UI with the approved spec, which belongs to cct:ux-build-validate."
+description: "Returns a spec-readiness verdict (ready or not-ready) for one design spec from completed specialist evidence: three independent reviewers (Nielsen heuristics, every Laws of UX check, and a screen critique against the audience and job stories), a definition of ready and one owner gate. Writes readiness.md into the spec folder. Use when the user says 'validate the spec', 'is the design ready', 'is this spec ready for approval', 'write readiness.md'. Skip for: comparing the built UI with the approved spec, which belongs to cct:ux-build-validate."
 user_invocable: true
 allowed-tools: "Bash(python3 */ux-assessment-run/scripts/*)"
 metadata:
@@ -12,7 +12,7 @@ metadata:
 
 **Arguments:** `<change>`, a change id, a change folder or a spec folder.
 
-Validate one design spec and write `<spec>/validation.md` with a verdict. The method is in
+Validate one design spec and write `<spec>/readiness.md` with a verdict. The method is in
 `references/spec.md`; follow it. Comparing the built UI with the approved spec is
 `cct:ux-build-validate`, not this skill.
 

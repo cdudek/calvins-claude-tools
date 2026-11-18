@@ -7,7 +7,7 @@ Run up to three fix rounds, then write the verdict.
 
 ## Inputs
 
-- Approved `<spec>/validation.md`.
+- Approved `<spec>/readiness.md`.
 - `<spec>/brief.md`.
 - `<spec>/ia.md`.
 - `<spec>/interaction.md`.
