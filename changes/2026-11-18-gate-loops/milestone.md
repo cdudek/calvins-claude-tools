@@ -4,7 +4,7 @@ change: 2026-11-18-gate-loops
 milestone: gate-loops
 branch: milestone/gate-loops-1
 linear_milestone: none
-status: building
+status: gated
 created: 2026-11-18
 ---
 
@@ -37,6 +37,11 @@ branch), `merged` (feature PRs) or `blocked: <reason>`.
 - Row 0 ran after the last earlier milestone merged (the gate's `parent-sync` check proves it).
 - One push and one PR from `milestone/gate-loops-1` to `main`, after the gate passed, auto-merge armed.
   No other PR or push for this milestone (`pr-gate.sh`).
+
+## Gate
+
+- **Gate:** `VERIFY PASS milestone 2026-11-18-gate-loops 0032bac5f1708f5051c931e4a1076efeb8bd753f`.
+- **Review:** one round, 8 fixes, converged in round 1; 7 advisory items in `findings.md`.
 
 ## Outcome
 
