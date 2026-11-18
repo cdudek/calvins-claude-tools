@@ -278,7 +278,7 @@ debug failures locally, not through remote CI. Commands:
 
 ## References
 
-- `references/design-inputs.md` — the visual source of truth, each kind of design input, what wins, the challenge rule.
+- `references/design-inputs.md` — the visual source of truth, the six layers, each kind of input, bundles and rendering, what wins, questioning the design.
 - `references/stages.md` — every step, input, output, skip and failure mode.
 - `references/trackers.md` — Linear, GitHub, Beads: choosing, setting up, the four levels in each.
 - `references/chain.md` — folder layout, decisions, frontmatter, `sdlc.json` keys, history.

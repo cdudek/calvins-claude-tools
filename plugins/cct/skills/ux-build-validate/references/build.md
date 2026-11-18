@@ -12,8 +12,8 @@ Run up to three fix rounds, then write the verdict.
 - `<spec>/ia.md`.
 - `<spec>/interaction.md`.
 - `<spec>/screens.md`.
-- `<spec>/prototype/index.md`.
-- Prototype screenshots under `<spec>/prototype/`.
+- The declared `visualSource`, when `decisions.json` names one: the reference.
+- `<spec>/prototype/index.md` and its screenshots, when present: advisory only.
 - The running build from `docs/ux/setup.md`.
 - the shared `finding-format.md`.
 - the shared `checklist.md`.
@@ -21,13 +21,13 @@ Run up to three fix rounds, then write the verdict.
 
 ## Steps
 
-1. Load the approved spec, prototype screenshots, and build.
+1. Load the approved spec, the visual source (else the prototype screenshots), and the build.
 2. If either side cannot be captured, set `verdict: fail` and name the blocker.
 3. For each screen and state, drive the build to the same state.
 4. Match content, theme, and zoom.
 5. Record viewport, zoom, and pixel density.
 6. Capture the build at 100 percent and 150 percent.
-7. Open every prototype and build image with the image-reading tool. Follow the shared
+7. Open every reference and build image with the image-reading tool. Follow the shared
    `visual-pass.md`, using `<spec>/visual/build/<round>/` as the run; compare both sets of pixels.
 8. Check full view first.
 9. Then check focused regions.
