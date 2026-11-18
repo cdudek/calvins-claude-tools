@@ -989,6 +989,8 @@ def main() -> int:
     hooks_dir = ROOT / ".claude" / "hooks"
     for src in sorted((TPL / "hooks").glob("*.sh")):
         _write(hooks_dir / src.name, src.read_text(encoding="utf-8"), executable=True)
+    for src in sorted((TPL / "hooks").glob("*.py")):  # helpers the hooks import (F15)
+        _write(hooks_dir / src.name, src.read_text(encoding="utf-8"))
 
     settings_path = ROOT / ".claude" / "settings.json"
     settings = (
@@ -1059,6 +1061,7 @@ def main() -> int:
                 "!.claude/settings.json",
                 "!.claude/hooks/",
                 "!.claude/hooks/*.sh",
+                "!.claude/hooks/*.py",
             )
             if line not in lines
         ]
