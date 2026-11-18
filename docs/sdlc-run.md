@@ -91,7 +91,7 @@ A project, work that spans several milestones, adds stage 6p: after the last mil
 
 `delivery: "feature-prs"` keeps the older shape: one PR per feature, auto-merged into the milestone branch. It suits teams building features in parallel.
 
-Builders are `cct:sdlc-feature-builder` agents, at most four at once, each in its own worktree and test slot. Each gets a `Base: <sha>` line, the milestone head, and resets to it before any edit, because a worktree hook cuts from the default branch. The supervisor commits its records first, edits no code, runs no test suite, and merges builder branches back one at a time. The close is one `cct:builder` with `Mode: close`; nothing merges while it runs.
+Builders are `cct:sdlc-feature-builder` agents, at most four at once, each in its own worktree and test slot. Each gets a `Base: <sha>` line, the milestone head, and resets to it before any edit, because a worktree hook cuts from the default branch. The supervisor commits its records first, edits no code, runs no test suite, and merges builder branches back one at a time. The close is one `cct:sdlc-feature-builder` with `Mode: close`; nothing merges while it runs.
 
 ## Branches, commits and PRs
 

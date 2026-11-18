@@ -9,7 +9,7 @@ Runs from the plugin and is never copied into a repo: run it with the working di
 adopted repo, which it finds from the cwd. It loads `verify_gate` from the plugin's own
 `templates/scripts/`, not from the repo's `scripts/`. stdlib only.
 
-Everything is read from the files; only `readme` writes, and only the change's README.md. The stage (1-7): an archived change → 7,
+Everything is read from the files; only `readme` writes, and only the change's README.md, only over a README it generated and only when the content changed. The stage (1-7): an archived change → 7,
 lock.json → 5 (6 once every feature is merged), plan.md → 4, facts.md → 3, an approved intent → 2,
 otherwise 1. Milestone position comes from the design doc's `## Milestones` list (decisions.json
 `design`), features from the milestone's `milestone.md` Features table.
@@ -31,7 +31,9 @@ line `Blocking: <what>, because <why>; <who> runs `<step>`.` says the one thing 
 
 With sdlc.json `milestones.merge: "local"` and a project branch, a milestone has no PR: it is DONE
 when its `VERIFY PASS milestone` head is an ancestor of the local project/<slug> (line `GOAL <id>
-DONE merged=project/<slug> gate=<sha>`). `--project` reads the project's own record (`VERIFY PASS
+DONE merged=project/<slug> gate=<sha>`). Each planned milestone counts by its own receipt
+verify/milestone-<n>.json (a pass whose head is in the project branch; the branch need not exist),
+or, without a receipt, by its milestone/<slug>-<n> branch being merged. `--project` reads the project's own record (`VERIFY PASS
 project <slug>`, written by `verify_gate.py project`) and the PR project/<slug> into the default
 branch, merged or armed, as above.
 """
@@ -44,7 +46,7 @@ import subprocess
 import sys
 from pathlib import Path
 
-from change_docs import ids, readme
+from change_docs import MARKER, ids, readme
 
 # verify_gate lives in the plugin's templates (it is also what adopt copies into repos).
 sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "templates" / "scripts"))
@@ -81,7 +83,12 @@ def read_json(path: Path) -> dict:
 def find_change(root: Path, cfg: dict, change_id: str | None) -> Path | None:
     base = root / cfg.get("changesDir", "changes")
     if change_id:
-        return base / change_id if (base / change_id).is_dir() else None
+        # a change is a direct child of changesDir, or archive/<year>/<year-month>/<id> once
+        # Stage 7 moved it: no "..", no absolute path, never the archive folder itself
+        if Path(change_id).name != change_id or change_id in ("..", "archive"):
+            return None
+        found = [base / change_id, *base.glob(f"archive/**/{change_id}")]
+        return next((d for d in found if d.is_dir() and base.resolve() in d.resolve().parents), None)
     if not base.is_dir():
         return None
     folders = [d for d in base.iterdir() if d.is_dir() and d.name != "archive"]
@@ -195,6 +202,31 @@ def gh_json(root: Path, *args: str) -> list | None:
     return found if isinstance(found, list) else None
 
 
+def contains(root: Path, sha: str, into: str) -> bool:
+    """`sha` is `into` or an ancestor of it."""
+    return bool(sha and into) and (
+        subprocess.run(
+            ["git", "-C", str(root), "merge-base", "--is-ancestor", sha, into], capture_output=True
+        ).returncode
+        == 0
+    )
+
+
+def same_head(root: Path, cfg: dict, gated: str, head: str) -> bool:
+    """The head the gate passed, or a descendant that only added records (pr-gate.sh's rule)."""
+    if gated == head:
+        return True
+    rel = str(cfg.get("changesDir", "changes")).rstrip("/") + "/"
+    changed = git(root, "diff", "--name-only", gated, head).splitlines()
+    return contains(root, gated, head) and bool(changed) and all(p.startswith(rel) for p in changed)
+
+
+def planned(change: Path) -> int:
+    """How many milestones plan.md lists."""
+    plan = (change / "plan.md").read_text(encoding="utf-8") if (change / "plan.md").exists() else ""
+    return sum(1 for line in section(plan, "Milestones") if re.match(r"\|\s*M\d+\b", line))
+
+
 def branches(change: Path, decisions: dict, scope: str, n: int | None) -> list[str]:
     """Head branches whose PRs end the goal: milestone/<slug>-<n>, or the Feature PRs row's branch."""
     plan = (change / "plan.md").read_text(encoding="utf-8") if (change / "plan.md").exists() else ""
@@ -205,7 +237,7 @@ def branches(change: Path, decisions: dict, scope: str, n: int | None) -> list[s
                 return [cells[3]]
         return []
     slug = decisions.get("milestone", {}).get("slug") or slug_of(change.name)
-    count = sum(1 for line in section(plan, "Milestones") if re.match(r"\|\s*M\d+\b", line))
+    count = planned(change)
     return [f"milestone/{slug}-{i}" for i in ([n] if n else range(1, max(count, 1) + 1))]
 
 
@@ -234,15 +266,23 @@ def goal(
     if local:  # no PR: the gated head must be merged into the local project branch
         names = []
         into = git(root, "rev-parse", "--verify", "--quiet", f"{project}^{{commit}}")
-        if passed and not (
-            into
-            and subprocess.run(
-                ["git", "-C", str(root), "merge-base", "--is-ancestor", passed.group(1), into],
-                capture_output=True,
-            ).returncode
-            == 0
-        ):
+        if passed and not contains(root, passed.group(1), into):
             missing.append(f"gate-not-merged-into-{project}")
+        # report.json holds the last gate run only: each planned milestone is done by its own
+        # receipt (verify/milestone-<n>.json), whose gated head is in the project branch; the
+        # branch merge is the fallback for a change gated before receipts existed
+        if planned(change):
+            for b in branches(change, read_json(change / "decisions.json"), scope, n):
+                i = b.rsplit("-", 1)[1]
+                receipt = read_json(change / "verify" / f"milestone-{i}.json")
+                if receipt:
+                    ok = str(receipt.get("result", "")).startswith("VERIFY PASS milestone ")
+                    if not (ok and contains(root, str(receipt.get("sha", "")), into)):
+                        missing.append(f"receipt-not-merged:{i}")
+                    continue
+                tip = git(root, "rev-parse", "--verify", "--quiet", f"{b}^{{commit}}")
+                if not contains(root, tip, into):
+                    missing.append(f"merge-missing:{b}")
     elif scope == "project":
         names = [project] if project else []
         if not names:
@@ -256,7 +296,7 @@ def goal(
         found = gh(
             root,
             *("pr", "list", "--head", branch, "--state", "all", "--limit", "1"),
-            *("--json", "number,headRefOid,state,autoMergeRequest,mergedAt"),
+            *("--json", "number,headRefOid,state,autoMergeRequest,mergedAt,baseRefName"),
         )
         if found is None:
             return 1, f"{name} OPEN gh-unavailable"
@@ -268,8 +308,14 @@ def goal(
         armed = pr.get("state") == "OPEN" and bool(pr.get("autoMergeRequest"))
         if not (merged or armed):
             missing.append(f"pr-{pr['number']}-not-merged-or-armed")
+        if scope == "project" and pr.get("baseRefName") != (cfg.get("defaultBranch") or "main"):
+            missing.append(f"pr-{pr['number']}-wrong-base")
         prs.append((pr, "merged" if merged else "armed"))
-    if prs and passed and prs[-1][0].get("headRefOid") != passed.group(1):
+    if (
+        prs
+        and passed
+        and not same_head(root, cfg, passed.group(1), prs[-1][0].get("headRefOid", ""))
+    ):
         missing.append(f"gate-sha-not-pr-{prs[-1][0]['number']}-head")
     if scope == "milestone":
         from verify_gate import milestone_blockers  # the gate's own record rules, one definition
@@ -286,7 +332,7 @@ def goal(
 
 # what is in the way, by the first missing item: (what, why, who acts, the exact step)
 BLOCKS = {
-    "milestone-gate-pass": (
+    "gate-pass": (
         "the {scope} gate has not passed",
         "no VERIFY PASS is recorded for it",
         "the agent",
@@ -340,6 +386,18 @@ BLOCKS = {
         "the agent",
         "git switch <project branch> && git merge --no-ff <milestone branch>",
     ),
+    "merge-missing:": (
+        "the milestone branch {n} is not merged into its local project branch",
+        "the milestone has no gate receipt, so its branch is checked, and it is not in the project branch",
+        "the agent",
+        "on {n}: python3 scripts/verify_gate.py milestone {id} (writes its receipt); then git switch <project branch> && git merge --no-ff {n}",
+    ),
+    "receipt-not-merged:": (
+        "milestone {n} has no passing gate receipt merged into its local project branch",
+        "its verify/milestone-{n}.json is missing, failed, or its head is not in the project branch",
+        "the agent",
+        "on branch milestone/<slug>-{n}: python3 scripts/verify_gate.py milestone {id}, then merge it",
+    ),
     "no-branch-for-": (
         "the plan names no branch for {n}",
         "plan.md has no matching row",
@@ -350,7 +408,7 @@ BLOCKS = {
         "there is no change folder",
         "the id matches no folder under changes/",
         "you",
-        "python3 scripts/sdlc_status.py map",
+        "python3 ${{CLAUDE_SKILL_DIR}}/scripts/sdlc_status.py map",
     ),
     "not-approved": (
         "the plan was never approved",
@@ -370,6 +428,54 @@ BLOCKS = {
         "you",
         "read verify/report.md, then delete verify/state.json to start over",
     ),
+    "flaky": (
+        "a check failed once and passed on a re-run",
+        "a flaky check cannot prove the change",
+        "you",
+        "reproduce it locally three times and fix the check's flakiness in its own change",
+    ),
+    "unknown-verdict": (
+        "a check ended without a verdict the gate understands",
+        "its last line was neither pass nor a known blocked reason",
+        "the agent",
+        "read verify/report.md, then fix the check's output",
+    ),
+    "needs-baseline": (
+        "a check needs a baseline that does not exist",
+        "nothing recorded the passing state to compare with",
+        "you",
+        "decide whether to record the baseline, then rerun `python3 scripts/verify_gate.py {scope} {id}`",
+    ),
+    "allowlist-request": (
+        "a check asks for a wider allowlist",
+        "the change needs something its limits do not permit",
+        "you",
+        "decide whether to widen the allowlist; never widen it silently",
+    ),
+    "scope-growth": (
+        "the change grew past its plan",
+        "files outside the plan's Files that change were edited",
+        "you",
+        "decide whether the plan or the edit moves",
+    ),
+    "spec-conflict": (
+        "the build contradicts the approved spec",
+        "a check found a state the spec forbids",
+        "you",
+        "decide whether the spec or the build changes",
+    ),
+    "env": (
+        "the gate cannot run here",
+        "no checks are configured, the change folder is missing or the environment is broken",
+        "you",
+        "fix the environment named in the gate output, then rerun `python3 scripts/verify_gate.py {scope} {id}`",
+    ),
+    "test-proves-nothing": (
+        "a test passes without the code it guards",
+        "the test also passes on the old code",
+        "the agent",
+        "rewrite the test so it fails without the change",
+    ),
     "attempts": (
         "three gate runs failed",
         "the breaker stops a loop",
@@ -379,17 +485,23 @@ BLOCKS = {
 }
 
 
-def blocker(change: Path, line: str, scope: str = "milestone") -> str:
+def blocker(subject: str, line: str, scope: str = "milestone") -> str:
     """The one thing in the way, as a sentence, from the goal line; empty when the goal is DONE.
-    Built from the first missing item (the line lists them in the order the goal checks them)."""
+    `subject` is the change id the goal was asked about, `scope` the gate it reads. Built from the
+    first missing item (the line lists them in the order the goal checks them)."""
     m = re.search(r"OPEN (\S+)|BLOCKED reason=([\w-]+)", line)
     if not m:
         return ""
     first = (m.group(1) or m.group(2)).split(",")[0]
+    key_of = "gate-pass" if first.endswith("-gate-pass") else first
     for key, (what, why, who, step) in BLOCKS.items():
-        if first == key or (key.endswith(("-", ":")) and first.startswith(key)):
-            n = re.sub(r"^no-pr:|^no-branch-for-|^gate-sha-not-pr-|-head$", "", first)
-            fill = {"scope": scope, "id": change.name, "n": n}
+        if key_of == key or (key.endswith(("-", ":")) and first.startswith(key)):
+            n = re.sub(
+                r"^no-pr:|^no-branch-for-|^merge-missing:|^receipt-not-merged:|^gate-sha-not-pr-|-head$",
+                "",
+                first,
+            )
+            fill = {"scope": scope, "id": subject, "n": n}
             return f"Blocking: {what.format(**fill)}, because {why}; {who} runs `{step.format(**fill)}`."
     pr = re.fullmatch(r"pr-(\d+)-not-merged-or-armed", first)
     if pr:
@@ -398,7 +510,7 @@ def blocker(change: Path, line: str, scope: str = "milestone") -> str:
             f"Blocking: PR {pr[1]} is open without auto-merge, because nothing armed it; "
             f"the agent runs `gh pr merge {pr[1]} {flag} --auto`."
         )
-    return f"Blocking: {first}, because the goal check lists it; the agent reads `sdlc_status.py goal {change.name}`."
+    return f"Blocking: {first}, because the goal check lists it; the agent reads `sdlc_status.py goal {subject}`."
 
 
 def goal_main(args: list[str]) -> int:
@@ -418,16 +530,34 @@ def goal_main(args: list[str]) -> int:
         print(__doc__)
         return 2
     root = repo_root(Path.cwd())
+    scope = "project" if project else flag[2:] if flag else "milestone"
     change = find_change(root, config(root), pos[0]) if root else None
     if not root or not change:
-        print(f"GOAL {pos[0]} OPEN no-change-folder")
+        line = f"GOAL {pos[0]} OPEN no-change-folder"
+        print(line)
+        print(blocker(pos[0], line, scope))
         return 1
-    scope = "project" if project else flag[2:] if flag else "milestone"
     code, line = goal(root, change, scope, int(value) if flag else None)
     print(line)
-    if code and (sentence := blocker(change, line, flag[2:] if flag else "milestone")):
+    if code and (sentence := blocker(change.name, line, scope)):
         print(sentence)
     return code
+
+
+def write_readme(change: Path, text: str) -> int:
+    """Write the reading map: only over a README this tool generated, and only when it differs,
+    so a stage commit carries it and a plain `status` never dirties the tree."""
+    path = change / "README.md"
+    old = path.read_text(encoding="utf-8") if path.exists() else None
+    if old is not None and MARKER not in old:
+        print(f"{path} is not generated (no {MARKER}); move or delete it first")
+        return 2
+    if old == text:
+        print(f"unchanged {path}")
+        return 0
+    path.write_text(text, encoding="utf-8")
+    print(f"wrote {path}")
+    return 0
 
 
 def main(argv: list[str]) -> int:
@@ -450,8 +580,7 @@ def main(argv: list[str]) -> int:
         print("\n".join(ids(change)))
     elif argv[1] == "readme":
         stage = f"{s['stage']}/7 {STAGES[s['stage'] - 1]}"
-        (change / "README.md").write_text(readme(change, stage), encoding="utf-8")
-        print(f"wrote {change / 'README.md'}")
+        return write_readme(change, readme(change, stage))
     else:
         print(milestone_map(s))
     return 0

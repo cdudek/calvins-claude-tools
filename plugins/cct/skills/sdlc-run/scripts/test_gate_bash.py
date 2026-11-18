@@ -79,3 +79,34 @@ def test_plan_gate_never_blocks_and_stays_quiet_without_plannotator(
         env={**os.environ, "CLAUDE_CONFIG_DIR": str(config), "PATH": "/usr/bin:/bin"},
     )
     assert r.returncode == 0 and r.stdout == "" and r.stderr == ""
+
+
+OLD_CONFIG = """SDLC_ROOT="${CLAUDE_PROJECT_DIR:-$(pwd)}"
+SDLC_JSON="$SDLC_ROOT/sdlc.json"
+sdlc_get() { :; }
+"""  # sdlc-config.sh before the fast hooks: no $SDLC_PY, no python-free helpers
+
+
+def test_a_new_hook_under_an_old_config_still_blocks_F4(repo: Path) -> None:
+    """`adopt --replace` swaps one file at a time: the hook must not need the new config."""
+    (repo / ".claude" / "hooks" / "sdlc-config.sh").write_text(OLD_CONFIG)
+    r = _bash(repo, "uv add httpx")
+    assert r.returncode == 2 and r.stderr.startswith("BLOCKED: ")
+
+
+def test_a_new_config_still_offers_sdlc_field_to_old_hooks_F4(repo: Path) -> None:
+    script = (
+        f'. "{repo}/.claude/hooks/sdlc-config.sh"; '
+        "sdlc_field '{\"tool_input\": {\"command\": \"uv add x\"}}' command"
+    )
+    r = subprocess.run(["bash", "-c", script], capture_output=True, text=True)
+    assert r.stdout.strip() == "uv add x"
+
+
+def test_a_malformed_rule_is_skipped_and_the_valid_ones_still_apply_F14(repo: Path) -> None:
+    good = BLOCKED[1]
+    for rules in ([good, {"message": "no match"}], [{"message": "no match"}, good], [good, 7]):
+        (repo / "sdlc.json").write_text(json.dumps({"blocked": rules}))
+        r = _bash(repo, "uv add httpx")
+        assert r.returncode == 2 and "BLOCKED: ask first." in r.stderr, rules
+        assert "blocked[" in r.stderr and "skipped" in r.stderr, rules

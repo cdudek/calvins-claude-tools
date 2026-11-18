@@ -48,6 +48,12 @@ else:
 PY
 }
 
+# The tool_input field <name> from the hook payload ($1). Hooks installed before the fast-hook
+# release call it; `adopt --replace` swaps one file at a time, so it stays until they are gone.
+sdlc_field() {
+  printf '%s' "$1" | "$SDLC_PY" -c 'import json,sys; d=json.load(sys.stdin); print(d.get("tool_input",{}).get(sys.argv[1],"") if sys.argv[1]!="stop_hook_active" else str(d.get("stop_hook_active",False)).lower())' "$2" 2>/dev/null || true
+}
+
 # Hash of the source diff: `git diff HEAD` plus every untracked file matching the verifyDirty
 # globs in $1 (space separated). One function, so turn-start.sh and verify-on-stop.sh hash
 # identically. Run inside the repo, with `set -f` so the globs reach git as patterns.

@@ -10,6 +10,7 @@
 # rules are POSIX ERE (`[[:space:]]`), which Python's `re` does not read.
 set -uo pipefail
 . "$(dirname "$0")/sdlc-config.sh"
+: "${SDLC_PY:=python3}" # an older sdlc-config.sh (one-file upgrade) does not set it
 
 payload=$(cat)
 fields=()
@@ -21,13 +22,17 @@ try:
     cfg = json.load(open(sys.argv[1], encoding="utf-8"))
     rules = cfg.get("blocked") or []
     out = [cmd, cfg.get("docs") or "docs/sdlc.md"]
-    for r in rules:
-        out += [r["match"], r.get("message", "")]
+    for i, r in enumerate(rules):
+        # one bad rule is reported and skipped; the valid ones still apply
+        if isinstance(r, dict) and isinstance(r.get("match"), str) and r["match"]:
+            out += [r["match"], str(r.get("message", ""))]
+        else:
+            sys.stderr.write("sdlc.json blocked[%d] has no `match` string: skipped\n" % i)
 except (OSError, ValueError, KeyError, AttributeError, TypeError):
     sys.exit(0)
 if cmd and rules:
     sys.stdout.write("\0".join(out) + "\0")
-' "$SDLC_JSON" 2>/dev/null
+' "$SDLC_JSON"
 )
 [ "${#fields[@]}" -ge 4 ] || exit 0
 cmd=${fields[0]}

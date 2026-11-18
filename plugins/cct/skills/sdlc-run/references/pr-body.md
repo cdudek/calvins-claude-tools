@@ -6,7 +6,7 @@
 - **Decision4 (advisory):** Copy the section from the repo's PR template. Pick one level (🟢 Undo, 🟡 Repair, 🟠 Migrate, 🔴 Answer) at or above the lowest level `boundary-map.yaml` gives the changed paths; unsure, take the higher. Give concrete recovery steps and who is responsible. Nothing checks it and it never blocks a merge.
 - **Decision record:** Only above Undo, as `AGENTS.md` says: Repair names what was chosen, over what, why and what it commits us to; Migrate lists at least two options; Answer lists facts marked observed, inferred, asked or unknown and recommends nothing.
 - **Milestone and review text:** The same layout covers milestone-close PRs, issue bodies and PR comments. Put addressed feedback under What, its rationale under Why and its check results under Proof. A short thread reply can be one bold-labelled bullet; include only applicable sections.
-- **Validation:** Validate the proposed body before pushing and the actual body after creation or edits against these rules. Use `--body-file`.
+- **Validation:** Validate the proposed body before pushing and the actual body after creation or edits against these rules. Use `--body-file`. In a repo with sdlc-run, ids go in brackets after the words, and `python3 scripts/verify_gate.py lint <change-id> --pr-body <file>` (or `-` for stdin) checks the body you are about to publish.
 
 Full example for a Repair change (illustrative evidence, not claims to copy). Omit Before merge when nothing is open, and omit Decision record at Undo.
 
@@ -14,7 +14,7 @@ Full example for a Repair change (illustrative evidence, not claims to copy). Om
 ## What
 
 - **Change:** Move saved filters to the versioned format.
-- **Requirement F1:** Existing filters remain readable during rollout.
+- **Requirement:** Existing filters remain readable during rollout (F1).
 
 ## Why
 

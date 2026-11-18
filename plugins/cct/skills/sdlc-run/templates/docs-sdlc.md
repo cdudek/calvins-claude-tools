@@ -59,7 +59,7 @@ none.
 
 | Key | Meaning |
 | --- | --- |
-| `checks.feature[]`, `checks.milestone[]` | what `scripts/verify_gate.py` runs, cheapest first by recorded seconds (`"serial": true` pins a check that needs an earlier one's output; `--keep-going` runs past a failure) |
+| `checks.feature[]`, `checks.milestone[]` | what `scripts/verify_gate.py` runs, cheapest first by recorded seconds (`"after": ["<check name>"]` keeps a check behind the one it needs, such as codegen before the typecheck; `"serial": true` pins a check in place; an approval made before 3.18.0 keeps the declared order; `--keep-going` runs past a failure) |
 | `milestones`, `hotfix` | milestone branch prefix and rebase rule; the hotfix lane |
 | `delivery` | `one-go` (default) or `feature-prs` |
 | `goal` | turn caps: `runTurns` for the one-go goal, `featureTurns` and `milestoneTurns` for feature PRs |

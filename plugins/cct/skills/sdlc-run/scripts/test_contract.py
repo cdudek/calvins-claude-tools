@@ -227,3 +227,22 @@ def test_decision4_is_advisory_no_workflow_or_gate_shipped() -> None:
     agents = (TEMPLATES / "decision4/AGENTS-section.md").read_text(encoding="utf-8")
     assert "Nothing blocks a merge on it" in agents
     assert "§" not in agents and "put-right" not in agents
+
+
+def _blueprint_copies() -> list[tuple[Path, Path]]:
+    """Every blueprint file that is a byte copy of a template, found by name."""
+    names = {p.name: p for p in (TEMPLATES / "scripts").glob("*.py")}
+    names["REVIEW.md"] = TEMPLATES / "REVIEW.md"
+    root = SKILL.parents[1] / "blueprint"
+    return [
+        (p, names[p.name])
+        for p in sorted(root.rglob("*"))
+        if p.is_file() and p.name in names and p.parent.name in ("scripts", "web-nextjs-cloud-run")
+    ]
+
+
+def test_blueprint_copies_match_their_templates_F19() -> None:
+    copies = _blueprint_copies()
+    assert {p.name for p, _ in copies} >= {"verify_gate.py", "marks.py", "design_index.py"}
+    stale = [str(p) for p, template in copies if p.read_bytes() != template.read_bytes()]
+    assert not stale, f"refresh from templates/ with cp: {stale}"

@@ -223,6 +223,11 @@ def test_lint_flags_long_sentences_and_open_questions(tmp_path: Path) -> None:
     assert _last(r) == f"LINT FAIL {ID} problems=2"
 
 
+# Ids the change defines. An id that is defined nowhere is ordinary text ("Press F5", "before Q4").
+DEFINED = (
+    "| # | What |\n|---|---|\n"
+    + "".join(f"| {i} | defined |\n" for i in ("Q202", "B19", "F13", "F14", "Q7", "A1", "F1000"))
+)
 GOOD_IDS = [
     "Designs win over today's app (Q202).",
     "The list stays sorted (F13, F14; rules SEC-2).",
@@ -233,17 +238,27 @@ GOOD_IDS = [
     "| F13 | a table row is data |",
     "Tag the test `@F13`.",
     "Never gate on HTTP 404 or SEC-2.",
+    "Press F5 to refresh before Q4.",  # F5 and Q4 are defined nowhere in the change
+    "Ticket F1001 stays out of scope.",
+    "The list stays sorted (see\nF13 and Q202 for the rule).",  # a bracket across a line wrap
+    "| 1 | Sort | F13, F14 | todo |",  # a cell of ids is structural
 ]
 BAD_IDS = [
     ("Done per Q202.", "Q202"),
     ("B19 blocks the build.", "B19"),
+    ("**B19 blocks the build.**", "B19"),
+    ("- **B19 blocks the build.**", "B19"),
     ("We ship F13 first, then (A1) later.", "F13"),
     ("> Decided in Q7 and nowhere else.", "Q7"),
+    ("Ticket F1000 is the reason.", "F1000"),
+    ("(the rule)\nDone per Q202.", "Q202"),
+    ("| 1 | Done per Q202 because it is simpler | todo |", "Q202"),
 ]
 
 
 def test_lint_passes_an_id_in_brackets_and_flags_a_bare_one(tmp_path: Path) -> None:
     repo = _repo(tmp_path, ["true"])
+    (repo / "changes" / ID / "analyze.md").write_text(DEFINED)
     path = repo / "changes" / ID / "intent.md"
     path.write_text("# Intent\n\n" + "\n\n".join(GOOD_IDS) + "\n")
     r = _gate(repo, "lint", ID)
@@ -259,11 +274,72 @@ def test_lint_passes_an_id_in_brackets_and_flags_a_bare_one(tmp_path: Path) -> N
 def test_lint_reads_every_owner_file_for_bare_ids_but_not_facts(tmp_path: Path, name: str) -> None:
     repo = _repo(tmp_path, ["true"])
     change = repo / "changes" / ID
-    (change / "facts.md").write_text("- [ ] **F1** (A1) It works, see F2.\n")
+    (change / "analyze.md").write_text(DEFINED)
+    (change / "facts.md").write_text("- [ ] **F1** (A1) It works, see F13.\n")
     assert _gate(repo, "lint", ID).returncode == 0
     (change / name).write_text("Because of Q202 we wait.\n")
     r = _gate(repo, "lint", ID)
     assert r.returncode == 1 and f"{name}: id Q202 outside brackets" in r.stdout
+
+
+BODY = "## What\n\n- **Requirement F13:** Filters stay readable.\n- **Proof (F14):** 12 passed.\n"
+
+
+@pytest.mark.parametrize("via", ["file", "stdin"])
+def test_lint_checks_the_pr_body_that_is_published(tmp_path: Path, via: str) -> None:
+    """The body `gh pr create --body-file` gets lives outside the change folder."""
+    repo = _repo(tmp_path, ["true"])
+    (repo / "changes" / ID / "analyze.md").write_text(DEFINED)
+    body = tmp_path / "proposed-pr-body.md"
+    body.write_text(BODY)
+    args = ["lint", ID, "--pr-body", str(body) if via == "file" else "-"]
+    r = subprocess.run(
+        [sys.executable, str(GATE), *args],
+        cwd=repo,
+        input=BODY,
+        capture_output=True,
+        text=True,
+        env=_env(),
+    )
+    assert r.returncode == 1 and "pr-body: id F13 outside brackets" in r.stdout, r.stdout
+    assert "F14" not in r.stdout
+    assert _last(r) == f"LINT FAIL {ID} problems=1"
+    body.write_text(BODY.replace("Requirement F13:", "Requirement (F13):"))
+    r = subprocess.run(
+        [sys.executable, str(GATE), *args],
+        cwd=repo,
+        input=body.read_text(),
+        capture_output=True,
+        text=True,
+        env=_env(),
+    )
+    assert r.returncode == 0, r.stdout
+
+
+def test_the_canonical_pr_body_example_passes_the_lint(tmp_path: Path) -> None:
+    text = (SKILL / "references" / "pr-body.md").read_text()
+    example = text.split("```markdown\n", 1)[1].split("\n```", 1)[0]
+    repo = _repo(tmp_path, ["true"])
+    (repo / "changes" / ID / "facts.md").write_text("- [ ] **F1** (A1) It works.\n")
+    r = subprocess.run(
+        [sys.executable, str(GATE), "lint", ID, "--pr-body", "-"],
+        cwd=repo,
+        input=example,
+        capture_output=True,
+        text=True,
+        env=_env(),
+    )
+    assert r.returncode == 0, r.stdout
+
+
+def test_approve_runs_the_lint_first_and_refuses_on_failure(tmp_path: Path) -> None:
+    repo = _repo(tmp_path, ["true"])
+    change = repo / "changes" / ID
+    (change / "intent.md").write_text("# Intent\n\n" + " ".join(["word"] * 30) + ".\n")
+    r = _gate(repo, "approve", ID)
+    assert r.returncode == 1 and "intent.md: 30 words" in r.stdout
+    assert _last(r).startswith(f"APPROVE FAIL {ID}")
+    assert not (change / "lock.json").exists()
 
 
 @pytest.mark.parametrize("name", ["run", "feature", "milestone", "project"])
@@ -592,6 +668,17 @@ def test_local_mode_milestone_must_contain_the_local_project_branch(tmp_path: Pa
     assert "git merge project/big" in r.stdout
     _git(repo, "merge", "-q", "--no-edit", "project/big")
     assert _last(_gate(repo, "milestone", ID)).startswith(f"VERIFY PASS milestone {ID}")
+
+
+def test_milestone_gate_keeps_its_own_receipt_beside_report_json(tmp_path: Path) -> None:
+    repo = _local_repo(tmp_path)
+    _merge_milestone_one_locally(repo)
+    _git(repo, "merge", "-q", "--no-edit", "project/big")
+    assert _last(_gate(repo, "milestone", ID)).startswith(f"VERIFY PASS milestone {ID}")
+    verify = repo / "changes" / ID / "verify"
+    receipt = json.loads((verify / "milestone-2.json").read_text())
+    assert receipt == json.loads((verify / "report.json").read_text())
+    assert receipt["result"].startswith("VERIFY PASS milestone") and receipt["sha"]
 
 
 @pytest.mark.parametrize("merge", [None, "pr"])
@@ -1002,3 +1089,52 @@ def test_a_supplied_bundle_requires_a_valid_ledger_at_milestone(tmp_path: Path) 
     _approve(repo)
     result = _gate(repo, "milestone", ID)
     assert _last(result) == f"VERIFY FAIL milestone {ID} check=owner-marks"
+
+
+def test_after_orders_a_check_behind_the_one_it_needs_F13(tmp_path: Path) -> None:
+    """Codegen must run before the typecheck even though the typecheck is the cheaper guess."""
+    repo = _repo(tmp_path, _checks(("tsc", "true"), ("types", "true")))
+    cfg = json.loads((repo / "sdlc.json").read_text())
+    cfg["checks"]["feature"][0]["after"] = ["types"]
+    (repo / "sdlc.json").write_text(json.dumps(cfg))
+    _git(repo, "commit", "-qam", "after")
+    _approve(repo)
+    assert _gate(repo, "feature", ID).returncode == 0
+    assert _order(repo) == ["types", "tsc"]
+
+
+def test_a_new_approval_records_cost_order_and_an_old_lock_keeps_declared_order_F13(
+    tmp_path: Path,
+) -> None:
+    repo = _repo(tmp_path, _checks(("e2e", "true"), ("unit", "true"), ("lint", "true")))
+    _approve(repo)
+    lock_path = repo / "changes" / ID / "lock.json"
+    lock = json.loads(lock_path.read_text())
+    assert lock["order"] == "cost"
+    assert _gate(repo, "feature", ID).returncode == 0
+    assert _order(repo) == ["lint", "unit", "e2e"]
+    del lock["order"]  # approved before this version: the order it saw is the order it keeps
+    lock_path.write_text(json.dumps(lock))
+    _git(repo, "commit", "-qam", "old lock")
+    assert _gate(repo, "feature", ID).returncode == 0
+    assert _order(repo) == ["e2e", "unit", "lint"]
+
+
+def test_keep_going_does_not_stop_at_a_blocked_check_F23(tmp_path: Path) -> None:
+    blocked = "echo 'VERIFY BLOCKED reason=env'; exit 1"
+    repo = _repo(tmp_path, _checks(("lint", "false"), ("unit", blocked), ("e2e", "true")))
+    _approve(repo)
+    r = _gate(repo, "feature", ID, "--keep-going")
+    assert _last(r) == f"VERIFY FAIL feature {ID} check=lint"  # the first verdict stands
+    assert _order(repo) == ["lint", "unit", "e2e"]
+
+
+def test_keep_going_reports_a_first_blocked_verdict_after_running_the_rest_F23(
+    tmp_path: Path,
+) -> None:
+    blocked = "echo 'VERIFY BLOCKED reason=env'; exit 1"
+    repo = _repo(tmp_path, _checks(("lint", blocked), ("unit", "false"), ("e2e", "true")))
+    _approve(repo)
+    r = _gate(repo, "feature", ID, "--keep-going")
+    assert _last(r) == "VERIFY BLOCKED reason=env" and r.returncode == 3
+    assert _order(repo) == ["lint", "unit", "e2e"]

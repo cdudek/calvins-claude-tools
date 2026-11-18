@@ -146,7 +146,7 @@ class Repo:
         found: list[Path] = []
         for changes in dirs:
             # archive/ too: the Stage 7 archive move is the last commit before the push (3.7.0)
-            found += [*changes.glob("*/verify/report.json"), *changes.glob("archive/*/verify/report.json")]
+            found += [*changes.glob("*/verify/report.json"), *changes.glob("archive/**/verify/report.json")]
         return found
 
     def passed(self, sha: str, scope: str = "milestone", slug: str = "") -> bool:
@@ -357,8 +357,21 @@ def check_merge(repo: Repo, args: list[str], current: str = "") -> None:
             i += 2
             continue
         ref = a.removeprefix("refs/heads/")
-        if not a.startswith("-") and ref.startswith(repo.m) and not repo.passed(repo.sha(ref)):
-            block(f"a merge of {ref} into {current} without a passing milestone gate.", CLOSE, "verify/report.json")
+        if not a.startswith("-") and ref.startswith(repo.m):
+            sha = repo.sha(ref)
+            if not repo.passed(sha):
+                block(f"a merge of {ref} into {current} without a passing milestone gate.", CLOSE, "verify/report.json")
+            into = current if current.startswith(repo.p) else real
+            parent = repo.project_of(ref)
+            if parent and parent != into:
+                block(f"a merge of {ref} into {into}: it belongs to {parent}.", local_merge_route(parent, ref))
+            tip = repo.sha(into)
+            if tip and subprocess.run(["git", "-C", str(repo.dir), "merge-base", "--is-ancestor", tip, sha]).returncode:
+                block(
+                    f"a merge of {ref} into {into} on a gate that ran against an older {into}.",
+                    f"`git merge {into}` on {ref}, then run `python3 scripts/verify_gate.py milestone <id>` again.",
+                    "verify/report.json",
+                )
         i += 1
 
 
