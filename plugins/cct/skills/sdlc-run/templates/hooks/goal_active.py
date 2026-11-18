@@ -19,10 +19,27 @@ from __future__ import annotations
 
 import json
 import os
+import re
 import sys
 from pathlib import Path
 
 SET = "A session-scoped Stop hook is now active"
+# Only a whole command entry or the exact stdout ends a goal: the same words quoted inside a
+# longer message (a subagent report, a pasted log) must not switch the gate off.
+TAGS = re.compile(r"\s*<command-(name|message|args)>([^<]*)</command-\1>\s*")
+NO_GOAL = "<local-command-stdout>No goal set</local-command-stdout>"
+
+
+def _cleared(text: str) -> bool:
+    if text.strip() == NO_GOAL:
+        return True
+    tags, pos = {}, 0
+    while pos < len(text):
+        m = TAGS.match(text, pos)
+        if not m:
+            return False
+        tags[m.group(1)], pos = m.group(2).strip(), m.end()
+    return tags.get("name") == "/goal" and tags.get("args") == "clear"
 
 
 def _text(entry: dict) -> str:
@@ -52,7 +69,7 @@ def goal_active(transcript: str) -> bool | None:
             live = att.get("met") is False and not att.get("failed")
         elif entry.get("type") in ("system", "user"):  # never api-request blobs: they quote old text
             text = _text(entry)
-            if "<command-args>clear</command-args>" in text or "No goal set" in text:
+            if _cleared(text):
                 live = False
             elif text.startswith(SET):
                 live = True
