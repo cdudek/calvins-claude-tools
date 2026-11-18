@@ -270,6 +270,22 @@ def test_lint_passes_an_id_in_brackets_and_flags_a_bare_one(tmp_path: Path) -> N
         assert _last(r) == f"LINT FAIL {ID} problems=1"
 
 
+def test_lint_exempts_the_verbatim_words_column_of_the_asks_table_only(tmp_path: Path) -> None:
+    repo = _repo(tmp_path, ["true"])
+    change = repo / "changes" / ID
+    (change / "analyze.md").write_text(
+        "| # | What |\n|---|---|\n| F3 | defined |\n| A3 | defined |\n"
+    )
+    path = change / "intent.md"
+    asks = '## Asks\n\n| # | Words |\n|---|---|\n| A3 | "Fix F3 like last time" |\n'
+    path.write_text("# Intent\n\n" + asks)
+    r = _gate(repo, "lint", ID)
+    assert r.returncode == 0, r.stdout
+    path.write_text("# Intent\n\n" + asks + '\nThe owner said "Fix F3 like last time".\n')
+    r = _gate(repo, "lint", ID)
+    assert r.returncode == 1 and "intent.md: id F3 outside brackets" in r.stdout
+
+
 @pytest.mark.parametrize("name", ["plan.md", "milestone.md", "questions.md", "pr-body.md"])
 def test_lint_reads_every_owner_file_for_bare_ids_but_not_facts(tmp_path: Path, name: str) -> None:
     repo = _repo(tmp_path, ["true"])
@@ -677,7 +693,7 @@ def test_milestone_gate_keeps_its_own_receipt_beside_report_json(tmp_path: Path)
     assert _last(_gate(repo, "milestone", ID)).startswith(f"VERIFY PASS milestone {ID}")
     verify = repo / "changes" / ID / "verify"
     receipt = json.loads((verify / "milestone-2.json").read_text())
-    assert receipt == json.loads((verify / "report.json").read_text())
+    assert receipt == {**json.loads((verify / "report.json").read_text()), "milestone": 2, "change": ID}
     assert receipt["result"].startswith("VERIFY PASS milestone") and receipt["sha"]
 
 
