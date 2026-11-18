@@ -15,9 +15,16 @@ never "B19 blocks the build". The id is a pointer for whoever wants the source, 
   finding (`findings.md`), `B` any other numbered item.
 - **The lint:** `python3 scripts/verify_gate.py lint <id>` flags an id outside brackets in the
   files the owner reads: `intent.md`, `plan.md`, `milestone.md`, `questions.md` and a drafted
-  `pr-body.md`. Tables, headings, code, test tags such as `@F1` and a bold label that opens a line
-  (`- **Q1 (date) the question?**`) are data and pass. `facts.md` is a list of ids and is not
-  checked. The same lint keeps sentences at 25 words or less.
+  `pr-body.md`. Only ids the change defines count (a table row that opens with the id, or a
+  definition label), so "Press F5" or "before Q4" pass. Headings, code, test tags such as `@F1`,
+  the first cell of a table row, a cell of ids only and a definition label (`- **Q1 (date) the
+  question?**`, `**F3**`) are structure and pass; any other table cell is prose and is checked, and
+  `**B19 blocks the build.**` is flagged. A bracket may span a line wrap. `facts.md` is a list of
+  ids and is not checked. The same lint keeps sentences at 25 words or less.
+- **Where it runs:** on the drafts before a reviewer is dispatched, again right before the owner
+  gate, first thing in `approve` (which refuses on any line it names), and on the PR body you
+  publish: `verify_gate.py lint <id> --pr-body <file>` (`-` reads stdin), before `gh pr create` or
+  `gh pr edit`. It reads files only.
 - **The templates** in `templates/change/` carry the rule in a comment under the title.
 
 ## The id glossary
@@ -55,5 +62,5 @@ runs `<step>`.` The sentence names only the first thing in the way.
 ## The newcomer page
 
 `docs/sdlc-run.md` describes the seven stages for a person new to the chain. It states the
-version it describes ("Describes sdlc-run 3.17.0"); a test fails when that is behind the version
-in `SKILL.md`. Bump it in the same change as the skill.
+sdlc-run version it describes on a "Describes sdlc-run <version>" line; a test fails when that is
+behind the version in `SKILL.md`. Bump it in the same change as the skill.

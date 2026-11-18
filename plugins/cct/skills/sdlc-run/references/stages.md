@@ -185,7 +185,8 @@ Skipped for size `none` and for `sdlc.json` `ux: off`, with one printed line.
   5. A reviewer in a fresh context writes `checklist.md`: items that test how the facts are
      written (Gap, Ambiguity, Conflict, Assumption), never the behaviour. The agent answers each
      in the facts, and the reviewer ticks it.
-  6. `python3 scripts/verify_gate.py lint <id>` over intent, facts and plan.
+  6. `python3 scripts/verify_gate.py lint <id>` over intent, facts and plan, **on the draft, before
+     the checklist reviewer is dispatched**: a pure file check is cheaper than a reviewer pass.
 - **Gate:** none; `chain-gate.sh` refuses `facts.md` before the UX plan is done or skipped.
 
 ## Stage 4 — Tech plan and the one gate
@@ -219,7 +220,9 @@ package), `tracking-apply` (the success-measure events). Each result lands in th
 
 ### 4.3 The gate
 
-0. **Analyze pass**, read-only (`references/quality-passes.md`): six passes over intent, facts,
+0. **Lint first.** `python3 scripts/verify_gate.py lint <id>` on the drafts, before either reviewer
+   is dispatched; fix every line it names. Run it again right before the owner gate (step 1).
+0a. **Analyze pass**, read-only (`references/quality-passes.md`): six passes over intent, facts,
    plan and `spec/`, findings into `analyze.md`. Fix every CRITICAL in its source file and mark it
    `fixed`; mention open HIGH findings in the five lines below.
 0b. **Challenge pass** (`references/quality-passes.md`): a reviewer in a fresh context argues
@@ -227,12 +230,12 @@ package), `tracking-apply` (the success-measure events). Each result lands in th
    else is affected) into `challenge.md`. Answer every CRITICAL in the plan or facts and mark it
    `answered`, or take it to the engineer for `accepted`. The strongest open challenge goes into
    the five lines below.
-1. Say in five lines what the plan builds, the feature PRs in order, and the biggest risk with
+1. Lint again (step 0), then say in five lines what the plan builds, the feature PRs in order, and the biggest risk with
    your recommendation for it. Then `plannotator annotate changes/<id>/plan.md --gate`; the plan
    links `spec/` and `facts.md`, so one gate covers all three. `planGate: self` only when no risk touches data safety,
    irreversible writes, security or money.
 2. Annotated: revise and re-gate. Approved: set `status: approved` on facts and plan.
-3. `python3 scripts/verify_gate.py approve <id>` writes `lock.json` (facts, done.json, checks). It refuses (`APPROVE FAIL`) an unchecked `checklist.md` item, an open CRITICAL
+3. `python3 scripts/verify_gate.py approve <id>` writes `lock.json` (facts, done.json, checks). It runs the lint first and refuses (`APPROVE FAIL`) on any line the lint names, an unchecked `checklist.md` item, an open CRITICAL
    in `analyze.md` or `challenge.md`, and a row of **Justified violations** with an empty cell.
 4. Commit `changes(<id>): approved by <who>`. One tracker comment with the folder permalink.
 5. One tracker sub-issue per row of `## Feature PRs`, under the change's issue (minimal first,
@@ -528,7 +531,9 @@ person's own browser session. Never use Claude in Chrome or any tool driving tha
 6. Compose the PR body from the repo's template, including its Decision4 section when it has
    one (advisory: [Decision4 in a PR](decision4-pr.md)), following [scannable bodies](pr-body.md).
    Validate the proposed body locally before pushing, then the actual body before the gate
-   publishes its successful status.
+   publishes its successful status. Before `gh pr create` or `gh pr edit`, run
+   `python3 scripts/verify_gate.py lint <id>` (questions and milestone report) and
+   `... lint <id> --pr-body <file>` on the body you publish.
    One push and one PR `milestone/<slug>` → **its parent** (`project/<slug>` when the project
    has a branch, else the default branch) with the report, `validation.md` and `Closes <KEY>`
    for the change's issue, only once the gate passed on that exact head; it merges with a merge

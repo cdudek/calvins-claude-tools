@@ -249,6 +249,12 @@ EOF
 gh pr create --draft --title "<conventional-title>" --body-file "${TMPDIR:-/tmp}/proposed-pr-body.md"
 ```
 
+**In a repo with `sdlc.json` and a change folder for this branch**, lint the body you are about to publish first, and fix every line it names (ids go in brackets after the words). It is a pure file check, no network. Use the same command before `gh pr edit` on the file you pass:
+
+```bash
+python3 scripts/verify_gate.py lint <change-id> --pr-body "${TMPDIR:-/tmp}/proposed-pr-body.md"
+```
+
 The PR title should follow the same convention as commit messages (e.g., `feat(auth): add JWT authentication`). The PR opens as a draft; tell the user to self-review and mark it ready when satisfied.
 
 **Verify the draft state and the self-review item before reporting the PR**, so a missed flag or a dropped template surfaces instead of passing silently:

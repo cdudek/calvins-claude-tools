@@ -1,7 +1,7 @@
 """The verify contract of the SDLC chain: one command, one last line.
 
     python3 scripts/verify_gate.py approve <id>              # lock the criteria at approval
-    python3 scripts/verify_gate.py lint <id>                 # plain-language lint: short sentences, ids only in brackets
+    python3 scripts/verify_gate.py lint <id> [--pr-body FILE|-]  # plain language: short sentences, ids only in brackets; the PR body you publish
     python3 scripts/verify_gate.py feature|milestone <id>    # run sdlc.json checks.<scope>
     python3 scripts/verify_gate.py audit [--no-evidence]     # read-only: is every gate enforced?
     # After UX review, also require each visual run:
@@ -92,7 +92,16 @@ SENTENCE_WORDS = 25
 OWNER_FILES = ("intent.md", "plan.md", "milestone.md", "questions.md", "pr-body.md")
 # The id families the chain defines: asks, bugs, facts, challenge findings, job stories,
 # non-functional facts, questions, review findings, analyze findings (`references/readability.md`).
-BARE_ID = re.compile(r"(?<![\w@/.#-])[ABFHJNQRX]\d{1,3}\b")
+ID_TOKEN = r"[ABFHJNQRX]\d+"
+BARE_ID = re.compile(rf"(?<![\w@/.#-]){ID_TOKEN}\b")
+# A definition label opens a line: `**F3**`, `**F3:**`, `**Q1 (date) the question?**`. The id then
+# stands alone; `**B19 blocks the build.**` is a sentence, not a label.
+LABEL = re.compile(
+    rf"^\s*(?:>\s*)?(?:(?:[-*]|\d+\.)\s+(?:\[[ x]\]\s+)?)?\*\*({ID_TOKEN})(?=\*\*|:|\s*\(|\s*$)"
+)
+TABLE_ID = re.compile(rf"^\s*\|\s*({ID_TOKEN})\s*\|")
+IDS_ONLY = re.compile(rf"[\s,;/&+-]*(?:{ID_TOKEN}[\s,;/&+-]*)*")
+BRACKETS = re.compile(r"\([^()]*\)|\[[^\[\]]*\]")  # may span a line wrap, never a blank line
 
 
 def sh(*cmd: str) -> str:
@@ -201,7 +210,7 @@ def end(line: str, code: int) -> int:
 
 
 def approve(change: Path, cfg: dict) -> int:
-    problems = approval_blockers(change)
+    problems = lint_problems(change) + approval_blockers(change)  # the cheap pure check first
     if problems:
         print("\n".join(problems[:TAIL]))
         return end(f"APPROVE FAIL {change.name} problems={len(problems)}", 1)
@@ -227,35 +236,72 @@ def prose(text: str) -> list[str]:
     return [s for line in lines for s in re.split(r"(?<=[.!?])\s+", line) if s.strip()]
 
 
-def bare_ids(text: str) -> list[tuple[str, str]]:
-    """(id, line) for every id in running text that is not inside brackets: "plain words first,
-    the id in brackets after". Tables, headings, code and a bold label that opens a line are data."""
-    text = re.sub(r"\A---\n.*?\n---\n", "", text, flags=re.S)
-    text = re.sub(r"```.*?```|<!--.*?-->", "", text, flags=re.S)
-    found = []
-    for line in text.splitlines():
-        if line.lstrip().startswith(("|", "#")):
+def defined_ids(change: Path) -> set[str]:
+    """The ids this change defines: a table row that opens with the id, or a definition label.
+    An id defined nowhere ("Press F5", "before Q4") is ordinary text and never flagged."""
+    found = set()
+    for path in change.rglob("*.md"):
+        if path.name == "README.md" or {"asks", "verify"} & set(path.relative_to(change).parts):
             continue
-        label = (
-            r"^\s*(?:>\s*)?(?:(?:[-*]|\d+\.)\s+(?:\[[ x]\]\s+)?)?\*\*[ABFHJNQRX]\d{1,3}\**(?=\W|$)"
-        )
-        line = re.sub(label, "", line)
-        line = re.sub(r"`[^`]*`", "", line)
-        for _ in range(3):  # nested brackets: (A1; see [F2])
-            line = re.sub(r"\([^()]*\)|\[[^\[\]]*\]", "", line)
-        found += [(m.group(0), line.strip()) for m in BARE_ID.finditer(line)]
+        for line in path.read_text(encoding="utf-8").splitlines():
+            if m := TABLE_ID.match(line) or LABEL.match(line):
+                found.add(m.group(1))
     return found
 
 
-def lint(change: Path) -> int:
+def bare_ids(text: str, defined: set[str]) -> list[tuple[str, str]]:
+    """(id, context) for every defined id in running text that is not inside brackets: "plain words
+    first, the id in brackets after". Headings, code, the first cell of a table row, a cell that
+    holds only ids and a definition label are structure; every other table cell is prose."""
+    text = re.sub(r"\A---\n.*?\n---\n", "", text, flags=re.S)
+    text = re.sub(r"```.*?```|<!--.*?-->", "", text, flags=re.S)
+    found: list[tuple[str, str]] = []
+    para: list[str] = []
+
+    def flush() -> None:
+        body = "\n".join(para)
+        para.clear()
+        for _ in range(3):  # nested brackets: (A1; see [F2])
+            body = BRACKETS.sub("", body)
+        for m in BARE_ID.finditer(body):
+            if m.group(0) in defined:
+                around = " ".join(body[max(0, m.start() - 30) : m.end() + 30].split())
+                found.append((m.group(0), around))
+
+    for line in text.splitlines():
+        s = line.strip()
+        if not s or s.startswith("#"):
+            flush()
+        elif s.startswith("|"):
+            flush()
+            for cell in [c.strip() for c in s.strip("|").split("|")][1:]:
+                if not IDS_ONLY.fullmatch(cell):
+                    para.append(cell)
+                    flush()
+        else:
+            if re.match(r"(?:[-*]|\d+\.)\s", s):
+                flush()  # a new list item never shares a bracket with the one before
+            para.append(re.sub(r"`[^`]*`", "", LABEL.sub("", line)))
+    flush()
+    return found
+
+
+def lint_problems(change: Path, body: str | None = None) -> list[str]:
     """Plain language: no sentence over SENTENCE_WORDS words, no leftover template prompts, and
-    in the files the owner reads no id outside brackets."""
+    in the files the owner reads no id outside brackets. With `body`, only that text (the PR body
+    about to be published) is checked, for ids. Pure file reads."""
+    defined = defined_ids(change)
+    if body is not None:
+        return [
+            f"pr-body: id {bare} outside brackets, words first: {ctx}"
+            for bare, ctx in bare_ids(body, defined)
+        ]
     problems = []
     for name in OWNER_FILES:
         path = change / name
         if path.exists():
-            for bare, line in bare_ids(path.read_text(encoding="utf-8")):
-                problems.append(f"{name}: id {bare} outside brackets, words first: {line[:70]}")
+            for bare, ctx in bare_ids(path.read_text(encoding="utf-8"), defined):
+                problems.append(f"{name}: id {bare} outside brackets, words first: {ctx}")
     for name in ("intent.md", "facts.md", "plan.md"):
         path = change / name
         if not path.exists():
@@ -266,6 +312,11 @@ def lint(change: Path) -> int:
                 problems.append(f"{name}: {len(s.split())} words: {s[:90]}...")
         if "[NEEDS CLARIFICATION" in text:
             problems.append(f"{name}: an open [NEEDS CLARIFICATION] remains")
+    return problems
+
+
+def lint(change: Path, body: str | None = None) -> int:
+    problems = lint_problems(change, body)
     for p in problems[:TAIL]:
         print(p)
     print(f"LINT {'FAIL' if problems else 'PASS'} {change.name} problems={len(problems)}")
@@ -703,6 +754,7 @@ def main(argv: list[str]) -> int:
     parser.add_argument("scope", choices=("approve", "lint", "feature", "milestone", "audit"))
     parser.add_argument("id", nargs="?")
     parser.add_argument("--no-evidence", action="store_true", help="audit: skip the never-ran test")
+    parser.add_argument("--pr-body", metavar="FILE", help="lint: check this PR body ('-' = stdin)")
     parser.add_argument("--visual-check")
     parser.add_argument("--visual-run", action="append", default=[])
     args = parser.parse_args(argv[1:])
@@ -723,7 +775,10 @@ def main(argv: list[str]) -> int:
     if args.scope == "approve":
         return approve(change, cfg)
     if args.scope == "lint":
-        return lint(change)
+        body = None
+        if args.pr_body:
+            body = sys.stdin.read() if args.pr_body == "-" else Path(args.pr_body).read_text("utf-8")
+        return lint(change, body)
     return run(args.scope, change, cfg, repo, args.visual_check, args.visual_run)
 
 
