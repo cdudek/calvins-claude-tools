@@ -1,0 +1,11 @@
+{
+  "size": "none",
+  "kind": "bug",
+  "milestone": {
+    "kind": "single",
+    "slug": "gate-loops"
+  },
+  "ticket": "cct-62u",
+  "design": "none",
+  "testLocked": true
+}

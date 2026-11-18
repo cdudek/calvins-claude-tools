@@ -989,6 +989,8 @@ def main() -> int:
     hooks_dir = ROOT / ".claude" / "hooks"
     for src in sorted((TPL / "hooks").glob("*.sh")):
         _write(hooks_dir / src.name, src.read_text(encoding="utf-8"), executable=True)
+    for src in sorted((TPL / "hooks").glob("*.py")):  # helpers the hooks import (F15)
+        _write(hooks_dir / src.name, src.read_text(encoding="utf-8"))
 
     settings_path = ROOT / ".claude" / "settings.json"
     settings = (
@@ -1043,11 +1045,9 @@ def main() -> int:
     write(settings_path, json.dumps(settings, indent=2) + "\n")
 
     # A global gitignore that hides `.claude/*` would leave the hooks working on one laptop.
-    ignored = (
-        subprocess.run(
-            ["git", "check-ignore", "-q", ".claude/hooks/gate-bash.sh"], cwd=ROOT
-        ).returncode
-        == 0
+    ignored = any(  # a `*.py` rule leaves the helpers untracked while the `.sh` hooks stay
+        subprocess.run(["git", "check-ignore", "-q", f".claude/hooks/{name}"], cwd=ROOT).returncode == 0
+        for name in ("gate-bash.sh", "goal_active.py")
     )
     if ignored:
         gi = ROOT / ".gitignore"
@@ -1059,6 +1059,7 @@ def main() -> int:
                 "!.claude/settings.json",
                 "!.claude/hooks/",
                 "!.claude/hooks/*.sh",
+                "!.claude/hooks/*.py",
             )
             if line not in lines
         ]

@@ -24,8 +24,9 @@ BLOCKED = [
 @pytest.fixture
 def repo(tmp_path: Path) -> Path:
     (tmp_path / ".claude" / "hooks").mkdir(parents=True)
-    for name in ("gate-bash.sh", "plan-gate.sh", "sdlc-config.sh"):
-        shutil.copy(HOOKS / name, tmp_path / ".claude" / "hooks" / name)
+    for name in ("gate-bash.sh", "plan-gate.sh", "sdlc-config.sh", "block_state.py"):
+        if (HOOKS / name).exists():  # the helper sits beside the hook; absent in older trees
+            shutil.copy(HOOKS / name, tmp_path / ".claude" / "hooks" / name)
     (tmp_path / "sdlc.json").write_text(json.dumps({"blocked": BLOCKED}))
     return tmp_path
 
