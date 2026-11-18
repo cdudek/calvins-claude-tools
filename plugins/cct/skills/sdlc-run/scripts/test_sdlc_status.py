@@ -117,6 +117,7 @@ def _pr(state: str = "MERGED", head: str = GATE, armed: bool = False, number: in
     return [
         {
             "number": number,
+            "baseRefName": "main",
             "headRefOid": head,
             "state": state,
             "mergedAt": "2026-11-11T10:00:00Z" if state == "MERGED" else None,
@@ -492,3 +493,64 @@ def test_goal_cli_reads_the_project_flag(repo: Path) -> None:
         r.returncode == 1
         and r.stdout.splitlines()[0] == f"GOAL {ID} OPEN project-gate-pass,no-project-branch"
     )
+
+
+def _sh(repo: Path, *args: str) -> str:
+    ident = ["-c", "user.name=t", "-c", "user.email=t@t"]
+    return subprocess.run(
+        ["git", *ident, *args], cwd=repo, check=True, env=_env(), capture_output=True, text=True
+    ).stdout.strip()
+
+
+def test_goal_local_waits_for_every_planned_milestone_F2(repo: Path) -> None:
+    """The report is the last gate run only: M1 merged and passed must not finish M2."""
+    _local_project(repo)
+    (repo / "changes" / ID / "plan.md").write_text(
+        "# Plan: R\n\n## Milestones\n\n| # | what |\n|---|---|\n| M1 | a |\n| M2 | b |\n"
+    )
+    _commit(repo, "base.txt")
+    _sh(repo, "branch", "project/big")
+    _sh(repo, "checkout", "-qb", "milestone/redesign-r2-1")
+    m1 = _commit(repo, "m1.txt")
+    _sh(repo, "branch", "-f", "project/big", m1)  # M1 merged
+    _sh(repo, "checkout", "-qb", "milestone/redesign-r2-2")
+    _commit(repo, "m2.txt")  # M2 built, not merged
+    _gate(repo, f"VERIFY PASS milestone {ID} {m1}")
+    folder = repo / "changes" / ID
+    want = (1, f"GOAL {ID} OPEN merge-missing:milestone/redesign-r2-2")
+    assert sdlc_status.goal(repo, folder, "milestone", 2, gh=_no_gh) == want
+    assert sdlc_status.goal(repo, folder, "milestone", None, gh=_no_gh) == want
+    assert sdlc_status.goal(repo, folder, "milestone", 1, gh=_no_gh)[0] == 0
+
+
+def test_goal_project_pr_must_target_the_default_branch_F11(repo: Path) -> None:
+    _local_project(repo)
+    (repo / "sdlc.json").write_text(
+        json.dumps({"defaultBranch": "main", "milestones": {"merge": "local"}})
+    )
+    _project_gate(repo, f"VERIFY PASS project big {GATE}")
+    wrong = [{**_pr()[0], "baseRefName": "project/other"}]
+    got = _goal(repo, {PROJECT_BRANCH: wrong}, "project")
+    assert got == (1, f"GOAL {ID} OPEN pr-7-wrong-base")
+    assert _goal(repo, {PROJECT_BRANCH: _pr()}, "project")[0] == 0
+
+
+def test_goal_accepts_a_records_only_commit_after_the_gate_F10(repo: Path) -> None:
+    _gate(repo, PASS.replace(GATE, base := _commit(repo, "code.txt")))
+    (repo / "changes" / "archive").mkdir()
+    head = _commit(repo, "changes/archive/moved.md")
+    assert _goal(repo, {BRANCH: _pr(head=head)})[0] == 0
+    late = _commit(repo, "more-code.txt")
+    assert _goal(repo, {BRANCH: _pr(head=late)}) == (
+        1,
+        f"GOAL {ID} OPEN gate-sha-not-pr-7-head",
+    )
+    assert base != head
+
+
+def test_goal_finds_an_archived_change_by_id_F10(repo: Path) -> None:
+    folder = repo / "changes"
+    (folder / "archive" / "2026" / "2026-11").mkdir(parents=True)
+    (folder / ID).rename(folder / "archive" / "2026" / "2026-11" / ID)
+    got = _run(repo, "goal", ID)
+    assert "no-change-folder" not in got.stdout

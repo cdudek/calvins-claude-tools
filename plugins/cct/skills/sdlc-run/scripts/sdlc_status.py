@@ -81,7 +81,9 @@ def read_json(path: Path) -> dict:
 def find_change(root: Path, cfg: dict, change_id: str | None) -> Path | None:
     base = root / cfg.get("changesDir", "changes")
     if change_id:
-        return base / change_id if (base / change_id).is_dir() else None
+        # archive/<year>/<year-month>/<id> once Stage 7 moved it
+        found = [base / change_id, *base.glob(f"archive/**/{change_id}")]
+        return next((d for d in found if d.is_dir()), None)
     if not base.is_dir():
         return None
     folders = [d for d in base.iterdir() if d.is_dir() and d.name != "archive"]
@@ -195,6 +197,31 @@ def gh_json(root: Path, *args: str) -> list | None:
     return found if isinstance(found, list) else None
 
 
+def contains(root: Path, sha: str, into: str) -> bool:
+    """`sha` is `into` or an ancestor of it."""
+    return bool(sha and into) and (
+        subprocess.run(
+            ["git", "-C", str(root), "merge-base", "--is-ancestor", sha, into], capture_output=True
+        ).returncode
+        == 0
+    )
+
+
+def same_head(root: Path, cfg: dict, gated: str, head: str) -> bool:
+    """The head the gate passed, or a descendant that only added records (pr-gate.sh's rule)."""
+    if gated == head:
+        return True
+    rel = str(cfg.get("changesDir", "changes")).rstrip("/") + "/"
+    changed = git(root, "diff", "--name-only", gated, head).splitlines()
+    return contains(root, gated, head) and bool(changed) and all(p.startswith(rel) for p in changed)
+
+
+def planned(change: Path) -> int:
+    """How many milestones plan.md lists."""
+    plan = (change / "plan.md").read_text(encoding="utf-8") if (change / "plan.md").exists() else ""
+    return sum(1 for line in section(plan, "Milestones") if re.match(r"\|\s*M\d+\b", line))
+
+
 def branches(change: Path, decisions: dict, scope: str, n: int | None) -> list[str]:
     """Head branches whose PRs end the goal: milestone/<slug>-<n>, or the Feature PRs row's branch."""
     plan = (change / "plan.md").read_text(encoding="utf-8") if (change / "plan.md").exists() else ""
@@ -205,7 +232,7 @@ def branches(change: Path, decisions: dict, scope: str, n: int | None) -> list[s
                 return [cells[3]]
         return []
     slug = decisions.get("milestone", {}).get("slug") or slug_of(change.name)
-    count = sum(1 for line in section(plan, "Milestones") if re.match(r"\|\s*M\d+\b", line))
+    count = planned(change)
     return [f"milestone/{slug}-{i}" for i in ([n] if n else range(1, max(count, 1) + 1))]
 
 
@@ -234,15 +261,14 @@ def goal(
     if local:  # no PR: the gated head must be merged into the local project branch
         names = []
         into = git(root, "rev-parse", "--verify", "--quiet", f"{project}^{{commit}}")
-        if passed and not (
-            into
-            and subprocess.run(
-                ["git", "-C", str(root), "merge-base", "--is-ancestor", passed.group(1), into],
-                capture_output=True,
-            ).returncode
-            == 0
-        ):
+        if passed and not contains(root, passed.group(1), into):
             missing.append(f"gate-not-merged-into-{project}")
+        # the report holds the last gate run only: each planned milestone's own branch must be in
+        if planned(change):
+            for b in branches(change, read_json(change / "decisions.json"), scope, n):
+                tip = git(root, "rev-parse", "--verify", "--quiet", f"{b}^{{commit}}")
+                if not contains(root, tip, into):
+                    missing.append(f"merge-missing:{b}")
     elif scope == "project":
         names = [project] if project else []
         if not names:
@@ -256,7 +282,7 @@ def goal(
         found = gh(
             root,
             *("pr", "list", "--head", branch, "--state", "all", "--limit", "1"),
-            *("--json", "number,headRefOid,state,autoMergeRequest,mergedAt"),
+            *("--json", "number,headRefOid,state,autoMergeRequest,mergedAt,baseRefName"),
         )
         if found is None:
             return 1, f"{name} OPEN gh-unavailable"
@@ -268,8 +294,14 @@ def goal(
         armed = pr.get("state") == "OPEN" and bool(pr.get("autoMergeRequest"))
         if not (merged or armed):
             missing.append(f"pr-{pr['number']}-not-merged-or-armed")
+        if scope == "project" and pr.get("baseRefName") != (cfg.get("defaultBranch") or "main"):
+            missing.append(f"pr-{pr['number']}-wrong-base")
         prs.append((pr, "merged" if merged else "armed"))
-    if prs and passed and prs[-1][0].get("headRefOid") != passed.group(1):
+    if (
+        prs
+        and passed
+        and not same_head(root, cfg, passed.group(1), prs[-1][0].get("headRefOid", ""))
+    ):
         missing.append(f"gate-sha-not-pr-{prs[-1][0]['number']}-head")
     if scope == "milestone":
         from verify_gate import milestone_blockers  # the gate's own record rules, one definition
@@ -340,6 +372,12 @@ BLOCKS = {
         "the agent",
         "git switch <project branch> && git merge --no-ff <milestone branch>",
     ),
+    "merge-missing:": (
+        "the milestone branch {n} is not merged into its local project branch",
+        "the gate report holds the last run only, so each planned milestone is checked by its branch",
+        "the agent",
+        "git switch <project branch> && git merge --no-ff {n}",
+    ),
     "no-branch-for-": (
         "the plan names no branch for {n}",
         "plan.md has no matching row",
@@ -388,7 +426,9 @@ def blocker(change: Path, line: str, scope: str = "milestone") -> str:
     first = (m.group(1) or m.group(2)).split(",")[0]
     for key, (what, why, who, step) in BLOCKS.items():
         if first == key or (key.endswith(("-", ":")) and first.startswith(key)):
-            n = re.sub(r"^no-pr:|^no-branch-for-|^gate-sha-not-pr-|-head$", "", first)
+            n = re.sub(
+                r"^no-pr:|^no-branch-for-|^merge-missing:|^gate-sha-not-pr-|-head$", "", first
+            )
             fill = {"scope": scope, "id": change.name, "n": n}
             return f"Blocking: {what.format(**fill)}, because {why}; {who} runs `{step.format(**fill)}`."
     pr = re.fullmatch(r"pr-(\d+)-not-merged-or-armed", first)
