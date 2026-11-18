@@ -23,9 +23,9 @@ branch), `merged` (feature PRs) or `blocked: <reason>`.
 | # | Change | Feature | PR or commit | State |
 |---|---|---|---|---|
 | 0 | 2026-11-18-gate-loops | sync: `git fetch origin && git merge origin/main`, locally; again after every earlier milestone merges | 6787eb9 (up to date) | done 6787eb9 |
-| T | 2026-11-18-gate-loops | failing tests for F1-F15, N1, then `testLocked` | <commit> | building |
-| 1 | 2026-11-18-gate-loops | shared goal helper | <commit> | todo |
-| 2 | 2026-11-18-gate-loops | pr-gate fixes | <commit> | todo |
+| T | 2026-11-18-gate-loops | failing tests for F1-F15, N1, then `testLocked` | 97e239c | done 4040936 |
+| 1 | 2026-11-18-gate-loops | shared goal helper | 5479733 | done 5479733 |
+| 2 | 2026-11-18-gate-loops | pr-gate fixes | <commit> | building |
 | 3 | 2026-11-18-gate-loops | block state and the repeat stop | <commit> | todo |
 | 4 | 2026-11-18-gate-loops | release 3.16.0 / 0.13.0 | <commit> | todo |
 
