@@ -98,6 +98,7 @@ REASONS = {
     "test-proves-nothing",
     "validation-not-met",  # a `not met` or `partly` row in validation.md
     "findings-open",  # an unchecked item in findings.md outside ## Advisory
+    "findings-blocked",  # an open item whose ## Dispositions row says blocked: terminal
     "not-converged",  # findings.md ## Converge has no `Converged:` line
 }
 LOCKED = ("facts.md", "done.json")
@@ -224,6 +225,28 @@ def approval_blockers(change: Path) -> list[str]:
     return out
 
 
+SETTLED = ("accepted", "deferred")  # `fixed` is the ticked box; `blocked` is terminal
+
+
+def item_id(item: str) -> str:
+    """The id of a findings.md item: its bold label (**B2**), else its first word."""
+    m = re.match(r"\*\*([^*]+)\*\*", item.strip())
+    return m.group(1).strip() if m else (item.split() or [""])[0]
+
+
+def dispositions(findings: str) -> dict[str, tuple[str, ...]]:
+    """item id -> (kind, owner, reason) from `## Dispositions` rows `| item | disposition | owner |
+    reason |`. accepted and deferred count only with a named owner and a reason; a row without
+    both is ignored, so the finding stays open. blocked needs no owner."""
+    out: dict[str, tuple[str, ...]] = {}
+    for row in table_rows(section(findings, "Dispositions"))[1:]:
+        row = (row + ["", "", "", ""])[:4]
+        key, kind, owner, reason = row[0].strip("* "), row[1].lower(), row[2], row[3]
+        if kind == "blocked" or (kind in SETTLED and owner and reason):
+            out[key] = (kind, owner, reason)
+    return out
+
+
 def milestone_blockers(change: Path) -> tuple[str, list[str]] | None:
     """The records a milestone must close before it passes: (reason, offending lines) or None."""
     rows = table_rows(read(change / "validation.md"))
@@ -233,6 +256,11 @@ def milestone_blockers(change: Path) -> tuple[str, list[str]] | None:
     findings = read(change / "findings.md")
     advisory = section(findings, "Advisory")
     open_items = re.findall(r"^\s*[-*] \[ \] (.*)$", findings.replace(advisory, ""), re.M)
+    settled = dispositions(findings)
+    blocked = [i for i in open_items if settled.get(item_id(i), ("",))[0] == "blocked"]
+    if blocked:
+        return "findings-blocked", [f"findings.md: blocked: {i[:80]}" for i in blocked]
+    open_items = [i for i in open_items if settled.get(item_id(i), ("",))[0] not in SETTLED]
     if open_items:
         return "findings-open", [f"findings.md: open: {i[:80]}" for i in open_items]
     if section(findings, "Converge") and "Converged:" not in findings:

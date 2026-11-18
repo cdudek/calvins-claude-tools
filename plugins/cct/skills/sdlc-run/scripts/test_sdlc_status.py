@@ -113,7 +113,13 @@ MOVED = "b" * 40
 PASS = f"VERIFY PASS milestone {ID} {GATE}"
 
 
-def _pr(state: str = "MERGED", head: str = GATE, armed: bool = False, number: int = 7) -> list:
+def _pr(
+    state: str = "MERGED",
+    head: str = GATE,
+    armed: bool = False,
+    number: int = 7,
+    labels: tuple[str, ...] = (),
+) -> list:
     return [
         {
             "number": number,
@@ -122,6 +128,7 @@ def _pr(state: str = "MERGED", head: str = GATE, armed: bool = False, number: in
             "state": state,
             "mergedAt": "2026-11-11T10:00:00Z" if state == "MERGED" else None,
             "autoMergeRequest": {"mergeMethod": "MERGE"} if armed else None,
+            "labels": [{"name": n} for n in labels],
         }
     ]
 
@@ -288,6 +295,19 @@ def test_blocker_names_what_why_who_and_the_exact_step(repo: Path) -> None:
     )
     assert "you run" in sdlc_status.blocker(ID, f"GOAL {ID} BLOCKED reason=protected-path")
     assert sdlc_status.blocker(ID, f"GOAL {ID} DONE pr=7 state=merged gate={GATE}") == ""
+
+
+def test_goal_never_asks_to_arm_a_closed_or_gated_ask_pr(repo: Path) -> None:
+    """3.21.0 (F2): arming comes after the owner's disposition, so a closed PR and an Ask-tier PR
+    are named for what they are, and the blocker never recommends `gh pr merge --auto`."""
+    _gate(repo, PASS)
+    for pr, reason in (
+        (_pr("CLOSED"), "pr-7-closed"),
+        (_pr("OPEN", labels=("ask",)), "pr-7-awaits-owner"),
+    ):
+        assert _goal(repo, {BRANCH: pr}) == (1, f"GOAL {ID} OPEN {reason}")
+        out = sdlc_status.blocker(ID, f"GOAL {ID} OPEN {reason}")
+        assert out.startswith("Blocking: PR 7") and "gh pr merge" not in out and "--auto" not in out
 
 
 def test_blocker_for_a_feature_names_the_feature_gate_and_its_pr(repo: Path) -> None:

@@ -478,8 +478,8 @@ person's own browser session. Never use Claude in Chrome or any tool driving tha
 
 1. One go: the same goal continues from Stage 5. Feature PRs: start `/goal` with
    `templates/goal/milestone.txt` filled (`goal.milestoneTurns`).
-2. Run on the diff, each once and in parallel: `cct:ux-assessment-run`, `cct:review-code-run` (Claude
-   and Codex; it reads the repo's `REVIEW.md` when there is one, the only code review the
+2. Run on the diff, each once and in parallel: `cct:ux-assessment-run`, `cct:review-code-run changes
+   <parent> --codex` (Claude and Codex; call it with this explicit command, a bare call has none; it reads the repo's `REVIEW.md` when there is one, the only code review the
    change gets, since 3.7.0 nothing reviews in CI),
    `cct:ux-responsive-audit` (the `responsiveTier` matrix, nothing overflows; reflow at
    320 × 640, WCAG 1.4.10 as written, never a 320 × 256 window), the states of
@@ -490,8 +490,8 @@ person's own browser session. Never use Claude in Chrome or any tool driving tha
    `../../test-e2e-policy/references/suite-speed-and-reliability.md` section G. Send inconsistent
    results to `test-flake-fix`. Also run `cct:ux-assessment-run` only
    when the change adds a screen,
-   `cct:ux-build-validate` (six layers, one frozen defect list per screen, two fix rounds, capture
-   from one pinned commit: [convergence](convergence.md)), the `cct:test-behavior-verifier` and `cct:review-criteria-auditor` agents for job
+   `cct:ux-build-validate` (report-only at the close: six layers, one frozen defect list per
+   screen, capture from one pinned commit; [convergence](convergence.md)), the `cct:test-behavior-verifier` and `cct:review-criteria-auditor` agents for job
    stories and facts. `cct:review-security-run` runs only on the goal's last milestone, on the whole
    goal diff (`git diff origin/<defaultBranch>...milestone/<slug>-<last>`), and only when auth, money or
    consent is touched anywhere in it; in a project it waits for Stage 6p. Never on earlier milestones.
@@ -527,11 +527,23 @@ person's own browser session. Never use Claude in Chrome or any tool driving tha
    A `fixed` row names the passing test tag that proves it in `test` (`@F<n>`); the tag must
    appear in a `testGlobs` file or the check fails.
    Only the engineer's words in `accepted` can accept a non-fixed row; never infer acceptance.
-4. One fix round: `cct:review-fix-run 1` (the `1` is `max_iterations`; always pass it) on the blocking items and the converge items only, split into parallel
-   parts by the files they touch, one builder and worktree per part; each part's fix is a commit
-   on `milestone/<slug>`, never a PR of its own. What is left, or new scope, becomes a change in
-   the next milestone. Each fix updates its record: the `validation.md` row re-run and set to
-   `met`, the `findings.md` item ticked.
+4. One fix round at milestone close, for every finding source together (code review, visual,
+   converge): the visual and build QA passes at the close are report-only. The supervisor hands
+   remediation the joined findings (the blocking and converge items of `findings.md`, visual
+   items included) and the code review's state directory from step 2, so the fix consumes the
+   review that already ran: `cct:review-fixset-triager <state directory>` (bounded rechecks run
+   concurrently), then `cct:review-feedback-run fix-set <state directory>`. It never starts a
+   fresh review: no `cct:review-fix-run` (it opens with a review of its own) and no second
+   `cct:review-code-run`. Split into parallel parts by the files they touch, one builder and
+   worktree per part; each part's fix is a commit on `milestone/<slug>`, never a PR of its own.
+   Each fix updates its record: the `validation.md` row re-run and set to `met`, the
+   `findings.md` item ticked. **What the round leaves gets one durable disposition**, a row in
+   `findings.md` under `## Dispositions` (`| item | disposition | owner | reason |`): `fixed` is the
+   ticked box; `accepted` or `deferred` needs a named owner and a reason (a deferral names the
+   milestone that builds it); `blocked` is terminal and the gate answers `findings-blocked`. The
+   gate clears an open item only for `accepted` or `deferred` with both. A fact that is `partly`
+   or `not met` in `validation.md` is never cleared by a disposition: change the scope with a new
+   approval, or the milestone is held.
 5. Reopen recaptured images and rerun their visual checks. Then
    `python3 scripts/verify_gate.py milestone <id> --visual-check "<checker>" --visual-run "<run>"`
    once, after the fixes, never between them, run by the close builder (`Mode: close`) on a

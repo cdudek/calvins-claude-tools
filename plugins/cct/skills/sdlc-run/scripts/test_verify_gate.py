@@ -846,6 +846,77 @@ def test_milestone_passes_when_records_are_closed(tmp_path: Path) -> None:
     assert _last(_gate(repo, "milestone", ID)).startswith(f"VERIFY PASS milestone {ID}")
 
 
+def _milestone_repo(tmp_path: Path) -> Path:
+    repo = _repo(tmp_path, [])
+    cfg = json.loads((repo / "sdlc.json").read_text())
+    (repo / "sdlc.json").write_text(json.dumps({**cfg, "checks": {"milestone": ["true"]}}))
+    _git(repo, "commit", "-qam", "milestone checks")
+    _approve(repo)
+    return repo
+
+
+OPEN_ITEM = "## Blocking\n\n- [ ] **B2** the card overflows at 320\n\n"
+TABLE = "## Dispositions\n\n| item | disposition | owner | reason |\n|---|---|---|---|\n"
+
+
+@pytest.mark.parametrize("kind", ["accepted", "deferred"])
+def test_a_named_owner_and_reason_settle_a_residual_finding(tmp_path: Path, kind: str) -> None:
+    """3.21.0 (S2): the one fix round leaves a residual; accepted or deferred by a named owner
+    with a reason is a disposition the gate understands, so the milestone can close."""
+    repo = _milestone_repo(tmp_path)
+    _commit_files(
+        repo,
+        validation_md="| F1 | x | y | z | met |\n",
+        findings_md=OPEN_ITEM + TABLE + f"| B2 | {kind} | Dana | Low on a phone; M2 builds it |\n",
+    )
+    assert _last(_gate(repo, "milestone", ID)).startswith(f"VERIFY PASS milestone {ID}")
+
+
+@pytest.mark.parametrize(
+    "row",
+    [
+        "| B2 | accepted | | no reason given as owner |\n",
+        "| B2 | deferred | Dana | |\n",
+        "| B9 | accepted | Dana | wrong item |\n",
+        "| B2 | fixed | Dana | a ticked box is the proof of a fix |\n",
+    ],
+)
+def test_a_disposition_without_owner_reason_or_item_leaves_the_finding_open(
+    tmp_path: Path, row: str
+) -> None:
+    repo = _milestone_repo(tmp_path)
+    _commit_files(
+        repo,
+        validation_md="| F1 | x | y | z | met |\n",
+        findings_md=OPEN_ITEM + TABLE + row,
+    )
+    r = _gate(repo, "milestone", ID)
+    assert r.returncode == 3 and _last(r) == "VERIFY BLOCKED reason=findings-open"
+
+
+def test_a_blocked_disposition_is_terminal(tmp_path: Path) -> None:
+    repo = _milestone_repo(tmp_path)
+    _commit_files(
+        repo,
+        validation_md="| F1 | x | y | z | met |\n",
+        findings_md=OPEN_ITEM + TABLE + "| B2 | blocked | Dana | needs a design-system release |\n",
+    )
+    r = _gate(repo, "milestone", ID)
+    assert r.returncode == 3 and _last(r) == "VERIFY BLOCKED reason=findings-blocked"
+    assert "B2" in r.stdout
+
+
+def test_acceptance_never_turns_a_partly_met_fact_into_met(tmp_path: Path) -> None:
+    repo = _milestone_repo(tmp_path)
+    _commit_files(
+        repo,
+        validation_md="| F1 | x | y | z | partly |\n",
+        findings_md=OPEN_ITEM + TABLE + "| F1 | accepted | Dana | good enough |\n",
+    )
+    r = _gate(repo, "milestone", ID)
+    assert _last(r) == "VERIFY BLOCKED reason=validation-not-met"
+
+
 def test_the_report_carries_operational_metrics(tmp_path: Path) -> None:
     repo = _repo(tmp_path, ["true", "false"])
     _approve(repo)

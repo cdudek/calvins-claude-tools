@@ -43,11 +43,27 @@ review ticks items off and may add only a High item or a regression, meaning som
 passed before and fails now. A new Medium or Low item found later is not added; that is what
 kept rounds from ending.
 
-## Budget: two fix rounds per screen per design-system release
+## Budget: one fix round at milestone close, two per screen while building
 
-After two fix rounds on one screen in one design-system release, stop. What is left goes to the
-owner as a side-by-side list (reference next to build, one row per open item) to accept or send
-back. A new design-system release starts a new budget.
+There are two budgets, for two different moments, and they do not add up.
+
+- **One fix round at milestone close**, for every finding source together (code review, visual,
+  converge). The close's visual and build QA are report-only; the supervisor owns the one round
+  and passes it the joined findings.
+- **Two fix rounds per screen per design-system release** for visual work outside the close, the
+  build loop of a screen under construction. After two rounds on one screen in one release, stop.
+  What is left goes to the owner as a side-by-side list (reference next to build, one row per open
+  item) to accept or send back. A new design-system release starts a new budget.
+
+### What the close leaves: one disposition
+
+After the one round, each residual finding gets one durable disposition, a row in `findings.md`
+under `## Dispositions`: `| item | disposition | owner | reason |`. `fixed` is the ticked box.
+`accepted` or `deferred` needs a named owner (the one authorised to take it) and a reason; a
+deferral names the milestone that builds it. `blocked` is terminal: the gate stops with
+`findings-blocked`. A `partly` or `not met` fact in `validation.md` is never cleared this way;
+that needs a scope change with a new approval, or the milestone is held. `verify_gate.py
+milestone` reads this table.
 
 ## Design-system audit and freeze (over about 20 screens)
 

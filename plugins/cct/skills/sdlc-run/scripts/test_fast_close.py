@@ -56,3 +56,53 @@ def test_the_codex_close_does_not_check_before_and_after_the_fix_parts() -> None
 
 def test_stages_say_the_gate_runs_evidence_checks_before_the_suites() -> None:
     assert "offline evidence checks first" in STAGES
+
+
+# 4. Findings straight to one fix round
+_at = STAGES.index("4. One fix round at milestone close")
+STEP4 = STAGES[_at : STAGES.index("5. Reopen recaptured images", _at)]
+
+
+def test_the_fix_round_reviews_once_explicitly_and_never_starts_a_fresh_review() -> None:
+    assert "cct:review-code-run changes <parent> --codex" in STAGES
+    assert "never starts a fresh review" in STEP4
+    assert "no `cct:review-fix-run`" in STEP4  # it opens with a review of its own
+    assert "cct:review-fix-run 1" not in STAGES
+    assert "state directory" in STEP4 and "joined findings" in STEP4
+
+
+def test_the_close_builder_fixes_from_the_joined_findings_and_never_reviews() -> None:
+    assert "joined findings" in CLOSE and "review state directory" in CLOSE
+    assert "never start a review" in CLOSE
+
+
+def test_residual_findings_get_one_durable_disposition() -> None:
+    for text in (STEP4, flat(SKILL / "references/convergence.md")):
+        assert "## Dispositions" in text
+        for word in ("accepted", "deferred", "blocked"):
+            assert word in text
+    assert "second fix round" not in SKILL_MD or "no second fix round" in SKILL_MD.lower()
+
+
+# 5. One budget
+CONVERGENCE = flat(SKILL / "references/convergence.md")
+QUALITY = flat(SKILL / "references/quality-passes.md")
+BUILD = flat(CCT / "skills/ux-build-validate/references/build.md")
+BUILD_SKILL = flat(CCT / "skills/ux-build-validate/SKILL.md")
+
+
+def test_the_texts_agree_on_one_fix_round_at_milestone_close() -> None:
+    for name, text in (
+        ("stages", STEP4),
+        ("convergence", CONVERGENCE),
+        ("quality-passes", QUALITY),
+        ("build.md", BUILD),
+        ("ux-build-validate", BUILD_SKILL),
+    ):
+        assert "one fix round at milestone close" in text.lower(), name
+
+
+def test_no_text_still_says_three_fix_rounds() -> None:
+    assert "up to three fix rounds" not in BUILD
+    assert "two or three rounds" not in BUILD
+    assert "two fix rounds per screen per design-system release" in CONVERGENCE.lower()

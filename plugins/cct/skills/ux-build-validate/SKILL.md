@@ -1,6 +1,6 @@
 ---
 name: ux-build-validate
-description: "Returns a built-versus-approved-spec verdict (pass or fail) for one change, from state-by-state visual evidence of the running build compared with the spec and prototype at 100 and 150 percent zoom, with up to three fix rounds. Writes qa.md into the spec folder. Use when the user says 'compare the build with the prototype', 'run design QA on the build', 'does the built ui match the spec', 'write qa.md for this change'. Skip for: whether the spec itself is ready, which belongs to cct:ux-spec-validate."
+description: "Returns a built-versus-approved-spec verdict (pass or fail) for one change, from state-by-state visual evidence of the running build compared with the spec and prototype at 100 and 150 percent zoom, with two fix rounds per screen per design-system release (report-only at milestone close). Writes qa.md into the spec folder. Use when the user says 'compare the build with the prototype', 'run design QA on the build', 'does the built ui match the spec', 'write qa.md for this change'. Skip for: whether the spec itself is ready, which belongs to cct:ux-spec-validate."
 user_invocable: true
 allowed-tools: "Bash(python3 */ux-assessment-run/scripts/*)"
 metadata:
@@ -62,7 +62,8 @@ fail.
 Judge on six layers with written tolerances (`references/build.md`, "Layers and tolerances"). A
 pixel diff is advisory only. Only High and Medium fail; Low is listed. Freeze the defect list
 after the first review and stop after two fix rounds per design-system release, then hand the
-owner a side-by-side list.
+owner a side-by-side list. At milestone close it is report-only: there is one fix round at
+milestone close, owned by the supervisor.
 
 ## Delegates
 

@@ -166,7 +166,9 @@ before any check or push: it owns local iteration, failures and the final full c
   evidence, verdict). Run the append-only converge pass from `quality-passes.md` into
   `findings.md` (ticked boxes are not evidence; repeat after the fix round until it adds nothing
   and writes `Converged: round <n>`). Write one `findings.md` section for the subagent's fix
-  round. Keep building the next milestone where it does not depend on this one.
+  round: the joined findings and the code review's state directory, so the fix never starts a
+  review. What the round leaves gets a row under `## Dispositions` (accepted or deferred by a named
+  owner with a reason, or blocked). Keep building the next milestone where it does not depend on this one.
 - **Publish:** only on `VERIFY PASS milestone {{CHANGE}} <sha>` with `<sha>` equal to the local
   head: one push, one PR `milestone/<slug>-<n>` to its parent, auto-merge armed with a merge
   commit (`gh pr merge <n> --merge --auto`). Ask first when a Critical or High is deferred. A

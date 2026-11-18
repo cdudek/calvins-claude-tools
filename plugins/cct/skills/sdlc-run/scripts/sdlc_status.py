@@ -296,7 +296,7 @@ def goal(
         found = gh(
             root,
             *("pr", "list", "--head", branch, "--state", "all", "--limit", "1"),
-            *("--json", "number,headRefOid,state,autoMergeRequest,mergedAt,baseRefName"),
+            *("--json", "number,headRefOid,state,autoMergeRequest,mergedAt,baseRefName,labels"),
         )
         if found is None:
             return 1, f"{name} OPEN gh-unavailable"
@@ -307,7 +307,11 @@ def goal(
         merged = pr.get("state") == "MERGED" or bool(pr.get("mergedAt"))
         armed = pr.get("state") == "OPEN" and bool(pr.get("autoMergeRequest"))
         if not (merged or armed):
-            missing.append(f"pr-{pr['number']}-not-merged-or-armed")
+            # arming comes after the owner's disposition: a closed PR and an Ask-tier PR are never
+            # recommended for `gh pr merge --auto`
+            asks = any(str(x.get("name", "")).lower() == "ask" for x in pr.get("labels") or [])
+            kind = "closed" if pr.get("state") == "CLOSED" else "awaits-owner" if asks else ""
+            missing.append(f"pr-{pr['number']}-{kind or 'not-merged-or-armed'}")
         if scope == "project" and pr.get("baseRefName") != (cfg.get("defaultBranch") or "main"):
             missing.append(f"pr-{pr['number']}-wrong-base")
         prs.append((pr, "merged" if merged else "armed"))
@@ -361,6 +365,12 @@ BLOCKS = {
         "findings.md has an unchecked item",
         "the agent",
         "fix each open item in findings.md, tick it, commit",
+    ),
+    "findings-blocked": (
+        "a review finding is blocked",
+        "findings.md has an item whose disposition says blocked",
+        "you",
+        "decide: a scope change with a new approval, or fix the named blocker",
     ),
     "validation-not-met": (
         "a fact has no proof",
@@ -503,6 +513,16 @@ def blocker(subject: str, line: str, scope: str = "milestone") -> str:
             )
             fill = {"scope": scope, "id": subject, "n": n}
             return f"Blocking: {what.format(**fill)}, because {why}; {who} runs `{step.format(**fill)}`."
+    waits = re.fullmatch(r"pr-(\d+)-(closed|awaits-owner)", first)
+    if waits:
+        what = (
+            "closed without merging, so there is nothing to arm"
+            if waits[2] == "closed"
+            else "waiting for its owner's disposition, so nothing arms it"
+        )
+        step = "opens a new PR for the gated head" if waits[2] == "closed" else "decides it"
+        who = "the agent" if waits[2] == "closed" else "you"
+        return f"Blocking: PR {waits[1]} is {what}; {who} {step}."
     pr = re.fullmatch(r"pr-(\d+)-not-merged-or-armed", first)
     if pr:
         flag = "--merge" if scope == "milestone" else "--squash"
