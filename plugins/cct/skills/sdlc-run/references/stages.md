@@ -542,10 +542,13 @@ person's own browser session. Never use Claude in Chrome or any tool driving tha
    worktree per part; each part's fix is a commit on `milestone/<slug>`, never a PR of its own.
    Each fix updates its record: the `validation.md` row re-run and set to `met`, the
    `findings.md` item ticked. **What the round leaves gets one durable disposition**, a row in
-   `findings.md` under `## Dispositions` (`| item | disposition | owner | reason |`): `fixed` is the
-   ticked box; `accepted` or `deferred` needs a named owner and a reason (a deferral names the
-   milestone that builds it); `blocked` is terminal and the gate answers `findings-blocked`. The
-   gate clears an open item only for `accepted` or `deferred` with both. A fact that is `partly`
+   `findings.md` under `## Dispositions` (`| item | disposition | owner | reason | quote |`): `fixed` is the
+   ticked box; `accepted` or `deferred` needs a named owner, a reason of a few words (a deferral
+   names the milestone that builds it) and `quote`, the engineer's own words copied verbatim from
+   the session; `blocked` is terminal and the gate answers `findings-blocked`. The gate clears an
+   open item only when the quote appears in a user message of the session transcript (never an
+   agent message or tool output), the item has an explicit bold id (`**B2**`) that no other open
+   item shares, and no cell is empty or a `<placeholder>`; the agent cannot accept its own finding. A fact that is `partly`
    or `not met` in `validation.md` is never cleared by a disposition: change the scope with a new
    approval, or the milestone is held.
 5. Reopen recaptured images and rerun their visual checks. Then

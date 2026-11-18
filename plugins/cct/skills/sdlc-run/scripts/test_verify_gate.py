@@ -224,9 +224,8 @@ def test_lint_flags_long_sentences_and_open_questions(tmp_path: Path) -> None:
 
 
 # Ids the change defines. An id that is defined nowhere is ordinary text ("Press F5", "before Q4").
-DEFINED = (
-    "| # | What |\n|---|---|\n"
-    + "".join(f"| {i} | defined |\n" for i in ("Q202", "B19", "F13", "F14", "Q7", "A1", "F1000"))
+DEFINED = "| # | What |\n|---|---|\n" + "".join(
+    f"| {i} | defined |\n" for i in ("Q202", "B19", "F13", "F14", "Q7", "A1", "F1000")
 )
 GOOD_IDS = [
     "Designs win over today's app (Q202).",
@@ -856,52 +855,125 @@ def _milestone_repo(tmp_path: Path) -> Path:
 
 
 OPEN_ITEM = "## Blocking\n\n- [ ] **B2** the card overflows at 320\n\n"
-TABLE = "## Dispositions\n\n| item | disposition | owner | reason |\n|---|---|---|---|\n"
+TABLE = (
+    "## Dispositions\n\n| item | disposition | owner | reason | quote |\n|---|---|---|---|---|\n"
+)
+QUOTE = "fine to ship the card as it is, we build it in M2"
 
 
-@pytest.mark.parametrize("kind", ["accepted", "deferred"])
-def test_a_named_owner_and_reason_settle_a_residual_finding(tmp_path: Path, kind: str) -> None:
-    """3.21.0 (S2): the one fix round leaves a residual; accepted or deferred by a named owner
-    with a reason is a disposition the gate understands, so the milestone can close."""
-    repo = _milestone_repo(tmp_path)
+def _owner_gate(repo: Path, said: str | None = QUOTE) -> subprocess.CompletedProcess[str]:
+    """The milestone gate with a session transcript in which the engineer said `said`; the agent's
+    own tool output carries the same words and must never count."""
+    transcript = repo.parent / "session.jsonl"
+    entries = [
+        {"type": "assistant", "message": {"content": [{"type": "text", "text": QUOTE}]}},
+        {
+            "type": "user",
+            "message": {"content": [{"type": "tool_result", "content": QUOTE}]},
+        },
+        {"type": "user", "isSidechain": True, "message": {"content": QUOTE}},
+    ]
+    if said is not None:
+        entries.append({"type": "user", "message": {"content": f"ok. {said}. go on"}})
+    transcript.write_text("\n".join(json.dumps(e) for e in entries) + "\n")
+    env = {**_env(), "SDLC_TRANSCRIPT": str(transcript)}
+    return subprocess.run(
+        [sys.executable, str(GATE), "milestone", ID],
+        cwd=repo,
+        capture_output=True,
+        text=True,
+        env=env,
+    )
+
+
+def _dispose(repo: Path, row: str, item: str = OPEN_ITEM) -> None:
     _commit_files(
         repo,
         validation_md="| F1 | x | y | z | met |\n",
-        findings_md=OPEN_ITEM + TABLE + f"| B2 | {kind} | Dana | Low on a phone; M2 builds it |\n",
+        findings_md=item + TABLE + row,
     )
-    assert _last(_gate(repo, "milestone", ID)).startswith(f"VERIFY PASS milestone {ID}")
+
+
+def _row(kind: str = "accepted", owner: str = "Dana", reason: str = "Low on a phone, M2 builds it",
+         quote: str = QUOTE, item: str = "B2") -> str:  # fmt: skip
+    return f"| {item} | {kind} | {owner} | {reason} | {quote} |\n"
+
+
+@pytest.mark.parametrize("kind", ["accepted", "deferred"])
+def test_the_owners_own_words_settle_a_residual_finding(tmp_path: Path, kind: str) -> None:
+    """3.21.0 (S2): accepted or deferred settles a residual only with a quote the engineer said in
+    the session, so an agent cannot accept its own finding."""
+    repo = _milestone_repo(tmp_path)
+    _dispose(repo, _row(kind))
+    assert _last(_owner_gate(repo)).startswith(f"VERIFY PASS milestone {ID}")
+
+
+def test_words_the_engineer_never_said_leave_the_finding_open(tmp_path: Path) -> None:
+    repo = _milestone_repo(tmp_path)
+    _dispose(repo, _row())
+    r = _owner_gate(repo, said=None)  # only the agent, a tool result and a subagent said it
+    assert r.returncode == 3 and _last(r) == "VERIFY BLOCKED reason=findings-open"
+
+
+def test_without_a_readable_transcript_nothing_is_settled(tmp_path: Path) -> None:
+    repo = _milestone_repo(tmp_path)
+    _dispose(repo, _row())
+    env = {**_env(), "SDLC_TRANSCRIPT": str(tmp_path / "missing.jsonl")}
+    r = subprocess.run(
+        [sys.executable, str(GATE), "milestone", ID], cwd=repo, capture_output=True, text=True, env=env
+    )  # fmt: skip
+    assert _last(r) == "VERIFY BLOCKED reason=findings-open"
 
 
 @pytest.mark.parametrize(
     "row",
     [
-        "| B2 | accepted | | no reason given as owner |\n",
-        "| B2 | deferred | Dana | |\n",
-        "| B9 | accepted | Dana | wrong item |\n",
-        "| B2 | fixed | Dana | a ticked box is the proof of a fix |\n",
+        _row(owner=""),
+        _row(owner="<owner>"),
+        _row(reason=""),
+        _row(reason="<why>"),
+        _row(reason="later"),  # a reason is a few words
+        _row(quote=""),
+        _row(quote="<what the owner said>"),
+        _row(item="B9"),  # no such open item
+        _row(kind="fixed"),  # a ticked box is the proof of a fix
     ],
 )
-def test_a_disposition_without_owner_reason_or_item_leaves_the_finding_open(
+def test_a_placeholder_or_thin_disposition_leaves_the_finding_open(
     tmp_path: Path, row: str
 ) -> None:
     repo = _milestone_repo(tmp_path)
-    _commit_files(
-        repo,
-        validation_md="| F1 | x | y | z | met |\n",
-        findings_md=OPEN_ITEM + TABLE + row,
-    )
-    r = _gate(repo, "milestone", ID)
+    _dispose(repo, row)
+    r = _owner_gate(repo)
     assert r.returncode == 3 and _last(r) == "VERIFY BLOCKED reason=findings-open"
+
+
+def test_a_disposition_needs_an_explicit_bold_id(tmp_path: Path) -> None:
+    """An item with no `**<ID>**` has no id to bind to, so a row can never settle it."""
+    repo = _milestone_repo(tmp_path)
+    plain = "## Blocking\n\n- [ ] the card overflows at 320\n\n"
+    for item in ("the", "Z2", "B2"):  # B2 is a real id, but the item carries no bold label
+        _dispose(repo, _row(item=item), plain)
+        assert _last(_owner_gate(repo)) == "VERIFY BLOCKED reason=findings-open", item
+
+
+def test_an_id_that_matches_two_open_items_settles_neither(tmp_path: Path) -> None:
+    repo = _milestone_repo(tmp_path)
+    twice = "## Blocking\n\n- [ ] **B2** one\n- [ ] **B2** two\n\n"
+    _dispose(repo, _row(), twice)
+    assert _last(_owner_gate(repo)) == "VERIFY BLOCKED reason=findings-open"
+
+
+def test_two_conflicting_rows_for_one_item_settle_nothing(tmp_path: Path) -> None:
+    repo = _milestone_repo(tmp_path)
+    _dispose(repo, _row() + _row(kind="deferred"))
+    assert _last(_owner_gate(repo)) == "VERIFY BLOCKED reason=findings-open"
 
 
 def test_a_blocked_disposition_is_terminal(tmp_path: Path) -> None:
     repo = _milestone_repo(tmp_path)
-    _commit_files(
-        repo,
-        validation_md="| F1 | x | y | z | met |\n",
-        findings_md=OPEN_ITEM + TABLE + "| B2 | blocked | Dana | needs a design-system release |\n",
-    )
-    r = _gate(repo, "milestone", ID)
+    _dispose(repo, _row("blocked", reason="needs a design-system release", quote="none said"))
+    r = _owner_gate(repo, said=None)
     assert r.returncode == 3 and _last(r) == "VERIFY BLOCKED reason=findings-blocked"
     assert "B2" in r.stdout
 
@@ -911,10 +983,9 @@ def test_acceptance_never_turns_a_partly_met_fact_into_met(tmp_path: Path) -> No
     _commit_files(
         repo,
         validation_md="| F1 | x | y | z | partly |\n",
-        findings_md=OPEN_ITEM + TABLE + "| F1 | accepted | Dana | good enough |\n",
+        findings_md=OPEN_ITEM + TABLE + _row(item="F1"),
     )
-    r = _gate(repo, "milestone", ID)
-    assert _last(r) == "VERIFY BLOCKED reason=validation-not-met"
+    assert _last(_owner_gate(repo)) == "VERIFY BLOCKED reason=validation-not-met"
 
 
 def test_the_report_carries_operational_metrics(tmp_path: Path) -> None:

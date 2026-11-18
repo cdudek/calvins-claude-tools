@@ -226,24 +226,88 @@ def approval_blockers(change: Path) -> list[str]:
 
 
 SETTLED = ("accepted", "deferred")  # `fixed` is the ticked box; `blocked` is terminal
+REASON_WORDS = 3  # a reason, and the owner's quote, are a few words, not one
 
 
 def item_id(item: str) -> str:
-    """The id of a findings.md item: its bold label (**B2**), else its first word."""
-    m = re.match(r"\*\*([^*]+)\*\*", item.strip())
-    return m.group(1).strip() if m else (item.split() or [""])[0]
+    """The id of a findings.md item: its explicit bold label (**B2**) when that is an id of one of
+    the chain's families, else "" (an item without one can never be settled by a row)."""
+    m = re.match(rf"\*\*({ID_TOKEN})\*\*", item.strip())
+    return m.group(1) if m else ""
 
 
-def dispositions(findings: str) -> dict[str, tuple[str, ...]]:
-    """item id -> (kind, owner, reason) from `## Dispositions` rows `| item | disposition | owner |
-    reason |`. accepted and deferred count only with a named owner and a reason; a row without
-    both is ignored, so the finding stays open. blocked needs no owner."""
-    out: dict[str, tuple[str, ...]] = {}
+def owner_words(repo: Path) -> str:
+    """What the engineer said in the session, whitespace-normalised: the text of user messages
+    only (never an assistant message, a tool result or a subagent's). The transcript is
+    SDLC_TRANSCRIPT (a file or a folder of .jsonl), else Claude Code's folder for this repo; none
+    readable is "", so nothing settles."""
+    env = os.environ.get("SDLC_TRANSCRIPT")
+    base = (
+        Path(env)
+        if env
+        else Path.home() / ".claude/projects" / re.sub(r"[^A-Za-z0-9]", "-", str(repo.resolve()))
+    )
+    files = [base] if base.is_file() else sorted(base.glob("*.jsonl")) if base.is_dir() else []
+    said: list[str] = []
+    for path in files:
+        try:
+            lines = path.read_text(encoding="utf-8").splitlines()
+        except (OSError, ValueError):
+            continue
+        for line in lines:
+            try:
+                entry = json.loads(line)
+            except ValueError:
+                continue
+            if (
+                not isinstance(entry, dict)
+                or entry.get("type") != "user"
+                or entry.get("isSidechain")
+            ):
+                continue
+            message = entry.get("message")
+            content = message.get("content") if isinstance(message, dict) else None
+            if isinstance(content, list):
+                content = " ".join(
+                    b.get("text", "")
+                    for b in content
+                    if isinstance(b, dict) and b.get("type") == "text"
+                )
+            if isinstance(content, str):
+                said.append(content)
+    return " ".join(" ".join(said).split())
+
+
+def placeholder(cell: str) -> bool:
+    """Empty, or an unfilled template prompt: the same test as approval_blockers."""
+    return not cell or cell[0] == "<"
+
+
+def dispositions(findings: str, said: str) -> dict[str, str]:
+    """item id -> kind from `## Dispositions` rows `| item | disposition | owner | reason | quote |`.
+    accepted and deferred count only with a real owner, a reason of a few words and a quote the
+    engineer said in the session (`said`); blocked needs none. An id with two rows, or any row
+    that fails, settles nothing."""
+    rows: dict[str, list[str]] = {}
     for row in table_rows(section(findings, "Dispositions"))[1:]:
-        row = (row + ["", "", "", ""])[:4]
-        key, kind, owner, reason = row[0].strip("* "), row[1].lower(), row[2], row[3]
-        if kind == "blocked" or (kind in SETTLED and owner and reason):
-            out[key] = (kind, owner, reason)
+        row = (row + [""] * 5)[:5]
+        rows.setdefault(row[0].strip("* "), []).append(row)
+    out: dict[str, str] = {}
+    for key, found in rows.items():
+        if len(found) != 1 or not re.fullmatch(ID_TOKEN, key):
+            continue
+        _, kind, owner, reason, quote = found[0]
+        kind = kind.lower()
+        if kind == "blocked":
+            out[key] = kind
+        elif (
+            kind in SETTLED
+            and not any(placeholder(c) for c in (owner, reason, quote))
+            and len(reason.split()) >= REASON_WORDS
+            and len(quote.split()) >= REASON_WORDS
+            and " ".join(quote.split()).lower() in said.lower()
+        ):
+            out[key] = kind
     return out
 
 
@@ -256,11 +320,14 @@ def milestone_blockers(change: Path) -> tuple[str, list[str]] | None:
     findings = read(change / "findings.md")
     advisory = section(findings, "Advisory")
     open_items = re.findall(r"^\s*[-*] \[ \] (.*)$", findings.replace(advisory, ""), re.M)
-    settled = dispositions(findings)
-    blocked = [i for i in open_items if settled.get(item_id(i), ("",))[0] == "blocked"]
+    ids = [item_id(i) for i in open_items]
+    settled = dispositions(findings, owner_words(Path.cwd()))
+    # a row binds to exactly one open item: an id shared by two open items settles neither
+    bound = {k: v for k, v in settled.items() if ids.count(k) == 1}
+    blocked = [i for i, k in zip(open_items, ids) if k and bound.get(k) == "blocked"]
     if blocked:
         return "findings-blocked", [f"findings.md: blocked: {i[:80]}" for i in blocked]
-    open_items = [i for i in open_items if settled.get(item_id(i), ("",))[0] not in SETTLED]
+    open_items = [i for i, k in zip(open_items, ids) if not (k and bound.get(k) in SETTLED)]
     if open_items:
         return "findings-open", [f"findings.md: open: {i[:80]}" for i in open_items]
     if section(findings, "Converge") and "Converged:" not in findings:
@@ -961,7 +1028,9 @@ def main(argv: list[str]) -> int:
     if args.scope == "lint":
         body = None
         if args.pr_body:
-            body = sys.stdin.read() if args.pr_body == "-" else Path(args.pr_body).read_text("utf-8")
+            body = (
+                sys.stdin.read() if args.pr_body == "-" else Path(args.pr_body).read_text("utf-8")
+            )
         return lint(change, body)
     return run(args.scope, change, cfg, repo, args.visual_check, args.visual_run, args.keep_going)
 

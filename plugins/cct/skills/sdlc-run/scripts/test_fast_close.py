@@ -150,3 +150,9 @@ def test_stage_6_calls_the_local_form_before_the_gate() -> None:
     assert STAGES.index("cct:ux-assessment-run scope=change base=<parent>") < STAGES.index(
         "5. Reopen recaptured images"
     )
+
+
+def test_dispositions_are_bound_to_the_engineers_own_words() -> None:
+    assert "| item | disposition | owner | reason | quote |" in STEP4
+    assert "user message of the session transcript" in STEP4
+    assert "words only the agent wrote never count" in CONVERGENCE
