@@ -6,5 +6,6 @@
     "slug": "gate-loops"
   },
   "ticket": "cct-62u",
-  "design": "none"
+  "design": "none",
+  "testLocked": true
 }
