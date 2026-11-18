@@ -5,6 +5,20 @@ version warning, the **Mechanical** lines are what `adopt` does for you (it adds
 with the stack's defaults and never overwrites a value), the **Manual** lines are printed for
 the engineer. A version with no migration lines needs nothing but a re-run of `adopt`.
 
+## 3.21.0 — a milestone close that is fast and cannot deadlock
+
+- **One owner for the full suite.** `verify_gate.py milestone` is the only runner of the full suite and the full E2E at the close. The extra full runs before it are gone, and the early review starts without a browser run. Targeted runs for a failure or a fix stay.
+- **Cheap checks first.** The gate runs the offline evidence checks (owner marks, visual checkers) before the suites, so a missing screenshot costs seconds, not a full E2E run.
+- **UX assessment without a PR.** `ux-assessment-run scope=change` takes a local `base`, `head` and `worktree` and hands them to every pass. The milestone close uses it before the gate, so it no longer waits for a PR that only exists after the gate. The PR form is unchanged.
+- **One capture manifest.** One assessment owns every capture, keyed by build, reference revision, screen, state, width and zoom. After a fix only the changed cells are captured again, and a `qa.md` or a capture is stale when its inputs changed. `marks.py check` enforces it when `verify/shots/manifest.json` exists.
+- **One fix round at the close, fed what already exists.** Remediation gets the joined findings and the code review's state directory and never starts a fresh review. Two fix rounds per screen stay for visual work while a screen is built.
+- **Leftovers get a disposition the gate reads.** A row in `findings.md` under `## Dispositions` settles a leftover: accepted or deferred needs a named owner, a reason and the engineer's own words (eight or more, in one real message of the session that also names the item). Blocked is terminal (`findings-blocked`). A fact that is only partly met is never cleared this way.
+- **Arming waits for the owner.** Auto-merge is armed only after the owner and visual dispositions are recorded. Status never tells anyone to arm a closed or Ask PR.
+- **Tests that can start before the UI exists.** Stage 5 writes the smallest failing assertion from the fact first; browser E2E with live selectors comes after the surface exists. The runner is named; `test-e2e-policy` is the rulebook.
+- **Fact proof is collected once.** Builders return evidence by fact, tag and tested commit. The close reuses it and exercises only what no evidence covers and the seams. The criteria auditor gets an explicit `verify/ac.json`.
+- Mechanical: re-running `adopt` refreshes `scripts/verify_gate.py`, `scripts/marks.py` and `REVIEW.md`, and stamps `sdlcVersion`.
+- Manual: none. A repo with a pending milestone may add a `## Dispositions` table to `findings.md`.
+
 ## 3.20.0 — UI review rounds that end
 
 - **Six layers with written tolerances.** A screen passes on structure, copy, tokens, geometry, rules and access, and review. The defaults are in `ux-build-validate` (the Measurements table gains a tolerance column) and the shared visual pass. A repo may tighten them, never loosen them without a decision record.
