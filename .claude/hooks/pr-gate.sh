@@ -57,15 +57,23 @@ GOAL_SOURCE = f"the transcript's goal entry in {transcript}"
 GOAL_ACTION = "type `/goal clear` (only the owner can)"
 
 
+def helper(name: str):
+    """A sibling helper by its exact path: never found on sys.path, where the working directory
+    could shadow it. Raises when it is missing or broken."""
+    import importlib.util
+
+    spec = importlib.util.spec_from_file_location(name, os.path.join(os.environ["SDLC_HOOK_DIR"], f"{name}.py"))
+    mod = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(mod)
+    return mod
+
+
 def block(why: str, route: str, source: str = "sdlc.json", action: str = "") -> None:
     """Block. `source` is what the gate read, `action` what the owner does (default: the route);
     a repeat of the same block says both (block_state.py), and without it the text is plain."""
     text = f"BLOCKED: {why}\n{route}\n({docs}, \"One milestone, one PR\")"
     try:
-        sys.path.insert(0, os.environ["SDLC_HOOK_DIR"])
-        from block_state import rewrite
-
-        text = rewrite("pr-gate.sh", text, source, action or route, payload)
+        text = helper("block_state").rewrite("pr-gate.sh", text, source, action or route, payload)
     except Exception:  # block state never changes the verdict
         pass
     print(text, file=sys.stderr)
@@ -79,9 +87,8 @@ def git(where: Path, *args: str) -> str:
 
 def goal_active() -> bool:
     """The goal reading is goal_active.py's; an unreadable transcript reads as no goal."""
-    sys.path.insert(0, os.environ["SDLC_HOOK_DIR"])
     try:
-        from goal_active import goal_active as read
+        read = helper("goal_active").goal_active
     except Exception:  # missing, or any error while importing it: a gate that cannot read the goal blocks
         block(
             "goal_active.py is missing or broken beside pr-gate.sh.", "Run `sdlc-run adopt` to restore it.",
@@ -153,7 +160,11 @@ class Repo:
                 rows = json.loads(path.read_text(encoding="utf-8")).get("prExceptions") or []
             except (OSError, ValueError, AttributeError):
                 continue
-            if any(r.get("branch") == branch and str(r.get("words", "")).strip() for r in rows):
+            if any(
+                isinstance(r, dict) and r.get("branch") == branch
+                and isinstance(r.get("words"), str) and r["words"].strip()
+                for r in rows
+            ):
                 return True
         return False
 
@@ -266,9 +277,10 @@ def segments(text: str) -> list[list[str]]:
     lex.whitespace_split = True
     out: list[list[str]] = [[]]
     target = False  # the token after a bare `>` or `2>>` is a file, not an argument
-    for tok in lex:
-        if target and tok == "&":
-            continue  # `2>&1`: the lexer split the fd duplication at the `&`
+    toks = list(lex)
+    for i, tok in enumerate(toks):
+        if tok == "&" and (target or toks[i + 1 : i + 2] and toks[i + 1].startswith(">")):
+            continue  # `2>&1` and `&>file`: the lexer split a redirect at the `&`
         if tok and set(tok) <= set(";&|"):
             out.append([])
         elif target:
@@ -301,7 +313,7 @@ for seg in parts:
         rest, here = seg[1:], where
         while rest and rest[0] in ("-C", "-c"):
             if rest[0] == "-C" and len(rest) > 1:
-                here = (where / os.path.expanduser(rest[1])).resolve()
+                here = (here / os.path.expanduser(rest[1])).resolve()
             rest = rest[2:]
         if rest and rest[0] == "push":
             check_push(Repo(here), rest[1:])

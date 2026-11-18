@@ -25,7 +25,7 @@ KEEP_SECONDS = 14 * 86400
 
 def _state_file(payload: dict) -> Path:
     session, cwd = payload["session_id"], payload["cwd"]
-    if not (isinstance(session, str) and re.fullmatch(r"[\w-][\w.-]*", session) and isinstance(cwd, str) and cwd):
+    if not (isinstance(session, str) and re.fullmatch(r"[A-Za-z0-9_-]+", session) and isinstance(cwd, str) and cwd):
         raise ValueError("no usable session_id or cwd")
     out = subprocess.run(
         ["git", "-C", cwd, "rev-parse", "--path-format=absolute", "--git-common-dir"],
@@ -42,9 +42,12 @@ def rewrite(hook: str, message: str, source: str, action: str, payload: dict) ->
     try:
         path = _state_file(payload)
         path.parent.mkdir(exist_ok=True)
-        for old in path.parent.iterdir():  # 14-day cleanup on every write
+        for old in path.parent.iterdir():  # 14-day cleanup on every write: our own files only
             try:
-                if old.is_file() and old.stat().st_mtime < time.time() - KEEP_SECONDS:
+                if (
+                    old.suffix == ".jsonl" and not old.is_symlink() and old.is_file()
+                    and old.stat().st_mtime < time.time() - KEEP_SECONDS
+                ):
                     old.unlink()
             except OSError:
                 pass
