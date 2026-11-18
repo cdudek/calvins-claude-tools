@@ -4,6 +4,13 @@ Usage: python3 scripts/marks.py init|check|table <change-id>
 Run from the repo root. Output: init additions/orphans; check problems and a summary;
 table a Markdown report. Written by `sdlc-run adopt`; edit the kit, not this copy.
 
+A design export bundle (a folder under asks/ with an index.html, or the folder decisions.json
+names as visualSource.path) is one row, kind bundle, with the hash of every file in it. It is
+never edited: a changed hash fails the check. Its row says "needs rendering" until `rendered`
+names a separate folder under asks/ holding at least one image per screen; those images are then
+inventoried as reference rows like any other. Generated mockups (spec/prototype) are advisory
+and never rows.
+
 marks.json holds {"rows": [...]}. Source paths and shots are change-relative; decision
 paths are repo-relative. IDs use the session folder relative to asks, or ref:<image path>.
 A fixed note names its proof in `test` (a tag such as @F1) found in a testGlobs file.
@@ -16,6 +23,7 @@ from __future__ import annotations
 
 import argparse
 import glob
+import hashlib
 import html
 import json
 import re
@@ -39,6 +47,33 @@ FILLED = {
 }
 TEST_GLOBS = ["**/*.test.*", "**/*.spec.*", "**/test_*.py", "**/tests/**", "**/e2e/**"]
 SKIP = ("node_modules", ".git", ".worktrees")
+BUNDLE_FILLED = {"rendered": ""}
+
+
+def bundles(change: Path) -> dict[Path, str]:
+    """Export bundle folders under asks/, with their hash: any folder holding index.html, plus
+    the folder decisions.json names as visualSource.path (a React export has no index.html)."""
+    folders = {index.parent for index in (change / "asks").rglob("index.html")}
+    try:
+        declared = json.loads((change / "decisions.json").read_text(encoding="utf-8"))
+        path = (change / declared["visualSource"]["path"]).resolve()
+        if path.is_dir() and path.is_relative_to((change / "asks").resolve()):
+            folders.add(path)
+    except (OSError, ValueError, KeyError, TypeError, AttributeError):
+        pass  # no decisions.json, no visualSource, or a URL: nothing declared
+    found = {}
+    for folder in sorted(folders):
+        if any(parent in found for parent in folder.parents):
+            continue
+        digest = hashlib.sha256()
+        for path in sorted(p for p in folder.rglob("*") if p.is_file()):
+            parts = path.relative_to(folder).parts  # the repo itself may sit under .worktrees
+            if path.name == ".DS_Store" or any(part in SKIP for part in parts):
+                continue
+            digest.update(path.relative_to(folder).as_posix().encode() + b"\0")
+            digest.update(path.read_bytes() + b"\0")
+        found[folder] = digest.hexdigest()
+    return found
 
 
 def sessions(change: Path) -> list[tuple[Path, str]]:
@@ -78,15 +113,20 @@ def inventory(change: Path) -> list[dict]:
                         "image": source.relative_to(change).as_posix(),
                     }
                 )
-    for folder in (change / "asks", change / "spec" / "prototype"):
-        for path in sorted(folder.rglob("*")):
-            if (
-                path.is_file()
-                and path.suffix.lower() in IMAGES
-                and path.resolve() not in mark_images
-            ):
-                image = path.relative_to(change).as_posix()
-                rows.append({"id": f"ref:{image}", "kind": "reference", "image": image})
+    found = bundles(change)
+    for folder, digest in found.items():
+        rel = folder.relative_to(change).as_posix()
+        rows.append({"id": f"bundle:{rel}", "kind": "bundle", "path": rel, "hash": digest})
+    # Generated mockups (spec/prototype) are advisory: only what the owner supplied is a reference.
+    for path in sorted((change / "asks").rglob("*")):
+        if (
+            path.is_file()
+            and path.suffix.lower() in IMAGES
+            and path.resolve() not in mark_images
+            and not any(b in path.parents for b in found)
+        ):
+            image = path.relative_to(change).as_posix()
+            rows.append({"id": f"ref:{image}", "kind": "reference", "image": image})
     ids = [row["id"] for row in rows]
     if len(ids) != len(set(ids)):
         raise ValueError("duplicate source IDs: check session mark and note numbers")
@@ -114,6 +154,10 @@ def inside_file(base: Path, value: object, boundary: Path) -> bool:
     return path.is_relative_to(boundary.resolve()) and path.is_file()
 
 
+def inside_dir(boundary: Path, path: Path) -> bool:
+    return path.resolve().is_relative_to(boundary.resolve())
+
+
 def spec_text(repo: Path, globs: list[str]) -> str:
     """All spec and test file text. shortcut: reads every match once, fine below ~10k files."""
     root = str(repo)
@@ -129,6 +173,10 @@ def spec_text(repo: Path, globs: list[str]) -> str:
     return "\n".join(parts)
 
 
+def extra(source: dict) -> dict:
+    return BUNDLE_FILLED if source["kind"] == "bundle" else FILLED
+
+
 def init(change: Path, sources: list[dict]) -> int:
     path = change / "marks.json"
     rows = read_rows(path) if path.exists() else []
@@ -136,10 +184,10 @@ def init(change: Path, sources: list[dict]) -> int:
     added = 0
     for source in sources:
         if source["id"] not in by_id:
-            rows.append(source | FILLED)
+            rows.append(source | extra(source))
             added += 1
         else:
-            for key, value in (source | FILLED).items():
+            for key, value in (source | extra(source)).items():
                 by_id[source["id"]].setdefault(key, value)
     source_ids = {row["id"] for row in sources}
     orphans = [row["id"] for row in rows if row["id"] not in source_ids]
@@ -173,6 +221,28 @@ def check(change: Path, sources: list[dict], repo: Path, designs: Path, globs: l
         elif any(row.get(key) != value for key, value in source.items()):
             problem("source fields differ; restore the original words and source paths")
         kind = source["kind"] if source else row.get("kind")
+        if kind == "bundle":
+            rendered = row.get("rendered")
+            if not filled(rendered) or not (change / rendered).is_dir():
+                problem(
+                    "needs rendering: render the bundle to images in a folder under asks/ "
+                    "and set rendered to it"
+                )
+            elif not inside_dir(change / "asks", change / rendered):
+                problem("rendered must be a folder under asks/")
+            elif source and (
+                inside_dir(change / source["path"], change / rendered)
+                or inside_dir(change / rendered, change / source["path"])
+            ):
+                problem("rendered must be separate from the bundle (render a copy, not the bundle)")
+            elif source:
+                screens = [
+                    h for h in (change / source["path"]).rglob("*.html") if h.name != "gallery.html"
+                ]
+                images = [p for p in (change / rendered).rglob("*") if p.suffix.lower() in IMAGES]
+                if len(images) < max(len(screens), 1):
+                    problem(f"rendered holds {len(images)} image for {len(screens)} screens")
+            continue
         statuses = NOTE_STATUSES if kind == "note" else REFERENCE_STATUSES
         if kind not in ("note", "reference"):
             problem("invalid kind")
@@ -224,13 +294,15 @@ def table(rows: list[dict]) -> int:
     print("|---|---|---|---|---|---|---|")
     for row in rows:
         status = row.get("status") or "unset"
+        if row.get("kind") == "bundle":
+            status = "rendered" if filled(row.get("rendered")) else "needs rendering"
         if filled(row.get("accepted")):
             status += f" (accepted: {row['accepted']})"
         values = [
             row["id"],
-            row.get("words", row.get("image")),
+            row.get("words", row.get("image", row.get("path"))),
             row.get("decision"),
-            row.get("shot"),
+            row.get("shot", row.get("rendered")),
             status,
             row.get("test"),
             row.get("differs"),

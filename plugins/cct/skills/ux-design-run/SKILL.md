@@ -84,4 +84,5 @@ redrawn.
 - Write facts, plans or product code, or edit `decisions.json` or `intent.md`.
 - Invent an ask.
 - Decide a deliberate inconsistency for the owner.
-- Make low-fi wireframes, or use Figma.
+- Make low-fi wireframes, or use Figma, for a prototype it makes (supplied designs are inputs:
+  `../sdlc-run/references/design-inputs.md`).

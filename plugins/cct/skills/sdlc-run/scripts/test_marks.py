@@ -5,6 +5,7 @@ Exercise owner-mark inventory, retained decisions, evidence checks and report ou
 
 from __future__ import annotations
 
+import hashlib
 import json
 import subprocess
 import sys
@@ -132,20 +133,16 @@ def test_init_preserves_filled_fields_adds_notes_and_reports_orphans(repo: Path)
 def test_inventory_references_and_only_snapmark_shaped_sessions(repo: Path) -> None:
     root = change(repo)
     write(root / "asks/wireframe.PNG")
-    write(root / "spec/prototype/mobile/screen.webp")
+    write(root / "spec/prototype/mobile/screen.webp")  # generated mockup: advisory, no row
     write(root / "asks/ordinary/session.md", "# Session\n\n## Notes\n\n1. Not a mark.\n")
     write(root / "asks/no-title/session.md", "## 001 · 12:00\n1. Not a session.\n")
     write(root / "asks/ordinary/reference.jpg")
     write(root / "spec/not-a-prototype.png")
     write(root / "asks/export.pdf")
     data = resolved(repo)
-    assert len(data) == 7
+    assert len(data) == 6
     refs = [row["image"] for row in data if row["kind"] == "reference"]
-    assert refs == [
-        "asks/ordinary/reference.jpg",
-        "asks/wireframe.PNG",
-        "spec/prototype/mobile/screen.webp",
-    ]
+    assert refs == ["asks/ordinary/reference.jpg", "asks/wireframe.PNG"]
     assert run(repo, "check").returncode == 0
 
 
@@ -346,3 +343,118 @@ def test_table_renders_literal_words_paths_and_acceptance(repo: Path) -> None:
     assert "&lt;toolbar&gt;" in result.stdout
     assert "accepted: Ship the gap" in result.stdout
     assert "docs/designs/choice" in result.stdout and "verify/shots/fresh" in result.stdout
+
+
+def bundle(repo: Path) -> Path:
+    folder = change(repo) / "asks/2026-11-01-export"
+    write(folder / "index.html", "<html>screen</html>")
+    write(folder / "assets/logo.png")
+    return folder
+
+
+def test_export_bundle_is_one_input_and_its_files_are_not_references(repo: Path) -> None:
+    bundle(repo)
+    assert run(repo, "init").returncode == 0
+    by_id = {row["id"]: row for row in rows(repo)}
+    row = by_id["bundle:asks/2026-11-01-export"]
+    assert row["kind"] == "bundle" and len(row["hash"]) == 64 and row["rendered"] == ""
+    assert not any("logo.png" in rid for rid in by_id)
+
+
+def test_bundle_needs_rendering_until_images_exist_and_stays_pinned(repo: Path) -> None:
+    resolved(repo)  # the sample rows pass; the bundle is not in marks.json yet
+    folder = bundle(repo)
+    assert run(repo, "init").returncode == 0
+    result = run(repo, "check")
+    assert (
+        result.returncode == 1 and "bundle:asks/2026-11-01-export: needs rendering" in result.stdout
+    )
+    write(change(repo) / "asks/2026-11-01-export-render/home.png")
+    run(repo, "init")
+    data = rows(repo)
+    for row in data:
+        if row["kind"] == "bundle":
+            row["rendered"] = "asks/2026-11-01-export-render"
+        elif row["kind"] == "reference":
+            row.update(expected="Home matches.", shot="verify/shots/fresh.png", status="match")
+    save(repo, data)
+    assert run(repo, "check").returncode == 0, run(repo, "check").stdout
+    write(folder / "index.html", "<html>edited</html>")
+    result = run(repo, "check")
+    assert result.returncode == 1 and "source fields differ" in result.stdout
+
+
+def test_bundle_render_folder_must_hold_an_image_under_asks(repo: Path) -> None:
+    bundle(repo)
+    run(repo, "init")
+    data = rows(repo)
+    (change(repo) / "empty").mkdir()
+    for row in data:
+        if row["kind"] == "bundle":
+            row["rendered"] = "empty"
+    save(repo, data)
+    assert "rendered must be a folder under asks/" in run(repo, "check").stdout
+
+
+def test_table_reports_bundle_as_needs_rendering(repo: Path) -> None:
+    bundle(repo)
+    run(repo, "init")
+    assert "needs rendering" in run(repo, "table").stdout
+
+
+def test_bundle_hash_covers_files_when_the_repo_sits_under_a_worktrees_folder(
+    tmp_path: Path,
+) -> None:
+    repo = tmp_path / ".worktrees" / "feature"
+    write(repo / "sdlc.json", "{}")
+    folder = repo / "changes" / ID / "asks/export"
+    write(folder / "index.html", "<html>one</html>")
+    assert run(repo, "init").returncode == 0
+    first = rows(repo)[0]["hash"]
+    assert first != hashlib.sha256(b"").hexdigest()
+    write(folder / "index.html", "<html>two</html>")
+    assert "source fields differ" in run(repo, "check").stdout
+
+
+def test_generated_mockups_are_advisory_not_reference_rows(repo: Path) -> None:
+    write(change(repo) / "spec/prototype/home.png")
+    assert run(repo, "init").returncode == 0
+    assert not any("prototype" in row["id"] for row in rows(repo))
+
+
+def render_row(repo: Path, rendered: str) -> None:
+    run(repo, "init")
+    data = rows(repo)
+    for row in data:
+        if row["kind"] == "bundle":
+            row["rendered"] = rendered
+    save(repo, data)
+
+
+def test_render_folder_must_be_separate_from_the_bundle(repo: Path) -> None:
+    folder = bundle(repo)
+    write(folder / "shots/index--desktop@2x.png")
+    render_row(repo, "asks/2026-11-01-export/shots")
+    assert "must be separate from the bundle" in run(repo, "check").stdout
+    render_row(repo, "asks/2026-11-01-export")
+    assert "must be separate from the bundle" in run(repo, "check").stdout
+
+
+def test_render_folder_must_cover_every_bundle_screen(repo: Path) -> None:
+    folder = bundle(repo)
+    write(folder / "about.html", "<html>about</html>")
+    write(change(repo) / "asks/export-render/index.png")
+    render_row(repo, "asks/export-render")
+    assert "1 image for 2 screens" in run(repo, "check").stdout
+
+
+def test_bundle_without_index_html_is_found_through_visual_source(repo: Path) -> None:
+    folder = change(repo) / "asks/react-export"
+    write(folder / "src/App.tsx", "export default 1")
+    write(
+        change(repo) / "decisions.json",
+        json.dumps({"visualSource": {"kind": "export-bundle", "path": "asks/react-export"}}),
+    )
+    assert run(repo, "init").returncode == 0
+    row = {r["id"]: r for r in rows(repo)}["bundle:asks/react-export"]
+    assert row["kind"] == "bundle" and len(row["hash"]) == 64

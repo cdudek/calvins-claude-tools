@@ -11,7 +11,8 @@ installed `cct:design-mockups-create` has a spec mode (its SKILL.md has a "Spec 
 `cct:design-mockups-create spec <spec>`, which follows these steps. Otherwise drive the Codex CLI
 yourself with the steps below; `cct:design-mockups-create` in its HTML form is not a substitute.
 Never build the prototype from code (no HTML, no product components), and never use Figma or
-low-fi wireframes. No Codex: skip with `skip -- no image generator` and say so once.
+low-fi wireframes. This bans prototypes the agent makes; designs the team supplies (an export
+bundle, a Figma file) are inputs, see `../../sdlc-run/references/design-inputs.md`. No Codex: skip with `skip -- no image generator` and say so once.
 
 ## Inputs
 

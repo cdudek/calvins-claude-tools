@@ -1,6 +1,6 @@
 # sdlc-run, end to end
 
-Describes sdlc-run 3.18.0.
+Describes sdlc-run 3.19.0.
 
 `/cct:sdlc-run` runs an AI-native software lifecycle in any repo. The agent drafts the intent, the UX plan, the facts and the tech plan. You confirm twice. Then one `/goal` builds the whole milestone as commits, runs the heavy checks once, and opens one PR.
 
@@ -38,6 +38,7 @@ The two touchpoints are the intent and the plan. After the plan is approved, `lo
 - **You get:** `intent.md` with your asks word for word, job stories, the success measure and the rules that apply.
 - **Who acts:** the agent drafts after one dialog (ticket, design, size, kind, milestone, project); **you confirm**.
 - **Typical time:** 10 to 20 minutes.
+- **Your design:** If you have a design (Figma, an export bundle, an image), say so; it becomes the one source the build is checked against ([design inputs](../plugins/cct/skills/sdlc-run/references/design-inputs.md)).
 - **Example:** your words "I can't find the newest invoice" become the ask A1, the job story "when I open the list I want newest first", and the measure "support questions about finding invoices drop by half in a month".
 
 ### 2 UX plan
@@ -178,7 +179,7 @@ It first asks whether to use Ship/Show/Ask merge tiers (a code owner approves ri
 
 ## Staying current
 
-`adopt` writes `"sdlcVersion": "3.18.0"` into `sdlc.json`. Every time the skill runs in the repo, `status` and the verify gate compare the stamp with the installed plugin and print one line when it is missing or older, for example:
+`adopt` writes `"sdlcVersion": "3.19.0"` into `sdlc.json`. Every time the skill runs in the repo, `status` and the verify gate compare the stamp with the installed plugin and print one line when it is missing or older, for example:
 
 ```text
 This repo runs sdlc-run 3.2.0; the kit is 3.3.1. Run `adopt --upgrade` (changes: 3.3.1: adopt --upgrade never overwrites or moves anything; 3.3.0: the CI workflow ships as a template, ciPaths by file type, versioned repos).
