@@ -259,10 +259,253 @@ def test_goal_cli_prints_one_line_and_exits_1_when_gh_fails(repo: Path, tmp_path
         text=True,
         env={**_env(), "PATH": path},
     )
-    assert (run.returncode, run.stdout.strip()) == (1, f"GOAL {ID} OPEN gh-unavailable")
+    first, second = run.stdout.strip().splitlines()
+    assert (run.returncode, first) == (1, f"GOAL {ID} OPEN gh-unavailable")
+    assert second.startswith("Blocking: GitHub cannot be reached")
 
 
 def test_goal_cli_refuses_bad_arguments(repo: Path) -> None:
     assert _run(repo, "goal").returncode == 2
     assert _run(repo, "goal", ID, "--feature").returncode == 2
     assert _run(repo, "goal", ID, "--feature", "x").returncode == 2
+
+
+# --- goal: the one blocking thing, as a sentence ------------------------------------------------
+
+
+def test_blocker_names_what_why_who_and_the_exact_step(repo: Path) -> None:
+    line = f"GOAL {ID} OPEN milestone-gate-pass,no-pr:{BRANCH}"
+    assert sdlc_status.blocker(ID, line) == (
+        "Blocking: the milestone gate has not passed, because no VERIFY PASS is recorded for it; "
+        f"the agent runs `python3 scripts/verify_gate.py milestone {ID}`."
+    )
+    assert "gh pr create --head " + BRANCH in sdlc_status.blocker(ID, f"GOAL {ID} OPEN no-pr:{BRANCH}")
+    assert sdlc_status.blocker(ID, f"GOAL {ID} OPEN pr-7-not-merged-or-armed") == (
+        "Blocking: PR 7 is open without auto-merge, because nothing armed it; "
+        "the agent runs `gh pr merge 7 --merge --auto`."
+    )
+    assert "you run" in sdlc_status.blocker(ID, f"GOAL {ID} BLOCKED reason=protected-path")
+    assert sdlc_status.blocker(ID, f"GOAL {ID} DONE pr=7 state=merged gate={GATE}") == ""
+
+
+def test_blocker_for_a_feature_names_the_feature_gate_and_its_pr(repo: Path) -> None:
+    out = sdlc_status.blocker(ID, f"GOAL {ID} OPEN feature-gate-pass", "feature")
+    assert "the feature gate has not passed" in out and f"verify_gate.py feature {ID}" in out
+    out = sdlc_status.blocker(ID, f"GOAL {ID} OPEN pr-7-not-merged-or-armed", "feature")
+    assert "gh pr merge 7 --squash --auto" in out
+    out = sdlc_status.blocker(ID, f"GOAL {ID} OPEN gate-sha-not-pr-7-head", "feature")
+    assert "PR 7" in out and f"verify_gate.py feature {ID}" in out
+
+
+EMITTED = [
+    "milestone-gate-pass",
+    "feature-gate-pass",
+    "no-branch-for-milestone-1",
+    "no-branch-for-feature-2",
+    f"no-pr:{BRANCH}",
+    "pr-7-not-merged-or-armed",
+    "gate-sha-not-pr-7-head",
+    "gh-unavailable",
+    "no-change-folder",
+    "findings-open",
+    "validation-not-met",
+    "not-converged",
+]
+
+
+@pytest.mark.parametrize("scope", ["milestone", "feature"])
+def test_every_reason_the_goal_emits_gets_a_real_sentence(scope: str) -> None:
+    for reason in EMITTED:
+        out = sdlc_status.blocker(ID, f"GOAL {ID} OPEN {reason}", scope)
+        assert out.startswith("Blocking: ") and "the goal check lists it" not in out, reason
+
+
+def test_every_reason_the_gate_blocks_on_gets_a_real_sentence() -> None:
+    sys.path.insert(0, str(SCRIPT.parent.parent / "templates" / "scripts"))
+    from verify_gate import REASONS
+
+    for reason in sorted(REASONS):
+        out = sdlc_status.blocker(ID, f"GOAL {ID} BLOCKED reason={reason}")
+        assert out.startswith("Blocking: ") and "the goal check lists it" not in out, reason
+
+
+def test_blocker_never_recommends_a_repo_local_status_script(repo: Path) -> None:
+    for reason in EMITTED + ["no-progress", "attempts", "not-approved"]:
+        assert " scripts/sdlc_status.py" not in sdlc_status.blocker(ID, f"GOAL {ID} OPEN {reason}")
+    assert "${CLAUDE_SKILL_DIR}/scripts/sdlc_status.py" in sdlc_status.blocker(
+        ID, f"GOAL {ID} OPEN no-change-folder"
+    )
+
+
+def test_goal_cli_says_what_blocks_a_goal_without_a_change_folder(repo: Path) -> None:
+    out = _run(repo, "goal", "no-such-change").stdout.splitlines()
+    assert out[0] == "GOAL no-such-change OPEN no-change-folder"
+    assert out[1].startswith("Blocking: there is no change folder") and len(out) == 2
+
+
+def test_goal_cli_feature_scope_reaches_the_sentence(repo: Path) -> None:
+    out = _run(repo, "goal", ID, "--feature", "1").stdout.splitlines()
+    assert f"verify_gate.py feature {ID}" in out[1], out
+
+
+def test_goal_cli_adds_the_sentence_only_when_the_goal_is_not_done(repo: Path) -> None:
+    out = _run(repo, "goal", ID).stdout.splitlines()
+    assert out[0].startswith(f"GOAL {ID} OPEN") and out[1].startswith("Blocking: ")
+    assert len(out) == 2
+
+
+# --- ids: every id with its meaning and where it is decided ----------------------------------
+
+
+def test_ids_print_meaning_and_file(repo: Path) -> None:
+    change = repo / "changes" / ID
+    (change / "intent.md").write_text(
+        "| # | Date | Source | Words | Screen | Res |\n|---|---|---|---|---|---|\n"
+        '| A1 | 2026-11-18 | chat | "Sort the list by date" | none | none |\n\n'
+        "| # | When | I want | So I can | Evidence |\n|---|---|---|---|---|\n"
+        "| J1 | I open the list | newest first | find it fast | reported (A1) |\n"
+    )
+    (change / "facts.md").write_text(
+        "- [ ] **F1** (A1; rules none) When the list opens, the system shall sort by date. Tag: `@F1`.\n"
+        "- [ ] **N1** (A1) The system shall answer in under 200 ms.\n"
+    )
+    (change / "questions.md").write_text(
+        "- **Q1 (2026-11-18) When to lock the tests?** The plan says lock after feature 1.\n"
+        "Later: see B19 and Q1.\n"
+    )
+    out = _run(repo, "ids", ID).stdout.splitlines()
+    assert 'A1   "Sort the list by date"  (intent.md)' in out
+    assert (
+        "J1   When I open the list, I want newest first, so I can find it fast  (intent.md)" in out
+    )
+    assert "F1   When the list opens, the system shall sort by date.  (facts.md)" in out
+    assert "N1   The system shall answer in under 200 ms.  (facts.md)" in out
+    assert "Q1   When to lock the tests?  (questions.md)" in out
+    assert out[-1] == "no definition found for: B19"
+
+
+def test_ids_say_so_when_there_are_none(repo: Path) -> None:
+    assert _run(repo, "ids", ID).stdout.strip() == "no ids in this change yet"
+
+
+# --- readme: the reading map -------------------------------------------------------------------
+
+
+def test_readme_gives_three_entry_points_and_a_row_per_document(repo: Path) -> None:
+    change = repo / "changes" / ID
+    (change / "intent.md").write_text("# Intent\n")
+    (change / "handover.md").write_text("# Handover\n")
+    r = _run(repo, "readme", ID)
+    assert r.returncode == 0
+    text = (change / "README.md").read_text()
+    assert "- **Understand the change:** read [intent.md](intent.md)." in text
+    assert (
+        "- **Review it:** read facts.md (not written yet), then plan.md (not written yet)." in text
+    )
+    assert "stage 5/7 Build; read [handover.md](handover.md)." in text
+    rows = [ln for ln in text.splitlines() if ln.startswith("| ") and "---" not in ln]
+    assert any("What are we building, and why?" in r and r.endswith("| yes |") for r in rows)
+    above, below = text.split("## For agents")
+    assert "decisions.json" in below and "verify/" in below and "analyze.md" in below
+    assert "analyze.md" not in above and "facts.md" in above
+
+
+def test_readme_is_regenerated_and_never_lists_itself_as_an_id_source(repo: Path) -> None:
+    change = repo / "changes" / ID
+    _run(repo, "readme", ID)
+    first = (change / "README.md").read_text()
+    (change / "handover-2.md").write_text("# later\n")
+    _run(repo, "readme", ID)
+    assert (change / "README.md").read_text() != first
+    assert "[handover-2.md](handover-2.md)" in (change / "README.md").read_text()
+    assert _run(repo, "ids", ID).stdout.strip() == "no ids in this change yet"
+
+
+def test_readme_refuses_paths_outside_the_changes_folder(repo: Path) -> None:
+    (repo / "README.md").write_text("project readme\n")
+    for bad in ("..", "../..", str(repo), "archive", "does-not-exist"):
+        r = _run(repo, "readme", bad)
+        assert r.returncode == 2, bad
+    assert (repo / "README.md").read_text() == "project readme\n"
+    assert not (repo / "changes" / "README.md").exists()
+
+
+def test_readme_replaces_only_a_generated_readme(repo: Path) -> None:
+    readme = repo / "changes" / ID / "README.md"
+    readme.write_text("# Written by hand\n")
+    r = _run(repo, "readme", ID)
+    assert r.returncode == 2 and "not generated" in r.stdout
+    assert readme.read_text() == "# Written by hand\n"
+    readme.unlink()
+    assert _run(repo, "readme", ID).returncode == 0
+    (repo / "changes" / ID / "handover.md").write_text("# h\n")
+    assert _run(repo, "readme", ID).returncode == 0
+    assert "handover.md" in readme.read_text()
+
+
+def test_readme_rewrites_nothing_when_the_content_is_the_same(repo: Path) -> None:
+    readme = repo / "changes" / ID / "README.md"
+    _run(repo, "readme", ID)
+    os.utime(readme, (1, 1))
+    r = _run(repo, "readme", ID)
+    assert r.returncode == 0 and "unchanged" in r.stdout
+    assert readme.stat().st_mtime == 1
+
+
+# --- reading map and glossary: the real folder, the named column ---------------------------------
+
+
+def test_glossary_reads_the_finding_and_challenge_columns_not_the_longest_cell(repo: Path) -> None:
+    change = repo / "changes" / ID
+    long_where = "plan.md ## Approach, the paragraph that starts with the export and goes on"
+    (change / "analyze.md").write_text(
+        "| ID | Severity | Pass | Where | Finding | Status |\n|---|---|---|---|---|---|\n"
+        f"| X1 | HIGH | coverage | {long_where} | The plan misses the export step. | open |\n"
+    )
+    (change / "challenge.md").write_text(
+        "| ID | Severity | Lens | Where | Challenge | Status |\n|---|---|---|---|---|---|\n"
+        f"| H1 | HIGH | simpler | {long_where} | A cron job would do. | answered, see plan |\n"
+    )
+    (change / "plan.md").write_text("Because (X1) and (H1) we wait.\n")
+    out = _run(repo, "ids", ID).stdout.splitlines()
+    assert "X1   The plan misses the export step.  (analyze.md)" in out
+    assert "H1   A cron job would do.  (challenge.md)" in out
+
+
+def test_readme_lists_the_standard_spec_files_and_names_every_other_file(repo: Path) -> None:
+    change = repo / "changes" / ID
+    (change / "spec").mkdir()
+    for name in ("brief", "ia", "interaction", "sitemap"):
+        (change / "spec" / f"{name}.md").write_text("# x\n")
+    (change / "notes.md").write_text("# mine\n")
+    (change / "spec" / "extra.md").write_text("# mine\n")
+    (change / "verify").mkdir()
+    (change / "verify" / "report.json").write_text("{}")
+    _run(repo, "readme", ID)
+    text = (change / "README.md").read_text()
+    for name in ("brief", "ia", "interaction", "sitemap"):
+        assert f"[spec/{name}.md](spec/{name}.md)" in text
+    other = text.split("## Other files in this folder")[1]
+    assert "[notes.md](notes.md)" in other and "[spec/extra.md](spec/extra.md)" in other
+    assert "spec/brief.md" not in other and "report.json" not in other
+
+
+@pytest.mark.parametrize(
+    ("names", "latest"),
+    [
+        (["handover.md", "handover-2.md"], "handover-2.md"),
+        (["handover-2.md", "handover-10.md", "handover-9.md"], "handover-10.md"),
+        (["handover-2026-11-20.md", "handover-2026-11-18.md", "handover-3.md"], "handover-2026-11-20.md"),
+    ],
+)
+def test_readme_points_at_the_latest_handover(repo: Path, names: list[str], latest: str) -> None:
+    change = repo / "changes" / ID
+    for n in names:
+        (change / n).write_text("# h\n")
+    _run(repo, "readme", ID)
+    assert f"read [{latest}]({latest})." in (change / "README.md").read_text()
+
+
+def test_the_milestone_report_template_links_the_glossary() -> None:
+    template = SCRIPT.parent.parent / "templates" / "change" / "milestone.md"
+    assert "sdlc_status.py ids" in template.read_text()

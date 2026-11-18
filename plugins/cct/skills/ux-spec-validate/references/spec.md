@@ -31,7 +31,7 @@ The output is the owner-readable gate summary.
    (independent, merged after all finish), fix every severity 3-4 finding and every contradiction
    between spec files in the spec, then re-check the fixes and look for contradictions the fixes
    made. Ask the owner open questions once, in one batch, each with a recommended answer. Done when
-   <spec>/validation.md says verdict: ready (no open 3-4, no contradiction, every ask maps to a
+   <spec>/readiness.md says verdict: ready (no open 3-4, no contradiction, every ask maps to a
    job story, a screen, and a fact, an out-of-scope line or, in standalone mode, an Ask Map line).
    ```
 
@@ -43,7 +43,7 @@ The output is the owner-readable gate summary.
    `known-image-faults.md`), in sdlc mode that every fact cites an ask, and that no spec file
    changed since the loop. A spec change since
    then sends the change back to the loop. Then fill the Prototype Screenshots section and hand
-   `<spec>/validation.md` to the owner gate.
+   `<spec>/readiness.md` to the owner gate.
 
 ## Steps
 
@@ -68,7 +68,7 @@ The output is the owner-readable gate summary.
 11. Write each answer into the spec file it changes, quoted with its date.
     Re-run the checks that answer touches.
 12. For the image gate, run `visual-check.py` from the shared `visual-pass.md` before writing
-    `<spec>/validation.md`. Link the ledger and check result in Prototype Screenshots; carry
+    `<spec>/readiness.md`. Link the ledger and check result in Prototype Screenshots; carry
     the convention verdicts and quotes into Findings, allowed issues into Deliberate
     Inconsistencies, and uncovered problems into Decisions Needed. Failure is `not-ready`
     with “the review did not run” in Did Not Run.
@@ -87,11 +87,11 @@ The output is the owner-readable gate summary.
 
 ## Output Template
 
-Write `<spec>/validation.md`.
+Write `<spec>/readiness.md`.
 
 ```markdown
 ---
-type: validation
+type: readiness
 change: <id>
 verdict: ready | not-ready
 status: draft | approved

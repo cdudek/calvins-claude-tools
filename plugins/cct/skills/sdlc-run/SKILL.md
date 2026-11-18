@@ -13,7 +13,7 @@ description: >-
 allowed-tools: "Read Grep Glob Edit Write Agent Skill AskUserQuestion Bash(bash */sdlc-run/scripts/*) Bash(python3 */sdlc-run/scripts/*) Bash(python3 */sdlc-run/templates/scripts/sdlc_version.py*) Bash(python3 scripts/sdlc_version.py*) Bash(python3 scripts/verify_gate.py *) Bash(wt *) Bash(git *) Bash(gh *) Bash(bd *) Bash(plannotator *) Bash(make *) Bash(pnpm *) Bash(uv *) Bash(npx *) EnterWorktree mcp__claude_ai_Linear__* mcp__linear__*"
 user_invocable: true
 metadata:
-  version: 3.16.0
+  version: 3.17.0
   author: calvindudek
 effort: high
 ---
@@ -50,6 +50,13 @@ Designs and decisions outlive a change: one file each in `designsDir`, never an 
 **Read `<designsDir>/INDEX.md` first** and open only the files it points to; run
 `python3 scripts/design_index.py write` after adding or changing one (`references/chain.md`).
 
+Every change folder starts with a generated `README.md`, the reading map: three entry points
+(understand, review, pick up) and one row per document. Regenerate it just before each stage commit, so the commit carries it
+(`sdlc_status.py readme <id>`; it writes only when the content changed, only over a README it
+generated, and `status` never writes it). Write plain words first and the id in brackets after ("Designs
+win over today's app (Q202)"); `verify_gate.py lint` flags a bare id in what the owner reads, and
+`sdlc_status.py ids <id>` says what each id means. `references/readability.md` has the rest.
+
 Read `sdlc.json` first: `tracker`, `checks`, `milestones`, `projects`, `hotfix`, `goal`, `languages`, `responsiveTier`,
 `ux`, `protected`, `planGate` and the v2 keys. No file means the repo is not adopted: run
 `adopt`. **Project values come from the repo** (sdlc.json, PRODUCT.md, DESIGN.md); where it
@@ -82,7 +89,7 @@ carry on: it never blocks. `references/changelog.md` lists what each version cha
 | Input | Do |
 |---|---|
 | `adopt [--dry-run] [--upgrade [--apply --replace FILE]] [--preset node\|python]` | Install or refresh the chain → `references/adopt.md`. `--upgrade` never overwrites or moves anything: it adds missing `sdlc.json` keys, stamps `sdlcVersion`, lists every differing file as `review diff` and the changelog's manual migrations; `--upgrade --apply --replace <file>` replaces one kit-owned file after showing its diff. First ask "Use Ship/Show/Ask?" (that file, "Ask first"), on the first adopt and on every upgrade. |
-| `status [<id>]` · `status --shipped [n]` | `bash ${CLAUDE_SKILL_DIR}/scripts/status.sh …`, then `python3 ${CLAUDE_SKILL_DIR}/scripts/sdlc_status.py map` for every milestone and this one's features. |
+| `status [<id>]` · `status --shipped [n]` | `bash ${CLAUDE_SKILL_DIR}/scripts/status.sh …`, then `python3 ${CLAUDE_SKILL_DIR}/scripts/sdlc_status.py map` for every milestone and this one's features. `status` is read-only. |
 | `<title>` or a ticket id | Start at Stage 1.0. |
 | `tracker` | Choose or set up the tracker → `references/trackers.md`. |
 | empty | `status.sh --current` finds this branch's change; continue from its state. |

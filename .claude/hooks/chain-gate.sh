@@ -159,6 +159,13 @@ def skipped(decisions: dict, activity: str) -> bool:
     return isinstance(value, str) and value.startswith("skip")
 
 
+def verdict_file(change_dir: Path) -> Path:
+    """spec/readiness.md; spec/validation.md only for a folder written before the rename."""
+    spec = change_dir / "spec"
+    old = spec / "validation.md"
+    return old if old.exists() and not (spec / "readiness.md").exists() else spec / "readiness.md"
+
+
 def activity_done(change_dir: Path, decisions: dict, activity: str) -> bool:
     files = {
         "brief": change_dir / "spec" / "brief.md",
@@ -167,7 +174,7 @@ def activity_done(change_dir: Path, decisions: dict, activity: str) -> bool:
         "screens": change_dir / "spec" / "screens.md",
         "prototype": change_dir / "spec" / "prototype" / "index.md",
         "conformance": change_dir / "spec" / "conformance.md",
-        "validation": change_dir / "spec" / "validation.md",
+        "validation": verdict_file(change_dir),
     }
     return skipped(decisions, activity) or files[activity].exists()
 
@@ -175,7 +182,7 @@ def activity_done(change_dir: Path, decisions: dict, activity: str) -> bool:
 def validation_ready(change_dir: Path, decisions: dict) -> bool:
     if skipped(decisions, "validation"):
         return True
-    validation = change_dir / "spec" / "validation.md"
+    validation = verdict_file(change_dir)
     return fm(validation, "verdict") == "ready" and fm(validation, "status") == "approved"
 
 
@@ -324,10 +331,10 @@ if len(parts) >= 3 and parts[0] == changes:
             )
         if v3 and not validation_ready(change_dir, decisions):
             deny(
-                f"{changes}/{change_id}/spec/validation.md must have verdict: ready and "
+                f"{changes}/{change_id}/spec/readiness.md must have verdict: ready and "
                 f"status: approved, or validation must be skipped. Run cct:ux-spec-validate spec "
                 f"{change_id}, then get the owner gate.",
-                source=f"{changes}/{change_id}/spec/validation.md"
+                source=f"{changes}/{change_id}/spec/readiness.md"
             )
     sys.exit(0)
 

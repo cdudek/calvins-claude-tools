@@ -115,7 +115,7 @@ delivered, explicitly labelled incomplete. Do not delete screenshots to make the
   evaluators finish. The run owner opens every shared screenshot and reconciles all issues.
 - Standalone conformance or init: a fresh `${TMPDIR:-/tmp}/cct/<skill>/<run-id>/` run.
   Link its ledger and check result from the skill's report.
-- Spec/prototype: `<spec>/visual/spec/<round>/`; link it from `validation.md`, `conformance.md`
+- Spec/prototype: `<spec>/visual/spec/<round>/`; link it from `readiness.md`, `conformance.md`
   or `prototype/index.md`. Before images exist, report “text only; visual pass not yet run”.
   An explicitly skipped prototype is “not applicable” with its recorded reason, never compliant.
 - Build QA: `<spec>/visual/build/<round>/`; link it from `qa.md`. Include both prototype and

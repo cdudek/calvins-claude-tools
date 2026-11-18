@@ -223,6 +223,141 @@ def test_lint_flags_long_sentences_and_open_questions(tmp_path: Path) -> None:
     assert _last(r) == f"LINT FAIL {ID} problems=2"
 
 
+# Ids the change defines. An id that is defined nowhere is ordinary text ("Press F5", "before Q4").
+DEFINED = (
+    "| # | What |\n|---|---|\n"
+    + "".join(f"| {i} | defined |\n" for i in ("Q202", "B19", "F13", "F14", "Q7", "A1", "F1000"))
+)
+GOOD_IDS = [
+    "Designs win over today's app (Q202).",
+    "The list stays sorted (F13, F14; rules SEC-2).",
+    "Nothing blocks the build [see B19].",
+    "- **Q1 (2026-11-18) When to lock the tests?** The default is one commit.",
+    "- [ ] **F3** (A1) When a row is added, the list refreshes.",
+    "Run `verify_gate.py` and read `F13` in the table.",
+    "| F13 | a table row is data |",
+    "Tag the test `@F13`.",
+    "Never gate on HTTP 404 or SEC-2.",
+    "Press F5 to refresh before Q4.",  # F5 and Q4 are defined nowhere in the change
+    "Ticket F1001 stays out of scope.",
+    "The list stays sorted (see\nF13 and Q202 for the rule).",  # a bracket across a line wrap
+    "| 1 | Sort | F13, F14 | todo |",  # a cell of ids is structural
+]
+BAD_IDS = [
+    ("Done per Q202.", "Q202"),
+    ("B19 blocks the build.", "B19"),
+    ("**B19 blocks the build.**", "B19"),
+    ("- **B19 blocks the build.**", "B19"),
+    ("We ship F13 first, then (A1) later.", "F13"),
+    ("> Decided in Q7 and nowhere else.", "Q7"),
+    ("Ticket F1000 is the reason.", "F1000"),
+    ("(the rule)\nDone per Q202.", "Q202"),
+    ("| 1 | Done per Q202 because it is simpler | todo |", "Q202"),
+]
+
+
+def test_lint_passes_an_id_in_brackets_and_flags_a_bare_one(tmp_path: Path) -> None:
+    repo = _repo(tmp_path, ["true"])
+    (repo / "changes" / ID / "analyze.md").write_text(DEFINED)
+    path = repo / "changes" / ID / "intent.md"
+    path.write_text("# Intent\n\n" + "\n\n".join(GOOD_IDS) + "\n")
+    r = _gate(repo, "lint", ID)
+    assert r.returncode == 0, r.stdout
+    for text, bare in BAD_IDS:
+        path.write_text(f"# Intent\n\n{text}\n")
+        r = _gate(repo, "lint", ID)
+        assert r.returncode == 1 and f"intent.md: id {bare} outside brackets" in r.stdout, text
+        assert _last(r) == f"LINT FAIL {ID} problems=1"
+
+
+def test_lint_exempts_the_verbatim_words_column_of_the_asks_table_only(tmp_path: Path) -> None:
+    repo = _repo(tmp_path, ["true"])
+    change = repo / "changes" / ID
+    (change / "analyze.md").write_text(
+        "| # | What |\n|---|---|\n| F3 | defined |\n| A3 | defined |\n"
+    )
+    path = change / "intent.md"
+    asks = '## Asks\n\n| # | Words |\n|---|---|\n| A3 | "Fix F3 like last time" |\n'
+    path.write_text("# Intent\n\n" + asks)
+    r = _gate(repo, "lint", ID)
+    assert r.returncode == 0, r.stdout
+    path.write_text("# Intent\n\n" + asks + '\nThe owner said "Fix F3 like last time".\n')
+    r = _gate(repo, "lint", ID)
+    assert r.returncode == 1 and "intent.md: id F3 outside brackets" in r.stdout
+
+
+@pytest.mark.parametrize("name", ["plan.md", "milestone.md", "questions.md", "pr-body.md"])
+def test_lint_reads_every_owner_file_for_bare_ids_but_not_facts(tmp_path: Path, name: str) -> None:
+    repo = _repo(tmp_path, ["true"])
+    change = repo / "changes" / ID
+    (change / "analyze.md").write_text(DEFINED)
+    (change / "facts.md").write_text("- [ ] **F1** (A1) It works, see F13.\n")
+    assert _gate(repo, "lint", ID).returncode == 0
+    (change / name).write_text("Because of Q202 we wait.\n")
+    r = _gate(repo, "lint", ID)
+    assert r.returncode == 1 and f"{name}: id Q202 outside brackets" in r.stdout
+
+
+BODY = "## What\n\n- **Requirement F13:** Filters stay readable.\n- **Proof (F14):** 12 passed.\n"
+
+
+@pytest.mark.parametrize("via", ["file", "stdin"])
+def test_lint_checks_the_pr_body_that_is_published(tmp_path: Path, via: str) -> None:
+    """The body `gh pr create --body-file` gets lives outside the change folder."""
+    repo = _repo(tmp_path, ["true"])
+    (repo / "changes" / ID / "analyze.md").write_text(DEFINED)
+    body = tmp_path / "proposed-pr-body.md"
+    body.write_text(BODY)
+    args = ["lint", ID, "--pr-body", str(body) if via == "file" else "-"]
+    r = subprocess.run(
+        [sys.executable, str(GATE), *args],
+        cwd=repo,
+        input=BODY,
+        capture_output=True,
+        text=True,
+        env=_env(),
+    )
+    assert r.returncode == 1 and "pr-body: id F13 outside brackets" in r.stdout, r.stdout
+    assert "F14" not in r.stdout
+    assert _last(r) == f"LINT FAIL {ID} problems=1"
+    body.write_text(BODY.replace("Requirement F13:", "Requirement (F13):"))
+    r = subprocess.run(
+        [sys.executable, str(GATE), *args],
+        cwd=repo,
+        input=body.read_text(),
+        capture_output=True,
+        text=True,
+        env=_env(),
+    )
+    assert r.returncode == 0, r.stdout
+
+
+def test_the_canonical_pr_body_example_passes_the_lint(tmp_path: Path) -> None:
+    text = (SKILL / "references" / "pr-body.md").read_text()
+    example = text.split("```markdown\n", 1)[1].split("\n```", 1)[0]
+    repo = _repo(tmp_path, ["true"])
+    (repo / "changes" / ID / "facts.md").write_text("- [ ] **F1** (A1) It works.\n")
+    r = subprocess.run(
+        [sys.executable, str(GATE), "lint", ID, "--pr-body", "-"],
+        cwd=repo,
+        input=example,
+        capture_output=True,
+        text=True,
+        env=_env(),
+    )
+    assert r.returncode == 0, r.stdout
+
+
+def test_approve_runs_the_lint_first_and_refuses_on_failure(tmp_path: Path) -> None:
+    repo = _repo(tmp_path, ["true"])
+    change = repo / "changes" / ID
+    (change / "intent.md").write_text("# Intent\n\n" + " ".join(["word"] * 30) + ".\n")
+    r = _gate(repo, "approve", ID)
+    assert r.returncode == 1 and "intent.md: 30 words" in r.stdout
+    assert _last(r).startswith(f"APPROVE FAIL {ID}")
+    assert not (change / "lock.json").exists()
+
+
 @pytest.mark.parametrize("name", ["run", "feature", "milestone"])
 def test_goal_templates_are_end_states_not_processes(name: str) -> None:
     """2026-11-11: a process in the condition cannot be satisfied after the merge, so it never clears."""

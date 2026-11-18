@@ -5,6 +5,20 @@ version warning, the **Mechanical** lines are what `adopt` does for you (it adds
 with the stack's defaults and never overwrites a value), the **Manual** lines are printed for
 the engineer. A version with no migration lines needs nothing but a re-run of `adopt`.
 
+## 3.17.0 — a change folder a newcomer can read
+
+- A change folder starts with `README.md`, a reading map the status script writes: three entry points (understand, review, pick up the work), one row per document (the question it answers, who writes it, at which stage, whether a newcomer needs it) and the working files below a "For agents" line. `sdlc_status.py readme <id>` regenerates it.
+- Plain words first, the id in brackets after ("Designs win over today's app (Q202)", never "per Q202"). The change templates say so, and `verify_gate.py lint` now flags a bare id in `intent.md`, `plan.md`, `milestone.md`, `questions.md` and a drafted `pr-body.md`.
+- `sdlc_status.py ids <id>` prints every id with its one-line meaning and the file that decides it.
+- `sdlc_status.py goal <id>` adds a second line when the goal is not done: the one thing in the way, why, who acts and the exact step.
+- `docs/designs/INDEX.md` gives each entry a "Read when:" line, from a `read_when` field in the design's frontmatter or built from its type and tags.
+- The spec's readiness verdict is now `spec/readiness.md`, so it no longer shares a name with the milestone's `validation.md`, which stays. The skip key `validation` in `decisions.json` is unchanged.
+- `docs/sdlc-run.md` describes all seven stages as of this version, and a test fails when its stated version falls behind `SKILL.md`.
+- Mechanical: re-running `adopt` refreshes `scripts/verify_gate.py`, `scripts/design_index.py`, the chain-gate hook and the change templates.
+- Manual: a change in flight keeps working with `spec/validation.md` (the readers prefer `spec/readiness.md` and fall back to the old name); rename it with `git mv` when convenient. Run `python3 scripts/design_index.py write` to add the "Read when:" lines.
+
+**Review fixes.** `readme` writes only inside a change folder directly under `changesDir`, only over a README it generated, and only when the content changed; `status` never writes it. The id lint counts only ids the change defines, treats table prose as prose, flags `**B19 blocks the build.**`, follows a bracket across a line wrap, and runs on the drafts before reviewers, before the owner gate, first in `approve` (which refuses on failure) and on the PR body you publish (`lint <id> --pr-body <file>|-`). The blocker sentence uses the resolved gate scope, covers every reason the goal and the gate emit, and names the plugin path of `sdlc_status.py`. The reading map lists the standard spec files and any other file, picks the newest handover by date or number, and the glossary reads the `Finding` or `Challenge` column. The id lint skips the verbatim `Words` column of the intent's Asks table, where the owner's sentence is quoted as said.
+
 ## 3.16.0 — the gate hooks stop looping
 
 - An ended goal (met, failed or `/goal clear`) no longer blocks: one shared helper, `goal_active.py`, reads the transcript for `pr-gate.sh`, `chain-gate.sh` and `verify-on-stop.sh`. `SDLC_GOAL_OFF=1` in the environment Claude starts with is the only off switch; there is no file switch.

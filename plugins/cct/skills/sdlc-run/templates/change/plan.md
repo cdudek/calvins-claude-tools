@@ -12,6 +12,8 @@ created: {{DATE}}
 
 # Plan: {{TITLE}}
 
+<!-- Writing rule: plain words first, the id in brackets after ("Designs win over today's app (Q202)", never "per Q202"). One idea per sentence, at most 25 words. `verify_gate.py lint` flags a bare id. -->
+
 > One sentence. What this change does.
 
 A person with no context builds from this file alone. [intent](intent.md) and
@@ -112,7 +114,7 @@ so every line here is proven by a check, not by a claim.
 - `python3 scripts/verify_gate.py feature {{CHANGE}}` ends `VERIFY PASS` for every feature.
 - `python3 scripts/verify_gate.py milestone {{CHANGE}}` ends `VERIFY PASS` once, on the milestone.
 - <file> exists / contains `<string>`.
-- F1 to F<n> pass by their named check.
+- Every fact passes by its named check.
 - Nothing outside `## Files that change` is edited.
 - Stop and report as soon as a step cannot proceed. Never work around a blocker.
 - Stop after 40 turns if not met. Report what is missing.

@@ -174,3 +174,69 @@ def test_permitted_paths_pass_without_a_goal(repo: Path, file: str) -> None:
 def test_a_branch_with_no_change_folder_gets_no_opinion(repo: Path) -> None:
     subprocess.run(["git", "checkout", "-q", "-b", "chore/unrelated"], cwd=repo, check=True)
     assert _edit(repo, "src/app.ts", "none").returncode == 0
+
+
+READY = "---\nverdict: ready\nstatus: approved\n---\n"
+NOT_READY = "---\nverdict: not-ready\nstatus: draft\n---\n"
+
+
+def _spec_repo(repo: Path, **verdicts: str) -> None:
+    """A v3 change whose only open question is the readiness verdict file(s) in spec/."""
+    change = repo / "changes" / ID
+    skips = {a: "skip -- t" for a in ("brief", "ia", "interaction", "screens", "prototype")}
+    (change / "decisions.json").write_text(
+        json.dumps({"size": "M", "kind": "feature", "skips": skips})
+    )
+    (change / "spec").mkdir()
+    (change / "plan.md").unlink()
+    (change / "lock.json").unlink()
+    for name, text in verdicts.items():
+        (change / "spec" / f"{name}.md").write_text(text)
+
+
+@pytest.mark.parametrize(
+    ("files", "allowed"),
+    [
+        ({"readiness": READY}, True),
+        ({"validation": READY}, True),  # a folder written before the rename keeps working
+        ({"readiness": NOT_READY, "validation": READY}, False),  # the new name wins
+        ({"readiness": READY, "validation": NOT_READY}, True),
+        ({}, False),
+    ],
+)
+def test_plan_waits_for_a_ready_verdict_under_either_name(
+    repo: Path, files: dict[str, str], allowed: bool
+) -> None:
+    _spec_repo(repo, conformance="# c\n", **files)
+    r = _edit(repo, f"changes/{ID}/plan.md", "active")
+    assert (r.returncode == 0) == allowed, r.stderr
+
+
+@pytest.mark.parametrize(
+    ("name", "text", "stage"),
+    [
+        ("readiness", READY, "facts"),
+        ("validation", READY, "facts"),  # written before the rename
+        ("validation", NOT_READY, "spec-review"),
+        (None, "", "spec-review"),
+    ],
+)
+def test_status_reads_the_verdict_under_either_name(
+    repo: Path, name: str | None, text: str, stage: str
+) -> None:
+    _spec_repo(repo)
+    change = repo / "changes" / ID
+    (change / "decisions.json").write_text(json.dumps({"size": "M", "kind": "feature"}))
+    for a in ("brief", "ia", "interaction", "screens", "conformance"):
+        (change / "spec" / f"{a}.md").write_text("# x\n")
+    (change / "spec" / "prototype").mkdir()
+    (change / "spec" / "prototype" / "index.md").write_text("# x\n")
+    if name:
+        (change / "spec" / f"{name}.md").write_text(text)
+    out = subprocess.run(
+        ["bash", str(Path(__file__).parent / "status.sh"), ID],
+        capture_output=True,
+        text=True,
+        env={**os.environ, "CLAUDE_PROJECT_DIR": str(repo)},
+    ).stdout
+    assert stage in out.split("templates=")[1], out

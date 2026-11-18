@@ -54,15 +54,15 @@ file; its reason is already recorded.
 4. **Screens.** Use `references/screens.md`. Write `<spec>/screens.md`.
 5. **Conformance.** Run `cct:ux-rules-validate spec <spec>`. It writes `<spec>/conformance.md`.
 6. **Validate the spec, as a loop.** Run `cct:ux-spec-validate spec <spec>` as a `/goal` loop:
-   review, fix the spec, re-check, until `<spec>/validation.md` says `verdict: ready`. The loop
+   review, fix the spec, re-check, until `<spec>/readiness.md` says `verdict: ready`. The loop
    is in `../ux-spec-validate/references/spec.md`.
-7. **Prototype, only from a validated spec.** Start only when `<spec>/validation.md` says
+7. **Prototype, only from a validated spec.** Start only when `<spec>/readiness.md` says
    `verdict: ready`, or validation is skipped. Use `references/prototype.md`. Write
    `<spec>/prototype/index.md` and the images under `<spec>/prototype/`. Run the shared
    `references/visual-pass.md` on every image, including its `visual-check.py` command, before
    reporting the image loop complete. A failed check means the review did not run.
 8. **Gate pass.** Standalone mode: run `cct:ux-spec-validate spec <spec>` once more; it checks the
-   images against the validated spec (no full re-review) and hands `<spec>/validation.md` to the
+   images against the validated spec (no full re-review) and hands `<spec>/readiness.md` to the
    owner. sdlc mode: stop here; the SDLC writes `facts.md` and then runs the same gate pass.
 
 Why this order: images drawn before validation get redrawn after every spec fix. On one product

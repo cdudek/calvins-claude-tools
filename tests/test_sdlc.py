@@ -319,6 +319,10 @@ def test_v3_approved_plan_has_spec_guardrails(change: Path, archived: bool) -> N
     assert decisions.get("size") in V3_SIZES, f"{change.name}: size"
     assert decisions.get("kind") in V3_KINDS, f"{change.name}: kind"
     skips = decisions.get("skips", {})
+    # spec/readiness.md; spec/validation.md only for a folder written before the rename
+    verdict_file = change / "spec" / "readiness.md"
+    if not verdict_file.exists() and (change / "spec" / "validation.md").exists():
+        verdict_file = change / "spec" / "validation.md"
     files = {
         "brief": change / "spec" / "brief.md",
         "ia": change / "spec" / "ia.md",
@@ -326,13 +330,13 @@ def test_v3_approved_plan_has_spec_guardrails(change: Path, archived: bool) -> N
         "screens": change / "spec" / "screens.md",
         "prototype": change / "spec" / "prototype" / "index.md",
         "conformance": change / "spec" / "conformance.md",
-        "validation": change / "spec" / "validation.md",
+        "validation": verdict_file,
     }
     for activity in V3_ACTIVITIES:
         skipped = str(skips.get(activity, "")).startswith("skip")
         assert skipped or files[activity].exists(), f"{change.name}: {activity}"
     if not str(skips.get("validation", "")).startswith("skip"):
-        fm = _frontmatter(change / "spec" / "validation.md")
+        fm = _frontmatter(verdict_file)
         assert fm.get("verdict") == "ready" and fm.get("status") == "approved"
     _assert_change_resources_stay_in_repo(REPO_ROOT, change)
     # A recorded intent skip means there is no intent.md to read, and the check above has
@@ -613,7 +617,7 @@ def _chain_repo(
         (d / "spec" / "prototype").mkdir()
         (d / "spec" / "prototype" / "index.md").write_text("# prototype\n")
     if validation:
-        (d / "spec" / "validation.md").write_text(validation)
+        (d / "spec" / "readiness.md").write_text(validation)
     (d / "facts.md").write_text(
         f"---\ntype: facts\nstatus: {facts_status}\n---\n\n"
         "# Facts\n\n- [ ] **F1** (A1) When x, the system shall y.\n"
@@ -790,7 +794,7 @@ def test_chain_gate_v3_refuses_plan_before_validation_approval(tmp_path: Path) -
         tmp_path,
         {"size": "M", "kind": "feature", "skips": {}},
         design_done=True,
-        validation="---\ntype: validation\nverdict: not-ready\nstatus: draft\n---\n",
+        validation="---\ntype: readiness\nverdict: not-ready\nstatus: draft\n---\n",
     )
     result = _run_chain(repo, f"changes/{change}/plan.md")
     assert result.returncode == 2 and "cct:ux-spec-validate spec" in result.stderr
@@ -912,3 +916,24 @@ def test_auto_merge_is_armed_by_the_app_never_github_token() -> None:
     assert "actions/checkout" not in arm
     assert "GH_TOKEN: ${{ steps.app-token.outputs.token }}" in arm
     assert "GH_TOKEN: ${{ github.token }}" not in arm
+
+
+def test_guardrail_reads_a_verdict_written_under_the_old_name(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """A folder written before spec/readiness.md existed keeps its spec/validation.md."""
+    monkeypatch.setattr(sys.modules[__name__], "REPO_ROOT", tmp_path)
+    change = tmp_path / "changes" / "2026-10-06-old"
+    (change / "spec" / "prototype").mkdir(parents=True)
+    (change / "decisions.json").write_text(json.dumps({"size": "M", "kind": "feature"}))
+    (change / "plan.md").write_text("---\nstatus: approved\n---\n")
+    for name in ("brief", "ia", "interaction", "screens", "conformance"):
+        (change / "spec" / f"{name}.md").write_text("# x\n")
+    (change / "spec" / "prototype" / "index.md").write_text("# x\n")
+    (change / "spec" / "validation.md").write_text(
+        "---\nverdict: ready\nstatus: approved\n---\n"
+    )
+    test_v3_approved_plan_has_spec_guardrails(change, False)
+    (change / "spec" / "readiness.md").write_text("---\nverdict: not-ready\nstatus: draft\n---\n")
+    with pytest.raises(AssertionError):
+        test_v3_approved_plan_has_spec_guardrails(change, False)

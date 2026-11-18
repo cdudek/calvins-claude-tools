@@ -84,7 +84,7 @@ Three processes live side by side, chosen by the folder, never by the date:
 | Folder has | Process | Gates |
 |---|---|---|
 | no `size` | v2 | facts accepted, plan gate |
-| `size`, no `milestone` | v3 with a design gate (local, 2026-10-06) | owner approves `spec/validation.md`, plan gate |
+| `size`, no `milestone` | v3 with a design gate (local, 2026-10-06) | owner approves `spec/readiness.md`, plan gate |
 | `milestone` | the milestone process (approved 2026-10-09) | engineer confirms intent; one gate for UX plan, facts and plan; `lock.json` |
 
 In-flight folders finish on the process they started; `chain-gate.sh` keeps each set of rules.
@@ -117,7 +117,7 @@ silently after the dialog. Adding one needs the user's yes and the reason.
 | `spec/prototype/index.md` | mock | `cct:ux-design-run` | Design gate summary | done or skipped |
 | `spec/conformance.md` | conformance | `cct:ux-rules-validate spec` | Design gate summary | done or skipped |
 | `facts.md` | spec.md, the delta | sdlc-run | owner approves with validation | yes |
-| `spec/validation.md` | ready review | `cct:ux-spec-validate spec` | owner reads it at the Design gate | done or skipped |
+| `spec/readiness.md` | ready review | `cct:ux-spec-validate spec` | owner reads it at the Design gate | done or skipped |
 | `plan.md` | plan.md | sdlc-run | owner or allowed self-check | yes |
 | `checklist.md` | requirements checklist | a reviewer in a fresh context | `approve` refuses an unchecked item | from 3.8.0 |
 | `analyze.md` | analyze pass | sdlc-run, read-only | `approve` refuses an open CRITICAL | from 3.8.0 |
@@ -194,10 +194,10 @@ created: YYYY-MM-DD
 archived_at: YYYY-MM-DD
 ```
 
-`spec/validation.md`:
+`spec/readiness.md`:
 
 ```yaml
-type: validation
+type: readiness
 change: <id>
 verdict: ready | not-ready
 status: draft | approved
@@ -284,7 +284,7 @@ It cannot be disabled in `sdlc.json`, does not change `lock.json`, and fails as 
 | intent drafted | `changes(<id>): intent drafted` | `status: draft` |
 | sent to a reviewer | `changes(<id>): intent to review by <who>` | `status: in-review` |
 | intent approved | `changes(<id>): intent approved by <who>` | `status`, `reviewed_by`, `approved_at` |
-| spec approved | `changes(<id>): spec approved by <who>` | `facts.md` and `spec/validation.md` approved |
+| spec approved | `changes(<id>): spec approved by <who>` | `facts.md` and `spec/readiness.md` approved |
 | facts accepted, v2 | `changes(<id>): facts accepted` | |
 | plan approved | `changes(<id>): plan approved` | `status`, `reviewed_by`, `approved_at`, annotations file kept |
 | failing bug test committed | `changes(<id>): failing test locked` | `testLocked: true` |

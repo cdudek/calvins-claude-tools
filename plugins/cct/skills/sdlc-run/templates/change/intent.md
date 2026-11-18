@@ -12,6 +12,8 @@ created: {{DATE}}
 
 # Intent: {{TITLE}}
 
+<!-- Writing rule: plain words first, the id in brackets after ("Designs win over today's app (Q202)", never "per Q202"). One idea per sentence, at most 25 words. `verify_gate.py lint` flags a bare id. -->
+
 > One sentence. What we want, and for whom.
 
 ## Asks
