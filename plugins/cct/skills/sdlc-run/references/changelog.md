@@ -5,6 +5,18 @@ version warning, the **Mechanical** lines are what `adopt` does for you (it adds
 with the stack's defaults and never overwrites a value), the **Manual** lines are printed for
 the engineer. A version with no migration lines needs nothing but a re-run of `adopt`.
 
+## 3.17.0 — a change folder a newcomer can read
+
+- A change folder starts with `README.md`, a reading map the status script writes: three entry points (understand, review, pick up the work), one row per document (the question it answers, who writes it, at which stage, whether a newcomer needs it) and the working files below a "For agents" line. `sdlc_status.py readme <id>` regenerates it.
+- Plain words first, the id in brackets after ("Designs win over today's app (Q202)", never "per Q202"). The change templates say so, and `verify_gate.py lint` now flags a bare id in `intent.md`, `plan.md`, `milestone.md`, `questions.md` and a drafted `pr-body.md`.
+- `sdlc_status.py ids <id>` prints every id with its one-line meaning and the file that decides it.
+- `sdlc_status.py goal <id>` adds a second line when the goal is not done: the one thing in the way, why, who acts and the exact step.
+- `docs/designs/INDEX.md` gives each entry a "Read when:" line, from a `read_when` field in the design's frontmatter or built from its type and tags.
+- The spec's readiness verdict is now `spec/readiness.md`, so it no longer shares a name with the milestone's `validation.md`, which stays. The skip key `validation` in `decisions.json` is unchanged.
+- `docs/sdlc-run.md` describes all seven stages as of this version, and a test fails when its stated version falls behind `SKILL.md`.
+- Mechanical: re-running `adopt` refreshes `scripts/verify_gate.py`, `scripts/design_index.py`, the chain-gate hook and the change templates.
+- Manual: in a change in flight, rename `spec/validation.md` to `spec/readiness.md` with `git mv`, or `chain-gate.sh` will not find the spec's verdict. Run `python3 scripts/design_index.py write` to add the "Read when:" lines.
+
 ## 3.16.0 — the gate hooks stop looping
 
 - An ended goal (met, failed or `/goal clear`) no longer blocks: one shared helper, `goal_active.py`, reads the transcript for `pr-gate.sh`, `chain-gate.sh` and `verify-on-stop.sh`. `SDLC_GOAL_OFF=1` in the environment Claude starts with is the only off switch; there is no file switch.

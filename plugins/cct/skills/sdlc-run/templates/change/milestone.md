@@ -10,6 +10,8 @@ created: {{DATE}}
 
 # Milestone: <slug>
 
+<!-- Writing rule: plain words first, the id in brackets after ("Designs win over today's app (Q202)", never "per Q202"). One idea per sentence, at most 25 words. `verify_gate.py lint` flags a bare id. -->
+
 > One sentence. What a user can do when this milestone reaches the default branch.
 
 Kind: <new | milestone of one | hotfix>. Changes that joined it record `milestone.slug` in their

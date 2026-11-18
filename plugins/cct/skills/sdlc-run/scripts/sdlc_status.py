@@ -2,12 +2,14 @@
 
     python3 ${CLAUDE_SKILL_DIR}/scripts/sdlc_status.py map [<id>]
     python3 ${CLAUDE_SKILL_DIR}/scripts/sdlc_status.py goal <id> [--milestone <n> | --feature <n>]
+    python3 ${CLAUDE_SKILL_DIR}/scripts/sdlc_status.py ids [<id>]
+    python3 ${CLAUDE_SKILL_DIR}/scripts/sdlc_status.py readme [<id>]
 
 Runs from the plugin and is never copied into a repo: run it with the working directory inside the
 adopted repo, which it finds from the cwd. It loads `verify_gate` from the plugin's own
 `templates/scripts/`, not from the repo's `scripts/`. stdlib only.
 
-Everything is read from the files, nothing is written. The stage (1-7): an archived change → 7,
+Everything is read from the files; only `readme` writes, and only the change's README.md. The stage (1-7): an archived change → 7,
 lock.json → 5 (6 once every feature is merged), plan.md → 4, facts.md → 3, an approved intent → 2,
 otherwise 1. Milestone position comes from the design doc's `## Milestones` list (decisions.json
 `design`), features from the milestone's `milestone.md` Features table.
@@ -21,7 +23,11 @@ n from plan.md `## Milestones`) merged or open with auto-merge armed, the last
 (`gh`, never local HEAD: records written after a merge move HEAD), and no open record
 (validation.md, findings.md; `verify_gate.milestone_blockers`). `--feature <n>` reads the plan's
 `## Feature PRs` row n and a `feature` gate; `--milestone <n>` narrows to one milestone. A `gh`
-that is missing or fails is `OPEN gh-unavailable`, never DONE.
+that is missing or fails is `OPEN gh-unavailable`, never DONE. When the goal is not DONE a second
+line `Blocking: <what>, because <why>; <who> runs `<step>`.` says the one thing in the way.
+
+`ids` prints every id the change defines with its one-line meaning and the file that decides it.
+`readme` writes `<change>/README.md`, the reading map (`references/readability.md`).
 """
 
 from __future__ import annotations
@@ -31,6 +37,8 @@ import re
 import subprocess
 import sys
 from pathlib import Path
+
+from change_docs import ids, readme
 
 STAGES = ("Intent", "UX plan", "Facts", "Tech plan", "Build", "Milestone", "Outcome")
 
@@ -240,6 +248,111 @@ def goal(
     return 0, f"{name} DONE pr={pr['number']} state={state} gate={passed.group(1)}"
 
 
+# what is in the way, by the first missing item: (what, why, who acts, the exact step)
+BLOCKS = {
+    "milestone-gate-pass": (
+        "the {scope} gate has not passed",
+        "no VERIFY PASS is recorded for it",
+        "the agent",
+        "python3 scripts/verify_gate.py {scope} {id}",
+    ),
+    "gate-sha-not-pr-": (
+        "the gate passed on a different commit than PR {n} holds",
+        "the PR head moved after the gate ran",
+        "the agent",
+        "python3 scripts/verify_gate.py {scope} {id}",
+    ),
+    "no-pr:": (
+        "there is no PR for {n}",
+        "the branch was never pushed and opened",
+        "the agent",
+        "gh pr create --head {n} --fill",
+    ),
+    "gh-unavailable": (
+        "GitHub cannot be reached",
+        "gh is missing, logged out or offline",
+        "you",
+        "gh auth status",
+    ),
+    "findings-open": (
+        "review findings are still open",
+        "findings.md has an unchecked item",
+        "the agent",
+        "fix each open item in findings.md, tick it, commit",
+    ),
+    "validation-not-met": (
+        "a fact has no proof",
+        "validation.md has a row that is not met or partly met",
+        "the agent",
+        "build the missing proof, then update validation.md",
+    ),
+    "not-converged": (
+        "the review has not converged",
+        "findings.md has a Converge section without a Converged line",
+        "the agent",
+        "run the converge pass and add the Converged line",
+    ),
+    "no-branch-for-": (
+        "the plan names no branch for {n}",
+        "plan.md has no matching row",
+        "you",
+        "add the row to plan.md ## Feature PRs",
+    ),
+    "no-change-folder": (
+        "there is no change folder",
+        "the id matches no folder under changes/",
+        "you",
+        "python3 scripts/sdlc_status.py map",
+    ),
+    "not-approved": (
+        "the plan was never approved",
+        "lock.json is missing",
+        "you",
+        "python3 scripts/verify_gate.py approve {id}",
+    ),
+    "protected-path": (
+        "the approved criteria changed",
+        "facts.md, done.json or checks moved after approval",
+        "you",
+        "decide whether the change stands; never re-lock without a decision",
+    ),
+    "no-progress": (
+        "the same failure came back three times",
+        "the fix did not change the result",
+        "you",
+        "read verify/report.md, then delete verify/state.json to start over",
+    ),
+    "attempts": (
+        "three gate runs failed",
+        "the breaker stops a loop",
+        "you",
+        "read verify/report.md, then delete verify/state.json to start over",
+    ),
+}
+
+
+def blocker(change: Path, line: str, scope: str = "milestone") -> str:
+    """The one thing in the way, as a sentence, from the goal line; empty when the goal is DONE.
+    Built from the first missing item (the line lists them in the order the goal checks them)."""
+    m = re.search(r"OPEN (\S+)|BLOCKED reason=([\w-]+)", line)
+    if not m:
+        return ""
+    first = (m.group(1) or m.group(2)).split(",")[0]
+    for key, (what, why, who, step) in BLOCKS.items():
+        if first == key or (key.endswith(("-", ":")) and first.startswith(key)):
+            n = re.sub(r"^no-pr:|^no-branch-for-|^gate-sha-not-pr-|-head$", "", first)
+            fill = {"scope": scope, "id": change.name, "n": n}
+            return f"Blocking: {what.format(**fill)}, because {why}; {who} runs `{step.format(**fill)}`."
+    pr = re.fullmatch(r"pr-(\d+)-not-merged-or-armed", first)
+    if pr:
+        flag = "--merge" if scope == "milestone" else "--squash"
+        return (
+            f"Blocking: PR {pr[1]} is open without auto-merge, because nothing armed it; "
+            f"the agent runs `gh pr merge {pr[1]} {flag} --auto`."
+        )
+    return f"Blocking: {first}, because the goal check lists it; the agent reads `sdlc_status.py goal {change.name}`."
+
+
 def goal_main(args: list[str]) -> int:
     pos, flag, value = (
         list(args),
@@ -260,11 +373,13 @@ def goal_main(args: list[str]) -> int:
         return 1
     code, line = goal(root, change, flag[2:] if flag else "milestone", int(value) if flag else None)
     print(line)
+    if code and (sentence := blocker(change, line, flag[2:] if flag else "milestone")):
+        print(sentence)
     return code
 
 
 def main(argv: list[str]) -> int:
-    if len(argv) < 2 or argv[1] not in ("map", "goal"):
+    if len(argv) < 2 or argv[1] not in ("map", "goal", "ids", "readme"):
         print(__doc__)
         return 2
     if argv[1] == "goal":
@@ -278,7 +393,15 @@ def main(argv: list[str]) -> int:
     if not change:
         print("no change folder for this branch: pass its id")
         return 2
-    print(milestone_map(state(change, root, cfg)))
+    s = state(change, root, cfg)
+    if argv[1] == "ids":
+        print("\n".join(ids(change)))
+    elif argv[1] == "readme":
+        stage = f"{s['stage']}/7 {STAGES[s['stage'] - 1]}"
+        (change / "README.md").write_text(readme(change, stage), encoding="utf-8")
+        print(f"wrote {change / 'README.md'}")
+    else:
+        print(milestone_map(s))
     return 0
 
 

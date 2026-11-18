@@ -1,7 +1,7 @@
 """The verify contract of the SDLC chain: one command, one last line.
 
     python3 scripts/verify_gate.py approve <id>              # lock the criteria at approval
-    python3 scripts/verify_gate.py lint <id>                 # plain-language lint of the docs
+    python3 scripts/verify_gate.py lint <id>                 # plain-language lint: short sentences, ids only in brackets
     python3 scripts/verify_gate.py feature|milestone <id>    # run sdlc.json checks.<scope>
     python3 scripts/verify_gate.py audit [--no-evidence]     # read-only: is every gate enforced?
     # After UX review, also require each visual run:
@@ -88,6 +88,11 @@ TAIL = 60  # stdout lines of a failing check
 BREAKER = 3
 ATTEMPTS = 3
 SENTENCE_WORDS = 25
+# What the owner reads. Facts, analyze, findings and the like are data tables of ids, not prose.
+OWNER_FILES = ("intent.md", "plan.md", "milestone.md", "questions.md", "pr-body.md")
+# The id families the chain defines: asks, bugs, facts, challenge findings, job stories,
+# non-functional facts, questions, review findings, analyze findings (`references/readability.md`).
+BARE_ID = re.compile(r"(?<![\w@/.#-])[ABFHJNQRX]\d{1,3}\b")
 
 
 def sh(*cmd: str) -> str:
@@ -222,9 +227,35 @@ def prose(text: str) -> list[str]:
     return [s for line in lines for s in re.split(r"(?<=[.!?])\s+", line) if s.strip()]
 
 
+def bare_ids(text: str) -> list[tuple[str, str]]:
+    """(id, line) for every id in running text that is not inside brackets: "plain words first,
+    the id in brackets after". Tables, headings, code and a bold label that opens a line are data."""
+    text = re.sub(r"\A---\n.*?\n---\n", "", text, flags=re.S)
+    text = re.sub(r"```.*?```|<!--.*?-->", "", text, flags=re.S)
+    found = []
+    for line in text.splitlines():
+        if line.lstrip().startswith(("|", "#")):
+            continue
+        label = (
+            r"^\s*(?:>\s*)?(?:(?:[-*]|\d+\.)\s+(?:\[[ x]\]\s+)?)?\*\*[ABFHJNQRX]\d{1,3}\**(?=\W|$)"
+        )
+        line = re.sub(label, "", line)
+        line = re.sub(r"`[^`]*`", "", line)
+        for _ in range(3):  # nested brackets: (A1; see [F2])
+            line = re.sub(r"\([^()]*\)|\[[^\[\]]*\]", "", line)
+        found += [(m.group(0), line.strip()) for m in BARE_ID.finditer(line)]
+    return found
+
+
 def lint(change: Path) -> int:
-    """Plain language: no sentence over SENTENCE_WORDS words, no leftover template prompts."""
+    """Plain language: no sentence over SENTENCE_WORDS words, no leftover template prompts, and
+    in the files the owner reads no id outside brackets."""
     problems = []
+    for name in OWNER_FILES:
+        path = change / name
+        if path.exists():
+            for bare, line in bare_ids(path.read_text(encoding="utf-8")):
+                problems.append(f"{name}: id {bare} outside brackets, words first: {line[:70]}")
     for name in ("intent.md", "facts.md", "plan.md"):
         path = change / name
         if not path.exists():

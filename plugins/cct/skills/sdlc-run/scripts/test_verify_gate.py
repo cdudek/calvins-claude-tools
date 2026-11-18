@@ -223,6 +223,49 @@ def test_lint_flags_long_sentences_and_open_questions(tmp_path: Path) -> None:
     assert _last(r) == f"LINT FAIL {ID} problems=2"
 
 
+GOOD_IDS = [
+    "Designs win over today's app (Q202).",
+    "The list stays sorted (F13, F14; rules SEC-2).",
+    "Nothing blocks the build [see B19].",
+    "- **Q1 (2026-11-18) When to lock the tests?** The default is one commit.",
+    "- [ ] **F3** (A1) When a row is added, the list refreshes.",
+    "Run `verify_gate.py` and read `F13` in the table.",
+    "| F13 | a table row is data |",
+    "Tag the test `@F13`.",
+    "Never gate on HTTP 404 or SEC-2.",
+]
+BAD_IDS = [
+    ("Done per Q202.", "Q202"),
+    ("B19 blocks the build.", "B19"),
+    ("We ship F13 first, then (A1) later.", "F13"),
+    ("> Decided in Q7 and nowhere else.", "Q7"),
+]
+
+
+def test_lint_passes_an_id_in_brackets_and_flags_a_bare_one(tmp_path: Path) -> None:
+    repo = _repo(tmp_path, ["true"])
+    path = repo / "changes" / ID / "intent.md"
+    path.write_text("# Intent\n\n" + "\n\n".join(GOOD_IDS) + "\n")
+    r = _gate(repo, "lint", ID)
+    assert r.returncode == 0, r.stdout
+    for text, bare in BAD_IDS:
+        path.write_text(f"# Intent\n\n{text}\n")
+        r = _gate(repo, "lint", ID)
+        assert r.returncode == 1 and f"intent.md: id {bare} outside brackets" in r.stdout, text
+        assert _last(r) == f"LINT FAIL {ID} problems=1"
+
+
+@pytest.mark.parametrize("name", ["plan.md", "milestone.md", "questions.md", "pr-body.md"])
+def test_lint_reads_every_owner_file_for_bare_ids_but_not_facts(tmp_path: Path, name: str) -> None:
+    repo = _repo(tmp_path, ["true"])
+    change = repo / "changes" / ID
+    (change / "facts.md").write_text("- [ ] **F1** (A1) It works, see F2.\n")
+    assert _gate(repo, "lint", ID).returncode == 0
+    (change / name).write_text("Because of Q202 we wait.\n")
+    r = _gate(repo, "lint", ID)
+    assert r.returncode == 1 and f"{name}: id Q202 outside brackets" in r.stdout
+
+
 @pytest.mark.parametrize("name", ["run", "feature", "milestone"])
 def test_goal_templates_are_end_states_not_processes(name: str) -> None:
     """2026-11-11: a process in the condition cannot be satisfied after the merge, so it never clears."""

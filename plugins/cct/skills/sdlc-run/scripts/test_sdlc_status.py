@@ -259,10 +259,106 @@ def test_goal_cli_prints_one_line_and_exits_1_when_gh_fails(repo: Path, tmp_path
         text=True,
         env={**_env(), "PATH": path},
     )
-    assert (run.returncode, run.stdout.strip()) == (1, f"GOAL {ID} OPEN gh-unavailable")
+    first, second = run.stdout.strip().splitlines()
+    assert (run.returncode, first) == (1, f"GOAL {ID} OPEN gh-unavailable")
+    assert second.startswith("Blocking: GitHub cannot be reached")
 
 
 def test_goal_cli_refuses_bad_arguments(repo: Path) -> None:
     assert _run(repo, "goal").returncode == 2
     assert _run(repo, "goal", ID, "--feature").returncode == 2
     assert _run(repo, "goal", ID, "--feature", "x").returncode == 2
+
+
+# --- goal: the one blocking thing, as a sentence ------------------------------------------------
+
+
+def test_blocker_names_what_why_who_and_the_exact_step(repo: Path) -> None:
+    change = repo / "changes" / ID
+    line = f"GOAL {ID} OPEN milestone-gate-pass,no-pr:{BRANCH}"
+    assert sdlc_status.blocker(change, line) == (
+        "Blocking: the milestone gate has not passed, because no VERIFY PASS is recorded for it; "
+        f"the agent runs `python3 scripts/verify_gate.py milestone {ID}`."
+    )
+    assert "gh pr create --head " + BRANCH in sdlc_status.blocker(
+        change, f"GOAL {ID} OPEN no-pr:{BRANCH}"
+    )
+    assert sdlc_status.blocker(change, f"GOAL {ID} OPEN pr-7-not-merged-or-armed") == (
+        "Blocking: PR 7 is open without auto-merge, because nothing armed it; "
+        "the agent runs `gh pr merge 7 --merge --auto`."
+    )
+    assert "you run" in sdlc_status.blocker(change, f"GOAL {ID} BLOCKED reason=protected-path")
+    assert sdlc_status.blocker(change, f"GOAL {ID} DONE pr=7 state=merged gate={GATE}") == ""
+
+
+def test_goal_cli_adds_the_sentence_only_when_the_goal_is_not_done(repo: Path) -> None:
+    out = _run(repo, "goal", ID).stdout.splitlines()
+    assert out[0].startswith(f"GOAL {ID} OPEN") and out[1].startswith("Blocking: ")
+    assert len(out) == 2
+
+
+# --- ids: every id with its meaning and where it is decided ----------------------------------
+
+
+def test_ids_print_meaning_and_file(repo: Path) -> None:
+    change = repo / "changes" / ID
+    (change / "intent.md").write_text(
+        "| # | Date | Source | Words | Screen | Res |\n|---|---|---|---|---|---|\n"
+        '| A1 | 2026-11-18 | chat | "Sort the list by date" | none | none |\n\n'
+        "| # | When | I want | So I can | Evidence |\n|---|---|---|---|---|\n"
+        "| J1 | I open the list | newest first | find it fast | reported (A1) |\n"
+    )
+    (change / "facts.md").write_text(
+        "- [ ] **F1** (A1; rules none) When the list opens, the system shall sort by date. Tag: `@F1`.\n"
+        "- [ ] **N1** (A1) The system shall answer in under 200 ms.\n"
+    )
+    (change / "questions.md").write_text(
+        "- **Q1 (2026-11-18) When to lock the tests?** The plan says lock after feature 1.\n"
+        "Later: see B19 and Q1.\n"
+    )
+    out = _run(repo, "ids", ID).stdout.splitlines()
+    assert 'A1   "Sort the list by date"  (intent.md)' in out
+    assert (
+        "J1   When I open the list, I want newest first, so I can find it fast  (intent.md)" in out
+    )
+    assert "F1   When the list opens, the system shall sort by date.  (facts.md)" in out
+    assert "N1   The system shall answer in under 200 ms.  (facts.md)" in out
+    assert "Q1   When to lock the tests?  (questions.md)" in out
+    assert out[-1] == "no definition found for: B19"
+
+
+def test_ids_say_so_when_there_are_none(repo: Path) -> None:
+    assert _run(repo, "ids", ID).stdout.strip() == "no ids in this change yet"
+
+
+# --- readme: the reading map -------------------------------------------------------------------
+
+
+def test_readme_gives_three_entry_points_and_a_row_per_document(repo: Path) -> None:
+    change = repo / "changes" / ID
+    (change / "intent.md").write_text("# Intent\n")
+    (change / "handover.md").write_text("# Handover\n")
+    r = _run(repo, "readme", ID)
+    assert r.returncode == 0
+    text = (change / "README.md").read_text()
+    assert "- **Understand the change:** read [intent.md](intent.md)." in text
+    assert (
+        "- **Review it:** read facts.md (not written yet), then plan.md (not written yet)." in text
+    )
+    assert "stage 5/7 Build; read [handover.md](handover.md)." in text
+    rows = [ln for ln in text.splitlines() if ln.startswith("| ") and "---" not in ln]
+    assert any("What are we building, and why?" in r and r.endswith("| yes |") for r in rows)
+    above, below = text.split("## For agents")
+    assert "decisions.json" in below and "verify/" in below and "analyze.md" in below
+    assert "analyze.md" not in above and "facts.md" in above
+
+
+def test_readme_is_regenerated_and_never_lists_itself_as_an_id_source(repo: Path) -> None:
+    change = repo / "changes" / ID
+    _run(repo, "readme", ID)
+    first = (change / "README.md").read_text()
+    (change / "handover-2.md").write_text("# later\n")
+    _run(repo, "readme", ID)
+    assert (change / "README.md").read_text() != first
+    assert "[handover-2.md](handover-2.md)" in (change / "README.md").read_text()
+    assert _run(repo, "ids", ID).stdout.strip() == "no ids in this change yet"
