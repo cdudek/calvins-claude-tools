@@ -1,14 +1,22 @@
 # sdlc-run, end to end
 
-Verification and every push follow the [local-first contract](../plugins/cct/skills/sdlc-run/references/local-first.md); read it before running checks or preparing a push.
+Describes sdlc-run 3.17.0.
 
 `/cct:sdlc-run` runs an AI-native software lifecycle in any repo. The agent drafts the intent, the UX plan, the facts and the tech plan. You confirm twice. Then one `/goal` builds the whole milestone as commits, runs the heavy checks once, and opens one PR.
 
-There is also a [visual version of this page](sdlc-run-explained.html). It is a standalone HTML file: download it and open it in a browser.
+Verification and every push follow the [local-first contract](../plugins/cct/skills/sdlc-run/references/local-first.md); read it before running checks or preparing a push. The runbook the agent follows is in [`plugins/cct/skills/sdlc-run/`](../plugins/cct/skills/sdlc-run/) (`SKILL.md`, `references/stages.md`, `references/ci-blueprint.md`, `references/adopt.md`).
 
-Version described: sdlc-run 3.9.0 (the stage walkthrough below was written for 3.7.0; [what 3.8 and 3.9 add](#what-38-and-39-add) is at the end). The runbook it follows is in [`plugins/cct/skills/sdlc-run/`](../plugins/cct/skills/sdlc-run/) (`SKILL.md`, `references/stages.md`, `references/ci-blueprint.md`, `references/adopt.md`).
+## Where to start reading
 
-## Stages and the two touchpoints
+One change folder, `changes/<date>-<slug>/`, holds everything: nothing lives only in a chat. Its `README.md` is a generated map. It answers three questions, each with one file:
+
+- **What are we building, and why?** Read `intent.md`.
+- **Is it right?** Read `facts.md`, then `plan.md`.
+- **Where did the work stop?** Read the stage in the README and the latest `handover*.md`.
+
+Everything else in the folder is a working file for agents. If a sentence names an id such as F3 or Q7, `sdlc_status.py ids <change>` says what it means and which file decides it.
+
+## The seven stages
 
 ```mermaid
 flowchart LR
@@ -23,20 +31,58 @@ flowchart LR
   P --> O["7 Outcome and archive"]
 ```
 
-One change folder, `changes/<date>-<slug>/`, holds everything: intent, `spec/`, facts, plan, `done.json`, `lock.json`, `milestone.md`. Nothing lives only in a chat.
+The two touchpoints are the intent and the plan. After the plan is approved, `lock.json` locks the facts, `done.json` and the checks; only your words can open them. The times are typical for a medium change, not promises. The example is one invented change throughout: "sort the invoice list by date".
 
-| Stage | What happens | Who |
-|---|---|---|
-| 1 Intent | One dialog picks ticket, design, size, kind, milestone and project. The agent drafts `intent.md`: your asks word for word, job stories, the success measure. | **You confirm** |
-| 2 UX plan | Screens, states, words and components, planned against the repo's design rules. Skipped for size `none` or `ux: off`. | agent |
-| 3 Facts | Short, testable sentences. Each cites an ask, names its screen or state, and names the E2E test that proves it. | agent |
-| 4 Tech plan | Where the code goes and how the work splits into features. `done.json` holds "done" as data. | **You approve** stages 2, 3 and 4 in one review |
-| 5 Build | Per feature: write its tests, build, commit, start the next at once. Run the touched tests and required pre-commit checks between features; reserve the full gate for the final head before push. Open questions go to `questions.md` with the default taken and never block. | agent, inside `/goal` |
-| 6 Milestone | Code review (Claude and Codex, the only one: nothing reviews in CI), UX review, accessibility, the full E2E suite once, every fact exercised in the built app, one fix round, `verify_gate.py milestone` on a frozen head, one push, one PR merged with a merge commit. | agent, inside `/goal`; **you accept** (in one go only when a Critical or High finding would be deferred) |
-| 6p Project | Only for work spanning several milestones, after the last one merged: the milestone checks once more on the whole project, on the default branch. No PR. With a project branch: merge the default branch in, same checks, one PR. | **you accept** |
-| 7 Outcome | Archive the folder when the change reaches the default branch. After release, read the success measure. A miss starts the next change. | agent, you read it |
+### 1 Intent
 
-The two touchpoints are the intent and the plan. After the plan is approved, `lock.json` locks facts, `done.json` and the checks; only your words can open them.
+- **You get:** `intent.md` with your asks word for word, job stories, the success measure and the rules that apply.
+- **Who acts:** the agent drafts after one dialog (ticket, design, size, kind, milestone, project); **you confirm**.
+- **Typical time:** 10 to 20 minutes.
+- **Example:** your words "I can't find the newest invoice" become the ask A1, the job story "when I open the list I want newest first", and the measure "support questions about finding invoices drop by half in a month".
+
+### 2 UX plan
+
+- **You get:** `spec/`: screens, states, words and components, planned against the repo's design rules, and `spec/readiness.md`, the verdict that the design is ready. Images of the screens only when the plan marks the UI risky. Skipped for size `none` or `ux: off`.
+- **Who acts:** the agent, with review agents.
+- **Typical time:** 30 to 60 minutes.
+- **Example:** one screen (the invoice list) with the states "empty", "loading" and "sorted", and the new column header named "Date".
+
+### 3 Facts
+
+- **You get:** `facts.md`: short testable sentences. Each cites its ask, names its screen or state and names the E2E test tag that proves it.
+- **Who acts:** the agent drafts; a reviewer in a fresh context writes `checklist.md`.
+- **Typical time:** 10 to 20 minutes.
+- **Example:** "When the list opens, the system shall show the newest invoice first (A1)".
+
+### 4 Tech plan
+
+- **You get:** `plan.md`: where the code goes, the milestones and the feature rows, and `done.json`, which holds "done" as data. An analyze pass and a challenge pass argue against it first.
+- **Who acts:** the agent drafts; **you approve** the UX plan, the facts and the plan in one review. Then `verify_gate.py approve` writes `lock.json`.
+- **Typical time:** 15 to 30 minutes to draft, plus your review.
+- **Example:** two features: "sort the rows" and "remember the sort in the URL", each with its facts.
+
+### 5 Build
+
+- **You get:** one commit per feature on `milestone/<slug>-<n>`, and `questions.md` with every open question and the default taken.
+- **Who acts:** the agent, inside one `/goal`. Builders write each feature's tests first, then the code; the touched tests and the repo's pre-commit checks run between features. A question never stops the build.
+- **Typical time:** 20 to 60 minutes per feature; a few hours for a milestone of four to six.
+- **Example:** commit "feat: sort the invoice list by date", then the next feature starts at once.
+
+### 6 Milestone
+
+- **You get:** one PR with the report. Code review (Claude and Codex), UX review, accessibility, the full E2E suite once, every fact exercised in the built app (`validation.md`), `findings.md` with one fix round, and `verify_gate.py milestone` on a frozen head.
+- **Who acts:** the agent, in the same `/goal`; **you accept** (in one go only when a critical or high finding would be deferred).
+- **Typical time:** 30 to 90 minutes, mostly the E2E suite.
+- **Example:** `validation.md` shows the fact above as "met", with the test and the screenshot as evidence.
+
+### 7 Outcome
+
+- **You get:** the folder archived once the change reaches the default branch, a short `reflection.md` and, after release, the success measure read where `intent.md` says.
+- **Who acts:** the agent archives; **you read** the measure.
+- **Typical time:** a minute to archive; the measure is read days or weeks later.
+- **Example:** "support questions about finding invoices: down 55 percent in 30 days, target met". A miss starts the next change.
+
+A project, work that spans several milestones, adds stage 6p: after the last milestone merges, the milestone checks run once more on the whole project, and **you accept** the project.
 
 ## One /goal per milestone
 
@@ -44,7 +90,7 @@ The two touchpoints are the intent and the plan. After the plan is approved, `lo
 
 `delivery: "feature-prs"` keeps the older shape: one PR per feature, auto-merged into the milestone branch. It suits teams building features in parallel.
 
-Builders are `cct:builder` agents, at most four at once, each in its own worktree and test slot. Each gets a `Base: <sha>` line, the milestone head, and resets to it before any edit, because a worktree hook cuts from the default branch. The supervisor commits its records first, edits no code, runs no test suite, and merges builder branches back one at a time. The close is one `cct:builder` with `Mode: close`; nothing merges while it runs.
+Builders are `cct:sdlc-feature-builder` agents, at most four at once, each in its own worktree and test slot. Each gets a `Base: <sha>` line, the milestone head, and resets to it before any edit, because a worktree hook cuts from the default branch. The supervisor commits its records first, edits no code, runs no test suite, and merges builder branches back one at a time. The close is one `cct:builder` with `Mode: close`; nothing merges while it runs.
 
 ## Branches, commits and PRs
 
@@ -132,7 +178,7 @@ It first asks whether to use Ship/Show/Ask merge tiers (a code owner approves ri
 
 ## Staying current
 
-`adopt` writes `"sdlcVersion": "3.9.1"` into `sdlc.json`. Every time the skill runs in the repo, `status` and the verify gate compare the stamp with the installed plugin and print one line when it is missing or older, for example:
+`adopt` writes `"sdlcVersion": "3.17.0"` into `sdlc.json`. Every time the skill runs in the repo, `status` and the verify gate compare the stamp with the installed plugin and print one line when it is missing or older, for example:
 
 ```text
 This repo runs sdlc-run 3.2.0; the kit is 3.3.1. Run `adopt --upgrade` (changes: 3.3.1: adopt --upgrade never overwrites or moves anything; 3.3.0: the CI workflow ships as a template, ciPaths by file type, versioned repos).
@@ -142,15 +188,10 @@ A repo newer than the plugin is told to update the plugin. The verify gate print
 
 `/cct:sdlc-run adopt --upgrade` is the safe path. It adds the keys a newer plugin introduced with the stack's defaults, never changes a value, stamps the new version and writes nothing else: no file overwritten, no folder moved. Each file that differs from the plugin's copy (a hook, `scripts/verify_gate.py`, `docs/sdlc.md`, the guardrail test) is listed as `review diff`, together with the manual migrations of `references/changelog.md` since your stamp. `adopt --upgrade --replace <file>` shows one file's diff; `adopt --upgrade --apply --replace <file>` replaces that file. A plain `adopt` refreshes every copy at once. `--dry-run` writes nothing.
 
-## What 3.8 and 3.9 add
+## What changed since 3.7
 
-Mechanisms are in `references/quality-passes.md` and `references/stages.md` of the skill.
+Each version's headline and migration steps are in the skill's [changelog](../plugins/cct/skills/sdlc-run/references/changelog.md). The ones a newcomer meets first:
 
-- **Rules (3.8):** `sdlc.json` takes an optional `rules` list of repo files that hold standing rules. Intent lists the rule IDs that apply; every fact cites the IDs it touches.
-- **Clarify, checklist, analyze (3.8):** at most 5 clarifying questions, then defaults under `## Assumptions`. A reviewer in a fresh context writes `checklist.md`; an analyze pass writes `analyze.md`. `approve` refuses an unchecked item or an open CRITICAL.
-- **Context pack (3.8):** a builder gets its feature's facts, the plan excerpt and the cited rule text, not whole files.
-- **Converge and validation block (3.8):** an append-only converge pass at the milestone close; the gate blocks on a `not met` or `partly` row, an open finding and a missing `Converged:` line.
-- **Challenge pass (3.9):** before gate 2 a fresh reviewer argues against the change into `challenge.md`; `approve` refuses an open CRITICAL.
-- **Enforcement audit (3.9):** `verify_gate.py audit` reports per gate whether it is installed, configured, executed and passed, and whether its CI job is a required status. Run at adopt, at each milestone close and monthly from CI.
-- **Reflection and metrics (3.9):** one short `reflection.md` per change at Stage 7; every gate report ends with operational metrics.
-- **Code reviewer (3.9):** four design questions on every axis: hidden dependencies, surprising side effects, domain vocabulary, composability.
+- **Rules, clarify, checklist, analyze, challenge (3.8, 3.9):** standing rules are cited by id; a fresh reviewer writes `checklist.md`, an analyze pass writes `analyze.md` and a challenge pass writes `challenge.md`. `approve` refuses an unchecked item or an open critical.
+- **Enforcement audit (3.9):** `verify_gate.py audit` says per gate whether it is installed, configured, executed and passed.
+- **Readable folders (3.17):** a generated `README.md` in every change folder, plain words with ids in brackets, `sdlc_status.py ids` and a sentence for what blocks the goal. [More](../plugins/cct/skills/sdlc-run/references/readability.md).
