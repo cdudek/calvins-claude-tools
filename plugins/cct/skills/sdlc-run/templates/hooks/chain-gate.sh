@@ -71,15 +71,23 @@ if rel.startswith("../") or rel.startswith("/"):
     sys.exit(0)
 
 
+def helper(name: str):
+    """A sibling helper by its exact path: never found on sys.path, where the working directory
+    could shadow it. Raises when it is missing or broken."""
+    import importlib.util
+
+    spec = importlib.util.spec_from_file_location(name, os.path.join(os.environ["SDLC_HOOK_DIR"], f"{name}.py"))
+    mod = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(mod)
+    return mod
+
+
 def deny(message: str, source: str = "", action: str = "") -> None:
     """Block. `source` is what the check read, `action` what the owner does; a repeat of the
     same block says both (block_state.py). Without block_state.py it is the plain message."""
     text = f"BLOCKED: {message}\n({docs})"
     try:
-        sys.path.insert(0, os.environ["SDLC_HOOK_DIR"])
-        from block_state import rewrite
-
-        text = rewrite(
+        text = helper("block_state").rewrite(
             "chain-gate.sh", text, source or "its change files",
             action or "follow the route in the message below", json.loads(os.environ["SDLC_BLOCK_CTX"]),
         )
@@ -136,9 +144,8 @@ PROTECTED_GLOBS = ["sdlc.json", "**/*-snapshots/**", "**/__screenshots__/**", "*
 
 def goal_active(path: str) -> bool | None:
     """goal_active.py's reading (None = unreadable, which fails open with a warning)."""
-    sys.path.insert(0, os.environ["SDLC_HOOK_DIR"])
     try:
-        from goal_active import goal_active as read
+        read = helper("goal_active").goal_active
     except Exception:  # missing, or any error while importing it: a gate that cannot read the goal blocks
         deny(
             "goal_active.py is missing or broken beside chain-gate.sh; run `sdlc-run adopt` to restore it.",
