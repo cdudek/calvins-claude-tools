@@ -88,7 +88,7 @@ Features 1 and 2 both edit `pr-gate.sh`; 3 edits the same hooks. Build them in o
 - [x] 0. Sync — proof: `git merge-base --is-ancestor origin/main HEAD` exits 0.
 - [x] 1. Goal helper — proof: `test_goal_active.py` F1–F5, F14, F15 pass; `grep -l goal_status templates/hooks/*.sh` prints nothing.
 - [x] 2. pr-gate fixes — proof: `test_pr_gate.py` F6–F8 pass.
-- [ ] 3. Block state — proof: `test_block_repeat.py` F9–F13 and N1 pass.
+- [x] 3. Block state — proof: `test_block_repeat.py` F9–F13 and N1 pass.
 - [ ] 4. Release — proof: `python3 -m unittest discover -s tests && scripts/run-plugin-tests.sh` exits 0; `adopt` leaves no diff on a second run.
 
 ## Milestones

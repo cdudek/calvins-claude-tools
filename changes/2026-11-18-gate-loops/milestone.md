@@ -26,7 +26,7 @@ branch), `merged` (feature PRs) or `blocked: <reason>`.
 | T | 2026-11-18-gate-loops | failing tests for F1-F15, N1, then `testLocked` | 97e239c | done 4040936 |
 | 1 | 2026-11-18-gate-loops | shared goal helper | 5479733 | done 5479733 |
 | 2 | 2026-11-18-gate-loops | pr-gate fixes | 74f99c4 | done 74f99c4 |
-| 3 | 2026-11-18-gate-loops | block state and the repeat stop | <commit> | building |
+| 3 | 2026-11-18-gate-loops | block state and the repeat stop | ddfa535 | done ddfa535 |
 | 4 | 2026-11-18-gate-loops | release 3.16.0 / 0.13.0 | <commit> | todo |
 
 ## Done
