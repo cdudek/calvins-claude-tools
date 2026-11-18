@@ -368,8 +368,8 @@ def test_owner_marks_is_automatic_at_milestone_only(tmp_path: Path, trigger: str
             "![Screenshot 1](img/001.png)\n\n1. Add spacing.\n"
         )
     elif trigger == "reference":
-        (change / "spec/prototype").mkdir(parents=True)
-        (change / "spec/prototype/wireframe.png").write_bytes(b"reference")
+        (change / "asks").mkdir(parents=True)
+        (change / "asks/wireframe.png").write_bytes(b"reference")
         (change / "marks.json").write_text('{"rows": []}')
     else:
         (change / "marks.json").write_text("{")
@@ -991,3 +991,14 @@ def test_keep_going_runs_every_check_and_names_the_first_failure(tmp_path: Path)
     r = _gate(repo, "feature", ID, "--keep-going")
     assert r.returncode == 1 and _last(r) == f"VERIFY FAIL feature {ID} check=lint"
     assert _order(repo) == ["lint", "unit", "e2e"] and "failed: lint, unit" in r.stdout
+
+
+def test_a_supplied_bundle_requires_a_valid_ledger_at_milestone(tmp_path: Path) -> None:
+    repo = _repo(tmp_path, ["true"])
+    (repo / "sdlc.json").write_text(json.dumps({"checks": {"milestone": ["true"]}}))
+    export = repo / "changes" / ID / "asks/export"
+    export.mkdir(parents=True)
+    (export / "index.html").write_text("<html>screen</html>")
+    _approve(repo)
+    result = _gate(repo, "milestone", ID)
+    assert _last(result) == f"VERIFY FAIL milestone {ID} check=owner-marks"

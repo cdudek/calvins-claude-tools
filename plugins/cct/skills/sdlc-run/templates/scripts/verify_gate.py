@@ -78,7 +78,7 @@ import sys
 import time
 from pathlib import Path
 
-from marks import sessions
+from marks import bundles, sessions
 from sdlc_version import kit_version, message
 
 REASONS = {
@@ -509,7 +509,9 @@ def run(
     except (OSError, ValueError):
         durations = {}
     checks = order_checks(checks, durations, change.name)
-    if scope == "milestone" and ((change / "marks.json").exists() or sessions(change)):
+    if scope == "milestone" and (
+        (change / "marks.json").exists() or sessions(change) or bundles(change)
+    ):
         checks.append(
             {
                 "name": "owner-marks",
