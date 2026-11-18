@@ -31,6 +31,7 @@
 # Python engine.
 set -uo pipefail
 . "$(dirname "$0")/sdlc-config.sh"
+: "${SDLC_PY:=python3}" # an older sdlc-config.sh (one-file upgrade) does not set it
 
 payload=$(cat)
 [ -f "$SDLC_JSON" ] || exit 0
