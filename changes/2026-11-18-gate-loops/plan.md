@@ -89,7 +89,7 @@ Features 1 and 2 both edit `pr-gate.sh`; 3 edits the same hooks. Build them in o
 - [x] 1. Goal helper — proof: `test_goal_active.py` F1–F5, F14, F15 pass; `grep -l goal_status templates/hooks/*.sh` prints nothing.
 - [x] 2. pr-gate fixes — proof: `test_pr_gate.py` F6–F8 pass.
 - [x] 3. Block state — proof: `test_block_repeat.py` F9–F13 and N1 pass.
-- [ ] 4. Release — proof: `python3 -m unittest discover -s tests && scripts/run-plugin-tests.sh` exits 0; `adopt` leaves no diff on a second run.
+- [x] 4. Release — proof: `python3 -m unittest discover -s tests && scripts/run-plugin-tests.sh` exits 0; `adopt` leaves no diff on a second run.
 
 ## Milestones
 
@@ -163,3 +163,5 @@ The goal:
 Only after approval.
 
 - **2026-11-18, test lock order:** the failing tests for every fact (F1-F15, N1) and the fixture updates land in one test-first commit before feature 1, then `testLocked: true`. Why: this is a v3 bug, and once locked `chain-gate.sh` refuses every `test_*.py` edit on this branch, so features 2-4 could not add their tests after feature 1. Recorded in `questions.md`.
+- **2026-11-18, goal helper hardening:** `goal_active.py` counts `/goal clear` only as a whole command entry or the exact `No goal set` output, after a security review showed quoted text in a report switched the gate off. Real transcripts checked: 5 bare outputs, 3 quoted copies that the old test would have misread.
+- **2026-11-18, changelog Manual line:** the 3.16.0 entry carries a `- Manual:` line (restart open sessions; a repo that `keep`s a hook copies the helpers by hand), because `test_adopt.py` requires one in the newest entry.

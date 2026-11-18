@@ -27,7 +27,7 @@ branch), `merged` (feature PRs) or `blocked: <reason>`.
 | 1 | 2026-11-18-gate-loops | shared goal helper | 5479733 | done 5479733 |
 | 2 | 2026-11-18-gate-loops | pr-gate fixes | 74f99c4 | done 74f99c4 |
 | 3 | 2026-11-18-gate-loops | block state and the repeat stop | ddfa535 | done ddfa535 |
-| 4 | 2026-11-18-gate-loops | release 3.16.0 / 0.13.0 | <commit> | todo |
+| 4 | 2026-11-18-gate-loops | release 3.16.0 / 0.13.0 | 9871a96, 37051d9 | done 37051d9 |
 
 ## Done
 
