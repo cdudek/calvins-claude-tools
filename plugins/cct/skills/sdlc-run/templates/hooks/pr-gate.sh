@@ -53,8 +53,22 @@ docs = cfg.get("docs", "docs/sdlc.md")
 WRAPPERS = {"rtk", "command", "env", "time", "nohup", "proxy"}
 
 
-def block(why: str, route: str) -> None:
-    print(f"BLOCKED: {why}\n{route}\n({docs}, \"One milestone, one PR\")", file=sys.stderr)
+GOAL_SOURCE = f"the transcript's goal entry in {transcript}"
+GOAL_ACTION = "type `/goal clear` (only the owner can)"
+
+
+def block(why: str, route: str, source: str = "sdlc.json", action: str = "") -> None:
+    """Block. `source` is what the gate read, `action` what the owner does (default: the route);
+    a repeat of the same block says both (block_state.py), and without it the text is plain."""
+    text = f"BLOCKED: {why}\n{route}\n({docs}, \"One milestone, one PR\")"
+    try:
+        sys.path.insert(0, os.environ["SDLC_HOOK_DIR"])
+        from block_state import rewrite
+
+        text = rewrite("pr-gate.sh", text, source, action or route, payload)
+    except Exception:  # block state never changes the verdict
+        pass
+    print(text, file=sys.stderr)
     sys.exit(2)
 
 
@@ -68,9 +82,11 @@ def goal_active() -> bool:
     sys.path.insert(0, os.environ["SDLC_HOOK_DIR"])
     try:
         from goal_active import goal_active as read
-    except ImportError:
-        print("BLOCKED: goal_active.py is missing beside pr-gate.sh; run `sdlc-run adopt` to restore it.", file=sys.stderr)
-        sys.exit(2)
+    except Exception:  # missing, or any error while importing it: a gate that cannot read the goal blocks
+        block(
+            "goal_active.py is missing or broken beside pr-gate.sh.", "Run `sdlc-run adopt` to restore it.",
+            source="goal_active.py beside pr-gate.sh",
+        )
     return bool(read(transcript))
 
 
@@ -192,7 +208,7 @@ def check_push(repo: Repo, args: list[str]) -> None:
             block(f"a push to {dst}.", "The default branch moves only through a merged PR.")
         if dst.startswith(repo.m):
             if not repo.feature_prs and not repo.passed(sha):
-                block(f"a push of {dst} at {sha[:12] or src} without a passing milestone gate.", CLOSE)
+                block(f"a push of {dst} at {sha[:12] or src} without a passing milestone gate.", CLOSE, "verify/report.json")
             continue
         if dst.startswith(repo.p):
             if sha and sha == repo.sha(f"origin/{repo.default}"):
@@ -201,7 +217,7 @@ def check_push(repo: Repo, args: list[str]) -> None:
         if repo.feature_prs:
             continue
         if repo.in_session() and goal_active():
-            block(f"a push of {dst} inside a /goal run.", RIDE)
+            block(f"a push of {dst} inside a /goal run.", RIDE, GOAL_SOURCE, GOAL_ACTION)
 
 
 def check_pr(repo: Repo, args: list[str]) -> None:
@@ -227,7 +243,7 @@ def check_pr(repo: Repo, args: list[str]) -> None:
             block(f"a PR from {head} into {base}.", "A milestone PR goes into its parent: project/* or the default branch.")
         sha = repo.sha(head) if "repo" not in opts else ""
         if sha and not repo.passed(sha):
-            block(f"a PR from {head} at {sha[:12]} without a passing milestone gate.", CLOSE)
+            block(f"a PR from {head} at {sha[:12]} without a passing milestone gate.", CLOSE, "verify/report.json")
         return
     if head.startswith(repo.p):
         if base != repo.default:
@@ -242,7 +258,7 @@ def check_pr(repo: Repo, args: list[str]) -> None:
     if base.startswith(repo.p):
         block(f"a PR from {head} into {base}: only milestone branches merge into a project.", RIDE)
     if repo.in_session() and goal_active():
-        block(f"a PR from {head} inside a /goal run: only milestone and project PRs open there.", RIDE)
+        block(f"a PR from {head} inside a /goal run: only milestone and project PRs open there.", RIDE, GOAL_SOURCE, GOAL_ACTION)
 
 
 def segments(text: str) -> list[list[str]]:
