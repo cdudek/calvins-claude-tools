@@ -37,3 +37,14 @@ Kept, not fixed in this milestone; none blocks the gate.
 - **R9 clear only from `subtype: local_command`** (`goal_active.py:70`): rejected by the validator; the exact-entry match in `fbbff9d` already ignores quoted text.
 
 ## Converge
+
+Converged: round 1
+
+- R7 off switch lets chain-gate allow build edits: 3a7fd19
+- R8 non-dict `message` no longer crashes the helper: 86772c8
+- R10 helpers loaded by exact sibling path: f3917d6
+- R12 null or blank `words` is not the engineer's words: eae7ac4
+- R14 `&>` no longer splits the push: 0d4b586
+- R15 repeated `-C` resolves against the running directory: 00e6ff0
+- R1 adopt checks a helper `.py` for ignore rules: 3b925c7
+- R4 cleanup only old regular `.jsonl` files, strict session id: d8c63d1
