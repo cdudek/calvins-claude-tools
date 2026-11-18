@@ -36,6 +36,12 @@ class SdlcRunPage(unittest.TestCase):
             if "://" not in target:
                 self.assertTrue((PAGE.parent / target).exists(), f"dead link: {target}")
 
+    def test_every_cct_agent_or_skill_it_names_exists(self):
+        cct = ROOT / "plugins/cct"
+        for name in set(re.findall(r"`cct:([a-z0-9-]+)", PAGE.read_text())):
+            found = (cct / "agents" / f"{name}.md").exists() or (cct / "skills" / name).is_dir()
+            self.assertTrue(found, f"the page names cct:{name}, which does not exist")
+
 
 if __name__ == "__main__":
     unittest.main()

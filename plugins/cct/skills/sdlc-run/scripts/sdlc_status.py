@@ -253,7 +253,7 @@ def goal(
 
 # what is in the way, by the first missing item: (what, why, who acts, the exact step)
 BLOCKS = {
-    "milestone-gate-pass": (
+    "gate-pass": (
         "the {scope} gate has not passed",
         "no VERIFY PASS is recorded for it",
         "the agent",
@@ -305,7 +305,7 @@ BLOCKS = {
         "there is no change folder",
         "the id matches no folder under changes/",
         "you",
-        "python3 scripts/sdlc_status.py map",
+        "python3 ${{CLAUDE_SKILL_DIR}}/scripts/sdlc_status.py map",
     ),
     "not-approved": (
         "the plan was never approved",
@@ -325,6 +325,54 @@ BLOCKS = {
         "you",
         "read verify/report.md, then delete verify/state.json to start over",
     ),
+    "flaky": (
+        "a check failed once and passed on a re-run",
+        "a flaky check cannot prove the change",
+        "you",
+        "reproduce it locally three times and fix the check's flakiness in its own change",
+    ),
+    "unknown-verdict": (
+        "a check ended without a verdict the gate understands",
+        "its last line was neither pass nor a known blocked reason",
+        "the agent",
+        "read verify/report.md, then fix the check's output",
+    ),
+    "needs-baseline": (
+        "a check needs a baseline that does not exist",
+        "nothing recorded the passing state to compare with",
+        "you",
+        "decide whether to record the baseline, then rerun `python3 scripts/verify_gate.py {scope} {id}`",
+    ),
+    "allowlist-request": (
+        "a check asks for a wider allowlist",
+        "the change needs something its limits do not permit",
+        "you",
+        "decide whether to widen the allowlist; never widen it silently",
+    ),
+    "scope-growth": (
+        "the change grew past its plan",
+        "files outside the plan's Files that change were edited",
+        "you",
+        "decide whether the plan or the edit moves",
+    ),
+    "spec-conflict": (
+        "the build contradicts the approved spec",
+        "a check found a state the spec forbids",
+        "you",
+        "decide whether the spec or the build changes",
+    ),
+    "env": (
+        "the gate cannot run here",
+        "no checks are configured, the change folder is missing or the environment is broken",
+        "you",
+        "fix the environment named in the gate output, then rerun `python3 scripts/verify_gate.py {scope} {id}`",
+    ),
+    "test-proves-nothing": (
+        "a test passes without the code it guards",
+        "the test also passes on the old code",
+        "the agent",
+        "rewrite the test so it fails without the change",
+    ),
     "attempts": (
         "three gate runs failed",
         "the breaker stops a loop",
@@ -334,17 +382,19 @@ BLOCKS = {
 }
 
 
-def blocker(change: Path, line: str, scope: str = "milestone") -> str:
+def blocker(subject: str, line: str, scope: str = "milestone") -> str:
     """The one thing in the way, as a sentence, from the goal line; empty when the goal is DONE.
-    Built from the first missing item (the line lists them in the order the goal checks them)."""
+    `subject` is the change id the goal was asked about, `scope` the gate it reads. Built from the
+    first missing item (the line lists them in the order the goal checks them)."""
     m = re.search(r"OPEN (\S+)|BLOCKED reason=([\w-]+)", line)
     if not m:
         return ""
     first = (m.group(1) or m.group(2)).split(",")[0]
+    key_of = "gate-pass" if first.endswith("-gate-pass") else first
     for key, (what, why, who, step) in BLOCKS.items():
-        if first == key or (key.endswith(("-", ":")) and first.startswith(key)):
+        if key_of == key or (key.endswith(("-", ":")) and first.startswith(key)):
             n = re.sub(r"^no-pr:|^no-branch-for-|^gate-sha-not-pr-|-head$", "", first)
-            fill = {"scope": scope, "id": change.name, "n": n}
+            fill = {"scope": scope, "id": subject, "n": n}
             return f"Blocking: {what.format(**fill)}, because {why}; {who} runs `{step.format(**fill)}`."
     pr = re.fullmatch(r"pr-(\d+)-not-merged-or-armed", first)
     if pr:
@@ -353,7 +403,7 @@ def blocker(change: Path, line: str, scope: str = "milestone") -> str:
             f"Blocking: PR {pr[1]} is open without auto-merge, because nothing armed it; "
             f"the agent runs `gh pr merge {pr[1]} {flag} --auto`."
         )
-    return f"Blocking: {first}, because the goal check lists it; the agent reads `sdlc_status.py goal {change.name}`."
+    return f"Blocking: {first}, because the goal check lists it; the agent reads `sdlc_status.py goal {subject}`."
 
 
 def goal_main(args: list[str]) -> int:
@@ -370,13 +420,16 @@ def goal_main(args: list[str]) -> int:
         print(__doc__)
         return 2
     root = repo_root(Path.cwd())
+    scope = flag[2:] if flag else "milestone"
     change = find_change(root, config(root), pos[0]) if root else None
     if not root or not change:
-        print(f"GOAL {pos[0]} OPEN no-change-folder")
+        line = f"GOAL {pos[0]} OPEN no-change-folder"
+        print(line)
+        print(blocker(pos[0], line, scope))
         return 1
-    code, line = goal(root, change, flag[2:] if flag else "milestone", int(value) if flag else None)
+    code, line = goal(root, change, scope, int(value) if flag else None)
     print(line)
-    if code and (sentence := blocker(change, line, flag[2:] if flag else "milestone")):
+    if code and (sentence := blocker(change.name, line, scope)):
         print(sentence)
     return code
 

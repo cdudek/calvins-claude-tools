@@ -274,21 +274,78 @@ def test_goal_cli_refuses_bad_arguments(repo: Path) -> None:
 
 
 def test_blocker_names_what_why_who_and_the_exact_step(repo: Path) -> None:
-    change = repo / "changes" / ID
     line = f"GOAL {ID} OPEN milestone-gate-pass,no-pr:{BRANCH}"
-    assert sdlc_status.blocker(change, line) == (
+    assert sdlc_status.blocker(ID, line) == (
         "Blocking: the milestone gate has not passed, because no VERIFY PASS is recorded for it; "
         f"the agent runs `python3 scripts/verify_gate.py milestone {ID}`."
     )
-    assert "gh pr create --head " + BRANCH in sdlc_status.blocker(
-        change, f"GOAL {ID} OPEN no-pr:{BRANCH}"
-    )
-    assert sdlc_status.blocker(change, f"GOAL {ID} OPEN pr-7-not-merged-or-armed") == (
+    assert "gh pr create --head " + BRANCH in sdlc_status.blocker(ID, f"GOAL {ID} OPEN no-pr:{BRANCH}")
+    assert sdlc_status.blocker(ID, f"GOAL {ID} OPEN pr-7-not-merged-or-armed") == (
         "Blocking: PR 7 is open without auto-merge, because nothing armed it; "
         "the agent runs `gh pr merge 7 --merge --auto`."
     )
-    assert "you run" in sdlc_status.blocker(change, f"GOAL {ID} BLOCKED reason=protected-path")
-    assert sdlc_status.blocker(change, f"GOAL {ID} DONE pr=7 state=merged gate={GATE}") == ""
+    assert "you run" in sdlc_status.blocker(ID, f"GOAL {ID} BLOCKED reason=protected-path")
+    assert sdlc_status.blocker(ID, f"GOAL {ID} DONE pr=7 state=merged gate={GATE}") == ""
+
+
+def test_blocker_for_a_feature_names_the_feature_gate_and_its_pr(repo: Path) -> None:
+    out = sdlc_status.blocker(ID, f"GOAL {ID} OPEN feature-gate-pass", "feature")
+    assert "the feature gate has not passed" in out and f"verify_gate.py feature {ID}" in out
+    out = sdlc_status.blocker(ID, f"GOAL {ID} OPEN pr-7-not-merged-or-armed", "feature")
+    assert "gh pr merge 7 --squash --auto" in out
+    out = sdlc_status.blocker(ID, f"GOAL {ID} OPEN gate-sha-not-pr-7-head", "feature")
+    assert "PR 7" in out and f"verify_gate.py feature {ID}" in out
+
+
+EMITTED = [
+    "milestone-gate-pass",
+    "feature-gate-pass",
+    "no-branch-for-milestone-1",
+    "no-branch-for-feature-2",
+    f"no-pr:{BRANCH}",
+    "pr-7-not-merged-or-armed",
+    "gate-sha-not-pr-7-head",
+    "gh-unavailable",
+    "no-change-folder",
+    "findings-open",
+    "validation-not-met",
+    "not-converged",
+]
+
+
+@pytest.mark.parametrize("scope", ["milestone", "feature"])
+def test_every_reason_the_goal_emits_gets_a_real_sentence(scope: str) -> None:
+    for reason in EMITTED:
+        out = sdlc_status.blocker(ID, f"GOAL {ID} OPEN {reason}", scope)
+        assert out.startswith("Blocking: ") and "the goal check lists it" not in out, reason
+
+
+def test_every_reason_the_gate_blocks_on_gets_a_real_sentence() -> None:
+    sys.path.insert(0, str(SCRIPT.parent.parent / "templates" / "scripts"))
+    from verify_gate import REASONS
+
+    for reason in sorted(REASONS):
+        out = sdlc_status.blocker(ID, f"GOAL {ID} BLOCKED reason={reason}")
+        assert out.startswith("Blocking: ") and "the goal check lists it" not in out, reason
+
+
+def test_blocker_never_recommends_a_repo_local_status_script(repo: Path) -> None:
+    for reason in EMITTED + ["no-progress", "attempts", "not-approved"]:
+        assert " scripts/sdlc_status.py" not in sdlc_status.blocker(ID, f"GOAL {ID} OPEN {reason}")
+    assert "${CLAUDE_SKILL_DIR}/scripts/sdlc_status.py" in sdlc_status.blocker(
+        ID, f"GOAL {ID} OPEN no-change-folder"
+    )
+
+
+def test_goal_cli_says_what_blocks_a_goal_without_a_change_folder(repo: Path) -> None:
+    out = _run(repo, "goal", "no-such-change").stdout.splitlines()
+    assert out[0] == "GOAL no-such-change OPEN no-change-folder"
+    assert out[1].startswith("Blocking: there is no change folder") and len(out) == 2
+
+
+def test_goal_cli_feature_scope_reaches_the_sentence(repo: Path) -> None:
+    out = _run(repo, "goal", ID, "--feature", "1").stdout.splitlines()
+    assert f"verify_gate.py feature {ID}" in out[1], out
 
 
 def test_goal_cli_adds_the_sentence_only_when_the_goal_is_not_done(repo: Path) -> None:
