@@ -95,6 +95,8 @@ from the change folder's files.
 | `PostToolUse Edit\|Write` | `lint-on-edit.sh` | runs matching file-scoped lint/format command |
 | `Stop` | `verify-on-stop.sh` | runs `python3 -m unittest discover -s tests` (falling back to `verify`) only when the turn changed source and that state was not verified before |
 
+Set `SDLC_GOAL_OFF=1` in the environment Claude starts with (`SDLC_GOAL_OFF=1 claude`) and no hook treats a goal as running. An agent's Bash `export` never reaches a hook, and there is no file switch.
+
 ## Build and test
 
 After the one gate, `python3 scripts/verify_gate.py approve <id>` locks the criteria. One

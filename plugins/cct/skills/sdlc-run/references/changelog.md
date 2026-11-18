@@ -5,6 +5,14 @@ version warning, the **Mechanical** lines are what `adopt` does for you (it adds
 with the stack's defaults and never overwrites a value), the **Manual** lines are printed for
 the engineer. A version with no migration lines needs nothing but a re-run of `adopt`.
 
+## 3.16.0 — the gate hooks stop looping
+
+- An ended goal (met, failed or `/goal clear`) no longer blocks: one shared helper, `goal_active.py`, reads the transcript for `pr-gate.sh`, `chain-gate.sh` and `verify-on-stop.sh`. `SDLC_GOAL_OFF=1` in the environment Claude starts with is the only off switch; there is no file switch.
+- `pr-gate.sh` ignores shell redirects such as `2>&1` when it reads a push, applies the goal rule only to the session's repo (any worktree of it), and honours the session repo's `prExceptions`.
+- A block that repeats exactly starts `STOP: this block repeated.`, names the hook and what it read, gives one owner action and says not to retry. Block history lives in `<git-common-dir>/sdlc-blocks/<session>.jsonl` and is kept 14 days.
+- Mechanical: re-running `adopt` copies the new `goal_active.py` and `block_state.py` to `.claude/hooks/` and allow-lists `.claude/hooks/*.py`. A hook without its helper blocks and names `sdlc-run adopt`.
+- Manual: restart open Claude Code sessions so they load the new hooks. A repo that lists a `.claude/hooks/` script under `keep` in `sdlc.json` copies the new `goal_active.py` and `block_state.py` by hand.
+
 ## 3.15.1 — verify-on-stop runs only after a turn that changed code
 
 - The Stop hook ran `verify` (up to 300 s) after every turn, even a chat reply, because it asked "is anything uncommitted?" and not "did this turn change anything?". It also read the whole transcript on every Stop and re-ran a failing `verify` after every later turn.
