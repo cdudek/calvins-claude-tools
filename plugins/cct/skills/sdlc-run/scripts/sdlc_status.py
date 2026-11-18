@@ -9,7 +9,7 @@ Runs from the plugin and is never copied into a repo: run it with the working di
 adopted repo, which it finds from the cwd. It loads `verify_gate` from the plugin's own
 `templates/scripts/`, not from the repo's `scripts/`. stdlib only.
 
-Everything is read from the files; only `readme` writes, and only the change's README.md. The stage (1-7): an archived change → 7,
+Everything is read from the files; only `readme` writes, and only the change's README.md, only over a README it generated and only when the content changed. The stage (1-7): an archived change → 7,
 lock.json → 5 (6 once every feature is merged), plan.md → 4, facts.md → 3, an approved intent → 2,
 otherwise 1. Milestone position comes from the design doc's `## Milestones` list (decisions.json
 `design`), features from the milestone's `milestone.md` Features table.
@@ -38,7 +38,7 @@ import subprocess
 import sys
 from pathlib import Path
 
-from change_docs import ids, readme
+from change_docs import MARKER, ids, readme
 
 STAGES = ("Intent", "UX plan", "Facts", "Tech plan", "Build", "Milestone", "Outcome")
 
@@ -72,7 +72,10 @@ def read_json(path: Path) -> dict:
 def find_change(root: Path, cfg: dict, change_id: str | None) -> Path | None:
     base = root / cfg.get("changesDir", "changes")
     if change_id:
-        return base / change_id if (base / change_id).is_dir() else None
+        # a change is a direct child of changesDir: no "..", no absolute path, not the archive
+        found = base / change_id
+        ok = found.is_dir() and found.resolve().parent == base.resolve()
+        return found if ok and found.name != "archive" else None
     if not base.is_dir():
         return None
     folders = [d for d in base.iterdir() if d.is_dir() and d.name != "archive"]
@@ -378,6 +381,22 @@ def goal_main(args: list[str]) -> int:
     return code
 
 
+def write_readme(change: Path, text: str) -> int:
+    """Write the reading map: only over a README this tool generated, and only when it differs,
+    so a stage commit carries it and a plain `status` never dirties the tree."""
+    path = change / "README.md"
+    old = path.read_text(encoding="utf-8") if path.exists() else None
+    if old is not None and MARKER not in old:
+        print(f"{path} is not generated (no {MARKER}); move or delete it first")
+        return 2
+    if old == text:
+        print(f"unchanged {path}")
+        return 0
+    path.write_text(text, encoding="utf-8")
+    print(f"wrote {path}")
+    return 0
+
+
 def main(argv: list[str]) -> int:
     if len(argv) < 2 or argv[1] not in ("map", "goal", "ids", "readme"):
         print(__doc__)
@@ -398,8 +417,7 @@ def main(argv: list[str]) -> int:
         print("\n".join(ids(change)))
     elif argv[1] == "readme":
         stage = f"{s['stage']}/7 {STAGES[s['stage'] - 1]}"
-        (change / "README.md").write_text(readme(change, stage), encoding="utf-8")
-        print(f"wrote {change / 'README.md'}")
+        return write_readme(change, readme(change, stage))
     else:
         print(milestone_map(s))
     return 0

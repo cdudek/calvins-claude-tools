@@ -362,3 +362,34 @@ def test_readme_is_regenerated_and_never_lists_itself_as_an_id_source(repo: Path
     assert (change / "README.md").read_text() != first
     assert "[handover-2.md](handover-2.md)" in (change / "README.md").read_text()
     assert _run(repo, "ids", ID).stdout.strip() == "no ids in this change yet"
+
+
+def test_readme_refuses_paths_outside_the_changes_folder(repo: Path) -> None:
+    (repo / "README.md").write_text("project readme\n")
+    for bad in ("..", "../..", str(repo), "archive", "does-not-exist"):
+        r = _run(repo, "readme", bad)
+        assert r.returncode == 2, bad
+    assert (repo / "README.md").read_text() == "project readme\n"
+    assert not (repo / "changes" / "README.md").exists()
+
+
+def test_readme_replaces_only_a_generated_readme(repo: Path) -> None:
+    readme = repo / "changes" / ID / "README.md"
+    readme.write_text("# Written by hand\n")
+    r = _run(repo, "readme", ID)
+    assert r.returncode == 2 and "not generated" in r.stdout
+    assert readme.read_text() == "# Written by hand\n"
+    readme.unlink()
+    assert _run(repo, "readme", ID).returncode == 0
+    (repo / "changes" / ID / "handover.md").write_text("# h\n")
+    assert _run(repo, "readme", ID).returncode == 0
+    assert "handover.md" in readme.read_text()
+
+
+def test_readme_rewrites_nothing_when_the_content_is_the_same(repo: Path) -> None:
+    readme = repo / "changes" / ID / "README.md"
+    _run(repo, "readme", ID)
+    os.utime(readme, (1, 1))
+    r = _run(repo, "readme", ID)
+    assert r.returncode == 0 and "unchanged" in r.stdout
+    assert readme.stat().st_mtime == 1

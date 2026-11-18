@@ -29,8 +29,11 @@ used but never defined is listed last. Use it before asking the owner what "Q202
 ## The reading map
 
 `python3 ${CLAUDE_SKILL_DIR}/scripts/sdlc_status.py readme [<id>]` writes `README.md` into the
-change folder. It is generated: never edit it, regenerate it. Run it after each stage commit and
-whenever `status` runs.
+change folder. It is generated: never edit it, regenerate it. Run it just before each stage commit so
+the commit carries it; `status` never writes it, so a clean head stays clean for `verify`.
+It writes only when the content changed, only inside a change folder directly under
+`changesDir`, and only over a README that carries its generator marker; a hand-written README
+is left alone and reported.
 
 - **Three entry points on top:** understand the change (`intent.md`), review it (`facts.md`, then
   `plan.md`), pick up the work (the stage and the latest `handover*.md`).
