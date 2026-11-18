@@ -31,7 +31,9 @@ never "B19 blocks the build". The id is a pointer for whoever wants the source, 
 
 `python3 ${CLAUDE_SKILL_DIR}/scripts/sdlc_status.py ids [<id>]` prints every id the change defines
 as `F1   <one-line meaning>  (facts.md)`: the meaning, then the file that decides it. An id that is
-used but never defined is listed last. Use it before asking the owner what "Q202" is.
+used but never defined is listed last. For an analysis or challenge row the meaning is its
+`Finding` or `Challenge` column, never the `Where` cell. The milestone report template points at
+this command. Use it before asking the owner what "Q202" is.
 
 ## The reading map
 
@@ -43,9 +45,11 @@ It writes only when the content changed, only inside a change folder directly un
 is left alone and reported.
 
 - **Three entry points on top:** understand the change (`intent.md`), review it (`facts.md`, then
-  `plan.md`), pick up the work (the stage and the latest `handover*.md`).
+  `plan.md`), pick up the work (the stage and the latest `handover*.md`, by the date or number in
+  its name).
 - **One row per document:** the question it answers, who writes it, at which stage, and whether a
-  newcomer needs it. A document not written yet is named and marked.
+  newcomer needs it. A document not written yet is named and marked. Any other file in the
+  folder is listed under "Other files in this folder".
 - **For agents:** evidence, run logs, audits and locks sit below a line of that name. A newcomer
   skips them.
 

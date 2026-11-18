@@ -42,7 +42,7 @@ def _first_sentence(text: str) -> str:
     return first
 
 
-def meaning(ident: str, line: str) -> str | None:
+def meaning(ident: str, line: str, header: list[str] | None = None) -> str | None:
     """The one-line meaning when `line` defines `ident`, else None. A definition is a table row
     whose first cell is the id, or a list item that opens with the id (bold or not)."""
     if line.lstrip().startswith("|"):
@@ -53,12 +53,27 @@ def meaning(ident: str, line: str) -> str | None:
             return _first_sentence(cells[3])
         if ident[0] == "J" and len(cells) > 3:
             return _first_sentence(f"When {cells[1]}, I want {cells[2]}, so I can {cells[3]}")
+        if ident[0] in "XH" and header:  # the Finding or Challenge column, not the longest cell
+            col = next((i for i, h in enumerate(header) if h.lower() in ("finding", "challenge")), -1)
+            if 0 < col < len(cells):
+                return _first_sentence(cells[col])
         return _first_sentence(max(cells[1:], key=len))
     m = re.match(rf"^\s*(?:[-*]|\d+\.)\s+(?:\[[ x]\]\s+)?\**{ident}\b(.*)$", line)
     if not m:
         return None
     rest = re.sub(r"^\**\s*(?:\([^)]*\)\s*)*", "", m.group(1))  # drop "** (A1; rules x)" lead
     return _first_sentence(rest) or None
+
+
+def _lines(text: str):
+    """(line, header cells of the table it sits in, or None)."""
+    lines, header = text.splitlines(), None
+    for i, line in enumerate(lines):
+        if not line.lstrip().startswith("|"):
+            header = None
+        elif i + 1 < len(lines) and re.fullmatch(r"\s*\|[\s:|-]+\|\s*", lines[i + 1]):
+            header = _cells(line)
+        yield line, header
 
 
 def ids(change: Path) -> list[str]:
@@ -77,8 +92,8 @@ def ids(change: Path) -> list[str]:
             hit = next(
                 (
                     t
-                    for line in p.read_text(encoding="utf-8").splitlines()
-                    if (t := meaning(ident, line))
+                    for line, header in _lines(p.read_text(encoding="utf-8"))
+                    if (t := meaning(ident, line, header))
                 ),
                 None,
             )
@@ -100,6 +115,34 @@ DOCS = (
         "agent drafts, engineer confirms",
         "1 Intent",
         "yes",
+    ),
+    (
+        "spec/brief.md",
+        "What problem does the design solve, and for whom?",
+        "agent (ux-design-run)",
+        "2 UX plan",
+        "yes",
+    ),
+    (
+        "spec/ia.md",
+        "Which objects and pages are there, and how do they connect?",
+        "agent (ux-design-run)",
+        "2 UX plan",
+        "no",
+    ),
+    (
+        "spec/interaction.md",
+        "How does each screen behave, state by state?",
+        "agent (ux-design-run)",
+        "2 UX plan",
+        "no",
+    ),
+    (
+        "spec/sitemap.md",
+        "Which pages exist, and how do people reach them?",
+        "agent (ux-sitemap-create)",
+        "2 UX plan",
+        "no",
     ),
     (
         "spec/screens.md",
@@ -157,10 +200,43 @@ def _name(change: Path, rel: str) -> str:
     return f"[{rel}]({rel})" if (change / rel).exists() else f"{rel} (not written yet)"
 
 
+def latest_handover(change: Path) -> Path | None:
+    """The newest handover*.md: by the date in its name, else by its number (handover-10 after
+    handover-9), else the plain handover.md last of all. Names, not file times: a checkout resets those."""
+
+    def key(p: Path) -> tuple[str, int, str]:
+        stem = p.stem
+        date = re.search(r"\d{4}-\d{2}-\d{2}", stem)
+        nums = re.findall(r"(?<!\d)\d+(?!\d)", re.sub(r"\d{4}-\d{2}-\d{2}", "", stem))
+        return (date.group(0) if date else "", int(nums[-1]) if nums else 0, p.name)
+
+    found = sorted(change.glob("handover*.md"), key=key)
+    return found[-1] if found else None
+
+
+KNOWN_DIRS = ("verify", "asks", "spec/prototype")
+
+
+def others(change: Path) -> list[str]:
+    """Files in the folder (two levels deep) that neither table names."""
+    known = {f for f, *_ in DOCS} | {f for f, *_ in FOR_AGENTS} | {"README.md"}
+    out = []
+    for p in sorted(change.rglob("*")):
+        rel = p.relative_to(change).as_posix()
+        if not p.is_file() or len(p.relative_to(change).parts) > 2 or rel in known:
+            continue
+        if p.name.startswith(".") or p.name.startswith("handover") or rel.startswith(
+            tuple(f"{d}/" for d in KNOWN_DIRS)
+        ):
+            continue
+        out.append(rel)
+    return out
+
+
 def readme(change: Path, stage: str) -> str:
     """The reading map of one change folder; regenerated, never edited by hand."""
-    latest = sorted(change.glob("handover*.md"))
-    pick = f"[{latest[-1].name}]({latest[-1].name})" if latest else "no handover yet"
+    latest = latest_handover(change)
+    pick = f"[{latest.name}]({latest.name})" if latest else "no handover yet"
     out = [
         f"# {change.name}",
         "",
@@ -180,7 +256,11 @@ def readme(change: Path, stage: str) -> str:
         "| Document | Question it answers | Who writes it | Stage | A newcomer needs it |",
         "|---|---|---|---|---|",
     ]
-    out += [f"| {_name(change, f)} | {q} | {w} | {s} | {n} |" for f, q, w, s, n in DOCS]
+    shown = latest.name if latest else "handover.md"
+    out += [
+        f"| {_name(change, shown if f == 'handover.md' else f)} | {q} | {w} | {s} | {n} |"
+        for f, q, w, s, n in DOCS
+    ]
     out += [
         "",
         "## For agents",
@@ -191,4 +271,7 @@ def readme(change: Path, stage: str) -> str:
         "|---|---|---|---|",
     ]
     out += [f"| {_name(change, f)} | {q} | {w} | {s} |" for f, q, w, s in FOR_AGENTS]
+    if extra := others(change):
+        out += ["", "## Other files in this folder", "", "Not in either list above.", ""]
+        out += [f"- [{rel}]({rel})" for rel in extra]
     return "\n".join(out) + "\n"

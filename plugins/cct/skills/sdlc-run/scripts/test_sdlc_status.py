@@ -450,3 +450,62 @@ def test_readme_rewrites_nothing_when_the_content_is_the_same(repo: Path) -> Non
     r = _run(repo, "readme", ID)
     assert r.returncode == 0 and "unchanged" in r.stdout
     assert readme.stat().st_mtime == 1
+
+
+# --- reading map and glossary: the real folder, the named column ---------------------------------
+
+
+def test_glossary_reads_the_finding_and_challenge_columns_not_the_longest_cell(repo: Path) -> None:
+    change = repo / "changes" / ID
+    long_where = "plan.md ## Approach, the paragraph that starts with the export and goes on"
+    (change / "analyze.md").write_text(
+        "| ID | Severity | Pass | Where | Finding | Status |\n|---|---|---|---|---|---|\n"
+        f"| X1 | HIGH | coverage | {long_where} | The plan misses the export step. | open |\n"
+    )
+    (change / "challenge.md").write_text(
+        "| ID | Severity | Lens | Where | Challenge | Status |\n|---|---|---|---|---|---|\n"
+        f"| H1 | HIGH | simpler | {long_where} | A cron job would do. | answered, see plan |\n"
+    )
+    (change / "plan.md").write_text("Because (X1) and (H1) we wait.\n")
+    out = _run(repo, "ids", ID).stdout.splitlines()
+    assert "X1   The plan misses the export step.  (analyze.md)" in out
+    assert "H1   A cron job would do.  (challenge.md)" in out
+
+
+def test_readme_lists_the_standard_spec_files_and_names_every_other_file(repo: Path) -> None:
+    change = repo / "changes" / ID
+    (change / "spec").mkdir()
+    for name in ("brief", "ia", "interaction", "sitemap"):
+        (change / "spec" / f"{name}.md").write_text("# x\n")
+    (change / "notes.md").write_text("# mine\n")
+    (change / "spec" / "extra.md").write_text("# mine\n")
+    (change / "verify").mkdir()
+    (change / "verify" / "report.json").write_text("{}")
+    _run(repo, "readme", ID)
+    text = (change / "README.md").read_text()
+    for name in ("brief", "ia", "interaction", "sitemap"):
+        assert f"[spec/{name}.md](spec/{name}.md)" in text
+    other = text.split("## Other files in this folder")[1]
+    assert "[notes.md](notes.md)" in other and "[spec/extra.md](spec/extra.md)" in other
+    assert "spec/brief.md" not in other and "report.json" not in other
+
+
+@pytest.mark.parametrize(
+    ("names", "latest"),
+    [
+        (["handover.md", "handover-2.md"], "handover-2.md"),
+        (["handover-2.md", "handover-10.md", "handover-9.md"], "handover-10.md"),
+        (["handover-2026-11-20.md", "handover-2026-11-18.md", "handover-3.md"], "handover-2026-11-20.md"),
+    ],
+)
+def test_readme_points_at_the_latest_handover(repo: Path, names: list[str], latest: str) -> None:
+    change = repo / "changes" / ID
+    for n in names:
+        (change / n).write_text("# h\n")
+    _run(repo, "readme", ID)
+    assert f"read [{latest}]({latest})." in (change / "README.md").read_text()
+
+
+def test_the_milestone_report_template_links_the_glossary() -> None:
+    template = SCRIPT.parent.parent / "templates" / "change" / "milestone.md"
+    assert "sdlc_status.py ids" in template.read_text()
