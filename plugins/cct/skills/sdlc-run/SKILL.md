@@ -13,7 +13,7 @@ description: >-
 allowed-tools: "Read Grep Glob Edit Write Agent Skill AskUserQuestion Bash(bash */sdlc-run/scripts/*) Bash(python3 */sdlc-run/scripts/*) Bash(python3 */sdlc-run/templates/scripts/sdlc_version.py*) Bash(python3 scripts/sdlc_version.py*) Bash(python3 scripts/verify_gate.py *) Bash(wt *) Bash(git *) Bash(gh *) Bash(bd *) Bash(plannotator *) Bash(make *) Bash(pnpm *) Bash(uv *) Bash(npx *) EnterWorktree mcp__claude_ai_Linear__* mcp__linear__*"
 user_invocable: true
 metadata:
-  version: 3.19.0
+  version: 3.20.0
   author: calvindudek
 effort: high
 ---
@@ -279,6 +279,7 @@ debug failures locally, not through remote CI. Commands:
 
 ## References
 
+- `references/convergence.md` — six-layer pass rule, severity, frozen defect list, fix-round budget, design-system audit, pinned capture.
 - `references/design-inputs.md` — the visual source of truth, the six layers, each kind of input, bundles and rendering, what wins, questioning the design.
 - `references/stages.md` — every step, input, output, skip and failure mode.
 - `references/trackers.md` — Linear, GitHub, Beads: choosing, setting up, the four levels in each.

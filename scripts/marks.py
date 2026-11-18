@@ -35,7 +35,8 @@ NOTE = re.compile(r"^(\d+)\. ([^\n]*(?:\n(?!\d+\. ).*)*)", re.M)
 IMAGE = re.compile(r"!\[[^\]]*\]\(([^)]+)\)")
 IMAGES = {".png", ".jpg", ".jpeg", ".webp", ".gif", ".svg", ".avif", ".bmp", ".tif", ".tiff"}
 NOTE_STATUSES = {"fixed", "partly", "not-fixed", "contradicted", "ruled-out", "cant-see"}
-REFERENCE_STATUSES = {"match", "differs"}
+# waits-on-design-system: done in the app, only a design-system part is missing; not a failure.
+REFERENCE_STATUSES = {"match", "differs", "waits-on-design-system"}
 FILLED = {
     "decision": None,
     "expected": "",
@@ -253,7 +254,11 @@ def check(change: Path, sources: list[dict], repo: Path, designs: Path, globs: l
             and (not isinstance(status, str) or status not in statuses)
         ):
             problem("invalid status")
-        if status not in ("fixed", "match", "ruled-out") and not filled(row.get("accepted")):
+        if status == "waits-on-design-system" and not filled(row.get("differs")):
+            problem("waits-on-design-system must name the missing design-system parts in differs")
+        if status not in ("fixed", "match", "ruled-out", "waits-on-design-system") and not filled(
+            row.get("accepted")
+        ):
             problem("unresolved status; needs the engineer's accepted words")
         if status != "ruled-out":
             if not filled(row.get("expected")):

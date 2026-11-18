@@ -49,6 +49,26 @@ Run up to three fix rounds, then write the verdict.
     Failure means the review did not run and `verdict: fail`. Pass only when the check passes
     and no P0-P2 remains.
 
+## Layers and tolerances
+
+A screen passes on six layers. These are the defaults; a repo may tighten them in its config and
+never loosen them without a decision record. Write the tolerance used in each Measurements row.
+
+| Layer | Tolerance |
+|---|---|
+| Structure | Same headings in the same order, same landmarks, nothing lost at 320 px. |
+| Copy | Same words after normalising quotes and spaces; sample data and ruled lines excluded. |
+| Tokens | Same design token for colour, type, weight, radius, background; sizes within 0.5 px. |
+| Geometry | Gaps use a spacing token and are within 2 px of the reference; anchors within 4 px desktop, 2 px phone; order and alignment exact. |
+| Rules and access | The repo's UI rules and WCAG 2.2 AA, zero violations. |
+| Review | Only High and Medium defects fail; Low is listed, not blocking. |
+
+A pixel diff is advisory only: sample data in designs is meant to differ. Severity: High blocks a
+task or fails contrast (P1), Medium is noticed at a glance (P2), Low is only visible when
+measuring (P3, does not fail). The defect list per screen is frozen after the first review (later
+rounds may add only High items or regressions), and the budget is two fix rounds per screen per
+design-system release. Full rules: the sdlc-run `convergence.md`.
+
 ## Mandatory Surface Pass
 
 - Typography.
@@ -92,8 +112,8 @@ created: YYYY-MM-DD
 
 ## Measurements
 
-| Item | Spec value | Built value | Result |
-|---|---|---|---|
+| Layer | Item | Spec value | Built value | Tolerance | Result |
+|---|---|---|---|---|---|
 
 ## Mock Shortcomings
 

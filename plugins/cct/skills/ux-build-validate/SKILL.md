@@ -53,7 +53,16 @@ resolve what the spec already decides.
 ## Severity
 
 P0-P3, the kit's one scale: `finding-format.md` maps P0 to Critical, P1 to High, P2 to Medium, P3
-to Low. Reuse its format where it fits.
+to Low. Reuse its format where it fits. For visual defects: High (P1) blocks a task or fails
+contrast, Medium (P2) is noticed at a glance, Low (P3) is only visible when measuring and does not
+fail.
+
+## Convergence
+
+Judge on six layers with written tolerances (`references/build.md`, "Layers and tolerances"). A
+pixel diff is advisory only. Only High and Medium fail; Low is listed. Freeze the defect list
+after the first review and stop after two fix rounds per design-system release, then hand the
+owner a side-by-side list.
 
 ## Delegates
 

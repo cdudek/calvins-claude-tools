@@ -134,3 +134,34 @@ Return the absolute run directory and checker script path to an SDLC caller. It 
 as `verify_gate.py ... --visual-check "<checker>" --visual-run "<run>"` so the check runs again
 inside the final gate and its failure appears in the gate report. Multiple runs use repeated
 `--visual-run` flags. Keep run artifacts available until that gate finishes.
+
+## 5. Judge on six layers, and let the rounds end
+
+Where the images are compared with a reference (a prototype, a design, a spec), judge six layers
+with written tolerances. These are defaults: a repo may tighten them in its config, never loosen
+them without a decision record.
+
+| Layer | Pass rule |
+|---|---|
+| Structure | Same headings in the same order, same landmarks, nothing lost at 320 px. |
+| Copy | Same words after normalising quotes and spaces; sample data and ruled lines excluded. |
+| Tokens | Same design token for colour, type, weight, radius, background; sizes within 0.5 px. |
+| Geometry | Gaps use a spacing token and are within 2 px of the reference; anchors within 4 px desktop, 2 px phone; order and alignment exact. |
+| Rules and access | The repo's UI rules and WCAG 2.2 AA, zero violations. |
+| Review | Only High and Medium defects fail; Low is listed, not blocking. |
+
+- **A pixel diff is advisory.** Sample data in designs is meant to differ, so a diff fails for the
+  wrong reason. Use it to find where to look.
+- **Severity for visual defects** reads the kit's one scale in `finding-format.md`: High (P1)
+  blocks a task or fails contrast, Medium (P2) is noticed at a glance (wrong component, missing
+  element, misalignment over 4 px), Low (P3) is only visible when measuring and does not fail.
+  Critical (P0) is unchanged.
+- **One defect list per screen, frozen after the first review.** Later reviews tick items off and
+  may add only a High item or a regression.
+- **Two fix rounds per screen per design-system release.** After that, a side-by-side list goes to
+  the owner to accept or send back.
+- **Capture from one build per milestone version**, from a worktree pinned to one commit, never
+  the live milestone branch: merges moved the branch mid-capture and ruined a batch. Capture each
+  screen in one batch, twice, for stability.
+
+The sdlc-run reference `convergence.md` has the full rules.
