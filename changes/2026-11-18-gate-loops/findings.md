@@ -18,7 +18,7 @@ Source: `cct:review-code-run changes` (deep, Claude and Codex) on `origin/main..
 - [x] **R14 `&>` splits the push** (`pr-gate.sh:273`, warning): `git push &> log origin <branch>` drops the refspec, so the current branch is judged instead. Fix: treat `&` followed by a `>` token as a redirect, not a separator.
 - [x] **R15 repeated relative `-C`** (`pr-gate.sh:304`, warning): each `-C` resolves against the first directory, not the previous one, as git does. Fix: resolve against the running directory.
 - [x] **R1 adopt checks only a `.sh` for ignore rules** (`adopt.py:1050`, warning): a repo that ignores `*.py` under `.claude/` keeps the helpers untracked and fresh clones block. Fix: run the check for a helper `.py` too.
-- [ ] **R4 cleanup deletes any old file in the state dir; session id unchecked** (`block_state.py:48`, warning): cleanup removes only regular `*.jsonl` files, never through a symlink, and a `session_id` outside `[A-Za-z0-9_-]` gets no state file (first-time message, N1).
+- [x] **R4 cleanup deletes any old file in the state dir; session id unchecked** (`block_state.py:48`, warning): cleanup removes only regular `*.jsonl` files, never through a symlink, and a `session_id` outside `[A-Za-z0-9_-]` gets no state file (first-time message, N1).
 
 ## Advisory
 
