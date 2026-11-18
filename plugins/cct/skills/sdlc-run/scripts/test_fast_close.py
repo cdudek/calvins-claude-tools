@@ -181,3 +181,42 @@ def test_stage_6_lists_the_assessment_once_and_lets_it_dispatch_the_specialists(
 def test_the_quote_rule_is_one_message_of_at_least_eight_words_naming_the_item() -> None:
     assert "at least eight words" in STEP4 and "names the item id" in STEP4
     assert "SDLC_TRANSCRIPT" not in CONVERGENCE
+
+
+# 7. Tests first that can start before the UI exists
+STAGE5 = STAGES.split("## Stage 5 — Build", 1)[1].split("## Records, gates and waiting", 1)[0]
+
+
+def test_stage_5_starts_from_the_smallest_failing_assertion() -> None:
+    assert "smallest failing assertion from the approved fact" in STAGE5
+    assert "only after the surface exists" in STAGE5
+    assert "live selectors" in STAGE5
+
+
+def test_stage_5_names_an_executable_runner_not_the_rulebook() -> None:
+    assert "`cct:test-e2e-policy` is a rulebook, not a runner" in STAGE5
+    assert "`cct:test-e2e-policy` on the feature tags" not in STAGE5
+
+
+def test_the_builder_writes_the_smallest_failing_assertion_first() -> None:
+    assert "smallest failing assertion from the approved fact" in BUILDER
+
+
+# 8. Fact proof is collected once, keyed, and reused
+AUDITOR = flat(CCT / "agents/review-criteria-auditor.md")
+STAGE6 = STAGES.split("## Stage 6 — Milestone", 1)[1].split("### Enforcement audit", 1)[0]
+
+
+def test_builders_return_evidence_keyed_by_fact_tag_and_sha() -> None:
+    assert "evidence keyed by fact, tag and tested SHA" in BUILDER
+    assert "evidence keyed by fact, tag and tested SHA" in STAGES
+
+
+def test_the_close_reuses_matching_evidence_and_exercises_only_the_rest() -> None:
+    assert "reuses the final-suite evidence of every fact whose tag and tested SHA match" in STAGE6
+    assert "only the behaviour no evidence covers and the seams between features" in STAGE6
+
+
+def test_the_criteria_auditor_gets_an_explicit_criteria_input() -> None:
+    assert "verify/ac.json" in STAGE6
+    assert "ac.json" in AUDITOR

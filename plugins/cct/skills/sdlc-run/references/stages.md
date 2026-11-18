@@ -271,9 +271,11 @@ a change small enough for one milestone has one.
    earlier milestone merges, and right before each close (the parent moves while you build).
    The merge may run in the supervisor's worktree. It is a commit, never a PR; `verify_gate.py milestone` fails with
    `check=parent-sync` until it is done, so it cannot be skipped.
-2. Per feature, in order: write the
-   tests for its facts (`cct:test-e2e-coverage-run`, tagged `@F<n>`;
-   bugs: `test-behavior-writer`, then `review-fix-implementer`), build in the plan's folders, commit,
+2. Per feature, in order: write the smallest failing assertion from the approved fact, tagged
+   `@F<n>` (a unit, API or component test that can run before the UI exists; for a control that
+   does not exist yet, assert its observable contract), build in the plan's folders until it runs
+   green, then author the browser E2E with live selectors (`cct:test-e2e-coverage-run`) only after
+   the surface exists; bugs: `test-behavior-writer`, then `review-fix-implementer`. Commit,
    set the row in `milestone.md` to `done <sha>`, start the next feature at once. **Run touched tests and required pre-commit checks between features**; do not
    repeat the full suite while diagnosing one failure. The full suite and the full E2E run once,
    inside `verify_gate.py milestone` at the close, never as a separate run before it.
@@ -309,8 +311,9 @@ a change small enough for one milestone has one.
      Bugs: `test-behavior-writer` writes the failing test, `testLocked: true`, then
      `review-fix-implementer`.
   3. Build in the plan's folders. A file elsewhere is `scope-growth`: stop and ask.
-  4. `cct:test-e2e-policy` on the feature tags locally, in the feature's own worktree and E2E
-     slot, in the foreground (see Wall clock below); `test-flake-fix` for an inconsistent test.
+    4. Run the feature's tags with the repo's E2E command (the stack's command in
+     `suite-speed-and-reliability.md`; `cct:test-e2e-policy` is a rulebook, not a runner), locally,
+     in the feature's own worktree and E2E slot, in the foreground (see Wall clock below); `test-flake-fix` for an inconsistent test.
   5. `python3 scripts/verify_gate.py feature <id>`, once per feature at the end, never after a
      task group; between edits run only the test files the change touched, since the gate is
      the final full check. On `FAIL`, use the targeted failure loop in [local-first](local-first.md), then rerun the full gate once: passed checks on an
@@ -446,6 +449,9 @@ disappear.
   logs, derived from the worktree path. A repo that hard-codes a port or database name gets
   one env var per value first. Schedule runs under the lock and load policy in
   `../../test-e2e-policy/references/suite-speed-and-reliability.md` section F.
+- **Builders return evidence keyed by fact, tag and tested SHA.** Each report ends with one line
+  per fact: fact id, `@F<n>` tag, the commit the test ran on, result, test name. The close
+  reuses it (Stage 6, validation).
 - **Builders never wait on background work.** E2E and long gates run in the foreground with a
   long tool timeout. A builder that parks on its own background job stalls the supervisor and
   the next builder.
@@ -514,12 +520,16 @@ person's own browser session. Never use Claude in Chrome or any tool driving tha
    gaps, not inferred passes. A `ruled-out` note needs its ADR, not a screenshot.
 2a. **Validation: does each feature do what the plan said?** Separate from the checks, which
    prove the code is sound. For every fact and every ask of this milestone, exercise the
-   built app (E2E with the fact's tag, a headless capture of the named screen and state, or
-   the `cct:test-behavior-verifier` agent driving the flow) and write one row to
+      built app (E2E with the fact's tag, a headless capture of the named screen and state, or
+   the `cct:test-behavior-verifier` agent driving the flow). The close reuses the final-suite
+   evidence of every fact whose tag and tested SHA match the head being closed (a changed row is
+   run again) and exercises only the behaviour no evidence covers and the seams between features and write one row to
    `changes/<id>/validation.md`: `F<n>/A<n>`, expected (the fact's words), observed (what the
    app did), evidence (test name, shot path, command output), verdict `met`, `not met` or
    `partly`. A `not met` or `partly` row is a blocking finding (the gate blocks on it: `validation-not-met`). `cct:review-criteria-auditor` grades the
-   same rows against the code; where it and the observed behaviour disagree, the behaviour
+   same rows against the code, from an explicit input: write `changes/<id>/verify/ac.json`
+   (`{"criteria": [{"id", "text"}]}`, one per fact and ask, the words as written) and name it in
+   its prompt; where it and the observed behaviour disagree, the behaviour
    wins and the row says so. Also list the open `questions.md` rows and the default each took.
 2b. **Converge**, after validation and before the findings are final (`references/quality-passes.md`):
    append-only; a ticked box is not evidence. Re-read every fact and ask against the diff and
