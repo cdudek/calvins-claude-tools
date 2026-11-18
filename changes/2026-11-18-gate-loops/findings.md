@@ -12,7 +12,7 @@ Source: `cct:review-code-run changes` (deep, Claude and Codex) on `origin/main..
 ## Fix round 1
 
 - [x] **R7 off switch blocks every build edit** (`chain-gate.sh:374`, warning): with `SDLC_GOAL_OFF=1` the helper reports no goal, so chain-gate denies every milestone source edit with "building happens inside /goal", the opposite of what the switch is for (J3). Fix: while `SDLC_GOAL_OFF=1`, chain-gate skips the goal requirement and allows the edit; the docs say so.
-- [ ] **R8 a non-dict `message` crashes the helper** (`goal_active.py:48`, warning): a `user` row whose `message` is a list raises, both PreToolUse hooks exit with a traceback and fail open. Fix: check `isinstance(..., dict)`.
+- [x] **R8 a non-dict `message` crashes the helper** (`goal_active.py:48`, warning): a `user` row whose `message` is a list raises, both PreToolUse hooks exit with a traceback and fail open. Fix: check `isinstance(..., dict)`.
 - [ ] **R10 helper import can fall back to a project module** (`pr-gate.sh:84`, `chain-gate.sh`, warning): `sys.path` import finds a same-named module from the working directory when the sibling is missing. Fix: load both helpers by exact sibling path (`importlib.util.spec_from_file_location`); a missing or broken file still blocks and names `sdlc-run adopt`.
 - [ ] **R12 `words: null` counts as the engineer's words** (`pr-gate.sh:156`, warning): `str(None)` is non-empty. Fix: accept only a dict row with a non-blank string `words`.
 - [ ] **R14 `&>` splits the push** (`pr-gate.sh:273`, warning): `git push &> log origin <branch>` drops the refspec, so the current branch is judged instead. Fix: treat `&` followed by a `>` token as a redirect, not a separator.

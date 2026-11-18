@@ -45,7 +45,8 @@ def _cleared(text: str) -> bool:
 def _text(entry: dict) -> str:
     c = entry.get("content")
     if c is None:
-        c = (entry.get("message") or {}).get("content")
+        m = entry.get("message")
+        c = m.get("content") if isinstance(m, dict) else None
     return c if isinstance(c, str) else ""
 
 
