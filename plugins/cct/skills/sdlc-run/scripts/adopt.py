@@ -1045,11 +1045,9 @@ def main() -> int:
     write(settings_path, json.dumps(settings, indent=2) + "\n")
 
     # A global gitignore that hides `.claude/*` would leave the hooks working on one laptop.
-    ignored = (
-        subprocess.run(
-            ["git", "check-ignore", "-q", ".claude/hooks/gate-bash.sh"], cwd=ROOT
-        ).returncode
-        == 0
+    ignored = any(  # a `*.py` rule leaves the helpers untracked while the `.sh` hooks stay
+        subprocess.run(["git", "check-ignore", "-q", f".claude/hooks/{name}"], cwd=ROOT).returncode == 0
+        for name in ("gate-bash.sh", "goal_active.py")
     )
     if ignored:
         gi = ROOT / ".gitignore"
