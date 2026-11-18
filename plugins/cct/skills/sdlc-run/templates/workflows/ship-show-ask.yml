@@ -2,7 +2,7 @@
 #
 # Every PR gets exactly one label from the paths it touches (.github/tiers.json):
 #   ask   a code owner must approve (CODEOWNERS + ruleset master-protection); never auto-merged
-#   show  auto-merge on green; the co-owner (vars.SDLC_COOWNER) is requested as reviewer and reads after
+#   show  auto-merge on green, nobody notified by the workflow
 #   ship  auto-merge on green, nobody notified
 # Bot PRs (image bumps, dependabot) are ship.
 #
@@ -78,12 +78,6 @@ jobs:
             [ "$old" = "$TIER" ] || gh pr edit "$PR" --remove-label "$old" 2>/dev/null || true
           done
           gh pr edit "$PR" --add-label "$TIER"
-
-      - name: Request the co-owner (show)
-        if: steps.classify.outputs.tier == 'show' && vars.SDLC_COOWNER != ''
-        env:
-          COOWNER: ${{ vars.SDLC_COOWNER }}
-        run: gh pr edit "$PR" --add-reviewer "$COOWNER" || echo "::notice::could not request $COOWNER (own PR?)"
 
   # Separate job, NO checkout: the `tier` job executes PR-authored code
   # (scripts/ship_show_ask.py from the PR's merge ref), and a PR could rewrite PATH from

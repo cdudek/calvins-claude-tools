@@ -1,7 +1,7 @@
 """Where a change stands: every milestone, the features of this one, and the stage.
 
     python3 ${CLAUDE_SKILL_DIR}/scripts/sdlc_status.py map [<id>]
-    python3 ${CLAUDE_SKILL_DIR}/scripts/sdlc_status.py goal <id> [--milestone <n> | --feature <n>]
+    python3 ${CLAUDE_SKILL_DIR}/scripts/sdlc_status.py goal <id> [--milestone <n> | --feature <n> | --project]
     python3 ${CLAUDE_SKILL_DIR}/scripts/sdlc_status.py ids [<id>]
     python3 ${CLAUDE_SKILL_DIR}/scripts/sdlc_status.py readme [<id>]
 
@@ -28,6 +28,12 @@ line `Blocking: <what>, because <why>; <who> runs `<step>`.` says the one thing 
 
 `ids` prints every id the change defines with its one-line meaning and the file that decides it.
 `readme` writes `<change>/README.md`, the reading map (`references/readability.md`).
+
+With sdlc.json `milestones.merge: "local"` and a project branch, a milestone has no PR: it is DONE
+when its `VERIFY PASS milestone` head is an ancestor of the local project/<slug> (line `GOAL <id>
+DONE merged=project/<slug> gate=<sha>`). `--project` reads the project's own record (`VERIFY PASS
+project <slug>`, written by `verify_gate.py project`) and the PR project/<slug> into the default
+branch, merged or armed, as above.
 """
 
 from __future__ import annotations
@@ -39,6 +45,9 @@ import sys
 from pathlib import Path
 
 from change_docs import ids, readme
+
+# verify_gate lives in the plugin's templates (it is also what adopt copies into repos).
+sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "templates" / "scripts"))
 
 STAGES = ("Intent", "UX plan", "Facts", "Tech plan", "Build", "Milestone", "Outcome")
 
@@ -204,16 +213,43 @@ def goal(
     root: Path, change: Path, scope: str = "milestone", n: int | None = None, gh=gh_json
 ) -> tuple[int, str]:
     """(exit code, the one line) for the change's goal; `gh(root, *args)` is injectable."""
+    from verify_gate import merges_locally, project_branch, project_record
+
     name = f"GOAL {change.name}"
-    report = read_json(change / "verify" / "report.json")
+    cfg = config(root) if (root / "sdlc.json").exists() else {}
+    project = project_branch(change, cfg)
+    subject = change.name
+    folder = change
+    if scope == "project":
+        subject = (read_json(change / "decisions.json").get("project") or {}).get("slug", "")
+        folder = project_record(subject, root) if project else change
+    report = read_json(folder / "verify" / "report.json")
     result = str(report.get("result", "")) if report.get("scope") == scope else ""
     blocked = re.fullmatch(r"VERIFY BLOCKED reason=([\w-]+)", result)
     if blocked:
         return 3, f"{name} BLOCKED reason={blocked.group(1)}"
-    passed = re.fullmatch(rf"VERIFY PASS {scope} {re.escape(change.name)} (\w+)", result)
+    passed = re.fullmatch(rf"VERIFY PASS {scope} {re.escape(subject)} (\w+)", result)
     missing = [] if passed else [f"{scope}-gate-pass"]
-    names = branches(change, read_json(change / "decisions.json"), scope, n)
-    if not names:
+    local = scope == "milestone" and project and merges_locally(cfg)
+    if local:  # no PR: the gated head must be merged into the local project branch
+        names = []
+        into = git(root, "rev-parse", "--verify", "--quiet", f"{project}^{{commit}}")
+        if passed and not (
+            into
+            and subprocess.run(
+                ["git", "-C", str(root), "merge-base", "--is-ancestor", passed.group(1), into],
+                capture_output=True,
+            ).returncode
+            == 0
+        ):
+            missing.append(f"gate-not-merged-into-{project}")
+    elif scope == "project":
+        names = [project] if project else []
+        if not names:
+            missing.append("no-project-branch")
+    else:
+        names = branches(change, read_json(change / "decisions.json"), scope, n)
+    if not names and not local and scope != "project":
         missing.append(f"no-branch-for-{scope}-{n}")
     prs = []
     for branch in names:
@@ -236,14 +272,14 @@ def goal(
     if prs and passed and prs[-1][0].get("headRefOid") != passed.group(1):
         missing.append(f"gate-sha-not-pr-{prs[-1][0]['number']}-head")
     if scope == "milestone":
-        # the gate's own record rules, one definition: the plugin's copy, not the repo's
-        sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "templates" / "scripts"))
-        from verify_gate import milestone_blockers
+        from verify_gate import milestone_blockers  # the gate's own record rules, one definition
 
         if blocker := milestone_blockers(change):
             missing.append(blocker[0])
     if missing:
         return 1, f"{name} OPEN " + ",".join(missing)
+    if local:
+        return 0, f"{name} DONE merged={project} gate={passed.group(1)}"
     pr, state = prs[-1]
     return 0, f"{name} DONE pr={pr['number']} state={state} gate={passed.group(1)}"
 
@@ -291,6 +327,18 @@ BLOCKS = {
         "findings.md has a Converge section without a Converged line",
         "the agent",
         "run the converge pass and add the Converged line",
+    ),
+    "project-gate-pass": (
+        "the project gate has not passed",
+        "no VERIFY PASS project is recorded for it",
+        "the agent",
+        "python3 scripts/verify_gate.py project {id}",
+    ),
+    "gate-not-merged-into-": (
+        "the milestone gate head is not merged into its local project branch",
+        "the milestone was never merged there, or moved after the gate",
+        "the agent",
+        "git switch <project branch> && git merge --no-ff <milestone branch>",
     ),
     "no-branch-for-": (
         "the plan names no branch for {n}",
@@ -359,6 +407,9 @@ def goal_main(args: list[str]) -> int:
         next((a for a in args if a in ("--milestone", "--feature")), None),
         "",
     )
+    project = "--project" in pos and not flag
+    if project:
+        pos.remove("--project")
     if flag:
         at = pos.index(flag)
         value = pos[at + 1] if at + 1 < len(pos) else ""
@@ -371,7 +422,8 @@ def goal_main(args: list[str]) -> int:
     if not root or not change:
         print(f"GOAL {pos[0]} OPEN no-change-folder")
         return 1
-    code, line = goal(root, change, flag[2:] if flag else "milestone", int(value) if flag else None)
+    scope = "project" if project else flag[2:] if flag else "milestone"
+    code, line = goal(root, change, scope, int(value) if flag else None)
     print(line)
     if code and (sentence := blocker(change, line, flag[2:] if flag else "milestone")):
         print(sentence)

@@ -14,17 +14,42 @@
 #      read by goal_active.py, the one reading chain-gate.sh and pr-gate.sh share. It parses the
 #      whole transcript, so it runs last. Unreadable -> verify runs. No helper -> exit 2.
 # A missing turn-start snapshot (first turn after an upgrade) skips step 3 only.
+# Interpreter starts: one on every Stop (payload + sdlc.json), a second only at step 5, on the
+# path that is about to run `verify` for seconds anyway.
 set -uo pipefail
 set -f # verifyDirty globs go to git as patterns, never expanded against cwd
 . "$(dirname "$0")/sdlc-config.sh"
 
-payload=$(cat)
-[ "$(sdlc_field "$payload" stop_hook_active)" = "true" ] && exit 0
+# One interpreter start for the whole hot path: the payload and sdlc.json are read together and
+# come back as NUL-separated fields -- stop_hook_active, transcript_path, verify, verifyDirty globs.
+fields=()
+while IFS= read -r -d '' f; do fields+=("$f"); done < <(
+  "$SDLC_PY" -c '
+import json, sys
+try:
+    d = json.load(sys.stdin)
+except ValueError:
+    d = {}
+if not isinstance(d, dict):
+    d = {}
+out = ["true" if d.get("stop_hook_active") is True else "false", d.get("transcript_path") or ""]
+try:
+    cfg = json.load(open(sys.argv[1], encoding="utf-8"))
+    out += [cfg.get("verifyStop") or cfg["verify"], " ".join(cfg["verifyDirty"])]
+except (OSError, ValueError, KeyError, TypeError, AttributeError):
+    out += ["", ""]
+sys.stdout.write("\0".join(out) + "\0")
+' "$SDLC_JSON" 2>/dev/null
+)
+[ "${#fields[@]}" -ge 4 ] || exit 0
+[ "${fields[0]}" = "true" ] && exit 0
+transcript=${fields[1]}
+verify=${fields[2]}
+globs=${fields[3]}
+[ -n "$verify" ] && [ -n "$globs" ] || exit 0
 
 cd "$SDLC_ROOT" || exit 0
 git rev-parse --is-inside-work-tree >/dev/null 2>&1 || exit 0
-verify=$(sdlc_get 'cfg.get("verifyStop") or cfg["verify"]') || exit 0
-globs=$(sdlc_get '" ".join(cfg["verifyDirty"])') || exit 0
 
 dirty=""
 for g in $globs; do
@@ -42,7 +67,6 @@ start="$gitdir/sdlc-turn-start.hash"
 stamp="$gitdir/sdlc-verify-stop.hash"
 [ -f "$stamp" ] && [ "$(cut -d' ' -f1 "$stamp")" = "$now" ] && exit 0
 
-transcript=$(printf '%s' "$payload" | python3 -c 'import json,sys; print(json.load(sys.stdin).get("transcript_path",""))' 2>/dev/null)
 # goal_active.py exits 0 when a goal runs; 1 for none or an unreadable transcript (verify runs).
 helper="$(dirname "$0")/goal_active.py"
 if [ ! -f "$helper" ]; then

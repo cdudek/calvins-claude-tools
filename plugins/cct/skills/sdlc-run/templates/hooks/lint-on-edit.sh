@@ -4,17 +4,37 @@
 # accumulates to a red CI job. Scoped to the file, never the repo -- the playbook's rule
 # for build-phase hooks is "fast and scoped to the file that changed".
 # Always exits 0: a formatter failure is not a reason to fail the edit.
+# One interpreter start per call: file, then the rules as NUL-separated <globs>, <command>.
 set -uo pipefail
 set -f # the globs are patterns to match against the file name, never expanded against cwd
 . "$(dirname "$0")/sdlc-config.sh"
 
-payload=$(cat)
-file=$(sdlc_field "$payload" file_path)
-[ -n "$file" ] && [ -f "$file" ] || exit 0
-rules=$(sdlc_get 'cfg["lintOnEdit"]') || exit 0
+fields=()
+while IFS= read -r -d '' f; do fields+=("$f"); done < <(
+  "$SDLC_PY" -c '
+import json, sys
+try:
+    file = (json.load(sys.stdin).get("tool_input") or {}).get("file_path") or ""
+    rules = json.load(open(sys.argv[1], encoding="utf-8")).get("lintOnEdit") or {}
+    out = [file]
+    for k, v in rules.items():
+        out += [k, v]
+except (OSError, ValueError, AttributeError, TypeError):
+    sys.exit(0)
+if file and rules:
+    sys.stdout.write("\0".join(out) + "\0")
+' "$SDLC_JSON" 2>/dev/null
+)
+[ "${#fields[@]}" -ge 3 ] || exit 0
+file=${fields[0]}
+[ -f "$file" ] || exit 0
 base=$(basename "$file")
 
-while IFS=$'\t' read -r globs command; do
+i=1
+while [ "$i" -lt "${#fields[@]}" ]; do
+  globs=${fields[$i]}
+  command=${fields[$((i + 1))]}
+  i=$((i + 2))
   [ -n "$globs" ] || continue
   for g in $globs; do
     # shellcheck disable=SC2254
@@ -24,5 +44,5 @@ while IFS=$'\t' read -r globs command; do
       $g) cd "$SDLC_ROOT" && sh -c "${command//\{file\}/\"\$1\"}" _ "$file" >/dev/null 2>&1 || true; exit 0 ;;
     esac
   done
-done < <(printf '%s' "$rules" | python3 -c 'import json,sys; [print(k+"\t"+v) for k,v in json.load(sys.stdin).items()]')
+done
 exit 0

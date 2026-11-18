@@ -104,6 +104,7 @@ def test_the_removed_verbs_are_refused(repo: Path) -> None:
 # --- goal: the one line a /goal condition matches --------------------------------------------
 
 sys.path.insert(0, str(SCRIPT.parent))
+sys.path.insert(0, str(SCRIPT.parent.parent / "templates" / "scripts"))
 import sdlc_status  # noqa: E402
 
 BRANCH = "milestone/redesign-r2-1"
@@ -362,3 +363,132 @@ def test_readme_is_regenerated_and_never_lists_itself_as_an_id_source(repo: Path
     assert (change / "README.md").read_text() != first
     assert "[handover-2.md](handover-2.md)" in (change / "README.md").read_text()
     assert _run(repo, "ids", ID).stdout.strip() == "no ids in this change yet"
+
+
+# --- goal in local milestones mode (sdlc.json milestones.merge: "local") ---------------------
+
+
+def _commit(repo: Path, name: str) -> str:
+    ident = ["-c", "user.name=t", "-c", "user.email=t@t"]
+    (repo / name).write_text(name)
+    subprocess.run(["git", "add", "-A"], cwd=repo, check=True, env=_env())
+    subprocess.run(["git", *ident, "commit", "-qm", name], cwd=repo, check=True, env=_env())
+    return subprocess.run(
+        ["git", "rev-parse", "HEAD"], cwd=repo, capture_output=True, text=True, env=_env()
+    ).stdout.strip()
+
+
+def _local_project(repo: Path, merge: str | None = "local") -> None:
+    """A project with a branch; the sdlc.json carries `milestones.merge` unless merge is None."""
+    (repo / "sdlc.json").write_text(json.dumps({"milestones": {"merge": merge}} if merge else {}))
+    decisions = repo / "changes" / ID / "decisions.json"
+    data = json.loads(decisions.read_text())
+    decisions.write_text(json.dumps({**data, "project": {"slug": "big", "branch": True}}))
+
+
+def _no_gh(root: Path, *args: str):
+    raise AssertionError(f"gh must not be called in local mode: {args}")
+
+
+def test_goal_local_milestone_is_done_when_the_gate_head_is_in_the_project_branch(
+    repo: Path,
+) -> None:
+    _local_project(repo)
+    gate = _commit(repo, "m1.txt")
+    subprocess.run(["git", "branch", "project/big"], cwd=repo, check=True, env=_env())
+    _gate(repo, f"VERIFY PASS milestone {ID} {gate}")
+    code, line = sdlc_status.goal(repo, repo / "changes" / ID, "milestone", None, gh=_no_gh)
+    assert (code, line) == (0, f"GOAL {ID} DONE merged=project/big gate={gate}")
+
+
+def test_goal_local_milestone_is_open_until_it_is_merged_into_the_project(repo: Path) -> None:
+    _local_project(repo)
+    before = _commit(repo, "base.txt")
+    subprocess.run(["git", "branch", "project/big"], cwd=repo, check=True, env=_env())
+    gate = _commit(repo, "m1.txt")  # the milestone moved past the project branch
+    _gate(repo, f"VERIFY PASS milestone {ID} {gate}")
+    want = (1, f"GOAL {ID} OPEN gate-not-merged-into-project/big")
+    assert sdlc_status.goal(repo, repo / "changes" / ID, "milestone", None, gh=_no_gh) == want
+    assert before != gate
+    subprocess.run(["git", "branch", "-D", "project/big"], cwd=repo, check=True, env=_env())
+    assert sdlc_status.goal(repo, repo / "changes" / ID, "milestone", None, gh=_no_gh) == want
+
+
+def test_goal_local_milestone_still_needs_a_gate_pass_and_closed_records(repo: Path) -> None:
+    _local_project(repo)
+    _commit(repo, "m1.txt")
+    subprocess.run(["git", "branch", "project/big"], cwd=repo, check=True, env=_env())
+    got = sdlc_status.goal(repo, repo / "changes" / ID, "milestone", None, gh=_no_gh)
+    assert got == (1, f"GOAL {ID} OPEN milestone-gate-pass")
+    _gate(repo, "VERIFY BLOCKED reason=attempts")
+    got = sdlc_status.goal(repo, repo / "changes" / ID, "milestone", None, gh=_no_gh)
+    assert got == (3, f"GOAL {ID} BLOCKED reason=attempts")
+
+
+@pytest.mark.parametrize("merge", [None, "pr"])
+def test_goal_without_local_mode_still_wants_the_milestone_pr(
+    repo: Path, merge: str | None
+) -> None:
+    _local_project(repo, merge)
+    gate = _commit(repo, "m1.txt")
+    subprocess.run(["git", "branch", "project/big"], cwd=repo, check=True, env=_env())
+    _gate(repo, f"VERIFY PASS milestone {ID} {gate}")
+    assert _goal(repo, {}) == (1, f"GOAL {ID} OPEN no-pr:{BRANCH}")
+    assert _goal(repo, {BRANCH: _pr(head=gate)})[0] == 0
+
+
+def test_goal_local_mode_without_a_project_uses_the_milestone_pr(repo: Path) -> None:
+    (repo / "sdlc.json").write_text(json.dumps({"milestones": {"merge": "local"}}))
+    _gate(repo, PASS)
+    assert _goal(repo, {}) == (1, f"GOAL {ID} OPEN no-pr:{BRANCH}")
+    assert _goal(repo, {BRANCH: _pr()})[0] == 0
+
+
+def _project_gate(repo: Path, result: str) -> None:
+    out = repo / ".git" / "sdlc" / "projects" / "big" / "verify"
+    out.mkdir(parents=True, exist_ok=True)
+    (out / "report.json").write_text(
+        json.dumps({"scope": "project", "id": "big", "result": result})
+    )
+
+
+PROJECT_BRANCH = "project/big"
+
+
+def test_goal_project_is_done_when_its_pr_merged_or_armed_on_the_gated_head(repo: Path) -> None:
+    _local_project(repo)
+    _project_gate(repo, f"VERIFY PASS project big {GATE}")
+    for pr, state in ((_pr(), "merged"), (_pr("OPEN", armed=True), "armed")):
+        got = _goal(repo, {PROJECT_BRANCH: pr}, "project")
+        assert got == (0, f"GOAL {ID} DONE pr=7 state={state} gate={GATE}")
+
+
+def test_goal_project_open_states(repo: Path) -> None:
+    _local_project(repo)
+    assert _goal(repo, {}, "project") == (
+        1,
+        f"GOAL {ID} OPEN project-gate-pass,no-pr:{PROJECT_BRANCH}",
+    )
+    _project_gate(repo, f"VERIFY PASS project big {GATE}")
+    assert _goal(repo, {PROJECT_BRANCH: _pr("OPEN")}, "project") == (
+        1,
+        f"GOAL {ID} OPEN pr-7-not-merged-or-armed",
+    )
+    assert _goal(repo, {PROJECT_BRANCH: _pr(head=MOVED)}, "project") == (
+        1,
+        f"GOAL {ID} OPEN gate-sha-not-pr-7-head",
+    )
+    _project_gate(repo, "VERIFY BLOCKED reason=env")
+    assert _goal(repo, {PROJECT_BRANCH: _pr()}, "project") == (3, f"GOAL {ID} BLOCKED reason=env")
+
+
+def test_goal_project_without_a_project_branch_is_open(repo: Path) -> None:
+    assert _goal(repo, {}, "project") == (1, f"GOAL {ID} OPEN project-gate-pass,no-project-branch")
+
+
+def test_goal_cli_reads_the_project_flag(repo: Path) -> None:
+    r = _run(repo, "goal", ID, "--project")
+    assert (
+        r.returncode == 1
+        and r.stdout.splitlines()[0] == f"GOAL {ID} OPEN project-gate-pass,no-project-branch"
+    )

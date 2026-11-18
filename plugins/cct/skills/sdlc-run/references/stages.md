@@ -107,6 +107,8 @@ Worktree lifecycle commands follow the [shared worktree policy](../../../referen
      `git push origin <parent>:refs/heads/milestone/<slug>`. `<parent>` is
      `origin/project/<slug>` when the project has a branch, else `origin/<defaultBranch>`.
      `hotfix` cuts no milestone branch.
+     In local mode: create `project/<slug>` locally from `origin/<defaultBranch>`, no push and no `git ls-remote` (see [Local milestones](local-first.md#local-milestones)).
+     In local mode (`milestones.merge: local`) every `origin/project/<slug>` in this file reads as the local `project/<slug>`; it is pushed once, at 6p, after `VERIFY PASS project`.
   4. Write `milestone.md` from the template for `new` and `single`; for `existing`, add a row to
      the named milestone's `milestone.md`. When the change names a design, add one line for it
      under that design's `## Milestones` (the guardrail test and `status` both read it).
@@ -278,6 +280,7 @@ a change small enough for one milestone has one.
    check, never the test loop.
    Scope the owner adds mid-run re-locks (`verify_gate.py approve <id>`) and gets one more close,
    logged under `## Revisions`.
+   In local mode: no push, no PR; merge the passed head into the project branch locally (see [Local milestones](local-first.md#local-milestones)).
 
 ### Feature PRs (`delivery: "feature-prs"`)
 
@@ -349,7 +352,8 @@ while a dependency PR's CI ran. Four rules, for every stack.
   last milestone it goes in the project PR's description. A fix for a milestone that already
   merged goes into that repo's next milestone. A merge from the default branch is the next
   milestone's sync row, never a `chore/merge-main-*` PR. `project/<slug>` is never pushed after
-  its creation; it moves only through milestone PRs. `pr-gate.sh` refuses everything else: a PR
+  its creation; it moves only through milestone PRs (local mode: it is never pushed before 6p and
+  moves only through local milestone merges). `pr-gate.sh` refuses everything else: a PR
   into `project/*` or `milestone/*` from any other branch, a push of a milestone head without
   `VERIFY PASS milestone` on it (a records-only commit after the PASS is fine), and inside
   `/goal` any other PR or push. Another repository follows the same rule with its own milestone
@@ -469,7 +473,7 @@ person's own browser session. Never use Claude in Chrome or any tool driving tha
    and line-format rules in `../../test-e2e-policy/references/suite-speed-and-reliability.md`
    section G. Send inconsistent results to `test-flake-fix`. Also run `cct:ux-assessment-run` only
    when the change adds a screen,
-   `cct:ux-spec-validate build`, the `cct:test-behavior-verifier` and `cct:review-criteria-auditor` agents for job
+   `cct:ux-build-validate`, the `cct:test-behavior-verifier` and `cct:review-criteria-auditor` agents for job
    stories and facts. `cct:review-security-run` runs only on the goal's last milestone, on the whole
    goal diff (`git diff origin/<defaultBranch>...milestone/<slug>-<last>`), and only when auth, money or
    consent is touched anywhere in it; in a project it waits for Stage 6p. Never on earlier milestones.
@@ -544,6 +548,7 @@ person's own browser session. Never use Claude in Chrome or any tool driving tha
    (Recommended)" with the one-line reason, or "Hold" with what is left. One go: no dialog;
    auto-merge is armed on green and the engineer reads `validation.md` in the PR. The dialog
    comes only when a Critical or High would be deferred.
+   In local mode: with a project branch, skip the push, the PR and auto-merge: after `VERIFY PASS milestone`, run `git switch project/<slug> && git merge --no-ff milestone/<slug>` ([Local milestones](local-first.md#local-milestones)). A milestone without a project still opens this one PR.
 
 ### Enforcement audit
 
@@ -585,6 +590,7 @@ Only when `decisions.json` has a `project`, and only once its last milestone has
    `origin/<defaultBranch>`, then one PR `project/<slug>` → default branch with the gate line
    in its description, merged with a merge commit. This is the PR that gets a tier. If the
    default branch moved after the last sync, merge it in locally once; never rebase it.
+   In local mode: run `python3 scripts/verify_gate.py project <slug>` on the checked-out `project/<slug>` (merged with `origin/<defaultBranch>`), then push it once and open the one PR ([Local milestones](local-first.md#local-milestones)).
 3. A blocking finding becomes one more milestone, closed and merged like any other.
 4. **The engineer accepts the project** in one `AskUserQuestion`. No second fix round: what is
    left becomes the next project's first change.
@@ -593,7 +599,11 @@ Only when `decisions.json` has a `project`, and only once its last milestone has
 
 1. Before the PR into the default branch merges, its last commit does
    `git mv changes/<id> changes/archive/<year>/<year-month>/<id>`, sets `archived_at` and reads
-   `changes(<id>): archived`: no separate PR after the merge. After it merges: comment the merge
+   `changes(<id>): archived`: no separate PR after the merge. **Guard, before the move:** run
+   `git grep -l -F "changes/<id>/" -- . ':!changes'`. A test, script or doc that reads or writes
+   inside the folder breaks the day it moves. Promote what it reads to `docs/` (product truth, not
+   a change record) or write outputs under `test-results/`, repoint the reference, and archive only
+   when the grep is empty. After it merges: comment the merge
    SHA in the tracker, `ExitWorktree keep`, then remove the owned path using the shared policy’s `wt remove`
    command (Git fallback; a worktree entered by path is never removed by `ExitWorktree`). Move the tracker forward only, never backwards.
 2. After release: read the success measure from PostHog (`cct:posthog-manage` or the insight

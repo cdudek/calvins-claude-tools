@@ -1106,7 +1106,7 @@ def main() -> int:
             manual.append(
                 f"ruleset on {cfg.get('defaultBranch', 'master')}: remove the GitHub App from the "
                 "pull_request bypass actors; delete the secrets CODE_MANAGER_APP_CLIENT_ID, "
-                "CODE_MANAGER_APP_PRIVATE_KEY, SDLC_SLACK_BOT_TOKEN and the variable SDLC_COOWNER "
+                "CODE_MANAGER_APP_PRIVATE_KEY and SDLC_SLACK_BOT_TOKEN "
                 "(Ship/Show/Ask is off, so the tier workflow that used them is gone)"
             )
     elif tiers_path.exists():
@@ -1203,6 +1203,16 @@ def main() -> int:
     # of every repo that still has them, and no repo needs ANTHROPIC_API_KEY.
     for name in ("claude-review.yml", "claude.yml", "ci-triage.yml"):
         remove(ROOT / ".github" / "workflows" / name, "no Claude in CI since sdlc-run 3.7.0")
+    # Decision4 is advisory (no workflow) since 3.12.0. A repo adopted before keeps the workflow
+    # adopt wrote then, which calls the shared checker and fails on every PR event. Only the
+    # generated one goes (it calls a shared decision4 checker workflow);
+    # a workflow of the repo's own that happens to be named decision4.yml stays.
+    d4 = ROOT / ".github" / "workflows" / "decision4.yml"
+    if d4.exists() and re.search(
+        r"decision4-check\.yml|/blueprints/", d4.read_text(encoding="utf-8")
+    ):
+        remove(d4, "Decision4 is advisory since sdlc-run 3.12.0: no workflow")
+        remove(ROOT / ".decision4.lock", "pinned the removed Decision4 checker")
     for src in sorted((TPL / "workflows").glob("*.yml")):
         dest = ROOT / ".github" / "workflows" / src.name
         if src.name == "ship-show-ask.yml" and not tiers_on:
@@ -1444,7 +1454,7 @@ def main() -> int:
 
     secrets = (
         [
-            "CODE_MANAGER_APP_CLIENT_ID + CODE_MANAGER_APP_PRIVATE_KEY (secrets), SDLC_COOWNER (variable)"
+            "CODE_MANAGER_APP_CLIENT_ID + CODE_MANAGER_APP_PRIVATE_KEY (secrets, normally already set; no action)"
             + (", SDLC_SLACK_BOT_TOKEN (secret)" if cfg.get("showChannel") else "")
         ]
         if tiers_on

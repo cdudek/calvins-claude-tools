@@ -59,7 +59,7 @@ none.
 
 | Key | Meaning |
 | --- | --- |
-| `checks.feature[]`, `checks.milestone[]` | what `scripts/verify_gate.py` runs, cheapest first |
+| `checks.feature[]`, `checks.milestone[]` | what `scripts/verify_gate.py` runs, cheapest first by recorded seconds (`"serial": true` pins a check that needs an earlier one's output; `--keep-going` runs past a failure) |
 | `milestones`, `hotfix` | milestone branch prefix and rebase rule; the hotfix lane |
 | `delivery` | `one-go` (default) or `feature-prs` |
 | `goal` | turn caps: `runTurns` for the one-go goal, `featureTurns` and `milestoneTurns` for feature PRs |
@@ -178,7 +178,6 @@ None: no workflow needs a secret.
 | Name | Unlocks |
 | --- | --- |
 | `CODE_MANAGER_APP_CLIENT_ID`, `CODE_MANAGER_APP_PRIVATE_KEY` | App auto-merge |
-| `SDLC_COOWNER` | show reviewer |
 | `SDLC_SLACK_BOT_TOKEN` | optional show Slack notice |
 {{/TIERS}}
 

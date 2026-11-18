@@ -33,14 +33,10 @@ set -uo pipefail
 . "$(dirname "$0")/sdlc-config.sh"
 
 payload=$(cat)
-file=$(sdlc_field "$payload" file_path)
-[ -n "$file" ] || exit 0
 [ -f "$SDLC_JSON" ] || exit 0
-transcript=$(printf '%s' "$payload" | python3 -c 'import json,sys; print(json.load(sys.stdin).get("transcript_path") or "")' 2>/dev/null || true)
-# the two fields block_state.py keys on, small enough for the environment (a Write payload is not)
-ctx=$(printf '%s' "$payload" | python3 -c 'import json,sys; d=json.load(sys.stdin); print(json.dumps({k: d.get(k) for k in ("session_id", "cwd")}))' 2>/dev/null || echo '{}')
 
-SDLC_BLOCK_CTX="$ctx" SDLC_HOOK_DIR="$(cd "$(dirname "$0")" && pwd)" python3 - "$SDLC_ROOT" "$SDLC_JSON" "$file" "$transcript" <<'PY'
+# One interpreter start per call: the payload (fd 3) and sdlc.json are read in the same process.
+SDLC_HOOK_DIR="$(cd "$(dirname "$0")" && pwd)" "$SDLC_PY" - "$SDLC_ROOT" "$SDLC_JSON" 3<<<"$payload" <<'PY'
 from __future__ import annotations
 
 import fnmatch
@@ -53,8 +49,16 @@ from pathlib import Path
 
 root = Path(sys.argv[1]).resolve()
 cfg_path = Path(sys.argv[2])
-file_arg = sys.argv[3]
-transcript = sys.argv[4] if len(sys.argv) > 4 else ""
+try:
+    payload = json.load(os.fdopen(3, encoding="utf-8"))
+    file_arg = payload["tool_input"]["file_path"]
+except (OSError, ValueError, KeyError, TypeError):
+    sys.exit(0)
+if not file_arg:
+    sys.exit(0)
+transcript = payload.get("transcript_path") or ""
+# the two fields block_state.py keys on
+block_ctx = {k: payload.get(k) for k in ("session_id", "cwd")}
 cfg = json.loads(cfg_path.read_text(encoding="utf-8"))
 changes = cfg.get("changesDir", "changes")
 designs = cfg.get("designsDir", "docs/designs")
@@ -89,7 +93,7 @@ def deny(message: str, source: str = "", action: str = "") -> None:
     try:
         text = helper("block_state").rewrite(
             "chain-gate.sh", text, source or "its change files",
-            action or "follow the route in the message below", json.loads(os.environ["SDLC_BLOCK_CTX"]),
+            action or "follow the route in the message below", block_ctx,
         )
     except Exception:  # block state never changes the verdict
         pass
@@ -214,7 +218,7 @@ def branch_change() -> tuple[str, Path, dict] | None:
 
 def match_any(path: str, patterns: list[str]) -> bool:
     return any(
-        fnmatch.fnmatchcase(path, pat) or fnmatch.fnmatchcase(path, pat.removeprefix("**/"))
+        fnmatch.fnmatchcase(path, pat) or fnmatch.fnmatchcase(path, (pat[3:] if pat.startswith("**/") else pat))
         for pat in patterns
     )
 

@@ -1,6 +1,6 @@
 # sdlc-run, end to end
 
-Describes sdlc-run 3.17.0.
+Describes sdlc-run 3.18.0.
 
 `/cct:sdlc-run` runs an AI-native software lifecycle in any repo. The agent drafts the intent, the UX plan, the facts and the tech plan. You confirm twice. Then one `/goal` builds the whole milestone as commits, runs the heavy checks once, and opens one PR.
 
@@ -178,7 +178,7 @@ It first asks whether to use Ship/Show/Ask merge tiers (a code owner approves ri
 
 ## Staying current
 
-`adopt` writes `"sdlcVersion": "3.17.0"` into `sdlc.json`. Every time the skill runs in the repo, `status` and the verify gate compare the stamp with the installed plugin and print one line when it is missing or older, for example:
+`adopt` writes `"sdlcVersion": "3.18.0"` into `sdlc.json`. Every time the skill runs in the repo, `status` and the verify gate compare the stamp with the installed plugin and print one line when it is missing or older, for example:
 
 ```text
 This repo runs sdlc-run 3.2.0; the kit is 3.3.1. Run `adopt --upgrade` (changes: 3.3.1: adopt --upgrade never overwrites or moves anything; 3.3.0: the CI workflow ships as a template, ciPaths by file type, versioned repos).
@@ -195,3 +195,4 @@ Each version's headline and migration steps are in the skill's [changelog](../pl
 - **Rules, clarify, checklist, analyze, challenge (3.8, 3.9):** standing rules are cited by id; a fresh reviewer writes `checklist.md`, an analyze pass writes `analyze.md` and a challenge pass writes `challenge.md`. `approve` refuses an unchecked item or an open critical.
 - **Enforcement audit (3.9):** `verify_gate.py audit` says per gate whether it is installed, configured, executed and passed.
 - **Readable folders (3.17):** a generated `README.md` in every change folder, plain words with ids in brackets, `sdlc_status.py ids` and a sentence for what blocks the goal. [More](../plugins/cct/skills/sdlc-run/references/readability.md).
+- **Faster hooks, cheaper gates, local milestones (3.18):** each hook starts Python once per call; `verify_gate.py` runs checks cheapest first; `milestones.merge: "local"` keeps milestone and project branches off GitHub until the one PR into the default branch. [More](../plugins/cct/skills/sdlc-run/references/local-first.md#local-milestones).

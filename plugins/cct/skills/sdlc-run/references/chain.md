@@ -123,7 +123,7 @@ silently after the dialog. Adding one needs the user's yes and the reason.
 | `analyze.md` | analyze pass | sdlc-run, read-only | `approve` refuses an open CRITICAL | from 3.8.0 |
 | `challenge.md` | challenge pass | a reviewer in a fresh context, read-only | `approve` refuses an open CRITICAL | from 3.9.0, absent blocks nothing |
 | `reflection.md` | reflection | sdlc-run at Stage 7 | none; the owner promotes repeated lessons | from 3.9.0 |
-| `spec/qa.md` | build validation | `cct:ux-spec-validate build` | PR evidence | when prototype exists |
+| `spec/qa.md` | build validation | `cct:ux-build-validate` | PR evidence | when prototype exists |
 | `handover.md` | — | a session that stops mid-build | none | no |
 | `marks.json` | owner feedback comparison | `marks.py init`, then the agent | milestone `owner-marks` | when marks or reference images exist |
 | `verify/shots/` | build evidence | headless capture | owner comparison and shared UX visual pass | for every row except `ruled-out` |
@@ -329,8 +329,9 @@ permalinks; local laptop paths are refused.
 | `tiers` | adopt, test, docs | Ship / Show / Ask on or off |
 | `askGatesMerge` | adopt | whether `ask` withholds auto-merge |
 | `keep` | adopt | generated paths this repo owns |
-| `checks.feature[]`, `checks.milestone[]` | `verify_gate.py` | commands, cheapest first; `{id}` is the change id; a string or `{name, run}` |
+| `checks.feature[]`, `checks.milestone[]` | `verify_gate.py` | commands, cheapest first (recorded seconds, else a guess from the command); `{id}` is the change id; a string or `{name, run, serial}` |
 | `milestones` | skill | `{branchPrefix}`; default `milestone/`. A milestone is cut locally from its parent: the project branch when the project has one, else the default branch, or from the milestone its plan row `needs`. `rebaseOnDefault` is obsolete since 3.7.0: a parent is merged in, never rebased |
+| `milestones.merge` | skill, `pr-gate.sh`, `verify_gate.py`, `sdlc_status.py` | `"pr"` (default; absent means `pr`) or `"local"`. `local` keeps milestone branches and `project/<slug>` on this machine: no milestone push, no milestone PR, the milestone is merged into the project branch locally, and only the project's PR into the default branch goes online. A milestone without a project still opens its one PR. `references/local-first.md`, "Local milestones" |
 | `projects` | skill | `{branchPrefix}`; default `project/`. Only used when `decisions.json` `project.branch` is true (or the project predates 3.7.0 and has no `branch` key); otherwise a project is planning only and its milestones go straight to the default branch |
 | `rules` | skill | optional list of repo paths holding standing rules (code of conduct, `PRODUCT.md`, `DESIGN.md`, an architecture policy). Stages 1 and 4 read them; intent lists the rule IDs that apply, each fact cites the IDs it touches. Absent: the defaults in `references/quality-passes.md`, existing files only. `adopt` never writes it, keeps it on re-adopt and rejects a value that is not a list of paths |
 | `hotfix` | skill | the hotfix lane on or off; default `true` |

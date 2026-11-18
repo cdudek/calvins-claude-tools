@@ -811,13 +811,13 @@ def test_tiers_false_writes_no_tier_files_and_no_tier_docs(tmp_path: Path, kind:
     docs = (repo / "docs" / "sdlc.md").read_text()
     assert "Ship / Show / Ask" not in docs and "ship-show-ask" not in docs
     assert "## Merging: auto-merge on green" in docs and "gh pr merge <n> --merge --auto" in docs
-    assert "CODE_MANAGER_APP" not in docs and "SDLC_COOWNER" not in docs
+    assert "CODE_MANAGER_APP" not in docs
     assert "`ask` needs a human" not in (repo / "CLAUDE.md").read_text()
     for rel in ("docs/sdlc.md", "CLAUDE.md"):
         text = (repo / rel).read_text()
         assert not TOKEN.search(text), f"{rel}: unrendered {TOKEN.search(text).group(0)}"
     manual = "\n".join(_sections(result.stdout)["MANUAL"])
-    for word in ("CODE_MANAGER_APP", "SDLC_COOWNER", "SDLC_SLACK_BOT_TOKEN", "code_owner", "App"):
+    for word in ("CODE_MANAGER_APP", "SDLC_SLACK_BOT_TOKEN", "code_owner", "App"):
         assert word not in manual, word
     assert "ship_show_ask" not in manual
 
@@ -940,7 +940,6 @@ def test_tiers_no_notes_the_ruleset_cleanup_once(tmp_path: Path) -> None:
         "CODE_MANAGER_APP_CLIENT_ID",
         "CODE_MANAGER_APP_PRIVATE_KEY",
         "SDLC_SLACK_BOT_TOKEN",
-        "SDLC_COOWNER",
     ):
         assert name in manual[0], name
     again = _sections(_adopt(repo, "--tiers", "no").stdout)
@@ -1594,3 +1593,33 @@ def test_the_ignore_allow_list_keeps_the_python_helpers_F15(tmp_path: Path) -> N
     before = (repo / ".gitignore").read_text()
     assert _sections(_adopt(repo).stdout)["WROTE"] == []
     assert (repo / ".gitignore").read_text() == before  # one allow-list, not two
+
+
+def test_adopt_removes_a_generated_decision4_workflow_only(tmp_path: Path) -> None:
+    """3.17.0: Decision4 has been advisory (no workflow) since 3.12.0, but adopt left the generated
+    workflow behind and it kept failing on every PR event. adopt takes it and its lock out (git
+    rm); a decision4.yml that calls neither shared checker is the repo's own and stays."""
+    repo = _repo(tmp_path, "node")
+    env = _env()
+    wf = repo / ".github" / "workflows" / "decision4.yml"
+    wf.write_text(
+        "name: Decision4\njobs:\n  decision4:\n    uses: "
+        "example-org/shared/.github/workflows/decision4-check.yml@b0b2060 # shared Decision4 v1\n"
+    )
+    (repo / ".decision4.lock").write_text("b0b2060\n")
+    subprocess.run(["git", "add", "."], cwd=repo, check=True, env=env)
+    subprocess.run(
+        ["git", "-c", "user.name=t", "-c", "user.email=t@t", "commit", "-qm", "old"],
+        cwd=repo,
+        check=True,
+        env=env,
+    )
+    res = _adopt(repo)
+    assert res.returncode == 0, res.stdout + res.stderr
+    assert not wf.exists() and not (repo / ".decision4.lock").exists()
+    assert any("decision4.yml (removed" in w for w in _sections(res.stdout)["WROTE"])
+    assert (repo / "boundary-map.yaml").exists(), "the advisory map stays"
+
+    wf.write_text("name: Decision4\njobs:\n  mine:\n    runs-on: ubuntu-latest\n")
+    assert _adopt(repo).returncode == 0
+    assert wf.exists(), "a repo's own workflow is not ours to delete"
