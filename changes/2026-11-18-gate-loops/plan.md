@@ -85,7 +85,7 @@ Features 1 and 2 both edit `pr-gate.sh`; 3 edits the same hooks. Build them in o
 
 ## Order of work
 
-- [ ] 0. Sync — proof: `git merge-base --is-ancestor origin/main HEAD` exits 0.
+- [x] 0. Sync — proof: `git merge-base --is-ancestor origin/main HEAD` exits 0.
 - [ ] 1. Goal helper — proof: `test_goal_active.py` F1–F5, F14, F15 pass; `grep -l goal_status templates/hooks/*.sh` prints nothing.
 - [ ] 2. pr-gate fixes — proof: `test_pr_gate.py` F6–F8 pass.
 - [ ] 3. Block state — proof: `test_block_repeat.py` F9–F13 and N1 pass.
@@ -161,3 +161,5 @@ The goal:
 ## Revisions
 
 Only after approval.
+
+- **2026-11-18, test lock order:** the failing tests for every fact (F1-F15, N1) and the fixture updates land in one test-first commit before feature 1, then `testLocked: true`. Why: this is a v3 bug, and once locked `chain-gate.sh` refuses every `test_*.py` edit on this branch, so features 2-4 could not add their tests after feature 1. Recorded in `questions.md`.
