@@ -36,7 +36,9 @@ Cheapest first: a check that passed takes its seconds into verify/durations.json
 and the next run sorts by them; a check with no record yet sorts by a static guess from its
 command (lint, format, typecheck, secrets and docs first, a build, e2e or docker run last, the
 rest between). Equal costs keep their order in sdlc.json. A check that depends on an earlier
-one's output sets `"serial": true`: it never moves, and nothing moves across it.
+one's output sets `"serial": true`: it never moves, and nothing moves across it, or
+`"after": ["<check name>"]`: it runs behind the named checks and moves freely otherwise. An approval
+made before 3.18.0 (its lock.json has no `"order": "cost"`) keeps the declared order.
 
 `project <slug>` (local milestones, stage 6p) runs `checks.milestone` on the checked-out
 project/<slug>, which must contain origin's default branch, and records `VERIFY PASS project
@@ -243,6 +245,7 @@ def approve(change: Path, cfg: dict) -> int:
         "approved_at": dt.datetime.now(dt.timezone.utc).isoformat(timespec="seconds"),  # noqa: UP017 -- runs on macOS python3 3.9
         "sha": sh("git", "rev-parse", "HEAD"),
         "criteria": criteria_hash(change, cfg.get("checks", {})),
+        "order": "cost",  # a lock without this key keeps the declared order (before 3.18.0)
     }
     (change / "lock.json").write_text(json.dumps(lock, indent=2) + "\n", encoding="utf-8")
     print(f"locked {', '.join(lock['criteria'])} in {change.name}/lock.json -- commit it")
@@ -376,7 +379,8 @@ DEFAULT_COST = 60.0  # unit tests and anything unrecognised
 
 def order_checks(checks: list[dict], durations: dict[str, float], change_id: str) -> list[dict]:
     """Cheapest first: recorded seconds when there are any, else a guess from the command. Stable,
-    so ties keep their sdlc.json order; a `serial` check is a wall that nothing moves across."""
+    so ties keep their sdlc.json order; a `serial` check is a wall that nothing moves across, and
+    `"after": [<check name>]` keeps a check behind the ones it needs (codegen before tsc)."""
 
     def cost(check: dict) -> float:
         cmd = check["run"].replace("{id}", change_id)
@@ -393,7 +397,20 @@ def order_checks(checks: list[dict], durations: dict[str, float], change_id: str
             segment = []
         else:
             segment.append(check)
-    return ordered + sorted(segment, key=cost)
+    ordered += sorted(segment, key=cost)
+    done: set[str] = set()
+    names = {c["name"] for c in ordered}
+    result: list[dict] = []
+    while ordered:
+        # the first check whose named predecessors have run; a cycle or unknown name never blocks
+        nxt = next(
+            (c for c in ordered if all(a in done or a not in names for a in c.get("after") or [])),
+            ordered[0],
+        )
+        ordered.remove(nxt)
+        done.add(nxt["name"])
+        result.append(nxt)
+    return result
 
 
 def run(
@@ -438,6 +455,7 @@ def run(
             (out_dir / "state.json").unlink(missing_ok=True)
         return end(line, code)
 
+    declared = False  # an approval from before 3.18.0 keeps the order its checks were written in
     now: dict[str, str] = {}  # a project has no lock: its checks are the milestones' locked ones
     if scope == "project":
         branch = f"{(cfg.get('projects') or {}).get('branchPrefix', 'project/')}{change.name}"
@@ -450,7 +468,9 @@ def run(
             print(f"{change.name}/lock.json is missing: run `verify_gate.py approve {change.name}`")
             print("at the plan gate, when the engineer approves.")
             return finish("VERIFY BLOCKED reason=not-approved", 3)
-        locked = json.loads(lock_path.read_text(encoding="utf-8"))["criteria"]
+        lock = json.loads(lock_path.read_text(encoding="utf-8"))
+        locked = lock["criteria"]
+        declared = lock.get("order") != "cost"
         now = criteria_hash(change, cfg.get("checks", {}))
         moved = sorted(k for k in set(locked) | set(now) if locked.get(k) != now.get(k))
         if moved:
@@ -508,7 +528,8 @@ def run(
         durations = json.loads(durations_path.read_text(encoding="utf-8"))
     except (OSError, ValueError):
         durations = {}
-    checks = order_checks(checks, durations, change.name)
+    if not declared:
+        checks = order_checks(checks, durations, change.name)
     if scope == "milestone" and ((change / "marks.json").exists() or sessions(change)):
         checks.append(
             {
@@ -567,7 +588,7 @@ def run(
             return finish("VERIFY BLOCKED reason=attempts", 3)
         return finish(f"VERIFY FAIL {scope} {change.name} check={name}", 1)
 
-    first_failure: tuple[str, str] | None = None  # --keep-going: the verdict names the first
+    first_failure: tuple[str, str, str] | None = None  # --keep-going: the verdict names the first
     for check in checks:
         name = check["name"]
         cmd = check["run"].replace("{id}", change.name)
@@ -608,6 +629,9 @@ def run(
         blocked = re.search(r"VERIFY BLOCKED reason=([\w-]+)\s*\Z", output.strip())
         if blocked:
             reason = blocked.group(1) if blocked.group(1) in REASONS else "unknown-verdict"
+            if keep_going:  # the rest still runs; the first verdict, blocked or failed, stands
+                first_failure = first_failure or (name, output, reason)
+                continue
             return finish(f"VERIFY BLOCKED reason={reason}", 3)
         if is_e2e(cmd):
             verdict = classify_e2e(cmd, repo)
@@ -616,13 +640,15 @@ def run(
                 report["checks"][-1]["rerun"] = verdict
                 report["checks"][-1]["tail"] += f"\n--last-failed re-run: the failures {verdict}"
         if keep_going:
-            first_failure = first_failure or (name, output)
+            first_failure = first_failure or (name, output, "")
             continue
         return failed(name, output)
     if first_failure:
         names = ", ".join(c["name"] for c in report["checks"] if c["status"] != "pass")
         print(f"failed: {names}")
-        return failed(*first_failure)
+        if first_failure[2]:
+            return finish(f"VERIFY BLOCKED reason={first_failure[2]}", 3)
+        return failed(*first_failure[:2])
 
     # A PASS names one frozen head: a merge or an edit during the checks means they tested
     # something other than the commit the line would name.

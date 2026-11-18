@@ -991,3 +991,52 @@ def test_keep_going_runs_every_check_and_names_the_first_failure(tmp_path: Path)
     r = _gate(repo, "feature", ID, "--keep-going")
     assert r.returncode == 1 and _last(r) == f"VERIFY FAIL feature {ID} check=lint"
     assert _order(repo) == ["lint", "unit", "e2e"] and "failed: lint, unit" in r.stdout
+
+
+def test_after_orders_a_check_behind_the_one_it_needs_F13(tmp_path: Path) -> None:
+    """Codegen must run before the typecheck even though the typecheck is the cheaper guess."""
+    repo = _repo(tmp_path, _checks(("tsc", "true"), ("types", "true")))
+    cfg = json.loads((repo / "sdlc.json").read_text())
+    cfg["checks"]["feature"][0]["after"] = ["types"]
+    (repo / "sdlc.json").write_text(json.dumps(cfg))
+    _git(repo, "commit", "-qam", "after")
+    _approve(repo)
+    assert _gate(repo, "feature", ID).returncode == 0
+    assert _order(repo) == ["types", "tsc"]
+
+
+def test_a_new_approval_records_cost_order_and_an_old_lock_keeps_declared_order_F13(
+    tmp_path: Path,
+) -> None:
+    repo = _repo(tmp_path, _checks(("e2e", "true"), ("unit", "true"), ("lint", "true")))
+    _approve(repo)
+    lock_path = repo / "changes" / ID / "lock.json"
+    lock = json.loads(lock_path.read_text())
+    assert lock["order"] == "cost"
+    assert _gate(repo, "feature", ID).returncode == 0
+    assert _order(repo) == ["lint", "unit", "e2e"]
+    del lock["order"]  # approved before this version: the order it saw is the order it keeps
+    lock_path.write_text(json.dumps(lock))
+    _git(repo, "commit", "-qam", "old lock")
+    assert _gate(repo, "feature", ID).returncode == 0
+    assert _order(repo) == ["e2e", "unit", "lint"]
+
+
+def test_keep_going_does_not_stop_at_a_blocked_check_F23(tmp_path: Path) -> None:
+    blocked = "echo 'VERIFY BLOCKED reason=env'; exit 1"
+    repo = _repo(tmp_path, _checks(("lint", "false"), ("unit", blocked), ("e2e", "true")))
+    _approve(repo)
+    r = _gate(repo, "feature", ID, "--keep-going")
+    assert _last(r) == f"VERIFY FAIL feature {ID} check=lint"  # the first verdict stands
+    assert _order(repo) == ["lint", "unit", "e2e"]
+
+
+def test_keep_going_reports_a_first_blocked_verdict_after_running_the_rest_F23(
+    tmp_path: Path,
+) -> None:
+    blocked = "echo 'VERIFY BLOCKED reason=env'; exit 1"
+    repo = _repo(tmp_path, _checks(("lint", blocked), ("unit", "false"), ("e2e", "true")))
+    _approve(repo)
+    r = _gate(repo, "feature", ID, "--keep-going")
+    assert _last(r) == "VERIFY BLOCKED reason=env" and r.returncode == 3
+    assert _order(repo) == ["lint", "unit", "e2e"]
