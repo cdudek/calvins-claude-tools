@@ -36,8 +36,9 @@ TRANSCRIPTS = {
 def repo(tmp_path: Path) -> Path:
     repo = tmp_path / "repo"
     (repo / ".claude" / "hooks").mkdir(parents=True)
-    for name in ("chain-gate.sh", "sdlc-config.sh"):
-        shutil.copy(HOOKS / name, repo / ".claude" / "hooks" / name)
+    for name in ("chain-gate.sh", "sdlc-config.sh", "goal_active.py", "block_state.py"):
+        if (HOOKS / name).exists():  # the helpers sit beside the hook; absent in older trees
+            shutil.copy(HOOKS / name, repo / ".claude" / "hooks" / name)
     (repo / "sdlc.json").write_text(json.dumps({"changesDir": "changes"}))
     change = repo / "changes" / ID
     change.mkdir(parents=True)
