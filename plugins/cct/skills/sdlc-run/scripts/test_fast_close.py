@@ -115,3 +115,38 @@ def test_nothing_is_armed_before_the_required_disposition() -> None:
     assert "never arm an `ask`-labelled or a closed PR" in SKILL_MD
     before_push = STAGES.split("**Never idle on CI.**", 1)[1].split("Agents run", 1)[0]
     assert "after the owner and visual dispositions" in before_push
+
+
+# 2. UX assessment without a PR
+UX = flat(CCT / "skills/ux-assessment-run/SKILL.md")
+CHANGE_SCOPE = UX.split("## scope=change", 1)[1]
+DISPATCH = flat(CCT / "references/dispatch.md")
+
+
+def test_the_assessment_takes_a_local_base_head_and_worktree() -> None:
+    assert "scope=change base=<ref> head=<ref> [worktree=<path>]" in UX
+    assert "scope=change [pr-number | pr-url]" in UX  # PR mode keeps its interface
+
+
+def test_a_missing_pr_stops_only_the_pr_form() -> None:
+    resolve = CHANGE_SCOPE.split("### 2.", 1)[0]
+    stop = resolve.index("None: stop and say so")
+    assert "PR form" in resolve[:stop], "the stop must sit inside the PR form"
+    assert "never calls `gh`" in resolve  # the local form has no PR to find
+    assert "git -C <worktree> diff --name-only <base>...<head>" in resolve
+
+
+def test_every_child_pass_receives_base_head_and_worktree() -> None:
+    assert "base, head and worktree" in CHANGE_SCOPE
+    assert "git -C <worktree> diff <base>...<head>" in CHANGE_SCOPE
+    assert "base, head and worktree" in DISPATCH
+    for skill in ("ux-build-validate", "ux-rules-validate"):
+        text = flat(CCT / f"skills/{skill}/SKILL.md")
+        assert "base=<ref> head=<ref> worktree=<path>" in text, skill
+
+
+def test_stage_6_calls_the_local_form_before_the_gate() -> None:
+    assert "cct:ux-assessment-run scope=change base=<parent> head=<milestone head>" in STAGES
+    assert STAGES.index("cct:ux-assessment-run scope=change base=<parent>") < STAGES.index(
+        "5. Reopen recaptured images"
+    )

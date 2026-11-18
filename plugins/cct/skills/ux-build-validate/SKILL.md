@@ -10,7 +10,9 @@ metadata:
 
 # cct:ux-build-validate
 
-**Arguments:** `<change>`, a change id, a change folder or a spec folder.
+**Arguments:** `<change>`, a change id, a change folder or a spec folder; with no PR, add the local
+form `base=<ref> head=<ref> worktree=<path>` (the build is the worktree at `head`; the diff is
+`git -C <worktree> diff <base>...<head>`).
 
 Validate one built UI against its approved spec and write `<spec>/qa.md` with a verdict. The
 method is in `references/build.md`; follow it.

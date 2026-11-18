@@ -11,7 +11,9 @@ metadata:
 # cct:ux-assessment-run
 
 **Arguments:** `scope=app [extra builds: PR numbers or URLs] [focus]` or
-`scope=change [pr-number | pr-url]` (defaults to the current branch's open PR).
+`scope=change [pr-number | pr-url]` (defaults to the current branch's open PR) or, with no PR,
+the local form `scope=change base=<ref> head=<ref> [worktree=<path>]` (the milestone close, before
+anything is pushed; `worktree` defaults to the current checkout).
 
 This process coordinates; it does not judge. The verdicts come from the specialists it
 dispatches: `cct:ux-usability-audit` (Nielsen, Shneiderman, the 30 Laws of UX, the dark-pattern
@@ -197,15 +199,23 @@ where the files are. Offer `cct:ux-decision-log` as the next step. Never start i
 The same lenses and the same finding format as `scope=app`, scoped to one PR. Keep your own
 commentary minimal: the deliverable is the consolidated findings.
 
-### 1. Resolve the PR
+### 1. Resolve the target
 
-- Arguments: a PR number or URL. Otherwise the current branch's open PR:
-  `gh pr view --json number,url,title,headRefName,baseRefName`. None: stop and say so.
-- `gh pr diff <n> --name-only`; keep interface files (components, screens, styles, strings,
+- **Local form** (`base` and `head` given): the caller already named the diff, so there is no PR
+  to find and the run never calls `gh`. The interface files are
+  `git -C <worktree> diff --name-only <base>...<head>`. The run folder is
+  `${TMPDIR:-/tmp}/cct/review/local-<repo>-<head sha, 12 characters>`. Every pass below gets the
+  same base, head and worktree, so no pass reads a PR.
+- **PR form** (a number, a URL, or neither): a PR number or URL. Otherwise the current branch's
+  open PR: `gh pr view --json number,url,title,headRefName,baseRefName`. None: stop and say so.
+  `gh pr diff <n> --name-only` lists the files.
+- Either way keep interface files (components, screens, styles, strings,
   locales; adjust to the repo layout). None: stop, nothing to review.
 - The PR's change has a spec folder (its change folder's `spec/`, or a `docs/ux/specs/` folder the
   PR or its ticket names; see the shared `references/spec-folder.md`): include
-  `cct:ux-build-validate <change>` as the `spec` pass and run it when `qa.md` is missing there.
+  `cct:ux-build-validate <change>` as the `spec` pass (local form: with `base=<ref> head=<ref>
+  worktree=<path>`) and run it when `qa.md` is missing or stale there: `qa.md` is stale when its
+  recorded build differs from this run's head (the capture manifest in `convergence.md`).
   Its findings join the merge, and the reviewers check against the spec instead of re-deriving the
   target from the diff.
 - The PR adds, moves or removes a route: run `cct:ux-sitemap-create diff base:<base ref>` as the
@@ -220,7 +230,10 @@ commentary minimal: the deliverable is the consolidated findings.
 
 ### 2. See it running
 
-Build the PR's head in its own worktree with the test data and fakes from `setup.md`. Screenshot
+Build the PR's head (local form: `head` in the given worktree) in its own worktree with the test
+data and fakes from `setup.md`. This assessment owns the captures: it writes the capture manifest
+(`verify/shots/manifest.json`, keyed by build, reference revision, screen, state, width and zoom)
+and every specialist reuses those captures instead of capturing again. Screenshot
 every changed screen, and every changed dialog, menu, popover or select open, into `$run/shots/`,
 then run the visual pass (shared steps) with `$run` as the run folder. If the app cannot be run,
 say so in the report and review from code; that output is BLOCKED for visual review.
@@ -233,8 +246,8 @@ unsure about runs everything. Write `$run/passes/00-review.json` as dispatch.md 
 listing every pass not picked under `did_not_run` with `not dispatched: <row>`.
 
 Dispatch the picked passes in one message, each with the prompt shape of dispatch.md section 4:
-its pass name, the PR number, the interface file list, the screenshots folder, the documents
-table, `finding-format.md`, the instruction to read the diff itself with `gh pr diff <n>`, and its
+its pass name, the PR number (local form: base, head and worktree), the interface file list, the screenshots folder, the documents
+table, `finding-format.md`, the instruction to read the diff itself with `gh pr diff <n>` (local form: `git -C <worktree> diff <base>...<head>`), and its
 output path `$run/passes/<pass>.json`. The orchestrator owns `visual`; it is not dispatched again.
 Every other pass opens any image it judges and sends new images and issues back to that ledger
 before merge.
@@ -244,7 +257,7 @@ before merge.
 - `heuristics`, `lenses`: `cct:ux-usability-audit`. `accessibility`: `cct:ux-accessibility-audit`.
   `responsive`: `cct:ux-responsive-audit`. Each runs what dispatch.md section 1 names for it.
 - `laws`: the laws pass (shared steps), delegated to `cct:ux-usability-audit`.
-- `conformance`: `cct:ux-rules-validate <n>` with the screenshots folder and the documents table.
+- `conformance`: `cct:ux-rules-validate <n>` (local form: `base=<ref> head=<ref> worktree=<path>`) with the screenshots folder and the documents table.
 - `e2e-coverage`: read-only, no server. One finding per new or substantially changed surface that
   no e2e spec exercises, with `cct:test-suite-run` named as the recommendation. It never writes tests.
 - `sitemap`: route changes only; `cct:ux-sitemap-create diff base:<base ref>`, its checks
@@ -278,7 +291,8 @@ to "no issues".
 
 ### 6. Offer to post (never auto-post)
 
-Ask: "Post these N findings as inline PR comments?" Only on an explicit yes:
+Local form: there is no PR, so there is nothing to post; give the report path. PR form: ask:
+"Post these N findings as inline PR comments?" Only on an explicit yes:
 - read the findings from `$run/merged.json`, never from the markdown;
 - a finding whose `location` is `file:line` becomes an inline comment: summary, impact, current
   experience, recommendation, decision needed;

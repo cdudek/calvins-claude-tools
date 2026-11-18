@@ -71,7 +71,8 @@ everything.
 Never paste a skill's or a reference's body into the prompt; name it and let the pass read it.
 Each pass gets:
 
-1. Its name from section 1 and the task: the PR, the interface files, the screenshots folder,
+1. Its name from section 1 and the task: the PR (the local form passes base, head and worktree
+   instead, and the pass reads `git -C <worktree> diff <base>...<head>`), the interface files, the screenshots folder,
    the documents table, and `finding-format.md` for how to write each field.
 2. The scope it must cover and the rules that apply (`conflicts.md` for rungs and exceptions).
 3. The output path, `<run>/passes/<pass>.json`, and the instruction: "Write ONLY JSON matching

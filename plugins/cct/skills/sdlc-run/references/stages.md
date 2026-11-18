@@ -479,7 +479,10 @@ person's own browser session. Never use Claude in Chrome or any tool driving tha
 
 1. One go: the same goal continues from Stage 5. Feature PRs: start `/goal` with
    `templates/goal/milestone.txt` filled (`goal.milestoneTurns`).
-2. Run on the diff, each once and in parallel: `cct:ux-assessment-run`, `cct:review-code-run changes
+2. Run on the diff, each once and in parallel: `cct:ux-assessment-run scope=change base=<parent>
+   head=<milestone head> worktree=<path>` (the local form: the milestone has no PR before the gate
+   passes, and the PR form would stop there; it runs before the gate and passes the same base,
+   head and worktree to every child pass), `cct:review-code-run changes
    <parent> --codex` (Claude and Codex; call it with this explicit command, a bare call has none; it reads the repo's `REVIEW.md` when there is one, the only code review the
    change gets, since 3.7.0 nothing reviews in CI),
    `cct:ux-responsive-audit` (the `responsiveTier` matrix, nothing overflows; reflow at
