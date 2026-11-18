@@ -160,7 +160,11 @@ class Repo:
                 rows = json.loads(path.read_text(encoding="utf-8")).get("prExceptions") or []
             except (OSError, ValueError, AttributeError):
                 continue
-            if any(r.get("branch") == branch and str(r.get("words", "")).strip() for r in rows):
+            if any(
+                isinstance(r, dict) and r.get("branch") == branch
+                and isinstance(r.get("words"), str) and r["words"].strip()
+                for r in rows
+            ):
                 return True
         return False
 
