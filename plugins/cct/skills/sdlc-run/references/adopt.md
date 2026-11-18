@@ -47,7 +47,7 @@ Run from the repo root, on a branch. Idempotent: rerun after editing `sdlc.json`
 **One owner? Answer "No" (`tiers: false`).** Ship/Show/Ask needs a second person to
 ask and to show. With one owner, `adopt` writes none of the three tier files and removes any
 that exist (`git rm`). `docs/sdlc.md` then says "auto-merge on green" instead of the tiers,
-and MANUAL drops the App secrets, `SDLC_COOWNER` and the Slack token setup notes. You arm auto-merge on each PR yourself: `gh pr merge <n> --merge --auto` for a milestone or
+and MANUAL drops the App secrets and the Slack token setup notes. You arm auto-merge on each PR yourself: `gh pr merge <n> --merge --auto` for a milestone or
 project PR, `--squash` for anything else.
 
 **CODEOWNERS is a team-repo choice, never installer-managed.** Adopt never creates, edits or
@@ -88,7 +88,7 @@ table, which is what makes `F1` traceable from `facts.md` through the test to th
 4. Run `verify` and the guardrail test. Stage everything (`git ls-files` is part of the
    test). Commit `feat(sdlc): adopt the chain`.
 5. GitHub, by the user: secrets `CODE_MANAGER_APP_CLIENT_ID`,
-   `CODE_MANAGER_APP_PRIVATE_KEY`; variable `SDLC_COOWNER`; optional
+   `CODE_MANAGER_APP_PRIVATE_KEY` (org-wide, normally already there); optional
    `SDLC_SLACK_BOT_TOKEN`; ruleset on the default branch per `references/tiers.md`; "Allow
    merge commits" on in the repo settings. With `tiers: false` only the ruleset's required
    checks and merge commits. No `ANTHROPIC_API_KEY`: nothing runs Claude in CI.

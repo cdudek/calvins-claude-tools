@@ -31,6 +31,11 @@ class Plugin(unittest.TestCase):
                            cwd=ROOT, capture_output=True, text=True, errors="replace")
         self.assertEqual(r.stdout, "")
 
+    def test_the_build_comparison_is_ux_build_validate_not_a_build_mode_of_ux_spec_validate(self):
+        r = subprocess.run(["git", "grep", "-nIE", r"ux-spec-validate( build|`? in build mode)", "--", "plugins", "docs"],
+                           cwd=ROOT, capture_output=True, text=True, errors="replace")
+        self.assertEqual(r.stdout, "")
+
 
 if __name__ == "__main__":
     unittest.main()

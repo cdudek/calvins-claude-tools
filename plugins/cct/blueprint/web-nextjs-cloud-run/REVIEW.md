@@ -1,12 +1,12 @@
 # Review instructions
 
-Read by `.github/workflows/claude-review.yml` once per non-bot pull request (and again on
-the `re-review` label), and by anyone reviewing by hand. The human reviewer's job is intent and risk — does the change do what
+Read by `cct:review-code-run` at every milestone close (the only code review; nothing reviews
+in CI), and by anyone reviewing by hand. The human reviewer's job is intent and risk — does the change do what
 `changes/<date>-<slug>/plan.md` says, and is the blast radius acceptable. The
 mechanical passes below are Claude's job, and they run identically on every PR.
 
-This CI review stays one cheap pass. The deep code review (`cct:review-code-run` with one
-`review-fix-run` round) runs once per milestone, on the milestone diff, not on each feature PR.
+The review (`cct:review-code-run` with one `review-fix-run` round) runs once per milestone,
+on the milestone diff, not on each feature PR.
 
 ## Passes
 
@@ -24,6 +24,25 @@ when the diff alone cannot settle a finding — never walk the repo, the budget 
   moves; `spec/conformance.md` component decisions and deliberate inconsistencies. A departure
   with no `## Revisions` line is **Important**. It also follows `CLAUDE.md` and does not make a
   repo rule false without updating it.
+
+## Decision4 (advisory)
+
+If the PR template has the section "How hard is it to undo this PR after merging?", read it
+against `boundary-map.yaml` and the diff: is the level at or above the lowest level for the
+changed paths, and are the recovery steps concrete? Say so in a comment. It never blocks a merge.
+
+## Design questions
+
+While reading, also ask these four (from the CUPID properties). They add no fourth pass: a yes
+is filed under Bugs when it breaks behaviour, and is a Nit otherwise.
+
+- **Hidden dependencies**: does the code need something the caller cannot see, such as call
+  order, a global or env var, a file, or a prior write?
+- **Surprising side effects**: does a function with a read-sounding name write, send, cache or
+  mutate its argument?
+- **Domain vocabulary**: do names match the words in `intent.md` and the product's glossary, or
+  do two names mean one thing here?
+- **Composability**: could a caller use this part alone, or is it only usable inside this flow?
 
 ## What Important means here
 

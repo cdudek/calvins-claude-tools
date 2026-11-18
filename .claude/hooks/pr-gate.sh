@@ -22,6 +22,13 @@
 #     the default branch      -> never
 #     anything else           -> refused inside an active /goal (feature-prs: allowed)
 #
+# sdlc.json `milestones.merge: "local"` (default "pr", which changes nothing above) keeps milestones
+# and the project branch on this machine; only the PR into the default branch goes online:
+#   git push milestone/*    -> refused when its change has a project branch (merge it locally)
+#   gh pr create            -> refused for head milestone/* into base project/*
+#   git push project/*      -> only a head that carries `VERIFY PASS project` (verify_gate.py project)
+#   git merge (on project/*) -> refused for a milestone/* ref without `VERIFY PASS milestone`
+#
 # An exception exists only in the engineer's words: decisions.json
 # `prExceptions: [{"branch": "<head>", "words": "<what the engineer said>"}]`.
 # Tags and branch deletions pass. A repo without sdlc.json gets no opinion.
@@ -30,7 +37,7 @@ set -uo pipefail
 
 payload=$(cat)
 [ -f "$SDLC_JSON" ] || exit 0
-case "$payload" in *push*|*"pr create"*) ;; *) exit 0 ;; esac
+case "$payload" in *push*|*"pr create"*|*merge*) ;; *) exit 0 ;; esac
 
 PAYLOAD="$payload" SDLC_HOOK_DIR="$(cd "$(dirname "$0")" && pwd)" python3 - "$SDLC_ROOT" "$SDLC_JSON" <<'PY'
 from __future__ import annotations
@@ -110,6 +117,7 @@ class Repo:
         self.m = (self.cfg.get("milestones") or {}).get("branchPrefix", "milestone/")
         self.p = (self.cfg.get("projects") or {}).get("branchPrefix", "project/")
         self.feature_prs = self.cfg.get("delivery") == "feature-prs"
+        self.local = (self.cfg.get("milestones") or {}).get("merge") == "local"
         self.hotfix = bool(self.cfg.get("hotfix", True))
         self.changes = self.top / self.cfg.get("changesDir", "changes")
 
@@ -126,31 +134,84 @@ class Repo:
     def sha(self, ref: str) -> str:
         return git(self.dir, "rev-parse", "--verify", "--quiet", f"{ref}^{{commit}}")
 
-    def passed(self, sha: str) -> bool:
-        """A milestone PASS on this commit, or on an ancestor that only records followed:
-        writing the gate line into milestone.md must not need a second full gate."""
+    def change_dirs(self) -> list[Path]:
+        """The changes folders a gate may have run in: ours, and in local mode every worktree's."""
+        dirs = [self.changes]
+        if self.local:  # the gate ran in the milestone's worktree, the merge runs in another
+            rel = self.changes.relative_to(self.top)
+            listing = git(self.dir, "worktree", "list", "--porcelain")
+            dirs = [Path(t) / rel for t in re.findall(r"^worktree (.+)$", listing, re.M)] or dirs
+        return dirs
+
+    def in_changes(self, name: str) -> list[Path]:
+        """`name` under every supported layout: live, archive/<id> and archive/<year>/<month>/<id>
+        (the Stage 7 archive move is the last commit before the push). Nothing deeper is read."""
+        patterns = (f"*/{name}", f"archive/*/{name}", f"archive/*/*/*/{name}")
+        return [f for changes in self.change_dirs() for pat in patterns for f in changes.glob(pat)]
+
+    def reports(self, scope: str, slug: str) -> list[Path]:
+        if scope == "project":  # verify_gate.py project: one record in the common git dir
+            common = git(self.dir, "rev-parse", "--path-format=absolute", "--git-common-dir")
+            return [Path(common) / "sdlc" / "projects" / slug / "verify" / "report.json"] if common else []
+        return self.in_changes("verify/report.json")
+
+    def change_ids(self, milestone: str) -> set[str]:
+        """The change(s) a milestone branch (milestone/<slug> or milestone/<slug>-<n>) belongs to."""
+        name = milestone.removeprefix(self.m)
+        ids = set()
+        for path in self.in_changes("decisions.json"):
+            try:
+                slug = (json.loads(path.read_text(encoding="utf-8")).get("milestone") or {}).get("slug")
+            except (OSError, ValueError, AttributeError):
+                continue
+            if slug and re.fullmatch(re.escape(slug) + r"(-\d+)?", name):
+                ids.add(path.parent.name)
+        return ids
+
+    def passed(self, sha: str, scope: str = "milestone", slug: str = "", branch: str = "") -> bool:
+        """A PASS of this scope for the change that owns `branch` (the project `slug`), on this
+        commit or on an ancestor that only records followed: writing the gate line into
+        milestone.md must not need a second full gate. Another change's pass never counts."""
         if not sha:
             return False
+        subjects = {slug} if scope == "project" else self.change_ids(branch)
         rel = self.changes.relative_to(self.top).as_posix() + "/"
-        # archive/ too: the Stage 7 archive move is the last commit before the push (3.7.0)
-        found = [*self.changes.glob("*/verify/report.json"), *self.changes.glob("archive/*/verify/report.json")]
-        for report in found:
+        for report in self.reports(scope, slug):
             try:
                 data = json.loads(report.read_text(encoding="utf-8"))
             except (OSError, ValueError):
                 continue
             gated = data.get("sha") or ""
-            if not gated or not str(data.get("result", "")).startswith("VERIFY PASS milestone"):
+            result = str(data.get("result", ""))
+            if not gated or data.get("scope", scope) != scope:
+                continue
+            if not any(result.startswith(f"VERIFY PASS {scope} {s} ") for s in subjects if s):
                 continue
             if gated == sha:
                 return True
             ancestor = subprocess.run(
-                ["git", "-C", str(self.dir), "merge-base", "--is-ancestor", gated, sha]
+                ["git", "-C", str(self.dir), "merge-base", "--is-ancestor", gated, sha],
+                capture_output=True,
             ).returncode == 0
             changed = git(self.dir, "diff", "--name-only", gated, sha).splitlines()
             if ancestor and all(p.startswith(rel) for p in changed):
                 return True
         return False
+
+    def project_of(self, milestone: str) -> str:
+        """The project/<slug> a milestone branch merges into: "" when its change has no project
+        branch. The branch is milestone/<slug> or milestone/<slug>-<n>."""
+        name = milestone.removeprefix(self.m)
+        for path in self.changes.glob("*/decisions.json"):
+            try:
+                found = json.loads(path.read_text(encoding="utf-8"))
+                slug, project = (found.get("milestone") or {}).get("slug"), found.get("project")
+            except (OSError, ValueError, AttributeError):
+                continue
+            if slug and re.fullmatch(re.escape(slug) + r"(-\d+)?", name):
+                if isinstance(project, dict) and project.get("slug") and project.get("branch", True):
+                    return f"{self.p}{project['slug']}"
+        return ""
 
     def excepted(self, branch: str) -> bool:
         # the pushed repo's own exceptions, and the session's: the engineer speaks in the session
@@ -178,6 +239,14 @@ RIDE = (
     "open in that repo, it goes into the next one. A merge from the default branch is a local "
     "`git merge origin/<parent>` on the next milestone branch, never a PR."
 )
+
+
+def local_merge_route(project: str, milestone: str) -> str:
+    return (
+        "Local milestones (sdlc.json milestones.merge): a milestone merges on this machine, after "
+        f"`VERIFY PASS milestone` on its head: `git switch {project} && git merge --no-ff {milestone}`. "
+        "Only the PR into the default branch goes online."
+    )
 
 
 def check_push(repo: Repo, args: list[str]) -> None:
@@ -218,10 +287,20 @@ def check_push(repo: Repo, args: list[str]) -> None:
         if dst == repo.default:
             block(f"a push to {dst}.", "The default branch moves only through a merged PR.")
         if dst.startswith(repo.m):
-            if not repo.feature_prs and not repo.passed(sha):
+            if repo.local and (project := repo.project_of(dst)):
+                block(f"a push of {dst} in local milestones mode.", local_merge_route(project, dst))
+            if not repo.feature_prs and not repo.passed(sha, branch=dst):
                 block(f"a push of {dst} at {sha[:12] or src} without a passing milestone gate.", CLOSE, "verify/report.json")
             continue
         if dst.startswith(repo.p):
+            if repo.local:  # one push, at the project close, of a head that passed the project gate
+                if not repo.passed(sha, "project", dst.removeprefix(repo.p)):
+                    block(
+                        f"a push of {dst} at {sha[:12] or src} without `VERIFY PASS project`.",
+                        f"Local milestones: run `python3 scripts/verify_gate.py project {dst.removeprefix(repo.p)}` "
+                        f"on {dst} merged with origin/{repo.default}, then push it once (Stage 6p).",
+                    )
+                continue
             if sha and sha == repo.sha(f"origin/{repo.default}"):
                 continue  # creating the project branch from the trunk (Stage 1.2)
             block(f"a push to {dst}.", "A project branch moves only through milestone PRs. " + RIDE)
@@ -250,10 +329,12 @@ def check_pr(repo: Repo, args: list[str]) -> None:
     if repo.excepted(head):
         return
     if head.startswith(repo.m):
+        if repo.local and base.startswith(repo.p):
+            block(f"a PR from {head} into {base} in local milestones mode.", local_merge_route(base, head))
         if not (base.startswith(repo.p) or base == repo.default):
             block(f"a PR from {head} into {base}.", "A milestone PR goes into its parent: project/* or the default branch.")
         sha = repo.sha(head) if "repo" not in opts else ""
-        if sha and not repo.passed(sha):
+        if sha and not repo.passed(sha, branch=head):
             block(f"a PR from {head} at {sha[:12]} without a passing milestone gate.", CLOSE, "verify/report.json")
         return
     if head.startswith(repo.p):
@@ -270,6 +351,60 @@ def check_pr(repo: Repo, args: list[str]) -> None:
         block(f"a PR from {head} into {base}: only milestone branches merge into a project.", RIDE)
     if repo.in_session() and goal_active():
         block(f"a PR from {head} inside a /goal run: only milestone and project PRs open there.", RIDE, GOAL_SOURCE, GOAL_ACTION)
+
+
+def switched_to(args: list[str]) -> str:
+    """The branch a `git switch|checkout` argument list moves to; "" for `--` paths and none."""
+    if "--" in args:
+        return ""
+    creates = {"-c", "-C", "--create", "--force-create", "-b", "-B"}
+    for i, a in enumerate(args):
+        if a in creates and i + 1 < len(args):
+            return args[i + 1]
+        if not a.startswith("-"):
+            return a
+    return ""
+
+
+def check_merge(repo: Repo, args: list[str], current: str = "") -> None:
+    """Local mode: on project/*, a milestone/* ref merges only with `VERIFY PASS milestone` on it.
+    `current` is the branch an earlier `git switch|checkout` of the same command moved to."""
+    real = repo.branch()
+    current = current or real
+    # Either branch gates: a failed or misread switch can only make the check stricter.
+    if not (repo.local and (current.startswith(repo.p) or real.startswith(repo.p))):
+        return
+    takes_value = {"-m", "--message", "-F", "--file", "-s", "--strategy", "-X", "--strategy-option"}
+    i = 0
+    while i < len(args):
+        a = args[i]
+        if a in takes_value:
+            i += 2
+            continue
+        ref = a.removeprefix("refs/heads/")
+        if not a.startswith("-") and ref.startswith(repo.m):
+            sha = repo.sha(ref)
+            if not repo.passed(sha, branch=ref):
+                block(f"a merge of {ref} into {current} without a passing milestone gate.", CLOSE, "verify/report.json")
+            into = current if current.startswith(repo.p) else real
+            parent = repo.project_of(ref)
+            if parent and parent != into:
+                block(f"a merge of {ref} into {into}: it belongs to {parent}.", local_merge_route(parent, ref))
+            tip = repo.sha(into)
+            if not tip:
+                block(
+                    f"a merge of {ref} into {into}: the project branch {into} cannot be resolved.",
+                    f"Create or check out {into} first (`git switch {into}`), then merge.",
+                )
+            if subprocess.run(
+                ["git", "-C", str(repo.dir), "merge-base", "--is-ancestor", tip, sha], capture_output=True
+            ).returncode:
+                block(
+                    f"a merge of {ref} into {into} on a gate that ran against an older {into}.",
+                    f"`git merge {into}` on {ref}, then run `python3 scripts/verify_gate.py milestone <id>` again.",
+                    "verify/report.json",
+                )
+        i += 1
 
 
 def segments(text: str) -> list[list[str]]:
@@ -301,6 +436,7 @@ except ValueError:
     sys.exit(0)
 
 where = cwd
+moved = ""  # branch an earlier `git switch|checkout` in this command moves to
 for seg in parts:
     while seg and ("=" in seg[0] and not seg[0].startswith("-") or seg[0] in WRAPPERS):
         seg = seg[1:]
@@ -317,6 +453,10 @@ for seg in parts:
             rest = rest[2:]
         if rest and rest[0] == "push":
             check_push(Repo(here), rest[1:])
+        elif rest and rest[0] in ("switch", "checkout"):
+            moved = switched_to(rest[1:])
+        elif rest and rest[0] == "merge":
+            check_merge(Repo(here), rest[1:], moved)
     elif seg[0] == "gh" and seg[1:3] == ["pr", "create"]:
         check_pr(Repo(where), seg[3:])
 sys.exit(0)

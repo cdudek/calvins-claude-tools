@@ -358,7 +358,7 @@ def test_approve_runs_the_lint_first_and_refuses_on_failure(tmp_path: Path) -> N
     assert not (change / "lock.json").exists()
 
 
-@pytest.mark.parametrize("name", ["run", "feature", "milestone"])
+@pytest.mark.parametrize("name", ["run", "feature", "milestone", "project"])
 def test_goal_templates_are_end_states_not_processes(name: str) -> None:
     """2026-11-11: a process in the condition cannot be satisfied after the merge, so it never clears."""
     text = (SKILL / "templates" / "goal" / f"{name}.txt").read_text()
@@ -640,6 +640,133 @@ def test_a_project_with_a_branch_or_from_before_3_7_still_syncs(
     assert "git merge origin/project/big" in r.stdout
 
 
+# 3.14.0: `milestones.merge: "local"` keeps milestones and the project branch on this machine.
+def _local_repo(tmp_path: Path, merge: str | None = "local") -> Path:
+    """master with the approved change, a never-pushed project/big at the same commit."""
+    repo = _repo(tmp_path, ["true"])
+    cfg = json.loads((repo / "sdlc.json").read_text())
+    cfg = {**cfg, "defaultBranch": "master", "checks": {"milestone": ["true"]}}
+    if merge:
+        cfg["milestones"] = {"merge": merge}
+    (repo / "sdlc.json").write_text(json.dumps(cfg))
+    (repo / "changes" / ID / "decisions.json").write_text(
+        json.dumps({"project": {"slug": "big", "branch": True}})
+    )
+    _git(repo, "add", ".")
+    _git(repo, "commit", "-qm", "checks, project")
+    _approve(repo)
+    origin = tmp_path / "origin.git"
+    _git(tmp_path, "init", "-q", "--bare", "-b", "master", str(origin))
+    _git(repo, "remote", "add", "origin", str(origin))
+    _git(repo, "push", "-q", "origin", "master")
+    _git(repo, "branch", "project/big")
+    return repo
+
+
+def _merge_milestone_one_locally(repo: Path) -> None:
+    """Milestone 2 was cut from the trunk; milestone 1 then merges into the local project branch."""
+    _git(repo, "branch", "milestone/big-2")
+    _git(repo, "checkout", "-qb", "milestone/big-1")
+    (repo / "m1.txt").write_text("milestone 1\n")
+    _git(repo, "add", ".")
+    _git(repo, "commit", "-qm", "milestone 1")
+    _git(repo, "switch", "-q", "project/big")
+    _git(repo, "merge", "-q", "--no-ff", "--no-edit", "milestone/big-1")
+    _git(repo, "switch", "-q", "milestone/big-2")
+
+
+def test_local_mode_milestone_must_contain_the_local_project_branch(tmp_path: Path) -> None:
+    repo = _local_repo(tmp_path)
+    _merge_milestone_one_locally(repo)
+    r = _gate(repo, "milestone", ID)
+    assert r.returncode == 1 and _last(r) == f"VERIFY FAIL milestone {ID} check=parent-sync"
+    assert "project/big has commits this milestone lacks" in r.stdout
+    assert "git merge project/big" in r.stdout
+    _git(repo, "merge", "-q", "--no-edit", "project/big")
+    assert _last(_gate(repo, "milestone", ID)).startswith(f"VERIFY PASS milestone {ID}")
+
+
+def test_milestone_gate_keeps_its_own_receipt_beside_report_json(tmp_path: Path) -> None:
+    repo = _local_repo(tmp_path)
+    _merge_milestone_one_locally(repo)
+    _git(repo, "merge", "-q", "--no-edit", "project/big")
+    assert _last(_gate(repo, "milestone", ID)).startswith(f"VERIFY PASS milestone {ID}")
+    verify = repo / "changes" / ID / "verify"
+    receipt = json.loads((verify / "milestone-2.json").read_text())
+    assert receipt == {**json.loads((verify / "report.json").read_text()), "milestone": 2, "change": ID}
+    assert receipt["result"].startswith("VERIFY PASS milestone") and receipt["sha"]
+
+
+@pytest.mark.parametrize("merge", [None, "pr"])
+def test_without_local_mode_a_local_project_branch_is_no_parent(
+    tmp_path: Path, merge: str | None
+) -> None:
+    repo = _local_repo(tmp_path, merge)
+    _merge_milestone_one_locally(repo)
+    assert _last(_gate(repo, "milestone", ID)).startswith(f"VERIFY PASS milestone {ID}")
+
+
+def test_project_gate_records_a_pass_on_the_project_head(tmp_path: Path) -> None:
+    repo = _local_repo(tmp_path)
+    _merge_milestone_one_locally(repo)
+    _git(repo, "switch", "-q", "project/big")
+    head = subprocess.run(
+        ["git", "rev-parse", "HEAD"], cwd=repo, capture_output=True, text=True, env=_env()
+    ).stdout.strip()
+    r = _gate(repo, "project", "big")
+    assert r.returncode == 0 and _last(r) == f"VERIFY PASS project big {head}"
+    common = subprocess.run(
+        ["git", "rev-parse", "--path-format=absolute", "--git-common-dir"],
+        cwd=repo, capture_output=True, text=True, env=_env(),
+    ).stdout.strip()  # fmt: skip
+    record = json.loads((Path(common) / "sdlc/projects/big/verify/report.json").read_text())
+    assert record["result"] == f"VERIFY PASS project big {head}" and record["sha"] == head
+    assert not (repo / "changes" / "big").exists()
+
+
+def test_project_gate_wants_the_project_branch_checked_out(tmp_path: Path) -> None:
+    repo = _local_repo(tmp_path)  # HEAD is master
+    r = _gate(repo, "project", "big")
+    assert r.returncode == 3 and _last(r) == "VERIFY BLOCKED reason=env"
+    assert "check out project/big" in r.stdout
+
+
+def test_project_gate_fails_until_the_default_branch_is_merged_in(tmp_path: Path) -> None:
+    repo = _local_repo(tmp_path)
+    other = tmp_path / "other"
+    _git(tmp_path, "clone", "-q", str(tmp_path / "origin.git"), str(other))
+    (other / "trunk.txt").write_text("the default branch moved\n")
+    _git(other, "add", ".")
+    _git(other, "commit", "-qm", "trunk moved")
+    _git(other, "push", "-q", "origin", "master")
+    _git(repo, "switch", "-q", "project/big")
+    r = _gate(repo, "project", "big")
+    assert r.returncode == 1 and _last(r) == "VERIFY FAIL project big check=parent-sync"
+    assert "git merge origin/master" in r.stdout
+    _git(repo, "merge", "-q", "--no-edit", "origin/master")
+    assert _last(_gate(repo, "project", "big")).startswith("VERIFY PASS project big")
+
+
+def test_project_gate_runs_the_milestone_checks_and_fails_with_them(tmp_path: Path) -> None:
+    repo = _local_repo(tmp_path)
+    cfg = json.loads((repo / "sdlc.json").read_text())
+    _git(repo, "switch", "-q", "project/big")
+    (repo / "sdlc.json").write_text(json.dumps({**cfg, "checks": {"milestone": ["false"]}}))
+    _git(repo, "commit", "-qam", "failing check")
+    r = _gate(repo, "project", "big")
+    assert r.returncode == 1 and _last(r) == "VERIFY FAIL project big check=check-1"
+
+
+def test_project_gate_without_milestone_checks_blocks(tmp_path: Path) -> None:
+    repo = _local_repo(tmp_path)
+    cfg = json.loads((repo / "sdlc.json").read_text())
+    _git(repo, "switch", "-q", "project/big")
+    (repo / "sdlc.json").write_text(json.dumps({**cfg, "checks": {}}))
+    _git(repo, "commit", "-qam", "no checks")
+    r = _gate(repo, "project", "big")
+    assert r.returncode == 3 and "checks.milestone is empty" in r.stdout
+
+
 # 3.8.0: the plan gate refuses unfinished quality records; the milestone gate refuses open ones.
 GOOD_INTENT = "---\nstatus: approved\n---\n\n# Intent\n"
 VIOLATIONS = (
@@ -908,3 +1035,111 @@ def test_audit_without_evidence_skips_the_never_ran_test(tmp_path: Path) -> None
         env=env,
     )
     assert r.returncode == 0 and "last run: never" in r.stdout
+
+
+def _order(repo: Path) -> list[str]:
+    report = json.loads((repo / "changes" / ID / "verify" / "report.json").read_text())
+    return [c["name"] for c in report["checks"]]
+
+
+def _checks(*names_and_cmds: tuple[str, str], **extra: object) -> list[dict]:
+    return [{"name": n, "run": c, **extra} for n, c in names_and_cmds]
+
+
+def test_checks_run_cheapest_first_by_a_static_guess(tmp_path: Path) -> None:
+    """No durations yet: lint, format and typecheck first, build/e2e last, the rest between,
+    whatever the order in sdlc.json."""
+    repo = _repo(tmp_path, _checks(("e2e", "true"), ("unit", "true"), ("lint", "true")))
+    _approve(repo)
+    assert _gate(repo, "feature", ID).returncode == 0
+    assert _order(repo) == ["lint", "unit", "e2e"]
+
+
+def test_the_first_failure_stops_before_the_expensive_checks(tmp_path: Path) -> None:
+    repo = _repo(tmp_path, _checks(("e2e", "true"), ("lint", "false")))
+    _approve(repo)
+    r = _gate(repo, "feature", ID)
+    assert r.returncode == 1 and _last(r) == f"VERIFY FAIL feature {ID} check=lint"
+    assert _order(repo) == ["lint"]
+
+
+def test_recorded_seconds_beat_the_guess_and_a_pass_records_them(tmp_path: Path) -> None:
+    repo = _repo(tmp_path, _checks(("lint", "echo a"), ("unit", "echo b")))
+    _approve(repo)
+    durations = repo / "changes" / ID / "verify" / "durations.json"
+    durations.parent.mkdir(exist_ok=True)
+    durations.write_text(json.dumps({"echo a": 90.0, "echo b": 0.1}))
+    assert _gate(repo, "feature", ID).returncode == 0
+    assert _order(repo) == ["unit", "lint"]
+    assert set(json.loads(durations.read_text())) == {"echo a", "echo b"}
+    assert json.loads(durations.read_text())["echo a"] < 90  # re-measured on the pass
+
+
+def test_a_serial_check_is_a_wall_nothing_moves_across(tmp_path: Path) -> None:
+    repo = _repo(
+        tmp_path, [*_checks(("e2e", "true"), ("unit", "true")), *_checks(("lint", "true"))]
+    )
+    cfg = json.loads((repo / "sdlc.json").read_text())
+    cfg["checks"]["feature"][2]["serial"] = True  # needs what the two before it produced
+    (repo / "sdlc.json").write_text(json.dumps(cfg))
+    _git(repo, "commit", "-qam", "serial")
+    _approve(repo)
+    assert _gate(repo, "feature", ID).returncode == 0
+    assert _order(repo) == ["unit", "e2e", "lint"]
+
+
+def test_keep_going_runs_every_check_and_names_the_first_failure(tmp_path: Path) -> None:
+    repo = _repo(tmp_path, _checks(("e2e", "true"), ("unit", "false"), ("lint", "false")))
+    _approve(repo)
+    r = _gate(repo, "feature", ID, "--keep-going")
+    assert r.returncode == 1 and _last(r) == f"VERIFY FAIL feature {ID} check=lint"
+    assert _order(repo) == ["lint", "unit", "e2e"] and "failed: lint, unit" in r.stdout
+
+
+def test_after_orders_a_check_behind_the_one_it_needs_F13(tmp_path: Path) -> None:
+    """Codegen must run before the typecheck even though the typecheck is the cheaper guess."""
+    repo = _repo(tmp_path, _checks(("tsc", "true"), ("types", "true")))
+    cfg = json.loads((repo / "sdlc.json").read_text())
+    cfg["checks"]["feature"][0]["after"] = ["types"]
+    (repo / "sdlc.json").write_text(json.dumps(cfg))
+    _git(repo, "commit", "-qam", "after")
+    _approve(repo)
+    assert _gate(repo, "feature", ID).returncode == 0
+    assert _order(repo) == ["types", "tsc"]
+
+
+def test_a_new_approval_records_cost_order_and_an_old_lock_keeps_declared_order_F13(
+    tmp_path: Path,
+) -> None:
+    repo = _repo(tmp_path, _checks(("e2e", "true"), ("unit", "true"), ("lint", "true")))
+    _approve(repo)
+    lock_path = repo / "changes" / ID / "lock.json"
+    lock = json.loads(lock_path.read_text())
+    assert lock["order"] == "cost"
+    assert _gate(repo, "feature", ID).returncode == 0
+    assert _order(repo) == ["lint", "unit", "e2e"]
+    del lock["order"]  # approved before this version: the order it saw is the order it keeps
+    lock_path.write_text(json.dumps(lock))
+    _git(repo, "commit", "-qam", "old lock")
+    assert _gate(repo, "feature", ID).returncode == 0
+    assert _order(repo) == ["e2e", "unit", "lint"]
+
+
+def test_keep_going_does_not_stop_at_a_blocked_check_F23(tmp_path: Path) -> None:
+    blocked = "echo 'VERIFY BLOCKED reason=env'; exit 1"
+    repo = _repo(tmp_path, _checks(("lint", "false"), ("unit", blocked), ("e2e", "true")))
+    _approve(repo)
+    r = _gate(repo, "feature", ID, "--keep-going")
+    assert _last(r) == f"VERIFY FAIL feature {ID} check=lint"  # the first verdict stands
+    assert _order(repo) == ["lint", "unit", "e2e"]
+
+
+def test_keep_going_reports_a_first_blocked_verdict_after_running_the_rest_F23(
+    tmp_path: Path,
+) -> None:
+    blocked = "echo 'VERIFY BLOCKED reason=env'; exit 1"
+    repo = _repo(tmp_path, _checks(("lint", blocked), ("unit", "false"), ("e2e", "true")))
+    _approve(repo)
+    r = _gate(repo, "feature", ID, "--keep-going")
+    assert _last(r) == "VERIFY BLOCKED reason=env" and r.returncode == 3
+    assert _order(repo) == ["lint", "unit", "e2e"]

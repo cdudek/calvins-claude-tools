@@ -75,7 +75,7 @@ before the spec settles get redrawn after every spec fix (My Sampler, 2026-10-07
    `gallery.py <change>/spec/prototype --open`; `spec/prototype/index.md` lists every screen ×
    state with its image and links `gallery.html`.
 
-The PNGs are the baseline `cct:ux-spec-validate build` compares the built app against.
+The PNGs are the baseline `cct:ux-build-validate` compares the built app against.
 
 ## Step 0 — Codex, or stop
 

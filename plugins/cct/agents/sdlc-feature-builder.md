@@ -19,7 +19,7 @@ Your prompt names the change folder, the feature or part, the worktree and the c
 
 1. Build from the context pack in your prompt: your feature's facts (with their tags), the plan excerpt for it, and the text of the rule IDs those facts cite. Open `changes/<id>/plan.md` or `facts.md` only for a gap the pack names, and report the gap. A rule in the pack is binding; if the facts need you to break one, stop and report it instead.
 2. Write the tests for the facts of your feature first.
-3. Build in the plan's folders. A file elsewhere is scope growth: stop and report it.
+3. Build in the plan's folders. A file elsewhere is scope growth: stop and report it. When a requirement changes a timing or behaviour contract (a limit, a default, an interval), grep the tests and scripts for the old value and update each one that asserted it.
 4. Run touched tests, their directly affected suite and required pre-commit checks. Follow the linked local-first failure loop. The close builder owns the final full check; if you are authorized to push yourself, run it before that push.
 5. Commit your work on the branch you were given, with a Conventional Commit subject (`feat: ...`, `fix: ...`): the release reads every commit of a milestone, not only the PR title.
 

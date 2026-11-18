@@ -102,7 +102,7 @@ indistinguishable from "nobody looked".
 These five levels are the kit's only severity scale. Every other scale a skill or a reference
 uses is a name for one of them, never a second judgement.
 
-| Level | Nielsen 0-4 | `cct:ux-accessibility-audit` | Build QA in `cct:ux-spec-validate` |
+| Level | Nielsen 0-4 | `cct:ux-accessibility-audit` | Build QA in `cct:ux-build-validate` |
 |---|---|---|---|
 | Critical | 4, usability catastrophe | Critical | P0 |
 | High | 3, major problem | Serious | P1 |

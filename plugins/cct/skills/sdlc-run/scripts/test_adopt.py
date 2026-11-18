@@ -445,6 +445,34 @@ def test_migrates_goals_and_claude_plans(tmp_path: Path) -> None:
     assert any("migrated" in w for w in out["WROTE"])
 
 
+def test_adopt_says_when_the_removed_coowner_step_was_in_use_F20(tmp_path: Path) -> None:
+    repo = _repo(tmp_path, "node")
+    _adopt(repo)
+    wf = repo / ".github" / "workflows" / "ship-show-ask.yml"
+    wf.write_text(wf.read_text() + "      - run: echo ${{ vars.SDLC_COOWNER }}\n")
+    notice = [m for m in _sections(_adopt(repo).stdout)["MANUAL"] if "SDLC_COOWNER" in m]
+    assert len(notice) == 1 and "CODEOWNERS" in notice[0]
+    assert "SDLC_COOWNER" not in wf.read_text()
+    assert not [m for m in _sections(_adopt(repo).stdout)["MANUAL"] if "SDLC_COOWNER" in m]
+
+
+def test_adopt_refuses_feature_prs_with_local_milestones_F12(tmp_path: Path) -> None:
+    repo = _repo(tmp_path, "node")
+    _adopt(repo)
+    cfg = json.loads((repo / "sdlc.json").read_text())
+    cfg.update({"delivery": "feature-prs", "milestones": {"merge": "local"}})
+    (repo / "sdlc.json").write_text(json.dumps(cfg))
+    res = _adopt(repo)
+    assert res.returncode != 0 and 'delivery "one-go"' in res.stderr + res.stdout
+
+
+def test_change_templates_name_the_local_route_F12() -> None:
+    tpl = Path(__file__).resolve().parents[1] / "templates" / "change"
+    for name in ("plan.md", "milestone.md"):
+        assert "local mode" in (tpl / name).read_text(), name
+    assert "no `origin/project/<slug>`" in (tpl / "plan.md").read_text()
+
+
 def test_keep_list_protects_a_generated_file(tmp_path: Path) -> None:
     repo = _repo(tmp_path, "node")
     _adopt(repo)
@@ -811,13 +839,13 @@ def test_tiers_false_writes_no_tier_files_and_no_tier_docs(tmp_path: Path, kind:
     docs = (repo / "docs" / "sdlc.md").read_text()
     assert "Ship / Show / Ask" not in docs and "ship-show-ask" not in docs
     assert "## Merging: auto-merge on green" in docs and "gh pr merge <n> --merge --auto" in docs
-    assert "CODE_MANAGER_APP" not in docs and "SDLC_COOWNER" not in docs
+    assert "CODE_MANAGER_APP" not in docs
     assert "`ask` needs a human" not in (repo / "CLAUDE.md").read_text()
     for rel in ("docs/sdlc.md", "CLAUDE.md"):
         text = (repo / rel).read_text()
         assert not TOKEN.search(text), f"{rel}: unrendered {TOKEN.search(text).group(0)}"
     manual = "\n".join(_sections(result.stdout)["MANUAL"])
-    for word in ("CODE_MANAGER_APP", "SDLC_COOWNER", "SDLC_SLACK_BOT_TOKEN", "code_owner", "App"):
+    for word in ("CODE_MANAGER_APP", "SDLC_SLACK_BOT_TOKEN", "code_owner", "App"):
         assert word not in manual, word
     assert "ship_show_ask" not in manual
 
@@ -940,7 +968,6 @@ def test_tiers_no_notes_the_ruleset_cleanup_once(tmp_path: Path) -> None:
         "CODE_MANAGER_APP_CLIENT_ID",
         "CODE_MANAGER_APP_PRIVATE_KEY",
         "SDLC_SLACK_BOT_TOKEN",
-        "SDLC_COOWNER",
     ):
         assert name in manual[0], name
     again = _sections(_adopt(repo, "--tiers", "no").stdout)
@@ -1594,3 +1621,81 @@ def test_the_ignore_allow_list_keeps_the_python_helpers_F15(tmp_path: Path) -> N
     before = (repo / ".gitignore").read_text()
     assert _sections(_adopt(repo).stdout)["WROTE"] == []
     assert (repo / ".gitignore").read_text() == before  # one allow-list, not two
+
+
+GENERATED_D4 = """name: Decision4
+on:
+  pull_request:
+    types: [opened, edited, synchronize, reopened]
+concurrency:
+  group: decision4-${{ github.event.pull_request.number }}
+  cancel-in-progress: true
+permissions:
+  contents: read
+  pull-requests: read
+jobs:
+  decision4:
+    uses: example-org/blueprints/.github/workflows/decision4-check.yml@770383e955d0b66199f13bbae0e825aa9fface08 # shared Decision4 v1
+"""
+
+
+def _commit_all(repo: Path) -> None:
+    env = _env()
+    subprocess.run(["git", "add", "."], cwd=repo, check=True, env=env)
+    subprocess.run(
+        ["git", "-c", "user.name=t", "-c", "user.email=t@t", "commit", "-qm", "old"],
+        cwd=repo, check=True, env=env,
+    )  # fmt: skip
+
+
+def test_adopt_keeps_a_decision4_workflow_that_only_mentions_blueprints_F3(
+    tmp_path: Path,
+) -> None:
+    repo = _repo(tmp_path, "node")
+    wf = repo / ".github" / "workflows" / "decision4.yml"
+    wf.write_text("name: mine\n# see example-org/blueprints/docs\njobs:\n  mine:\n    runs-on: x\n")
+    (repo / ".decision4.lock").write_text("mine\n")
+    _commit_all(repo)
+    assert _adopt(repo).returncode == 0
+    assert wf.exists() and (repo / ".decision4.lock").exists()
+
+
+def test_adopt_honours_keep_for_the_generated_decision4_files_F3(tmp_path: Path) -> None:
+    repo = _repo(tmp_path, "node")
+    _adopt(repo)
+    cfg = json.loads((repo / "sdlc.json").read_text())
+    cfg["keep"] = [*cfg.get("keep", []), ".github/workflows/decision4.yml"]
+    (repo / "sdlc.json").write_text(json.dumps(cfg))
+    wf = repo / ".github" / "workflows" / "decision4.yml"
+    wf.write_text(GENERATED_D4)
+    (repo / ".decision4.lock").write_text("b0b2060\n")
+    _commit_all(repo)
+    assert _adopt(repo).returncode == 0
+    assert wf.exists() and (repo / ".decision4.lock").exists()
+
+
+def test_adopt_removes_a_generated_decision4_workflow_only(tmp_path: Path) -> None:
+    """3.17.0: Decision4 has been advisory (no workflow) since 3.12.0, but adopt left the generated
+    workflow behind and it kept failing on every PR event. adopt takes it and its lock out (git
+    rm); a decision4.yml that calls neither shared checker is the repo's own and stays."""
+    repo = _repo(tmp_path, "node")
+    env = _env()
+    wf = repo / ".github" / "workflows" / "decision4.yml"
+    wf.write_text(GENERATED_D4)
+    (repo / ".decision4.lock").write_text("b0b2060\n")
+    subprocess.run(["git", "add", "."], cwd=repo, check=True, env=env)
+    subprocess.run(
+        ["git", "-c", "user.name=t", "-c", "user.email=t@t", "commit", "-qm", "old"],
+        cwd=repo,
+        check=True,
+        env=env,
+    )
+    res = _adopt(repo)
+    assert res.returncode == 0, res.stdout + res.stderr
+    assert not wf.exists() and not (repo / ".decision4.lock").exists()
+    assert any("decision4.yml (removed" in w for w in _sections(res.stdout)["WROTE"])
+    assert (repo / "boundary-map.yaml").exists(), "the advisory map stays"
+
+    wf.write_text("name: Decision4\njobs:\n  mine:\n    runs-on: ubuntu-latest\n")
+    assert _adopt(repo).returncode == 0
+    assert wf.exists(), "a repo's own workflow is not ours to delete"

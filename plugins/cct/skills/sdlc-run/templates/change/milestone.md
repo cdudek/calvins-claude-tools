@@ -36,7 +36,8 @@ branch), `merged` (feature PRs) or `blocked: <reason>`.
 - `findings.md` has no open blocking item after the one fix round.
 - Row 0 ran after the last earlier milestone merged (the gate's `parent-sync` check proves it).
 - One push and one PR from `milestone/<slug>` to its parent, after the gate passed, auto-merge armed.
-  No other PR or push for this milestone (`pr-gate.sh`).
+  No other PR or push for this milestone (`pr-gate.sh`). In local mode with a project branch: no
+  push or PR; the milestone is merged into the local `project/<slug>` instead.
 
 ## Outcome
 

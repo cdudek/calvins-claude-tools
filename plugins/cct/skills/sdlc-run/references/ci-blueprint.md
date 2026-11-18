@@ -18,6 +18,9 @@ Merge protection is the repository's required GitHub checks. Iterate locally per
 4. Share installation in one job per stack when possible. Use the cheapest capable runner;
    reserve macOS for Apple release builds on tags or manual dispatch. Standard runners in
    public repositories are free. No full CI rerun on main after a PR already passed.
+5. The milestone close runs the same list locally: `sdlc.json` `checks.milestone` is that one
+   list (see [one list](local-first.md#one-list-the-milestone-check-is-the-repos-check)), never a
+   second gate with its own commands.
 
 ## The example workflow
 

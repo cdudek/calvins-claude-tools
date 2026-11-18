@@ -23,7 +23,7 @@ the report by hand.
 | `responsive` | `cct:ux-responsive-audit`: code audit always, viewport shots when a server is up | `responsive` |
 | `e2e-coverage` | Read-only search of the e2e suite for specs that exercise the changed surfaces | `e2e-coverage` |
 | `sitemap` | `cct:ux-sitemap-create diff base:<base ref>`: the head's routes against the base's | `sitemap` |
-| `spec` | `cct:ux-spec-validate build <change>`, when the change has a spec folder | `spec` |
+| `spec` | `cct:ux-build-validate <change>`, when the change has a spec folder | `spec` |
 
 ## 2. Always run
 

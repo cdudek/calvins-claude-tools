@@ -300,3 +300,292 @@ def test_an_exception_in_the_pushed_repo_still_counts_F8(repo: Path, tmp_path: P
     (change / "decisions.json").write_text(json.dumps({"prExceptions": rows}))
     cmd = f"cd {other} && gh pr create --base project/trial --head fix/urgent --title t --body b"
     assert _run(repo, cmd).returncode == 0
+
+
+# 3.14.0: sdlc.json `milestones.merge: "local"`. Milestones and the project branch stay on this
+# machine; only the PR into the default branch goes online.
+def _local(repo: Path, merge: str | None = "local", project: bool = True) -> None:
+    cfg = json.loads((repo / "sdlc.json").read_text())
+    cfg = {**cfg, "milestones": {"merge": merge}} if merge else cfg
+    (repo / "sdlc.json").write_text(json.dumps(cfg))
+    decisions = repo / "changes" / ID / "decisions.json"
+    data = json.loads(decisions.read_text())
+    if project:
+        data["project"] = {"slug": "trial", "branch": True}
+    decisions.write_text(json.dumps(data))
+    _git(repo, "add", ".")
+    _git(repo, "commit", "-qm", "local milestones")
+    _git(repo, "branch", "project/trial")  # same commit, so it carries the config
+
+
+def _pass_project(repo: Path, sha: str | None = None) -> None:
+    common = Path(_git(repo, "rev-parse", "--path-format=absolute", "--git-common-dir"))
+    verify = common / "sdlc" / "projects" / "trial" / "verify"
+    verify.mkdir(parents=True, exist_ok=True)
+    sha = sha or _git(repo, "rev-parse", "project/trial")
+    (verify / "report.json").write_text(
+        json.dumps({"sha": sha, "result": f"VERIFY PASS project trial {sha}"})
+    )
+
+
+def test_local_mode_refuses_the_milestone_push_even_with_a_pass(repo: Path) -> None:
+    _local(repo)
+    _pass(repo)
+    r = _run(repo, "git push -u origin milestone/trial-1")
+    assert r.returncode == 2 and "local milestones mode" in r.stderr
+    assert "git switch project/trial && git merge --no-ff milestone/trial-1" in r.stderr
+
+
+def test_local_mode_without_a_project_sends_the_milestone_to_the_default_branch(repo: Path) -> None:
+    _local(repo, project=False)
+    assert _run(repo, "git push -u origin milestone/trial-1").returncode == 2  # no gate yet
+    _pass(repo)
+    assert _run(repo, "git push -u origin milestone/trial-1").returncode == 0
+    assert _run(repo, "gh pr create --base master --title t --body b").returncode == 0
+
+
+@pytest.mark.parametrize("merge", [None, "pr"])
+def test_pr_mode_still_pushes_the_milestone_and_opens_its_pr(repo: Path, merge: str | None) -> None:
+    _local(repo, merge)
+    _pass(repo)
+    assert _run(repo, "git push -u origin milestone/trial-1").returncode == 0
+    cmd = "gh pr create --base project/trial --title 'Milestone 1' --body x"
+    assert _run(repo, cmd).returncode == 0
+
+
+def test_local_mode_refuses_the_milestone_pr_into_the_project(repo: Path) -> None:
+    _local(repo)
+    _pass(repo)
+    r = _run(repo, "gh pr create --base project/trial --head milestone/trial-1 --title t --body b")
+    assert r.returncode == 2 and "local milestones mode" in r.stderr
+    assert "git merge --no-ff milestone/trial-1" in r.stderr
+
+
+def test_local_mode_pushes_the_project_only_with_its_own_pass(repo: Path) -> None:
+    _local(repo)
+    _git(repo, "checkout", "-q", "project/trial")
+    assert _run(repo, "git push -u origin project/trial").returncode == 2  # never gated
+    assert _run(repo, "git push origin origin/master:refs/heads/project/trial").returncode == 2
+    _pass(repo)  # a milestone PASS is not a project PASS
+    r = _run(repo, "git push -u origin project/trial")
+    assert r.returncode == 2 and "VERIFY PASS project" in r.stderr
+    _pass_project(repo, sha="0" * 40)  # stale: the head moved after the gate
+    assert _run(repo, "git push -u origin project/trial").returncode == 2
+    _pass_project(repo)
+    assert _run(repo, "git push -u origin project/trial").returncode == 0
+    assert _run(repo, "git push origin project/trial:refs/heads/project/trial").returncode == 0
+
+
+def test_local_project_pass_survives_the_archive_move_but_not_code(repo: Path) -> None:
+    _local(repo)
+    _git(repo, "checkout", "-q", "project/trial")
+    _pass_project(repo)
+    (repo / "changes" / "archive").mkdir()
+    _git(repo, "mv", f"changes/{ID}", f"changes/archive/{ID}")
+    _git(repo, "commit", "-qm", "archive")
+    assert _run(repo, "git push -u origin project/trial").returncode == 0
+    _commit(repo, "src/app.ts", "late\n")
+    assert _run(repo, "git push -u origin project/trial").returncode == 2
+
+
+def test_local_mode_opens_the_project_pr_into_the_default_branch_only(repo: Path) -> None:
+    _local(repo)
+    ok = "gh pr create --head project/trial --base master --title t --body b"
+    assert _run(repo, ok).returncode == 0
+    r = _run(repo, "gh pr create --head project/trial --base other --title t --body b")
+    assert r.returncode == 2 and "default branch" in r.stderr
+
+
+def test_pr_mode_keeps_the_project_branch_rule(repo: Path) -> None:
+    _local(repo, None)
+    _git(repo, "checkout", "-q", "project/trial")
+    _pass_project(repo)  # ignored outside local mode
+    r = _run(repo, "git push -u origin project/trial")
+    assert r.returncode == 2 and "only through milestone PRs" in r.stderr
+
+
+def test_local_merge_into_the_project_needs_the_milestone_pass(repo: Path) -> None:
+    _local(repo)
+    here = _git(repo, "rev-parse", "--abbrev-ref", "HEAD")
+    assert here == "milestone/trial-1"
+    _git(repo, "checkout", "-q", "project/trial")
+    for cmd in (
+        "git merge --no-ff milestone/trial-1",
+        "git merge --no-ff -m 'merge m1' milestone/trial-1",
+        "rtk git merge refs/heads/milestone/trial-1 --no-edit",
+    ):
+        r = _run(repo, cmd)
+        assert r.returncode == 2 and "without a passing milestone gate" in r.stderr, cmd
+    _git(repo, "checkout", "-q", "milestone/trial-1")
+    _pass(repo)
+    _git(repo, "checkout", "-q", "project/trial")
+    assert _run(repo, "git merge --no-ff milestone/trial-1").returncode == 0
+    assert _run(repo, "git merge --no-ff -m 'merge m1' milestone/trial-1").returncode == 0
+
+
+def test_local_merge_sees_a_pass_recorded_in_another_worktree(repo: Path, tmp_path: Path) -> None:
+    _local(repo)
+    _pass(repo)  # the gate ran here, on milestone/trial-1
+    other = tmp_path / "project-wt"
+    _git(repo, "worktree", "add", "-q", str(other), "project/trial")
+    assert _run_in(other, repo, "git merge --no-ff milestone/trial-1").returncode == 0
+    _commit(repo, "src/app.ts", "3\n")  # code after the gate: no longer the gated head
+    assert _run_in(other, repo, "git merge --no-ff milestone/trial-1").returncode == 2
+
+
+def test_local_merge_leaves_other_merges_alone(repo: Path) -> None:
+    _local(repo)
+    _git(repo, "checkout", "-q", "project/trial")
+    assert _run(repo, "git merge origin/master").returncode == 0
+    assert _run(repo, "git merge --abort").returncode == 0
+    assert _run(repo, "git merge --no-ff -m 'about milestone/x' fix/thing").returncode == 0
+    _git(repo, "checkout", "-q", "milestone/trial-1")  # not a project branch
+    assert _run(repo, "git merge --no-ff project/trial").returncode == 0
+
+
+def test_pr_mode_does_not_look_at_merges(repo: Path) -> None:
+    _local(repo, None)
+    _git(repo, "checkout", "-q", "project/trial")
+    assert _run(repo, "git merge --no-ff milestone/trial-1").returncode == 0
+
+
+def _run_in(where: Path, repo: Path, command: str) -> subprocess.CompletedProcess[str]:
+    """Run the hook of `repo` for a command typed in the worktree `where`."""
+    transcript = repo.parent / "t.jsonl"
+    transcript.write_text("")
+    payload = {
+        "tool_input": {"command": command},
+        "cwd": str(where),
+        "transcript_path": str(transcript),
+    }
+    return subprocess.run(
+        ["bash", str(repo / ".claude" / "hooks" / "pr-gate.sh")],
+        input=json.dumps(payload), capture_output=True, text=True,
+        env={**_env(), "CLAUDE_PROJECT_DIR": str(repo)},
+    )  # fmt: skip
+
+
+def test_local_merge_is_read_after_a_switch_in_the_same_command(repo: Path) -> None:
+    """The route the hook recommends is `git switch project/x && git merge --no-ff milestone/x`:
+    the hook runs before the switch, so it must follow it."""
+    _local(repo)  # HEAD stays milestone/trial-1
+    for cmd in (
+        "git switch project/trial && git merge --no-ff milestone/trial-1",
+        "git checkout project/trial; git merge milestone/trial-1",
+        f"git -C {repo} switch project/trial && git -C {repo} merge milestone/trial-1",
+    ):
+        r = _run(repo, cmd)
+        assert r.returncode == 2 and "without a passing milestone gate" in r.stderr, cmd
+    _pass(repo)
+    for cmd in (
+        "git switch project/trial && git merge --no-ff milestone/trial-1",
+        "git checkout project/trial; git merge milestone/trial-1",
+    ):
+        assert _run(repo, cmd).returncode == 0, cmd
+
+
+def test_local_merge_after_a_switch_to_another_branch_is_left_alone(repo: Path) -> None:
+    _local(repo)
+    assert _run(repo, "git switch -c fix/x && git merge milestone/trial-1").returncode == 0
+
+
+def test_pr_mode_ignores_a_switch_and_merge(repo: Path) -> None:
+    _local(repo, None)
+    cmd = "git switch project/trial && git merge --no-ff milestone/trial-1"
+    assert _run(repo, cmd).returncode == 0
+
+
+@pytest.mark.parametrize(
+    "cmd",
+    [
+        "git switch other; git merge milestone/trial-1",
+        "git switch other || git merge milestone/trial-1",
+        "git switch nonexistent && git merge milestone/trial-1",
+    ],
+)
+def test_a_switch_away_never_hides_the_real_project_branch(repo: Path, cmd: str) -> None:
+    _local(repo)
+    _git(repo, "checkout", "-q", "project/trial")
+    r = _run(repo, cmd)
+    assert r.returncode == 2 and "without a passing milestone gate" in r.stderr
+
+
+def test_local_merge_refuses_a_pass_gated_before_the_project_moved_F6(repo: Path) -> None:
+    """Two milestones cut from one project tip: after the first merges, the second's pass is old."""
+    _local(repo)
+    _git(repo, "checkout", "-q", "-b", "milestone/trial-2", "project/trial")
+    _commit(repo, "src/other.ts", "m2\n")
+    _pass(repo)  # the gate passed on M2 against the old project tip
+    _git(repo, "checkout", "-q", "milestone/trial-1")
+    _commit(repo, "src/m1.ts", "m1\n")
+    _git(repo, "checkout", "-q", "project/trial")
+    _git(repo, "merge", "-q", "--no-ff", "-m", "m1", "milestone/trial-1")
+    r = _run(repo, "git merge --no-ff milestone/trial-2")
+    assert r.returncode == 2 and "project/trial" in r.stderr and "older" in r.stderr
+    _git(repo, "checkout", "-q", "milestone/trial-2")
+    _git(repo, "merge", "-q", "project/trial")  # parent-sync, then gate again
+    _pass(repo)
+    _git(repo, "checkout", "-q", "project/trial")
+    assert _run(repo, "git merge --no-ff milestone/trial-2").returncode == 0
+
+
+def test_local_merge_refuses_another_projects_branch_F6(repo: Path) -> None:
+    _local(repo)
+    _pass(repo)
+    _git(repo, "branch", "project/other", "milestone/trial-1")
+    _git(repo, "checkout", "-q", "project/other")
+    r = _run(repo, "git merge --no-ff milestone/trial-1")
+    assert r.returncode == 2 and "belongs to project/trial" in r.stderr
+
+
+def test_a_pass_counts_after_a_year_month_archive_move_F10(repo: Path) -> None:
+    _pass(repo)
+    (repo / "changes" / "archive" / "2026" / "2026-11").mkdir(parents=True)
+    _git(repo, "mv", f"changes/{ID}", f"changes/archive/2026/2026-11/{ID}")
+    _git(repo, "commit", "-qm", "archive")
+    assert _run(repo, "git push -u origin milestone/trial-1").returncode == 0
+
+
+def _other_change_pass(repo: Path, where: str = "changes/2026-11-02-other") -> None:
+    """A passing report of ANOTHER change, gated on this very commit."""
+    sha = _git(repo, "rev-parse", "HEAD")
+    folder = repo / where
+    (folder / "verify").mkdir(parents=True)
+    (folder / "decisions.json").write_text(json.dumps({"milestone": {"slug": "other"}}))
+    (folder / "verify" / "report.json").write_text(
+        json.dumps(
+            {
+                "scope": "milestone",
+                "id": "2026-11-02-other",
+                "sha": sha,
+                "result": f"VERIFY PASS milestone 2026-11-02-other {sha}",
+            }
+        )
+    )
+
+
+def test_a_pass_of_another_change_on_the_same_sha_does_not_admit_the_push(repo: Path) -> None:
+    _other_change_pass(repo)
+    r = _run(repo, "git push -u origin milestone/trial-1")
+    assert r.returncode == 2 and "without a passing milestone gate" in r.stderr
+    pr = "gh pr create --base project/trial --title t --body x"
+    assert _run(repo, pr).returncode == 2
+    _pass(repo)  # this change's own pass still admits it
+    assert _run(repo, "git push -u origin milestone/trial-1").returncode == 0
+
+
+def test_a_report_in_an_unsupported_folder_depth_is_not_read(repo: Path) -> None:
+    _pass(repo)
+    folder = repo / "changes" / ID
+    deep = repo / "changes" / "archive" / "a" / "b" / "c" / "d" / ID
+    deep.parent.mkdir(parents=True)
+    _git(repo, "mv", str(folder), str(deep))
+    _git(repo, "commit", "-qm", "archive too deep")
+    assert _run(repo, "git push -u origin milestone/trial-1").returncode == 2
+
+
+def test_local_merge_into_an_unresolvable_project_branch_is_refused(repo: Path) -> None:
+    _local(repo, project=False)
+    _pass(repo)
+    r = _run(repo, "git switch -c project/nowhere && git merge --no-ff milestone/trial-1")
+    assert r.returncode == 2 and "project branch" in r.stderr and "project/nowhere" in r.stderr

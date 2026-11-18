@@ -24,7 +24,7 @@ milestone close.
 | Tier | Typical paths | Worst case if wrong | Who looks |
 |---|---|---|---|
 | **ask** | migrations / schema, integrations that write to real systems, `k8s/**`, `.github/**`, dependency manifests + lockfiles, `REVIEW.md`, `sdlc.json`, `.claude/settings.json`, `.claude/hooks/**` | writes to a CRM, mailbox or billing account; cluster or secret wiring; supply chain; the rules the agents run under | a code owner **before** merge; with no co-owner, a human merges by hand |
-| **show** | `src/**`, `tests/**`, `e2e/**`, `scripts/**` | a bug ships behind CI, e2e and the milestone review | the co-owner **after** merge (`vars.SDLC_COOWNER` is requested; optional Slack notice) |
+| **show** | `src/**`, `tests/**`, `e2e/**`, `scripts/**` | a bug ships behind CI, e2e and the milestone review | the co-owner **after** merge (optional Slack notice; nothing requests them) |
 | **ship** | docs, changes, designs, skills, `CLAUDE.md` | nothing runs differently | nobody |
 
 Milestone and project PRs merge with a merge commit, everything else squashes.

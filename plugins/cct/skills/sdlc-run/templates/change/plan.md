@@ -131,8 +131,11 @@ before any check or push: it owns local iteration, failures and the final full c
   `milestone/<slug>-<n>`, cut from fresh `origin/<parent>`. `<parent>` is `project/<slug>` when
   the project has a branch, else `<default>`. A milestone with `needs:` is cut from that local
   milestone instead. Building never waits for a merge. Nothing is pushed before its gate passes.
+  In local mode (`milestones.merge: local`) `<parent>` is the local `project/<slug>`: it exists
+  only on this machine until the project closes, so there is no `origin/project/<slug>`.
 - **Sync:** the first row of a milestone is a local `git fetch origin && git merge
-  origin/<default>` (also `git merge origin/project/<slug>` when the project has a branch).
+  origin/<default>` (also `git merge origin/project/<slug>` when the project has a branch; in local
+  mode `git merge project/<slug>`).
   Repeat it right before each close, and after any earlier milestone merges. It is never a PR.
   The milestone gate fails `check=parent-sync` without it. The merge may run in the supervisor's
   worktree.
@@ -167,7 +170,9 @@ before any check or push: it owns local iteration, failures and the final full c
 - **Publish:** only on `VERIFY PASS milestone {{CHANGE}} <sha>` with `<sha>` equal to the local
   head: one push, one PR `milestone/<slug>-<n>` to its parent, auto-merge armed with a merge
   commit (`gh pr merge <n> --merge --auto`). Ask first when a Critical or High is deferred. A
-  milestone that needs another opens its PR after that one merges.
+  milestone that needs another opens its PR after that one merges. In local mode with a project
+  branch there is no push and no PR: after the pass, `git switch project/<slug> && git merge
+  --no-ff milestone/<slug>-<n>`; the project's one push and PR come at its close (Stage 6p).
 - **Red CI:** CI is the last check, not the test loop. Read the exact failed job or test and its
   reason, reproduce it locally, fix it, then run only the failing tests plus the directly affected
   suite until green, the full suite once, and one batched push. Never a pipeline retry or a

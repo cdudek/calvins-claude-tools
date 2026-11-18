@@ -531,6 +531,16 @@ def write(path: Path, text: str, *, keep: bool = False, executable: bool = False
         path.chmod(0o755)
 
 
+# The workflow adopt wrote before 3.12.0 (templates/decision4/decision4.yml): owner and sha vary.
+GENERATED_DECISION4 = re.compile(
+    r"name: Decision4\non:\n  pull_request:\n    types: \[opened, edited, synchronize, reopened\]\n"
+    r"concurrency:\n  group: decision4-\$\{\{ github\.event\.pull_request\.number \}\}\n"
+    r"  cancel-in-progress: true\npermissions:\n  contents: read\n  pull-requests: read\n"
+    r"jobs:\n  decision4:\n    uses: [\w.-]+/[\w.-]+/\.github/workflows/decision4-check\.yml"
+    r"@[0-9a-f]{7,40} # shared Decision4 v1\n*"
+)
+
+
 def remove(path: Path, why: str) -> None:
     """Take a generated file out of the repo: `git rm`, then unlink whatever git did not track."""
     if not path.exists():
@@ -883,6 +893,12 @@ def main() -> int:
     if cfg_path.exists():
         cfg = json.loads(cfg_path.read_text(encoding="utf-8"))
         cfg_before = json.dumps(cfg, sort_keys=True)
+        if cfg.get("delivery") == "feature-prs" and (cfg.get("milestones") or {}).get("merge") == "local":
+            sys.exit(
+                'sdlc.json: delivery "feature-prs" needs a remote milestone branch, which '
+                'milestones.merge "local" never pushes. Use delivery "one-go" (the default) with '
+                'local milestones, or milestones.merge "pr" with feature PRs.'
+            )
         kept.append("sdlc.json")
         if not UPGRADE:
             cfg["kitTemplates"] = templates_hash()
@@ -1106,7 +1122,7 @@ def main() -> int:
             manual.append(
                 f"ruleset on {cfg.get('defaultBranch', 'master')}: remove the GitHub App from the "
                 "pull_request bypass actors; delete the secrets CODE_MANAGER_APP_CLIENT_ID, "
-                "CODE_MANAGER_APP_PRIVATE_KEY, SDLC_SLACK_BOT_TOKEN and the variable SDLC_COOWNER "
+                "CODE_MANAGER_APP_PRIVATE_KEY and SDLC_SLACK_BOT_TOKEN "
                 "(Ship/Show/Ask is off, so the tier workflow that used them is gone)"
             )
     elif tiers_path.exists():
@@ -1203,6 +1219,31 @@ def main() -> int:
     # of every repo that still has them, and no repo needs ANTHROPIC_API_KEY.
     for name in ("claude-review.yml", "claude.yml", "ci-triage.yml"):
         remove(ROOT / ".github" / "workflows" / name, "no Claude in CI since sdlc-run 3.7.0")
+    # Decision4 is advisory (no workflow) since 3.12.0. A repo adopted before keeps the workflow
+    # adopt wrote then, which calls the shared checker and fails on every PR event. Only a file
+    # that matches the generated one exactly goes, and not when sdlc.json `keep` lists it; a
+    # workflow of the repo's own, even one named decision4.yml, stays.
+    d4 = ROOT / ".github" / "workflows" / "decision4.yml"
+    d4_lock = ROOT / ".decision4.lock"
+    if (
+        d4.exists()
+        and ".github/workflows/decision4.yml" not in keep_paths
+        and GENERATED_DECISION4.fullmatch(d4.read_text(encoding="utf-8"))
+    ):
+        remove(d4, "Decision4 is advisory since sdlc-run 3.12.0: no workflow")
+        if ".decision4.lock" not in keep_paths:
+            remove(d4_lock, "pinned the removed Decision4 checker")
+    old_tier = ROOT / ".github" / "workflows" / "ship-show-ask.yml"
+    if (
+        tiers_on
+        and old_tier.exists()
+        and ".github/workflows/ship-show-ask.yml" not in keep_paths
+        and "SDLC_COOWNER" in old_tier.read_text(encoding="utf-8")
+    ):
+        manual.append(
+            "ship-show-ask.yml no longer requests the Show reviewer (vars.SDLC_COOWNER, removed in "
+            "sdlc-run 3.18.0): add the reviewer to CODEOWNERS, or a `gh pr edit --add-reviewer` step by hand."
+        )
     for src in sorted((TPL / "workflows").glob("*.yml")):
         dest = ROOT / ".github" / "workflows" / src.name
         if src.name == "ship-show-ask.yml" and not tiers_on:
@@ -1444,7 +1485,7 @@ def main() -> int:
 
     secrets = (
         [
-            "CODE_MANAGER_APP_CLIENT_ID + CODE_MANAGER_APP_PRIVATE_KEY (secrets), SDLC_COOWNER (variable)"
+            "CODE_MANAGER_APP_CLIENT_ID + CODE_MANAGER_APP_PRIVATE_KEY (secrets, normally already set; no action)"
             + (", SDLC_SLACK_BOT_TOKEN (secret)" if cfg.get("showChannel") else "")
         ]
         if tiers_on
