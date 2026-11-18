@@ -60,7 +60,7 @@ is `scope-growth`.
 In order, grouped under `### Milestone <n> — <what a user can do after it>`. One go (the
 default): each row is a commit on `milestone/<slug>-<n>` with touched tests and required pre-commit checks between rows; each
 milestone gets the checks and validation once, and one PR that releases it. For E2E, run
-the full suite once, ×3 only for changed and flaky specs. Use the committed
+the full suite once, inside `verify_gate.py milestone` (the only runner of the full suite), ×3 only for changed and flaky specs. Use the committed
 `e2e/flaky-specs.txt` list per `cct:test-e2e-policy`, `suite-speed-and-reliability.md`
 section G (selection and line format). `delivery: "feature-prs"`: each row is one PR into
 `milestone/<slug>` (a hotfix: into the default branch), the next starts when it auto-merges.
@@ -156,11 +156,11 @@ before any check or push: it owns local iteration, failures and the final full c
   default you took, tell the engineer in one line, and carry on.
 - **Close:** once a milestone's features are committed, hand its local pipeline to one
   `cct:sdlc-feature-builder` subagent with `Mode: close` and the head it runs on. It spawns no
-  agents and nothing merges into the milestone while it runs. It runs the unit tests, the full
-  E2E suite once (changed and flaky specs ×3, the committed `e2e/flaky-specs.txt` per
-  `cct:test-e2e-policy`, `suite-speed-and-reliability.md` section G), the one fix round on the
-  blocking findings, then `python3 scripts/verify_gate.py milestone {{CHANGE}}`. Its full output
-  is pasted.
+  agents and nothing merges into the milestone while it runs. It runs the one fix round on the
+  blocking findings, then `python3 scripts/verify_gate.py milestone {{CHANGE}}`, the only runner of
+  the full suite and the full E2E (changed and flaky specs ×3, the committed
+  `e2e/flaky-specs.txt` per `cct:test-e2e-policy`, `suite-speed-and-reliability.md` section G). Its
+  full output is pasted.
 - **Meanwhile:** dispatch the Stage 6 reviews on the milestone diff in parallel. Validate every
   fact and ask of the milestone against the built app into `validation.md` (expected, observed,
   evidence, verdict). Run the append-only converge pass from `quality-passes.md` into

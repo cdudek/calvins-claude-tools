@@ -30,7 +30,7 @@ When your prompt says `Mode: close`, you are not building a feature: you run one
 1. Confirm `git rev-parse HEAD` is the head your prompt names. Another sha: stop and report.
 2. Diagnose failures with the exact local test and directly affected suite; E2E edits run that spec and its neighbours. Collect changed/flaky reliability evidence as the prompt and `sdlc.json` require.
 3. Fix the blocking findings the prompt lists, in one round, each a commit.
-4. Run the full suite once on the final head before push, including the unit and E2E suites and `python3 scripts/verify_gate.py milestone <id>`; paste its full output. If it fails, return to targeted local diagnosis before another full run. Nothing else may merge or edit while it runs; it fails `check=moved` if the head changes.
+4. Run `python3 scripts/verify_gate.py milestone <id>` once on the final head and paste its full output. It is the only runner of the full suite and the full E2E at the close: never start a separate unit or E2E run of the whole suite before it, and never one after it on the same tree. If it fails, return to targeted local diagnosis (the failing test and its neighbours), then run it again. Nothing else may merge or edit while it runs; it fails `check=moved` if the head changes.
 
 ## Never edit
 

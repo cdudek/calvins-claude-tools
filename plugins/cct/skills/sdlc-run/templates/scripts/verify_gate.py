@@ -587,10 +587,13 @@ def run(
         durations = {}
     if not declared:
         checks = order_checks(checks, durations, change.name)
+    # Evidence checks are offline and cheap: they run before the suites, so a missing screenshot,
+    # checker or tag never costs a full E2E run (3.21.0).
+    evidence: list[dict] = []
     if scope == "milestone" and (
         (change / "marks.json").exists() or sessions(change) or bundles(change)
     ):
-        checks.append(
+        evidence.append(
             {
                 "name": "owner-marks",
                 "cache": False,
@@ -605,7 +608,7 @@ def run(
             }
         )
     for number, visual_run in enumerate(visual_runs or [], 1):
-        checks.append(
+        evidence.append(
             {
                 "name": f"ux-visual-{number}",
                 "cache": False,
@@ -620,6 +623,7 @@ def run(
                 ),
             }
         )
+    checks = evidence + checks
 
     cache_path = out_dir / "cache.json"
     cache = json.loads(cache_path.read_text()) if cache_path.exists() else {}

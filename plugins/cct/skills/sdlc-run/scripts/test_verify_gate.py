@@ -456,7 +456,7 @@ def test_owner_marks_is_automatic_at_milestone_only(tmp_path: Path, trigger: str
     assert result.returncode == 1
     assert _last(result) == f"VERIFY FAIL milestone {ID} check=owner-marks"
     report = json.loads((change / "verify/report.json").read_text())
-    assert [c["name"] for c in report["checks"]] == ["check-1", "owner-marks"]
+    assert [c["name"] for c in report["checks"]] == ["owner-marks"]  # evidence first, 3.21.0
     assert "owner-marks" in (change / "verify/report.md").read_text()
     assert (change / "lock.json").read_bytes() == lock
 
@@ -1078,6 +1078,22 @@ def test_keep_going_runs_every_check_and_names_the_first_failure(tmp_path: Path)
     r = _gate(repo, "feature", ID, "--keep-going")
     assert r.returncode == 1 and _last(r) == f"VERIFY FAIL feature {ID} check=lint"
     assert _order(repo) == ["lint", "unit", "e2e"] and "failed: lint, unit" in r.stdout
+
+
+def test_missing_evidence_fails_before_the_suite_starts(tmp_path: Path) -> None:
+    """3.21.0: offline evidence checks (marks, visual checkers) run before the suites, so a
+    missing screenshot never costs a full E2E run."""
+    repo = _repo(tmp_path, ["true"])
+    ran = repo / "suite-ran"
+    suite = f"touch {ran}"
+    (repo / "sdlc.json").write_text(json.dumps({"checks": {"milestone": [suite]}}))
+    export = repo / "changes" / ID / "asks/export"
+    export.mkdir(parents=True)
+    (export / "index.html").write_text("<html>screen</html>")
+    _approve(repo)
+    result = _gate(repo, "milestone", ID)
+    assert _last(result) == f"VERIFY FAIL milestone {ID} check=owner-marks"
+    assert not ran.exists()
 
 
 def test_a_supplied_bundle_requires_a_valid_ledger_at_milestone(tmp_path: Path) -> None:
