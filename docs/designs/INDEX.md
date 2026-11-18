@@ -15,3 +15,7 @@ One line: title · status · date · tags. Newest first within each type.
 ## note (1)
 
 - [How developers keep track of many parallel coding agents](2026-11-13-note-agent-tracker-research.md) · active · 2026-11-13 · agent-tracker, research
+
+## proposal (1)
+
+- [sdlc-run follows spec-driven development in three documents](2026-11-18-proposal-sdlc-run-spec-driven.md) · proposed · 2026-11-18
