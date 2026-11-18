@@ -8,6 +8,7 @@
 set -uo pipefail
 set -f # the globs are patterns to match against the file name, never expanded against cwd
 . "$(dirname "$0")/sdlc-config.sh"
+: "${SDLC_PY:=python3}" # an older sdlc-config.sh (one-file upgrade) does not set it
 
 fields=()
 while IFS= read -r -d '' f; do fields+=("$f"); done < <(
