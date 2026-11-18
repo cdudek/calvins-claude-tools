@@ -74,7 +74,7 @@ starting at:
    and wait for the owner to approve it. A decision is not approval of a plan, and a comment is
    not approval either. Before building a new screen, flow or behaviour, run `cct:ux-design-run
    <change>` (when the repo runs `cct:sdlc-run` with a Design stage, that stage runs it).
-   Then build, run `cct:ux-spec-validate build <change>` when a spec folder exists,
+   Then build, run `cct:ux-build-validate <change>` when a spec folder exists,
    `cct:ux-rules-validate` on each change and `cct:ux-assessment-run` on each PR.
 
 ## Never

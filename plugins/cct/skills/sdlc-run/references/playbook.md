@@ -15,7 +15,7 @@ stage ends by committing an artifact, the commit starts the next stage, humans s
 | Build | Skills | this kit, especially `cct:sdlc-run` and the cct UX skills | policy owner | policy change → merged skill | review findings citing policy → 0 |
 | Build | Hooks as guardrails · parallel sessions | `.claude/hooks/*`, worktrees, `prototypeDirs` allowance | deterministic hooks | concurrent sessions while quality holds | merged changes per engineer vs rework |
 | Build | Build subagents | `cct:test-behavior-verifier` for M/L: changed behaviour plus two nearest flows, report only | PR evidence, no approval power | verifier pass on first run | escaped neighbouring-flow regressions |
-| Test | Feedback loop | `verifyStop`, `cct:ux-spec-validate build`, locked bug tests, full `verify` before PR | hook and PR checks | stop checks stay fast | CI success and change failure rate |
+| Test | Feedback loop | `verifyStop`, `cct:ux-build-validate`, locked bug tests, full `verify` before PR | hook and PR checks | stop checks stay fast | CI success and change failure rate |
 | Test | Continuous evals in CI | not yet — needs 20+ collected tasks | pass-rate threshold | eval pass rate | regressions caught in CI vs prod |
 | Deploy | AI in PR review | `review-code-run` (Claude and Codex, reading `REVIEW.md`) once per milestone, locally, before the push; no CI review since 3.7.0 | the milestone gate | time to first review | defects caught at merge vs escaped |
 | Deploy | Hooks as approval gates · CI/CD | `gate-bash.sh`, `chain-gate.sh`, Ship / Show / Ask, CI triage | tiers and ruleset | pipeline failures triaged without paging | DORA |
