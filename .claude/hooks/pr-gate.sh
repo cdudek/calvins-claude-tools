@@ -32,7 +32,7 @@ payload=$(cat)
 [ -f "$SDLC_JSON" ] || exit 0
 case "$payload" in *push*|*"pr create"*) ;; *) exit 0 ;; esac
 
-PAYLOAD="$payload" python3 - "$SDLC_ROOT" "$SDLC_JSON" <<'PY'
+PAYLOAD="$payload" SDLC_HOOK_DIR="$(cd "$(dirname "$0")" && pwd)" python3 - "$SDLC_ROOT" "$SDLC_JSON" <<'PY'
 from __future__ import annotations
 
 import json
@@ -53,8 +53,22 @@ docs = cfg.get("docs", "docs/sdlc.md")
 WRAPPERS = {"rtk", "command", "env", "time", "nohup", "proxy"}
 
 
-def block(why: str, route: str) -> None:
-    print(f"BLOCKED: {why}\n{route}\n({docs}, \"One milestone, one PR\")", file=sys.stderr)
+GOAL_SOURCE = f"the transcript's goal entry in {transcript}"
+GOAL_ACTION = "type `/goal clear` (only the owner can)"
+
+
+def block(why: str, route: str, source: str = "sdlc.json", action: str = "") -> None:
+    """Block. `source` is what the gate read, `action` what the owner does (default: the route);
+    a repeat of the same block says both (block_state.py), and without it the text is plain."""
+    text = f"BLOCKED: {why}\n{route}\n({docs}, \"One milestone, one PR\")"
+    try:
+        sys.path.insert(0, os.environ["SDLC_HOOK_DIR"])
+        from block_state import rewrite
+
+        text = rewrite("pr-gate.sh", text, source, action or route, payload)
+    except Exception:  # block state never changes the verdict
+        pass
+    print(text, file=sys.stderr)
     sys.exit(2)
 
 
@@ -64,21 +78,16 @@ def git(where: Path, *args: str) -> str:
 
 
 def goal_active() -> bool:
-    """Same reading as chain-gate.sh: the last goal_status entry of the transcript says met: false."""
+    """The goal reading is goal_active.py's; an unreadable transcript reads as no goal."""
+    sys.path.insert(0, os.environ["SDLC_HOOK_DIR"])
     try:
-        lines = Path(transcript).read_text(encoding="utf-8").splitlines()
-    except (OSError, ValueError):
-        return False
-    last = None
-    for line in lines:
-        try:
-            entry = json.loads(line)
-        except ValueError:
-            continue
-        att = entry.get("attachment") if isinstance(entry, dict) else None
-        if isinstance(att, dict) and att.get("type") == "goal_status":
-            last = att
-    return last is not None and last.get("met") is False
+        from goal_active import goal_active as read
+    except Exception:  # missing, or any error while importing it: a gate that cannot read the goal blocks
+        block(
+            "goal_active.py is missing or broken beside pr-gate.sh.", "Run `sdlc-run adopt` to restore it.",
+            source="goal_active.py beside pr-gate.sh",
+        )
+    return bool(read(transcript))
 
 
 class Repo:
@@ -96,6 +105,13 @@ class Repo:
         self.feature_prs = self.cfg.get("delivery") == "feature-prs"
         self.hotfix = bool(self.cfg.get("hotfix", True))
         self.changes = self.top / self.cfg.get("changesDir", "changes")
+
+    def in_session(self) -> bool:
+        """The goal binds the session's start repo, and any worktree of it; another repo is its own."""
+        mine, start = (
+            git(w, "rev-parse", "--path-format=absolute", "--git-common-dir") for w in (self.dir, root)
+        )
+        return not (mine and start) or Path(mine).resolve() == Path(start).resolve()
 
     def branch(self) -> str:
         return git(self.dir, "rev-parse", "--abbrev-ref", "HEAD")
@@ -130,7 +146,9 @@ class Repo:
         return False
 
     def excepted(self, branch: str) -> bool:
-        for path in self.changes.glob("*/decisions.json"):
+        # the pushed repo's own exceptions, and the session's: the engineer speaks in the session
+        start = root / cfg.get("changesDir", "changes")
+        for path in [*self.changes.glob("*/decisions.json"), *start.glob("*/decisions.json")]:
             try:
                 rows = json.loads(path.read_text(encoding="utf-8")).get("prExceptions") or []
             except (OSError, ValueError, AttributeError):
@@ -190,7 +208,7 @@ def check_push(repo: Repo, args: list[str]) -> None:
             block(f"a push to {dst}.", "The default branch moves only through a merged PR.")
         if dst.startswith(repo.m):
             if not repo.feature_prs and not repo.passed(sha):
-                block(f"a push of {dst} at {sha[:12] or src} without a passing milestone gate.", CLOSE)
+                block(f"a push of {dst} at {sha[:12] or src} without a passing milestone gate.", CLOSE, "verify/report.json")
             continue
         if dst.startswith(repo.p):
             if sha and sha == repo.sha(f"origin/{repo.default}"):
@@ -198,8 +216,8 @@ def check_push(repo: Repo, args: list[str]) -> None:
             block(f"a push to {dst}.", "A project branch moves only through milestone PRs. " + RIDE)
         if repo.feature_prs:
             continue
-        if goal_active():
-            block(f"a push of {dst} inside a /goal run.", RIDE)
+        if repo.in_session() and goal_active():
+            block(f"a push of {dst} inside a /goal run.", RIDE, GOAL_SOURCE, GOAL_ACTION)
 
 
 def check_pr(repo: Repo, args: list[str]) -> None:
@@ -225,7 +243,7 @@ def check_pr(repo: Repo, args: list[str]) -> None:
             block(f"a PR from {head} into {base}.", "A milestone PR goes into its parent: project/* or the default branch.")
         sha = repo.sha(head) if "repo" not in opts else ""
         if sha and not repo.passed(sha):
-            block(f"a PR from {head} at {sha[:12]} without a passing milestone gate.", CLOSE)
+            block(f"a PR from {head} at {sha[:12]} without a passing milestone gate.", CLOSE, "verify/report.json")
         return
     if head.startswith(repo.p):
         if base != repo.default:
@@ -239,17 +257,24 @@ def check_pr(repo: Repo, args: list[str]) -> None:
         block(f"a PR from {head} into {base}.", RIDE)
     if base.startswith(repo.p):
         block(f"a PR from {head} into {base}: only milestone branches merge into a project.", RIDE)
-    if goal_active():
-        block(f"a PR from {head} inside a /goal run: only milestone and project PRs open there.", RIDE)
+    if repo.in_session() and goal_active():
+        block(f"a PR from {head} inside a /goal run: only milestone and project PRs open there.", RIDE, GOAL_SOURCE, GOAL_ACTION)
 
 
 def segments(text: str) -> list[list[str]]:
     lex = shlex.shlex(text, posix=True, punctuation_chars=";&|")
     lex.whitespace_split = True
     out: list[list[str]] = [[]]
+    target = False  # the token after a bare `>` or `2>>` is a file, not an argument
     for tok in lex:
+        if target and tok == "&":
+            continue  # `2>&1`: the lexer split the fd duplication at the `&`
         if tok and set(tok) <= set(";&|"):
             out.append([])
+        elif target:
+            target = False
+        elif m := re.fullmatch(r"\d*>>?(.*)", tok):
+            target = not m.group(1)
         else:
             out[-1].append(tok)
     return [s for s in out if s]

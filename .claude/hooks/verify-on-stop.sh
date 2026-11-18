@@ -11,8 +11,8 @@
 #   4. the diff hash was already verified, pass OR fail (stamp in the git dir): a red state is
 #      not re-run and not blocked again until the code changes
 #   5. inside an active /goal the milestone gate (verify_gate.py) is the check. The signal is
-#      the one chain-gate.sh uses: the last `goal_status` attachment of the transcript says
-#      met=false. It parses the whole transcript, so it runs last. Unreadable -> verify runs.
+#      read by goal_active.py, the one reading chain-gate.sh and pr-gate.sh share. It parses the
+#      whole transcript, so it runs last. Unreadable -> verify runs. No helper -> exit 2.
 # A missing turn-start snapshot (first turn after an upgrade) skips step 3 only.
 set -uo pipefail
 set -f # verifyDirty globs go to git as patterns, never expanded against cwd
@@ -43,19 +43,13 @@ stamp="$gitdir/sdlc-verify-stop.hash"
 [ -f "$stamp" ] && [ "$(cut -d' ' -f1 "$stamp")" = "$now" ] && exit 0
 
 transcript=$(printf '%s' "$payload" | python3 -c 'import json,sys; print(json.load(sys.stdin).get("transcript_path",""))' 2>/dev/null)
-if [ -n "$transcript" ] && python3 - "$transcript" <<'PY' 2>/dev/null
-import json, sys
-last = None
-for line in open(sys.argv[1], encoding="utf-8"):
-    try:
-        att = json.loads(line).get("attachment")
-    except (ValueError, AttributeError):
-        continue
-    if isinstance(att, dict) and att.get("type") == "goal_status":
-        last = att
-sys.exit(0 if last is not None and last.get("met") is False else 1)
-PY
-then exit 0; fi
+# goal_active.py exits 0 when a goal runs; 1 for none or an unreadable transcript (verify runs).
+helper="$(dirname "$0")/goal_active.py"
+if [ ! -f "$helper" ]; then
+  echo "verify-on-stop: goal_active.py is missing beside this hook; run \`sdlc-run adopt\` to restore it." >&2
+  exit 2
+fi
+if [ -n "$transcript" ] && python3 "$helper" "$transcript" 2>/dev/null; then exit 0; fi
 
 if out=$(eval "$verify" 2>&1); then
   printf '%s pass\n' "$now" >"$stamp"
