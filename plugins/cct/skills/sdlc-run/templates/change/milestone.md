@@ -14,6 +14,8 @@ created: {{DATE}}
 
 > One sentence. What a user can do when this milestone reaches the default branch.
 
+What each id in this report means: `python3 ${CLAUDE_SKILL_DIR}/scripts/sdlc_status.py ids {{CHANGE}}`.
+
 Kind: <new | milestone of one | hotfix>. Changes that joined it record `milestone.slug` in their
 own `decisions.json` and add their features below.
 

@@ -7,7 +7,7 @@ Run up to three fix rounds, then write the verdict.
 
 ## Inputs
 
-- Approved `<spec>/readiness.md`.
+- Approved `<spec>/readiness.md` (`<spec>/validation.md` in a folder written before the rename).
 - `<spec>/brief.md`.
 - `<spec>/ia.md`.
 - `<spec>/interaction.md`.

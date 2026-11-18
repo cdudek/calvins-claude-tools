@@ -29,7 +29,9 @@ the engineer. A version with no migration lines needs nothing but a re-run of `a
 - The spec's readiness verdict is now `spec/readiness.md`, so it no longer shares a name with the milestone's `validation.md`, which stays. The skip key `validation` in `decisions.json` is unchanged.
 - `docs/sdlc-run.md` describes all seven stages as of this version, and a test fails when its stated version falls behind `SKILL.md`.
 - Mechanical: re-running `adopt` refreshes `scripts/verify_gate.py`, `scripts/design_index.py`, the chain-gate hook and the change templates.
-- Manual: in a change in flight, rename `spec/validation.md` to `spec/readiness.md` with `git mv`, or `chain-gate.sh` will not find the spec's verdict. Run `python3 scripts/design_index.py write` to add the "Read when:" lines.
+- Manual: a change in flight keeps working with `spec/validation.md` (the readers prefer `spec/readiness.md` and fall back to the old name); rename it with `git mv` when convenient. Run `python3 scripts/design_index.py write` to add the "Read when:" lines.
+
+**Review fixes.** `readme` writes only inside a change folder directly under `changesDir`, only over a README it generated, and only when the content changed; `status` never writes it. The id lint counts only ids the change defines, treats table prose as prose, flags `**B19 blocks the build.**`, follows a bracket across a line wrap, and runs on the drafts before reviewers, before the owner gate, first in `approve` (which refuses on failure) and on the PR body you publish (`lint <id> --pr-body <file>|-`). The blocker sentence uses the resolved gate scope, covers every reason the goal and the gate emit, and names the plugin path of `sdlc_status.py`. The reading map lists the standard spec files and any other file, picks the newest handover by date or number, and the glossary reads the `Finding` or `Challenge` column.
 
 ## 3.16.0 — the gate hooks stop looping
 

@@ -82,6 +82,8 @@ d = pathlib.Path(sys.argv[2])
 if "size" not in dec or str(dec.get("skips", {}).get("validation", "")).startswith("skip"):
     sys.exit(1)
 val = d / "spec" / "readiness.md"
+if not val.exists():  # a folder written before the rename keeps its old name
+    val = d / "spec" / "validation.md"
 if not val.exists():
     sys.exit(0)
 front = {}

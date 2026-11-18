@@ -9,7 +9,7 @@ Runs from the plugin and is never copied into a repo: run it with the working di
 adopted repo, which it finds from the cwd. It loads `verify_gate` from the plugin's own
 `templates/scripts/`, not from the repo's `scripts/`. stdlib only.
 
-Everything is read from the files; only `readme` writes, and only the change's README.md. The stage (1-7): an archived change → 7,
+Everything is read from the files; only `readme` writes, and only the change's README.md, only over a README it generated and only when the content changed. The stage (1-7): an archived change → 7,
 lock.json → 5 (6 once every feature is merged), plan.md → 4, facts.md → 3, an approved intent → 2,
 otherwise 1. Milestone position comes from the design doc's `## Milestones` list (decisions.json
 `design`), features from the milestone's `milestone.md` Features table.
@@ -46,7 +46,7 @@ import subprocess
 import sys
 from pathlib import Path
 
-from change_docs import ids, readme
+from change_docs import MARKER, ids, readme
 
 # verify_gate lives in the plugin's templates (it is also what adopt copies into repos).
 sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "templates" / "scripts"))
@@ -83,9 +83,12 @@ def read_json(path: Path) -> dict:
 def find_change(root: Path, cfg: dict, change_id: str | None) -> Path | None:
     base = root / cfg.get("changesDir", "changes")
     if change_id:
-        # archive/<year>/<year-month>/<id> once Stage 7 moved it
+        # a change is a direct child of changesDir, or archive/<year>/<year-month>/<id> once
+        # Stage 7 moved it: no "..", no absolute path, never the archive folder itself
+        if Path(change_id).name != change_id or change_id in ("..", "archive"):
+            return None
         found = [base / change_id, *base.glob(f"archive/**/{change_id}")]
-        return next((d for d in found if d.is_dir()), None)
+        return next((d for d in found if d.is_dir() and base.resolve() in d.resolve().parents), None)
     if not base.is_dir():
         return None
     folders = [d for d in base.iterdir() if d.is_dir() and d.name != "archive"]
@@ -329,7 +332,7 @@ def goal(
 
 # what is in the way, by the first missing item: (what, why, who acts, the exact step)
 BLOCKS = {
-    "milestone-gate-pass": (
+    "gate-pass": (
         "the {scope} gate has not passed",
         "no VERIFY PASS is recorded for it",
         "the agent",
@@ -405,7 +408,7 @@ BLOCKS = {
         "there is no change folder",
         "the id matches no folder under changes/",
         "you",
-        "python3 scripts/sdlc_status.py map",
+        "python3 ${{CLAUDE_SKILL_DIR}}/scripts/sdlc_status.py map",
     ),
     "not-approved": (
         "the plan was never approved",
@@ -425,6 +428,54 @@ BLOCKS = {
         "you",
         "read verify/report.md, then delete verify/state.json to start over",
     ),
+    "flaky": (
+        "a check failed once and passed on a re-run",
+        "a flaky check cannot prove the change",
+        "you",
+        "reproduce it locally three times and fix the check's flakiness in its own change",
+    ),
+    "unknown-verdict": (
+        "a check ended without a verdict the gate understands",
+        "its last line was neither pass nor a known blocked reason",
+        "the agent",
+        "read verify/report.md, then fix the check's output",
+    ),
+    "needs-baseline": (
+        "a check needs a baseline that does not exist",
+        "nothing recorded the passing state to compare with",
+        "you",
+        "decide whether to record the baseline, then rerun `python3 scripts/verify_gate.py {scope} {id}`",
+    ),
+    "allowlist-request": (
+        "a check asks for a wider allowlist",
+        "the change needs something its limits do not permit",
+        "you",
+        "decide whether to widen the allowlist; never widen it silently",
+    ),
+    "scope-growth": (
+        "the change grew past its plan",
+        "files outside the plan's Files that change were edited",
+        "you",
+        "decide whether the plan or the edit moves",
+    ),
+    "spec-conflict": (
+        "the build contradicts the approved spec",
+        "a check found a state the spec forbids",
+        "you",
+        "decide whether the spec or the build changes",
+    ),
+    "env": (
+        "the gate cannot run here",
+        "no checks are configured, the change folder is missing or the environment is broken",
+        "you",
+        "fix the environment named in the gate output, then rerun `python3 scripts/verify_gate.py {scope} {id}`",
+    ),
+    "test-proves-nothing": (
+        "a test passes without the code it guards",
+        "the test also passes on the old code",
+        "the agent",
+        "rewrite the test so it fails without the change",
+    ),
     "attempts": (
         "three gate runs failed",
         "the breaker stops a loop",
@@ -434,19 +485,23 @@ BLOCKS = {
 }
 
 
-def blocker(change: Path, line: str, scope: str = "milestone") -> str:
+def blocker(subject: str, line: str, scope: str = "milestone") -> str:
     """The one thing in the way, as a sentence, from the goal line; empty when the goal is DONE.
-    Built from the first missing item (the line lists them in the order the goal checks them)."""
+    `subject` is the change id the goal was asked about, `scope` the gate it reads. Built from the
+    first missing item (the line lists them in the order the goal checks them)."""
     m = re.search(r"OPEN (\S+)|BLOCKED reason=([\w-]+)", line)
     if not m:
         return ""
     first = (m.group(1) or m.group(2)).split(",")[0]
+    key_of = "gate-pass" if first.endswith("-gate-pass") else first
     for key, (what, why, who, step) in BLOCKS.items():
-        if first == key or (key.endswith(("-", ":")) and first.startswith(key)):
+        if key_of == key or (key.endswith(("-", ":")) and first.startswith(key)):
             n = re.sub(
-                r"^no-pr:|^no-branch-for-|^merge-missing:|^receipt-not-merged:|^gate-sha-not-pr-|-head$", "", first
+                r"^no-pr:|^no-branch-for-|^merge-missing:|^receipt-not-merged:|^gate-sha-not-pr-|-head$",
+                "",
+                first,
             )
-            fill = {"scope": scope, "id": change.name, "n": n}
+            fill = {"scope": scope, "id": subject, "n": n}
             return f"Blocking: {what.format(**fill)}, because {why}; {who} runs `{step.format(**fill)}`."
     pr = re.fullmatch(r"pr-(\d+)-not-merged-or-armed", first)
     if pr:
@@ -455,7 +510,7 @@ def blocker(change: Path, line: str, scope: str = "milestone") -> str:
             f"Blocking: PR {pr[1]} is open without auto-merge, because nothing armed it; "
             f"the agent runs `gh pr merge {pr[1]} {flag} --auto`."
         )
-    return f"Blocking: {first}, because the goal check lists it; the agent reads `sdlc_status.py goal {change.name}`."
+    return f"Blocking: {first}, because the goal check lists it; the agent reads `sdlc_status.py goal {subject}`."
 
 
 def goal_main(args: list[str]) -> int:
@@ -475,16 +530,34 @@ def goal_main(args: list[str]) -> int:
         print(__doc__)
         return 2
     root = repo_root(Path.cwd())
+    scope = "project" if project else flag[2:] if flag else "milestone"
     change = find_change(root, config(root), pos[0]) if root else None
     if not root or not change:
-        print(f"GOAL {pos[0]} OPEN no-change-folder")
+        line = f"GOAL {pos[0]} OPEN no-change-folder"
+        print(line)
+        print(blocker(pos[0], line, scope))
         return 1
-    scope = "project" if project else flag[2:] if flag else "milestone"
     code, line = goal(root, change, scope, int(value) if flag else None)
     print(line)
-    if code and (sentence := blocker(change, line, flag[2:] if flag else "milestone")):
+    if code and (sentence := blocker(change.name, line, scope)):
         print(sentence)
     return code
+
+
+def write_readme(change: Path, text: str) -> int:
+    """Write the reading map: only over a README this tool generated, and only when it differs,
+    so a stage commit carries it and a plain `status` never dirties the tree."""
+    path = change / "README.md"
+    old = path.read_text(encoding="utf-8") if path.exists() else None
+    if old is not None and MARKER not in old:
+        print(f"{path} is not generated (no {MARKER}); move or delete it first")
+        return 2
+    if old == text:
+        print(f"unchanged {path}")
+        return 0
+    path.write_text(text, encoding="utf-8")
+    print(f"wrote {path}")
+    return 0
 
 
 def main(argv: list[str]) -> int:
@@ -507,8 +580,7 @@ def main(argv: list[str]) -> int:
         print("\n".join(ids(change)))
     elif argv[1] == "readme":
         stage = f"{s['stage']}/7 {STAGES[s['stage'] - 1]}"
-        (change / "README.md").write_text(readme(change, stage), encoding="utf-8")
-        print(f"wrote {change / 'README.md'}")
+        return write_readme(change, readme(change, stage))
     else:
         print(milestone_map(s))
     return 0
