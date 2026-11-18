@@ -30,7 +30,7 @@ origin's default branch, or project/<slug> in a project, has commits HEAD lacks:
 locally first. With `milestones.merge: "local"` the local project/<slug> must also be an ancestor
 of HEAD, so a milestone cannot skip an earlier one merged locally. Then it runs the checks cheapest first and the first
 failure stops the run (`--keep-going` runs them all and reports the first failure's verdict), and
-writes <changesDir>/<id>/verify/report.json + report.md.
+writes <changesDir>/<id>/verify/report.json + report.md (a milestone on branch milestone/<slug>-<n> also milestone-<n>.json, never overwritten by another scope).
 
 Cheapest first: a check that passed takes its seconds into verify/durations.json (keyed by command)
 and the next run sorts by them; a check with no record yet sorts by a static guess from its
@@ -439,7 +439,13 @@ def run(
         report["result"] = line
         report["sha"] = sh("git", "rev-parse", "HEAD")
         report["metrics"] = metrics(change, report, retries, started_run)
-        (out_dir / "report.json").write_text(json.dumps(report, indent=2) + "\n", encoding="utf-8")
+        text = json.dumps(report, indent=2) + "\n"
+        (out_dir / "report.json").write_text(text, encoding="utf-8")
+        # report.json holds the last scope run only: a milestone also keeps its own receipt, which
+        # `sdlc_status.py goal` reads, so a deleted merged branch does not undo a finished milestone
+        on = re.fullmatch(r"milestone/.+-(\d+)", sh("git", "rev-parse", "--abbrev-ref", "HEAD"))
+        if scope == "milestone" and on:
+            (out_dir / f"milestone-{on[1]}.json").write_text(text, encoding="utf-8")
         rows = "\n".join(
             f"| {c['name']} | {c['status']} | {c['seconds']} |" for c in report["checks"]
         )

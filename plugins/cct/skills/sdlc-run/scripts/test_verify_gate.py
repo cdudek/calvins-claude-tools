@@ -594,6 +594,17 @@ def test_local_mode_milestone_must_contain_the_local_project_branch(tmp_path: Pa
     assert _last(_gate(repo, "milestone", ID)).startswith(f"VERIFY PASS milestone {ID}")
 
 
+def test_milestone_gate_keeps_its_own_receipt_beside_report_json(tmp_path: Path) -> None:
+    repo = _local_repo(tmp_path)
+    _merge_milestone_one_locally(repo)
+    _git(repo, "merge", "-q", "--no-edit", "project/big")
+    assert _last(_gate(repo, "milestone", ID)).startswith(f"VERIFY PASS milestone {ID}")
+    verify = repo / "changes" / ID / "verify"
+    receipt = json.loads((verify / "milestone-2.json").read_text())
+    assert receipt == json.loads((verify / "report.json").read_text())
+    assert receipt["result"].startswith("VERIFY PASS milestone") and receipt["sha"]
+
+
 @pytest.mark.parametrize("merge", [None, "pr"])
 def test_without_local_mode_a_local_project_branch_is_no_parent(
     tmp_path: Path, merge: str | None

@@ -31,7 +31,9 @@ line `Blocking: <what>, because <why>; <who> runs `<step>`.` says the one thing 
 
 With sdlc.json `milestones.merge: "local"` and a project branch, a milestone has no PR: it is DONE
 when its `VERIFY PASS milestone` head is an ancestor of the local project/<slug> (line `GOAL <id>
-DONE merged=project/<slug> gate=<sha>`). `--project` reads the project's own record (`VERIFY PASS
+DONE merged=project/<slug> gate=<sha>`). Each planned milestone counts by its own receipt
+verify/milestone-<n>.json (a pass whose head is in the project branch; the branch need not exist),
+or, without a receipt, by its milestone/<slug>-<n> branch being merged. `--project` reads the project's own record (`VERIFY PASS
 project <slug>`, written by `verify_gate.py project`) and the PR project/<slug> into the default
 branch, merged or armed, as above.
 """
@@ -263,9 +265,18 @@ def goal(
         into = git(root, "rev-parse", "--verify", "--quiet", f"{project}^{{commit}}")
         if passed and not contains(root, passed.group(1), into):
             missing.append(f"gate-not-merged-into-{project}")
-        # the report holds the last gate run only: each planned milestone's own branch must be in
+        # report.json holds the last gate run only: each planned milestone is done by its own
+        # receipt (verify/milestone-<n>.json), whose gated head is in the project branch; the
+        # branch merge is the fallback for a change gated before receipts existed
         if planned(change):
             for b in branches(change, read_json(change / "decisions.json"), scope, n):
+                i = b.rsplit("-", 1)[1]
+                receipt = read_json(change / "verify" / f"milestone-{i}.json")
+                if receipt:
+                    ok = str(receipt.get("result", "")).startswith("VERIFY PASS milestone ")
+                    if not (ok and contains(root, str(receipt.get("sha", "")), into)):
+                        missing.append(f"receipt-not-merged:{i}")
+                    continue
                 tip = git(root, "rev-parse", "--verify", "--quiet", f"{b}^{{commit}}")
                 if not contains(root, tip, into):
                     missing.append(f"merge-missing:{b}")
@@ -374,9 +385,15 @@ BLOCKS = {
     ),
     "merge-missing:": (
         "the milestone branch {n} is not merged into its local project branch",
-        "the gate report holds the last run only, so each planned milestone is checked by its branch",
+        "the milestone has no gate receipt, so its branch is checked, and it is not in the project branch",
         "the agent",
-        "git switch <project branch> && git merge --no-ff {n}",
+        "on {n}: python3 scripts/verify_gate.py milestone {id} (writes its receipt); then git switch <project branch> && git merge --no-ff {n}",
+    ),
+    "receipt-not-merged:": (
+        "milestone {n} has no passing gate receipt merged into its local project branch",
+        "its verify/milestone-{n}.json is missing, failed, or its head is not in the project branch",
+        "the agent",
+        "on branch milestone/<slug>-{n}: python3 scripts/verify_gate.py milestone {id}, then merge it",
     ),
     "no-branch-for-": (
         "the plan names no branch for {n}",
@@ -427,7 +444,7 @@ def blocker(change: Path, line: str, scope: str = "milestone") -> str:
     for key, (what, why, who, step) in BLOCKS.items():
         if first == key or (key.endswith(("-", ":")) and first.startswith(key)):
             n = re.sub(
-                r"^no-pr:|^no-branch-for-|^merge-missing:|^gate-sha-not-pr-|-head$", "", first
+                r"^no-pr:|^no-branch-for-|^merge-missing:|^receipt-not-merged:|^gate-sha-not-pr-|-head$", "", first
             )
             fill = {"scope": scope, "id": change.name, "n": n}
             return f"Blocking: {what.format(**fill)}, because {why}; {who} runs `{step.format(**fill)}`."
