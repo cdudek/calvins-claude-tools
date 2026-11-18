@@ -1540,3 +1540,57 @@ def test_adopt_creates_the_starter_map_and_pr_template(tmp_path: Path) -> None:
     assert "floor: Undo" in (repo / "boundary-map.yaml").read_text()
     assert "Decision record" in (repo / ".github/PULL_REQUEST_TEMPLATE.md").read_text()
     assert not (repo / ".github/workflows/decision4.yml").exists()
+
+
+# The hooks read goal state and block history through two helpers that sit beside them; a hook
+# without goal_active.py blocks (F15), so adopt must ship both.
+HOOK_HELPERS = ("goal_active.py", "block_state.py")
+TEMPLATE_HOOKS = Path(__file__).resolve().parents[1] / "templates" / "hooks"
+
+
+def test_adopt_copies_the_hook_helpers_F15(tmp_path: Path) -> None:
+    repo = _repo(tmp_path, "node")
+    assert _adopt(repo).returncode == 0
+    for name in HOOK_HELPERS:
+        copied = repo / ".claude" / "hooks" / name
+        assert copied.is_file(), name
+        assert copied.read_text() == (TEMPLATE_HOOKS / name).read_text(), name
+    # an older copy is refreshed, not kept
+    stale = repo / ".claude" / "hooks" / "goal_active.py"
+    stale.write_text("# old copy\n")
+    out = _sections(_adopt(repo).stdout)
+    assert stale.read_text() == (TEMPLATE_HOOKS / "goal_active.py").read_text()
+    assert any("goal_active.py" in w for w in out["WROTE"]), out["WROTE"]
+
+
+def test_a_second_adopt_leaves_the_hook_helpers_untouched_F15(tmp_path: Path) -> None:
+    repo = _repo(tmp_path, "python")
+    _adopt(repo)
+    hooks = repo / ".claude" / "hooks"
+    before = {p.name: p.read_bytes() for p in hooks.iterdir()}
+    assert set(HOOK_HELPERS) <= set(before)
+    second = _sections(_adopt(repo).stdout)
+    assert second["WROTE"] == [], second["WROTE"]
+    assert {p.name: p.read_bytes() for p in hooks.iterdir()} == before
+
+
+def test_the_ignore_allow_list_keeps_the_python_helpers_F15(tmp_path: Path) -> None:
+    """A global ignore of `.claude/**` is why adopt writes `!.claude/hooks/*.sh`; the helpers
+    are `.py` and need their own line, or they work on one laptop and vanish from the commit."""
+    repo = _repo(tmp_path, "node")
+    (repo / ".git" / "info" / "exclude").write_text(".claude/**\n")  # stands in for a global ignore
+
+    def ignored(rel: str) -> bool:
+        return (
+            subprocess.run(["git", "check-ignore", "-q", rel], cwd=repo, env=_env()).returncode == 0
+        )
+
+    assert ignored(".claude/hooks/goal_active.py"), "the fixture must hide the helpers"
+    assert _adopt(repo).returncode == 0
+    lines = (repo / ".gitignore").read_text().splitlines()
+    assert "!.claude/hooks/*.sh" in lines and "!.claude/hooks/*.py" in lines, lines
+    for rel in (".claude/hooks/gate-bash.sh", *(f".claude/hooks/{n}" for n in HOOK_HELPERS)):
+        assert not ignored(rel), rel
+    before = (repo / ".gitignore").read_text()
+    assert _sections(_adopt(repo).stdout)["WROTE"] == []
+    assert (repo / ".gitignore").read_text() == before  # one allow-list, not two

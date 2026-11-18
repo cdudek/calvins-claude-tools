@@ -42,8 +42,9 @@ def repo(tmp_path: Path) -> Path:
     _git(tmp_path, "init", "-q", "--bare", "-b", "master", str(origin))
     repo = tmp_path / "repo"
     (repo / ".claude" / "hooks").mkdir(parents=True)
-    for name in ("pr-gate.sh", "sdlc-config.sh"):
-        shutil.copy(HOOKS / name, repo / ".claude" / "hooks" / name)
+    for name in ("pr-gate.sh", "sdlc-config.sh", "goal_active.py", "block_state.py"):
+        if (HOOKS / name).exists():  # the helpers sit beside the hook; absent in older trees
+            shutil.copy(HOOKS / name, repo / ".claude" / "hooks" / name)
     (repo / "sdlc.json").write_text(
         json.dumps({"defaultBranch": "master", "changesDir": "changes"})
     )
@@ -212,3 +213,90 @@ def test_a_failed_gate_line_is_not_a_pass(repo: Path) -> None:
 def test_force_pushing_the_default_branch_is_refused(repo: Path) -> None:
     _pass(repo)
     assert _run(repo, "git push --force origin milestone/trial-1:master").returncode == 2
+
+
+# The push gate judges only its own push (F6-F8).
+@pytest.mark.parametrize(
+    "redirect",
+    ["2>&1", "> push.log", ">push.log", "2>> push.log", "2>>push.log", "&>push.log", "&> push.log"],
+)
+def test_a_redirect_is_not_a_refspec_F6(repo: Path, redirect: str) -> None:
+    _pass(repo)
+    cmd = f"git push -u origin milestone/trial-1 {redirect}"
+    assert _run(repo, cmd, goal=True).returncode == 0
+    assert _run(repo, f"git push {redirect} origin milestone/trial-1", goal=True).returncode == 0
+    assert _run(repo, f"git push origin HEAD {redirect} | tail -3", goal=True).returncode == 0
+
+
+@pytest.mark.parametrize("redirect", ["2>&1", ">push.log", "&>push.log"])
+def test_a_redirect_does_not_hide_a_refused_push_F6(repo: Path, redirect: str) -> None:
+    # no gate pass: still refused, and for the milestone reason
+    r = _run(repo, f"git push -u origin milestone/trial-1 {redirect}", goal=True)
+    assert r.returncode == 2 and "without a passing milestone gate" in r.stderr
+    assert _run(repo, f"git push origin HEAD:master {redirect}").returncode == 2
+
+
+def _other_repo(tmp_path: Path) -> Path:
+    """A second repo with its own sdlc.json, on a plain branch."""
+    other = tmp_path / "other"
+    other.mkdir()
+    _git(other, "init", "-q", "-b", "master")
+    (other / "sdlc.json").write_text(
+        json.dumps({"defaultBranch": "master", "changesDir": "changes"})
+    )
+    _commit(other, "src/app.ts", "1\n")
+    _git(other, "checkout", "-qb", "fix/other")
+    return other
+
+
+def test_the_goal_rule_skips_pushes_in_another_repo_F7(repo: Path, tmp_path: Path) -> None:
+    other = _other_repo(tmp_path)
+    assert _run(repo, f"cd {other} && git push -u origin fix/other", goal=True).returncode == 0
+    assert _run(repo, f"git -C {other} push -u origin fix/other", goal=True).returncode == 0
+    pr = _run(repo, f"cd {other} && gh pr create --title t --body b", goal=True)
+    assert pr.returncode == 0
+    # the session's own repo is still bound by the goal
+    _git(repo, "checkout", "-qb", "fix/thing")
+    r = _run(repo, "git push -u origin fix/thing", goal=True)
+    assert r.returncode == 2 and "inside a /goal run" in r.stderr
+
+
+def test_other_rules_still_apply_in_another_repo_F7(repo: Path, tmp_path: Path) -> None:
+    other = _other_repo(tmp_path)
+    r = _run(repo, f"cd {other} && git push origin HEAD:master", goal=True)
+    assert r.returncode == 2 and "a push to master" in r.stderr
+
+
+def test_a_worktree_of_the_start_repo_is_the_start_repo_F7(repo: Path, tmp_path: Path) -> None:
+    wt = tmp_path / "wt"
+    _git(repo, "worktree", "add", "-q", "-b", "fix/wt", str(wt))
+    r = _run(repo, f"cd {wt} && git push -u origin fix/wt", goal=True)
+    assert r.returncode == 2 and "inside a /goal run" in r.stderr
+    assert _run(repo, f"cd {wt} && git push -u origin fix/wt").returncode == 0  # no goal
+
+
+def test_an_exception_in_the_start_repo_is_honoured_for_another_repo_F8(
+    repo: Path, tmp_path: Path
+) -> None:
+    other = _other_repo(tmp_path)
+    cmd = f"cd {other} && gh pr create --base project/trial --head fix/urgent --title t --body b"
+    assert _run(repo, cmd).returncode == 2  # no row anywhere yet
+    decisions = repo / "changes" / ID / "decisions.json"
+    data = json.loads(decisions.read_text())
+    empty = [{"branch": "fix/urgent", "words": ""}]
+    decisions.write_text(json.dumps({**data, "prExceptions": empty}))
+    assert _run(repo, cmd).returncode == 2  # an empty `words` is no exception
+    rows = [{"branch": "fix/urgent", "words": "ship the kit fix now, I accept the extra run"}]
+    decisions.write_text(json.dumps({**data, "prExceptions": rows}))
+    assert _run(repo, cmd).returncode == 0
+    assert _run(repo, cmd.replace("fix/urgent", "fix/else")).returncode == 2  # that branch only
+
+
+def test_an_exception_in_the_pushed_repo_still_counts_F8(repo: Path, tmp_path: Path) -> None:
+    other = _other_repo(tmp_path)
+    change = other / "changes" / "2026-11-01-x"
+    change.mkdir(parents=True)
+    rows = [{"branch": "fix/urgent", "words": "ship it, I accept the extra run"}]
+    (change / "decisions.json").write_text(json.dumps({"prExceptions": rows}))
+    cmd = f"cd {other} && gh pr create --base project/trial --head fix/urgent --title t --body b"
+    assert _run(repo, cmd).returncode == 0
