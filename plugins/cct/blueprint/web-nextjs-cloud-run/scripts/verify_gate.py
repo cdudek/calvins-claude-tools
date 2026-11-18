@@ -289,11 +289,13 @@ def defined_ids(change: Path) -> set[str]:
 def bare_ids(text: str, defined: set[str]) -> list[tuple[str, str]]:
     """(id, context) for every defined id in running text that is not inside brackets: "plain words
     first, the id in brackets after". Headings, code, the first cell of a table row, a cell that
-    holds only ids and a definition label are structure; every other table cell is prose."""
+    holds only ids, a definition label and the verbatim Words column of the intent's Asks table are
+    structure; every other table cell is prose."""
     text = re.sub(r"\A---\n.*?\n---\n", "", text, flags=re.S)
     text = re.sub(r"```.*?```|<!--.*?-->", "", text, flags=re.S)
     found: list[tuple[str, str]] = []
     para: list[str] = []
+    heading, header = "", []  # the last heading, and the header row of the table being read
 
     def flush() -> None:
         body = "\n".join(para)
@@ -307,12 +309,18 @@ def bare_ids(text: str, defined: set[str]) -> list[tuple[str, str]]:
 
     for line in text.splitlines():
         s = line.strip()
+        if not s.startswith("|"):
+            header = []
         if not s or s.startswith("#"):
             flush()
+            heading = s.lstrip("# ").lower() if s else heading
         elif s.startswith("|"):
             flush()
-            for cell in [c.strip() for c in s.strip("|").split("|")][1:]:
-                if not IDS_ONLY.fullmatch(cell):
+            cells = [c.strip() for c in s.strip("|").split("|")]
+            header = header or [c.lower() for c in cells]
+            for i, cell in enumerate(cells[1:], 1):
+                verbatim = heading == "asks" and header[i : i + 1] == ["words"]
+                if not verbatim and not IDS_ONLY.fullmatch(cell):
                     para.append(cell)
                     flush()
         else:
@@ -496,7 +504,10 @@ def run(
         # `sdlc_status.py goal` reads, so a deleted merged branch does not undo a finished milestone
         on = re.fullmatch(r"milestone/.+-(\d+)", sh("git", "rev-parse", "--abbrev-ref", "HEAD"))
         if scope == "milestone" and on:
-            (out_dir / f"milestone-{on[1]}.json").write_text(text, encoding="utf-8")
+            bound = {**report, "milestone": int(on[1]), "change": change.name}  # bound to its subject
+            (out_dir / f"milestone-{on[1]}.json").write_text(
+                json.dumps(bound, indent=2) + "\n", encoding="utf-8"
+            )
         rows = "\n".join(
             f"| {c['name']} | {c['status']} | {c['seconds']} |" for c in report["checks"]
         )

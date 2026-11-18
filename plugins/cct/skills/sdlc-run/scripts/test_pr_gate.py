@@ -544,3 +544,48 @@ def test_a_pass_counts_after_a_year_month_archive_move_F10(repo: Path) -> None:
     _git(repo, "mv", f"changes/{ID}", f"changes/archive/2026/2026-11/{ID}")
     _git(repo, "commit", "-qm", "archive")
     assert _run(repo, "git push -u origin milestone/trial-1").returncode == 0
+
+
+def _other_change_pass(repo: Path, where: str = "changes/2026-11-02-other") -> None:
+    """A passing report of ANOTHER change, gated on this very commit."""
+    sha = _git(repo, "rev-parse", "HEAD")
+    folder = repo / where
+    (folder / "verify").mkdir(parents=True)
+    (folder / "decisions.json").write_text(json.dumps({"milestone": {"slug": "other"}}))
+    (folder / "verify" / "report.json").write_text(
+        json.dumps(
+            {
+                "scope": "milestone",
+                "id": "2026-11-02-other",
+                "sha": sha,
+                "result": f"VERIFY PASS milestone 2026-11-02-other {sha}",
+            }
+        )
+    )
+
+
+def test_a_pass_of_another_change_on_the_same_sha_does_not_admit_the_push(repo: Path) -> None:
+    _other_change_pass(repo)
+    r = _run(repo, "git push -u origin milestone/trial-1")
+    assert r.returncode == 2 and "without a passing milestone gate" in r.stderr
+    pr = "gh pr create --base project/trial --title t --body x"
+    assert _run(repo, pr).returncode == 2
+    _pass(repo)  # this change's own pass still admits it
+    assert _run(repo, "git push -u origin milestone/trial-1").returncode == 0
+
+
+def test_a_report_in_an_unsupported_folder_depth_is_not_read(repo: Path) -> None:
+    _pass(repo)
+    folder = repo / "changes" / ID
+    deep = repo / "changes" / "archive" / "a" / "b" / "c" / "d" / ID
+    deep.parent.mkdir(parents=True)
+    _git(repo, "mv", str(folder), str(deep))
+    _git(repo, "commit", "-qm", "archive too deep")
+    assert _run(repo, "git push -u origin milestone/trial-1").returncode == 2
+
+
+def test_local_merge_into_an_unresolvable_project_branch_is_refused(repo: Path) -> None:
+    _local(repo, project=False)
+    _pass(repo)
+    r = _run(repo, "git switch -c project/nowhere && git merge --no-ff milestone/trial-1")
+    assert r.returncode == 2 and "project branch" in r.stderr and "project/nowhere" in r.stderr
