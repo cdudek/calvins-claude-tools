@@ -38,11 +38,12 @@ file=$(sdlc_field "$payload" file_path)
 [ -f "$SDLC_JSON" ] || exit 0
 transcript=$(printf '%s' "$payload" | python3 -c 'import json,sys; print(json.load(sys.stdin).get("transcript_path") or "")' 2>/dev/null || true)
 
-python3 - "$SDLC_ROOT" "$SDLC_JSON" "$file" "$transcript" <<'PY'
+SDLC_HOOK_DIR="$(cd "$(dirname "$0")" && pwd)" python3 - "$SDLC_ROOT" "$SDLC_JSON" "$file" "$transcript" <<'PY'
 from __future__ import annotations
 
 import fnmatch
 import json
+import os
 import re
 import subprocess
 import sys
@@ -119,28 +120,14 @@ PROTECTED_GLOBS = ["sdlc.json", "**/*-snapshots/**", "**/__screenshots__/**", "*
 
 
 def goal_active(path: str) -> bool | None:
-    """True/False from the last goal_status entry of the transcript; None when unreadable.
-
-    The entry is undocumented: {"type":"attachment","attachment":{"type":"goal_status",
-    "met":false,...}}. Unreadable fails open with a warning rather than blocking every edit.
-    """
+    """goal_active.py's reading (None = unreadable, which fails open with a warning)."""
+    sys.path.insert(0, os.environ["SDLC_HOOK_DIR"])
     try:
-        lines = Path(path).read_text(encoding="utf-8").splitlines()
-    except (OSError, ValueError):
-        return None
-    parsed, last = 0, None
-    for line in lines:
-        try:
-            entry = json.loads(line)
-        except ValueError:
-            continue
-        parsed += 1
-        att = entry.get("attachment") if isinstance(entry, dict) else None
-        if isinstance(att, dict) and att.get("type") == "goal_status":
-            last = att
-    if not parsed:
-        return None
-    return last is not None and last.get("met") is False
+        from goal_active import goal_active as read
+    except ImportError:
+        print("BLOCKED: goal_active.py is missing beside chain-gate.sh; run `sdlc-run adopt` to restore it.", file=sys.stderr)
+        sys.exit(2)
+    return read(path)
 
 
 def skipped(decisions: dict, activity: str) -> bool:

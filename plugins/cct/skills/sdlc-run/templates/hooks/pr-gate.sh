@@ -32,7 +32,7 @@ payload=$(cat)
 [ -f "$SDLC_JSON" ] || exit 0
 case "$payload" in *push*|*"pr create"*) ;; *) exit 0 ;; esac
 
-PAYLOAD="$payload" python3 - "$SDLC_ROOT" "$SDLC_JSON" <<'PY'
+PAYLOAD="$payload" SDLC_HOOK_DIR="$(cd "$(dirname "$0")" && pwd)" python3 - "$SDLC_ROOT" "$SDLC_JSON" <<'PY'
 from __future__ import annotations
 
 import json
@@ -64,21 +64,14 @@ def git(where: Path, *args: str) -> str:
 
 
 def goal_active() -> bool:
-    """Same reading as chain-gate.sh: the last goal_status entry of the transcript says met: false."""
+    """The goal reading is goal_active.py's; an unreadable transcript reads as no goal."""
+    sys.path.insert(0, os.environ["SDLC_HOOK_DIR"])
     try:
-        lines = Path(transcript).read_text(encoding="utf-8").splitlines()
-    except (OSError, ValueError):
-        return False
-    last = None
-    for line in lines:
-        try:
-            entry = json.loads(line)
-        except ValueError:
-            continue
-        att = entry.get("attachment") if isinstance(entry, dict) else None
-        if isinstance(att, dict) and att.get("type") == "goal_status":
-            last = att
-    return last is not None and last.get("met") is False
+        from goal_active import goal_active as read
+    except ImportError:
+        print("BLOCKED: goal_active.py is missing beside pr-gate.sh; run `sdlc-run adopt` to restore it.", file=sys.stderr)
+        sys.exit(2)
+    return bool(read(transcript))
 
 
 class Repo:
