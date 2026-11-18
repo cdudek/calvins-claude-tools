@@ -1,7 +1,7 @@
 """The verify contract of the SDLC chain: one command, one last line.
 
     python3 scripts/verify_gate.py approve <id>              # lock the criteria at approval
-    python3 scripts/verify_gate.py lint <id>                 # plain-language lint: short sentences, ids only in brackets
+    python3 scripts/verify_gate.py lint <id> [--pr-body FILE|-]  # plain language: short sentences, ids only in brackets; the PR body you publish
     python3 scripts/verify_gate.py feature|milestone <id>    # run sdlc.json checks.<scope>
     python3 scripts/verify_gate.py audit [--no-evidence]     # read-only: is every gate enforced?
     # After UX review, also require each visual run:
@@ -252,11 +252,13 @@ def defined_ids(change: Path) -> set[str]:
 def bare_ids(text: str, defined: set[str]) -> list[tuple[str, str]]:
     """(id, context) for every defined id in running text that is not inside brackets: "plain words
     first, the id in brackets after". Headings, code, the first cell of a table row, a cell that
-    holds only ids and a definition label are structure; every other table cell is prose."""
+    holds only ids, a definition label and the verbatim Words column of the intent's Asks table are
+    structure; every other table cell is prose."""
     text = re.sub(r"\A---\n.*?\n---\n", "", text, flags=re.S)
     text = re.sub(r"```.*?```|<!--.*?-->", "", text, flags=re.S)
     found: list[tuple[str, str]] = []
     para: list[str] = []
+    heading, header = "", []  # the last heading, and the header row of the table being read
 
     def flush() -> None:
         body = "\n".join(para)
@@ -270,12 +272,18 @@ def bare_ids(text: str, defined: set[str]) -> list[tuple[str, str]]:
 
     for line in text.splitlines():
         s = line.strip()
+        if not s.startswith("|"):
+            header = []
         if not s or s.startswith("#"):
             flush()
+            heading = s.lstrip("# ").lower() if s else heading
         elif s.startswith("|"):
             flush()
-            for cell in [c.strip() for c in s.strip("|").split("|")][1:]:
-                if not IDS_ONLY.fullmatch(cell):
+            cells = [c.strip() for c in s.strip("|").split("|")]
+            header = header or [c.lower() for c in cells]
+            for i, cell in enumerate(cells[1:], 1):
+                verbatim = heading == "asks" and header[i : i + 1] == ["words"]
+                if not verbatim and not IDS_ONLY.fullmatch(cell):
                     para.append(cell)
                     flush()
         else:
