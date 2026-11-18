@@ -504,7 +504,10 @@ def run(
         # `sdlc_status.py goal` reads, so a deleted merged branch does not undo a finished milestone
         on = re.fullmatch(r"milestone/.+-(\d+)", sh("git", "rev-parse", "--abbrev-ref", "HEAD"))
         if scope == "milestone" and on:
-            (out_dir / f"milestone-{on[1]}.json").write_text(text, encoding="utf-8")
+            bound = {**report, "milestone": int(on[1]), "change": change.name}  # bound to its subject
+            (out_dir / f"milestone-{on[1]}.json").write_text(
+                json.dumps(bound, indent=2) + "\n", encoding="utf-8"
+            )
         rows = "\n".join(
             f"| {c['name']} | {c['status']} | {c['seconds']} |" for c in report["checks"]
         )

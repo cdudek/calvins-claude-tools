@@ -693,7 +693,7 @@ def test_milestone_gate_keeps_its_own_receipt_beside_report_json(tmp_path: Path)
     assert _last(_gate(repo, "milestone", ID)).startswith(f"VERIFY PASS milestone {ID}")
     verify = repo / "changes" / ID / "verify"
     receipt = json.loads((verify / "milestone-2.json").read_text())
-    assert receipt == json.loads((verify / "report.json").read_text())
+    assert receipt == {**json.loads((verify / "report.json").read_text()), "milestone": 2, "change": ID}
     assert receipt["result"].startswith("VERIFY PASS milestone") and receipt["sha"]
 
 
