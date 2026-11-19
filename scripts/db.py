@@ -3,6 +3,7 @@
     python3 scripts/db.py test prepare                 # one local Postgres container + a migrated template
     python3 scripts/db.py test create [NAME]           # a private copy in under a second; prints "NAME URL"
     python3 scripts/db.py test drop NAME
+    python3 scripts/db.py test sweep                   # drop copies of dead jobs and old templates
     python3 scripts/db.py test run -- CMD...           # create, run CMD with DATABASE_URL set, drop
     python3 scripts/db.py dev ensure                   # proxy up, your own database created once, migrated
     add --print to any verb: show the commands, run nothing
@@ -11,7 +12,7 @@ Why tests stay local: the database was never the slow part (builds, browsers and
 checks reset their data before every screen and every query would pay a network round trip; tests drop
 and recreate databases, which does not belong next to shared data; a local Postgres starts in seconds.
 
-`sdlc.json` `db.test`: image, container, port, template (database name), migrate (a command that reads
+`sdlc.json` `db.test`: image, container, port, template (database name prefix; the template is `<template>_<migrations hash>`), migrate (a command that reads
 DATABASE_URL), migrations (globs; a change rebuilds the template, so a stale template never serves
 wrong tests). The container listens on 127.0.0.1 with trust auth: a throwaway with no password.
 
@@ -27,6 +28,8 @@ Written by `sdlc-run adopt` from the kit; edit the kit, not this copy. stdlib on
 from __future__ import annotations
 
 import argparse
+import contextlib
+import fcntl
 import glob
 import hashlib
 import json
@@ -88,6 +91,17 @@ class Runner:
             raise SystemExit(res.returncode)
         return res
 
+    def stream(self, argv: list[str], env: dict | None = None, cwd: str | None = None) -> int:
+        """Run with the caller's stdout and stderr, so output shows as it happens."""
+        if self.dry:
+            print(self.show(argv, env))
+            return 0
+        try:
+            return subprocess.run(argv, env=dict(os.environ, **(env or {})), cwd=cwd).returncode
+        except OSError as e:
+            print(f"db: cannot run {argv[0]}: {e}", file=sys.stderr)
+            return 127
+
     def probe(self, argv: list[str]) -> bool:
         """Exit 0 of a read-only question. A dry run prints it and answers no."""
         if self.dry:
@@ -98,6 +112,28 @@ class Runner:
 
 # --- test-db ----------------------------------------------------------------------------------
 
+JOB = re.compile(r"^sdlc_job_(\d+)_(?:(\d{10})_)?\d+$")  # sdlc_job_<pid>_<epoch seconds>_<n>
+JOB_GRACE = 3600  # a standalone `test create` exits at once; its copy outlives its pid by design
+TEMPLATE_TTL = 7 * 86400
+
+
+def state_dir() -> Path:
+    base = os.environ.get("SDLC_DB_DIR")
+    if not base:
+        state = os.environ.get("XDG_STATE_HOME") or str(Path.home() / ".local/state")
+        base = str(Path(state) / "sdlc/db")
+    return Path(base)
+
+
+def alive(pid: int) -> bool:
+    try:
+        os.kill(pid, 0)
+    except ProcessLookupError:
+        return False
+    except PermissionError:
+        return True
+    return True
+
 
 class TestDb:
     __test__ = False  # not a pytest class
@@ -106,8 +142,13 @@ class TestDb:
         self.c, self.r = cfg, runner
         self.container = cfg["container"]
         self.port = int(cfg["port"])
-        self.template = valid(cfg["template"])
+        self.template = valid(cfg["template"])  # the prefix; the template itself is <prefix>_<hash>
         self.user = cfg.get("user", "postgres")
+        self.key = re.sub(r"[^A-Za-z0-9_.-]", "_", self.container)
+
+    @property
+    def tmpl(self) -> str:
+        return valid(f"{self.template}_{self.migrations_hash()}")
 
     def url(self, name: str) -> str:
         return f"postgresql://{self.user}@127.0.0.1:{self.port}/{name}"
@@ -126,24 +167,69 @@ class TestDb:
                 h.update(Path(f).read_bytes())
         return h.hexdigest()[:16]
 
-    def start_container(self) -> None:
-        if self.r.probe(["docker", "exec", self.container, "pg_isready", "-U", self.user]):
+    @contextlib.contextmanager
+    def locked(self):
+        """One writer per container on this machine: starting it and building a template."""
+        if self.r.dry:
+            yield
             return
-        self.r.run(["docker", "rm", "-f", self.container], check=False)
+        d = state_dir()
+        d.mkdir(parents=True, exist_ok=True)
+        with open(d / f"{self.key}.lock", "a+") as fh:
+            fcntl.flock(fh, fcntl.LOCK_EX)
+            try:
+                yield
+            finally:
+                fcntl.flock(fh, fcntl.LOCK_UN)
+
+    def used(self, update: dict | None = None) -> dict:
+        """Last use per template, kept beside the lock; call with the lock held."""
+        f = state_dir() / f"{self.key}.json"
+        try:
+            data = json.loads(f.read_text(encoding="utf-8"))
+        except (OSError, ValueError):
+            data = {}
+        if update is not None and not self.r.dry:
+            f.write_text(json.dumps(update), encoding="utf-8")
+        return data
+
+    def ready(self) -> bool:
+        return self.r.probe(["docker", "exec", self.container, "pg_isready", "-U", self.user])
+
+    def wait_ready(self, tries: int) -> bool:
+        for _ in range(tries):
+            if self.ready():
+                return True
+            if self.r.dry:
+                break
+            time.sleep(0.5)
+        return False
+
+    def start_container(self) -> None:
+        if self.wait_ready(3):  # one failed probe never condemns a container
+            return
+        state = self.r.run(
+            ["docker", "inspect", "-f", "{{.State.Running}}", self.container], check=False
+        )
+        exists, running = state.returncode == 0, state.stdout.strip() == "true"
+        if exists and running:  # up but still starting, or busy: wait, never remove
+            if self.wait_ready(60) or self.r.dry:
+                return
+            raise ConfigError(
+                f"container {self.container} is running but not ready; "
+                f"run `docker logs {self.container}`"
+            )
+        if exists:
+            self.r.run(["docker", "rm", "-f", self.container], check=False)
         self.r.run(
             ["docker", "run", "-d", "--name", self.container,
              "-e", "POSTGRES_HOST_AUTH_METHOD=trust", "-p", f"127.0.0.1:{self.port}:5432",
              self.c.get("image", "postgres:17")]
         )  # fmt: skip
-        for _ in range(60):
-            if self.r.probe(["docker", "exec", self.container, "pg_isready", "-U", self.user]):
-                return
-            if self.r.dry:
-                return
-            time.sleep(0.5)
-        raise ConfigError(
-            f"container {self.container} never became ready; run `docker logs {self.container}`"
-        )
+        if not self.wait_ready(60) and not self.r.dry:
+            raise ConfigError(
+                f"container {self.container} never became ready; run `docker logs {self.container}`"
+            )
 
     def disconnect(self, db: str) -> None:
         self.psql(
@@ -151,60 +237,88 @@ class TestDb:
             f"WHERE datname = '{db}' AND pid <> pg_backend_pid()"
         )
 
-    def prepare(self) -> None:
+    def _prepare(self) -> str:
+        """Start the container and publish this migration set's template once. Lock held."""
         self.start_container()
+        tmpl = self.tmpl
         want = f"migrations:{self.migrations_hash()}"
         have = (
             ""
             if self.r.dry
             else self.psql(
                 f"SELECT shobj_description(oid, 'pg_database') FROM pg_database "
-                f"WHERE datname = '{self.template}'"
+                f"WHERE datname = '{tmpl}'"
             ).stdout.strip()
         )
-        if have == want:
-            return
-        self.disconnect(self.template)
-        self.psql(f"DROP DATABASE IF EXISTS {self.template}")
-        self.psql(f"CREATE DATABASE {self.template}")
-        if self.c.get("migrate"):
-            self.r.run(
-                shlex.split(self.c["migrate"]), env={"DATABASE_URL": self.url(self.template)}
-            )
-        self.disconnect(self.template)  # CREATE ... TEMPLATE fails while anything is connected
-        self.psql(f"COMMENT ON DATABASE {self.template} IS '{want}'")
+        # absent, or an unstamped leftover of a crashed build: only ever our own name
+        if have != want:
+            self.disconnect(tmpl)
+            self.psql(f"DROP DATABASE IF EXISTS {tmpl}")
+            self.psql(f"CREATE DATABASE {tmpl}")
+            if self.c.get("migrate"):
+                self.r.run(shlex.split(self.c["migrate"]), env={"DATABASE_URL": self.url(tmpl)})
+            self.disconnect(tmpl)  # CREATE ... TEMPLATE fails while anything is connected
+            self.psql(f"COMMENT ON DATABASE {tmpl} IS '{want}'")  # the stamp publishes it
+        self.used({**self.used(), tmpl: time.time()})
+        self._sweep()
+        return tmpl
+
+    def prepare(self) -> None:
+        with self.locked():
+            self._prepare()
 
     def create(self, name: str | None = None) -> str:
-        name = valid(name or f"sdlc_job_{os.getpid()}_{time.time_ns() % 10**8}")
-        self.disconnect(self.template)
-        self.psql(f"CREATE DATABASE {name} TEMPLATE {self.template}")
+        name = valid(name or f"sdlc_job_{os.getpid()}_{int(time.time())}_{time.time_ns() % 10**6}")
+        with self.locked():
+            tmpl = self._prepare()
+            self.disconnect(tmpl)
+            self.psql(f"CREATE DATABASE {name} TEMPLATE {tmpl}")
         return name
 
     def drop(self, name: str) -> None:
         self.disconnect(valid(name))
         self.psql(f"DROP DATABASE IF EXISTS {name}")
 
+    def _sweep(self) -> list[str]:
+        """Drop copies whose process is gone and templates of old migration sets. Lock held."""
+        now, keep, used, gone = time.time(), self.tmpl, self.used(), []
+        old = re.compile(rf"^{re.escape(self.template)}(_[0-9a-f]{{16}})?$")
+        for n in self.psql("SELECT datname FROM pg_database").stdout.split():
+            if m := JOB.match(n):
+                if not alive(int(m[1])) and now - int(m[2] or 0) > JOB_GRACE:
+                    self.drop(n)
+                    gone.append(n)
+            elif n != keep and old.match(n):
+                if now - used.setdefault(n, now) > TEMPLATE_TTL:
+                    self.drop(n)
+                    used.pop(n)
+                    gone.append(n)
+        self.used(used)
+        return gone
+
+    def sweep(self) -> list[str]:
+        with self.locked():
+            return self._sweep() if self.ready() else []
+
 
 def cmd_test(args, runner: Runner) -> int:
     db = TestDb(section("test", ("container", "port", "template")), runner)
     if args.verb == "prepare":
         db.prepare()
+    elif args.verb == "sweep":
+        for n in db.sweep():
+            print(f"dropped {n}")
     elif args.verb == "create":
-        db.prepare()
         name = db.create(args.name)
         print(f"{name} {db.url(name)}")
     elif args.verb == "drop":
         db.drop(args.name)
-    else:  # run
+    else:  # run: one job, one copy
         if not args.cmd:
             raise ConfigError("test run needs a command after `--`")
-        db.prepare()
         name = db.create()
         try:
-            res = runner.run(args.cmd, env={"DATABASE_URL": db.url(name)}, check=False)
-            sys.stdout.write(res.stdout)
-            sys.stderr.write(res.stderr)
-            return res.returncode
+            return runner.stream(args.cmd, env={"DATABASE_URL": db.url(name)}, cwd=args.cwd)
         finally:
             db.drop(name)
     return 0
@@ -263,14 +377,19 @@ def main(argv: list[str]) -> int:
     ap = argparse.ArgumentParser(prog="db.py")
     top = ap.add_subparsers(dest="kind", required=True)
     t = top.add_parser("test")
-    t.add_argument("verb", choices=["prepare", "create", "drop", "run"])
+    t.add_argument("verb", choices=["prepare", "create", "drop", "run", "sweep"])
     t.add_argument("name", nargs="?")
     d = top.add_parser("dev")
     d.add_argument("verb", choices=["ensure"])
     for p in (t, d):
         p.add_argument("--print", action="store_true", dest="dry")
     args = ap.parse_args(argv)
-    args.cmd = cmd
+    args.cmd, args.cwd = cmd, os.getcwd()
+    top_level = subprocess.run(
+        ["git", "rev-parse", "--show-toplevel"], capture_output=True, text=True
+    ).stdout.strip()
+    if top_level:  # sdlc.json and the migration globs are relative to the repo root
+        os.chdir(top_level)
     if args.kind == "test" and args.verb == "drop" and not args.name:
         ap.error("drop needs a database name")
     runner = Runner(args.dry)
