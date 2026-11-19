@@ -41,6 +41,8 @@ def _repo(tmp_path: Path, feature: list) -> Path:
     (repo / ".gitignore").write_text("/changes/*/verify/\n")
     (change / "facts.md").write_text("---\nstatus: approved\n---\n\n- [ ] **F1** It works.\n")
     (change / "done.json").write_text('{"facts": ["F1"]}\n')
+    # a milestone passes only with a met row and evidence for every approved fact
+    (change / "validation.md").write_text("| F1 | It works | ran | tests/x.py::test_f1 | met |\n")
     _git(repo, "init", "-q", "-b", "master")
     _git(repo, "add", ".")
     _git(repo, "commit", "-qm", "init")
@@ -1496,3 +1498,62 @@ def test_the_presets_run_the_full_e2e_and_repeat_changed_and_flaky_specs_three_t
     assert "flaky-specs.txt" in milestone
     assert "--repeat-each=3" in milestone or "seq 3" in milestone or "1 2 3" in milestone
     assert "git diff --name-only" in milestone and "{base}" in milestone
+
+
+# --- Review finding 6: the validation rows come from the approved facts of the milestone -----
+
+
+def _facts_repo(tmp_path: Path, facts: list, plan: str = "") -> Path:
+    repo = _repo(tmp_path, [])
+    cfg = json.loads((repo / "sdlc.json").read_text())
+    (repo / "sdlc.json").write_text(json.dumps({**cfg, "checks": {"milestone": ["true"]}}))
+    change = repo / "changes" / ID
+    (change / "done.json").write_text(json.dumps({"facts": facts}))
+    if plan:
+        (change / "plan.md").write_text(plan)
+    _git(repo, "add", ".")
+    _git(repo, "commit", "-qm", "facts")
+    _approve(repo)
+    return repo
+
+
+@pytest.mark.parametrize(
+    "validation",
+    [
+        None,  # no validation.md at all
+        "| F1 | x | y | z | met |\n",  # F2 has no row
+        "| F1 | x | y |  | met |\n| F2 | x | y | t.test.ts > it | met |\n",  # empty evidence
+        "| F1 | x | y | <test or shot> | met |\n| F2 | x | y | t | met |\n",  # a placeholder
+        "| F1 | x | y | - | met |\n| F2 | x | y | t | met |\n",
+        "| F1 | x | y | z | met |\n| F2 | x | y | z | unknown |\n",  # not a met verdict
+    ],
+)
+def test_a_pass_needs_a_met_row_with_evidence_for_every_approved_fact(
+    tmp_path: Path, validation: str | None
+) -> None:
+    repo = _facts_repo(tmp_path, ["F1", "F2"])
+    if validation is not None:
+        _commit_files(repo, validation_md=validation)
+    else:
+        (repo / "changes" / ID / "validation.md").unlink()
+        _git(repo, "commit", "-qam", "no validation")
+    r = _gate(repo, "milestone", ID)
+    assert r.returncode == 3 and _last(r) == "VERIFY BLOCKED reason=validation-not-met", r.stdout
+
+
+def test_every_fact_with_a_met_row_and_evidence_passes(tmp_path: Path) -> None:
+    repo = _facts_repo(tmp_path, [{"id": "F1", "tag": "@F1"}, "N1"])
+    _commit_files(
+        repo, validation_md="| F1/A1 | x | y | e2e: login.spec.ts @F1 | met |\n| N1 | x | y | shot: a.png | met |\n"
+    )
+    assert _last(_gate(repo, "milestone", ID)).startswith(f"VERIFY PASS milestone {ID}")
+
+
+def test_only_the_facts_of_this_milestone_are_expected(tmp_path: Path) -> None:
+    plan = "## Milestones\n\n| Milestone | Features | needs |\n|---|---|---|\n| M1 a | F1 | none |\n| M2 b | F2 | M1 |\n"
+    repo = _facts_repo(tmp_path, ["F1", "F2"], plan)
+    _git(repo, "checkout", "-q", "-b", "milestone/trial-1")
+    _commit_files(repo, validation_md="| F1 | x | y | z | met |\n")
+    assert _last(_gate(repo, "milestone", ID)).startswith(f"VERIFY PASS milestone {ID}")
+    _git(repo, "checkout", "-q", "-b", "milestone/trial-2")
+    assert _last(_gate(repo, "milestone", ID)) == "VERIFY BLOCKED reason=validation-not-met"

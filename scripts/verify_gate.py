@@ -268,6 +268,53 @@ def item_id(item: str) -> str:
     return m.group(1) if m else ""
 
 
+NO_EVIDENCE = {"", "-", "--", "n/a", "na", "none", "tbd", "todo", "?"}
+
+
+def approved_facts(change: Path) -> list[str]:
+    """The fact ids the approved `done.json` lists (a string, or an object with an `id`)."""
+    try:
+        listed = json.loads(read(change / "done.json")).get("facts") or []
+    except (ValueError, AttributeError):
+        return []
+    return [str(f["id"] if isinstance(f, dict) else f) for f in listed if f]
+
+
+def milestone_facts(change: Path) -> list[str]:
+    """The approved facts this milestone must prove: the `## Milestones` row of `plan.md` for the
+    checked-out `milestone/<slug>-<n>` branch, else every approved fact."""
+    facts = approved_facts(change)
+    on = re.fullmatch(
+        r"milestone/.+-(\d+)", sh("git", "-C", str(change), "rev-parse", "--abbrev-ref", "HEAD")
+    )
+    if on:
+        for row in table_rows(section(read(change / "plan.md"), "Milestones"))[1:]:
+            if re.match(rf"M{on[1]}\b", row[0]) and len(row) > 1:
+                mine = re.findall(r"[A-Z]\d+", row[1])
+                return [f for f in facts if f in mine]
+    return facts
+
+
+def validation_gaps(change: Path) -> list[str]:
+    """What validation.md lacks: for every approved fact of this milestone one row with the verdict
+    `met` and evidence (a test, a file, an observed artefact: not empty, not a placeholder)."""
+    rows = table_rows(read(change / "validation.md"))
+    head = [c.lower() for c in rows[0]] if rows else []
+    at = head.index("evidence") if "evidence" in head else 3
+    gaps = []
+    for fact in milestone_facts(change):
+        mine = [r for r in rows if fact in re.findall(r"[A-Z]\d+", r[0] if r else "")]
+        if not mine:
+            gaps.append(f"validation.md: {fact} has no row")
+        for row in mine:
+            evidence = row[at].strip(" `") if len(row) > at else ""
+            if row[-1].strip().lower() != "met":
+                gaps.append(f"validation.md: {fact} is not marked met")
+            elif evidence.lower() in NO_EVIDENCE or evidence[:1] == "<":
+                gaps.append(f"validation.md: {fact} is met without evidence")
+    return gaps
+
+
 def milestone_blockers(change: Path) -> tuple[str, list[str]] | None:
     """The records a milestone must close before it passes: (reason, offending lines) or None.
     A residual finding is settled only by the owner's answer to a dialog `Change <id>, finding
@@ -304,6 +351,8 @@ def milestone_blockers(change: Path) -> tuple[str, list[str]] | None:
         return "findings-open", [f"findings.md: open: {i[:80]}" for i in open_items]
     if section(findings, "Converge") and "Converged:" not in findings:
         return "not-converged", ["findings.md: ## Converge has no `Converged: round <n>` line"]
+    if gaps := validation_gaps(change):
+        return "validation-not-met", gaps
     return None
 
 
