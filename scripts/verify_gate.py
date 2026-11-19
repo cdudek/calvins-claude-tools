@@ -1007,6 +1007,21 @@ def run_check(cmd: str, cwd: Path, limit: int) -> subprocess.CompletedProcess[st
     return subprocess.CompletedProcess(cmd, proc.returncode, out, err)
 
 
+def queued(cmd: str, limit: int, cfg: dict) -> tuple[str, int]:
+    """The command the check loop starts and its outer deadline. With heavy.py beside the gate, a heavy
+    check takes a slot and a light one passes straight through (`--auto`); a gate already inside a
+    slot runs it at once, so a close builder's `heavy.py run -- verify_gate.py milestone` never queues
+    behind itself. heavy.py enforces the check's own timeout (`--run-timeout`, the process-group
+    kill); the outer deadline adds the slot wait, so waiting never counts against the check."""
+    heavy = Path(__file__).with_name("heavy.py")
+    if not heavy.is_file():  # a repo adopted before the queue
+        return cmd, limit
+    section = cfg.get("heavy") if isinstance(cfg.get("heavy"), dict) else {}
+    wait = int(section.get("waitTimeout", 1800))
+    wrapped = shlex.join([sys.executable, str(heavy), "run", "--auto", "--run-timeout", str(limit), "--", "sh", "-c", cmd])
+    return wrapped, limit + max(wait, 0) + 60
+
+
 def run(
     scope: str,
     change: Path,
@@ -1180,6 +1195,15 @@ def run(
     # Evidence checks are offline and cheap: they run before the suites, so a missing screenshot,
     # checker or tag never costs a full E2E run (3.21.0).
     evidence: list[dict] = []
+    preflight = Path(__file__).with_name("preflight.py")
+    if scope == "milestone" and cfg.get("preflight") and preflight.is_file():  # declared tools and sign-ins, once
+        evidence.append(
+            {
+                "name": "preflight",
+                "cache": False,
+                "run": f"{shlex.join([sys.executable, str(preflight)])} || {{ echo 'VERIFY BLOCKED reason=env'; exit 1; }}",
+            }
+        )
     if scope == "milestone" and has_owner_marks(change):
         evidence.append(
             {
@@ -1282,8 +1306,13 @@ def run(
             continue
         started = time.monotonic()
         limit = int(check.get("timeout") or cfg.get("checkTimeout") or CHECK_TIMEOUT)
-        proc = run_check(cmd, repo, limit)
+        started_cmd, outer = queued(cmd, limit, cfg)
+        proc = run_check(started_cmd, repo, outer)
         output = proc.stdout + proc.stderr
+        if started_cmd != cmd and proc.returncode == 124 and "timed out" not in output:
+            output += f"\ntimed out after {limit}s\n"  # heavy.py killed the group at the check's limit
+        if started_cmd != cmd and proc.returncode == 75 and "heavy: no slot after" in output:
+            output += "\nVERIFY BLOCKED reason=env\n"  # nothing ran: a handoff naming the holder, not a failed check
         tail = "\n".join(output.strip().splitlines()[-TAIL:])
         status = "pass" if proc.returncode == 0 else "fail"
         report["checks"].append(
