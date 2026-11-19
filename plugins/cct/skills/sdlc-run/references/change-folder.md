@@ -95,9 +95,10 @@ the receipts.
   never starts a goal of its own, and the owner gate is the only place `pending` must be gone
   (`consistency --phase approve` refuses it, naming the ask).
 - **S1, a skip behind a prerequisite.** Stage 2 writes `prototype: required|none` into `spec.md`
-  before anything else. Build QA asks `spec.py` (`qa_applicability`) first: with `none` or
-  `ux: none` it skips with a printed reason and asks for no readiness file and no second gate; with
-  `required` it runs, and the joint gate approves the readiness file.
+  before anything else. Build QA runs `python3 scripts/spec.py qa <change>` first: exit 3 (`none` or
+  `ux: none`) skips with a printed reason and asks for no readiness file and no second gate; exit 0
+  (`required`) runs, and the joint gate approves the readiness file; exit 2 means Stage 2 recorded
+  nothing, so stop and ask. A missing record is never read as a skip.
 - **S3, an outcome with no later PR.** The measure leaves the folder before the folder goes, into
   `.sdlc/outcomes/<id>.json` (`due`, `observed: null`). The scheduled read and the tracker comment
   record the value with `spec.py outcome record`; with no tracker and no next change it is one

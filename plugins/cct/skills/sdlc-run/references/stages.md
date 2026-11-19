@@ -71,7 +71,7 @@ here blocks it.
   against `spec.md`, with no goal of its own. An in-scope ask may be `pending` (its rule is not
   written yet); the verdict lists those. Write `prototype: required` or `prototype: none` into
   `spec.md` before anything else in this stage, and before build QA ever asks for a readiness file:
-  `spec.py qa_applicability` decides first, so `none` skips with a printed reason and no second
+  `spec.py qa <change>` decides first (exit 0 runs, 3 skips, 2 unrecorded: stop), so `none` skips with a printed reason and no second
   gate. This closes D1 and S1.
 - **3 Requirements, 4 plan.** No `facts.md` and no `plan.md`. `design.md` (L) or the design notes of
   `tasks.md` (M) carry the approach, ground truth, rules check, test strategy, risks with proofs and

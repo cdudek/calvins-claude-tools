@@ -1,6 +1,6 @@
 ---
 type: proposal
-status: proposed
+status: accepted
 created: 2026-11-18
 author: Claude, from the owner's verdict on sdlc-run
 supersedes: none
@@ -212,3 +212,17 @@ The size already exists in `decisions.json` and gates what the lint demands; no 
 8. **Back-fill specs from recent archive?** Recommend not now. Start `specs/` as changes touch a capability; back-fill only the capabilities the owner names.
 9. **Drift check strictness.** Recommend report-only for one week per repo, then blocking at the milestone gate and in CI, for `live` requirements only.
 10. **Constitution or steering file.** Recommend none. `sdlc.json` rules, `CLAUDE.md` and architecture policy already play that role; adding a file would be one more thing to keep current.
+
+## 9. Amendments after the reviews and the owner's decisions (what was built)
+
+Owner decisions of 2026-11-19 win over sections 2 to 8. Where they differ, this section is the
+design; the sections above stay as the reasoning.
+
+- **Living spec (replaces section 3).** One file per requirement, `specs/<capability>/rules/R123.md`, a `manifest.yaml` per capability, a generated `specs/CAPABILITIES.md`. No `specs/<capability>/spec.md`, no `## Delta`, no apply script, no hashes: the PR's git diff is the delta. Rule ids are `R` plus a running number with no fixed width, never reused (next = highest ever used + 1, from git history or `.sdlc/last-rule-id`); `spec renumber` fixes a collision before merge, moving a rule to another capability is a file move with no retag. The `SER-12` prefix style is dropped (it looked like a tracker key and made every move a retag).
+- **Drift check (replaces the grep in section 3).** A changed rule needs a changed test; tagged tests that are skipped do not count; `proof: test | manual | check:<name>` keeps rules no test can prove from forcing fake tests; `planned` rules need no tag until live.
+- **Finding rules.** A local index inside `.git` (id, capability, summary, status; never committed), `spec find` with git dates as the tie-break, an open-PR conflict warning and a staleness flag; a recall@10 eval against a grep before a repo goes blocking.
+- **No archive.** Change folders are removed after the merge; existing archives go once their changes are complete. The success measure moves to `.sdlc/outcomes/<id>.json` first. This replaces the flat archive of section 3 and Stage 7.
+- **Three documents, as proposed, with these changes from the reviews.** Scope S, M or L is chosen by change risk, not UX size. The lock covers `spec.md`, `design.md` and the task rows, never ticks or the handover; only the supervisor ticks `tasks.md`. Findings carry a `phase`. The `state/` folder move, the `intake.json` rename and capability `decisions/` folders are not built: machine files keep their paths so every reader keeps working, and layout 4 is opt-in per repo and pinned per change in `decisions.json`.
+- **Planning practices folded into `design.md`.** Ground truth with `file:line`, a proof before build per risk, rollout and rollback, the architecture checklists as a trigger, a test strategy per rule, a cold-read question in the single reviewer's brief.
+- **Deadlocks.** D1 (spec needs future facts), S1 (skip behind a prerequisite) and S3 (outcome with no later PR) are closed in `references/change-folder.md` and tested in `scripts/test_spec.py`.
+- **Where.** `plugins/cct/skills/sdlc-run/templates/scripts/spec.py`, `templates/change/{spec,design,tasks}.md`, `templates/specs/`, `references/change-folder.md`, `references/living-spec.md`. Gate wiring is in [sdd-integration](sdd-integration.md).

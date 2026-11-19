@@ -413,6 +413,32 @@ def test_s1_build_qa_is_decided_before_any_readiness_file_is_asked_for(repo: Pat
     assert spec.qa_applicability(c)[0] is True
     (c / "spec.md").write_text(s.replace("ux: none", "ux: M"))
     assert any("record `prototype" in e for e in spec.consistency(c, "draft"))
+    assert spec.qa_applicability(c)[0] is None  # not recorded: neither run nor skip
+
+
+def test_s1_the_qa_command_exits_0_to_run_3_to_skip_and_2_when_unrecorded(
+    repo: Path, monkeypatch
+) -> None:
+    c = _change(repo)
+    s = (c / "spec.md").read_text()
+    monkeypatch.chdir(repo)
+    for text, code in [
+        (s.replace("ux: none", "ux: M\nprototype: required"), 0),
+        (s.replace("ux: none", "ux: M\nprototype: none"), 3),
+        (s, 3),
+        (s.replace("ux: none", "ux: M"), 2),
+        (s.replace("ux: none\n", ""), 2),  # no ux key at all: a missing record, not a skip
+    ]:
+        (c / "spec.md").write_text(text)
+        assert spec.main(["qa", str(c)]) == code
+    assert any("`ux`" in e for e in spec.consistency(c, "draft"))
+
+
+def test_the_base_falls_back_to_the_repos_default_branch(repo: Path) -> None:
+    sh(repo, "git", "branch", "-m", "trunk")
+    (repo / "sdlc.json").write_text('{"defaultBranch": "trunk"}')
+    assert spec.tip_ref(repo, None) == "trunk"
+    assert spec.tip_ref(repo, "HEAD") == "HEAD"
 
 
 def test_s3_the_outcome_outlives_the_folder_with_no_tracker_and_no_later_pr(repo: Path) -> None:

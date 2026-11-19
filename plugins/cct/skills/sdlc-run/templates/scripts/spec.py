@@ -11,6 +11,7 @@
     spec.py capabilities [--write|--check]                       the generated specs/CAPABILITIES.md
     spec.py check [--base REF] [--json]                          the drift check (exit 1 on a problem)
     spec.py eval <fixture.json> [--k 10] [--fail-under 0.8]      recall@k of `find` against a grep
+    spec.py qa <change-dir>                                      build QA applies? exit 0 yes, 3 skip, 2 unrecorded
     spec.py consistency <change-dir> [--phase draft|approve] [--base REF]
     spec.py outcome write|record|due ...                         the success measure after the folder is gone
 
@@ -409,7 +410,11 @@ def scan_tags(files: list[Path], root: Path) -> dict[int, list[tuple[str, int, b
 
 
 def tip_ref(root: Path, base: str | None) -> str | None:
-    for cand in [base, "origin/main", "origin/master", "main", "master"]:
+    default = _config(root).get("defaultBranch")
+    names = (
+        [default, "main", "master"] if isinstance(default, str) and default else ["main", "master"]
+    )
+    for cand in [base, *[f"origin/{n}" for n in names], *names]:
         if cand and git(root, "rev-parse", "--verify", "-q", cand + "^{commit}", probe=True):
             return cand
     return None
@@ -987,16 +992,20 @@ def change_rules(change: Path) -> dict[int, dict]:
     return out
 
 
-def qa_applicability(change: Path) -> tuple[bool, str]:
-    """Decide first whether build QA applies, before any readiness file is asked for (S1)."""
+def qa_applicability(change: Path) -> tuple[bool | None, str]:
+    """Decide first whether build QA applies, before any readiness file is asked for (S1).
+    True runs it, False skips it with the reason, None means Stage 2 recorded nothing: the
+    caller stops and asks, it never treats a missing record as a skip."""
     fm, _ = split_frontmatter((Path(change) / "spec.md").read_text(encoding="utf-8"))
-    if str(fm.get("ux", "none")) in ("none", "off", ""):
+    if "ux" not in fm:
+        return None, "spec.md has no `ux` field: Stage 2 must record it"
+    if str(fm["ux"]) in ("none", "off"):
         return False, "no interface change (ux: none)"
     if str(fm.get("prototype", "")) == "none":
         return False, "prototype: none, recorded at Stage 2"
     if str(fm.get("prototype", "")) == "required":
         return True, "prototype: required"
-    return False, "prototype is not recorded: Stage 2 must write required or none"
+    return None, "prototype is not recorded: Stage 2 must write required or none"
 
 
 def task_states(change: Path) -> list[tuple[str, str, str]]:
@@ -1043,6 +1052,8 @@ def consistency(
     scope = str(fm.get("scope", ""))
     if scope not in ("S", "M", "L"):
         errs.append("spec.md: scope must be S, M or L (chosen by risk, not by UX size)")
+    if "ux" not in fm:
+        errs.append("spec.md: no `ux` field (none, S, M or L)")
     ux = str(fm.get("ux", "none"))
     if ux not in ("none", "off") and str(fm.get("prototype", "")) not in ("required", "none"):
         errs.append(
@@ -1257,6 +1268,7 @@ def main(argv: list[str] | None = None) -> int:
     e.add_argument("fixture")
     e.add_argument("--k", type=int, default=10)
     e.add_argument("--fail-under", type=float, default=0.0)
+    sub.add_parser("qa").add_argument("change")
     s = sub.add_parser("consistency")
     s.add_argument("change")
     s.add_argument("--phase", default="approve", choices=("draft", "approve"))
@@ -1327,6 +1339,12 @@ def main(argv: list[str] | None = None) -> int:
             res = evaluate(root, json.loads(Path(a.fixture).read_text()), a.k)
             print(json.dumps(res, indent=2))
             return 1 if res["find"] < a.fail_under else 0
+        elif a.cmd == "qa":
+            ok, why = qa_applicability(Path(a.change))
+            print(
+                ("QA RUNS: " if ok else "QA SKIPPED: " if ok is False else "QA UNRECORDED: ") + why
+            )
+            return 0 if ok else 3 if ok is False else 2
         elif a.cmd == "consistency":
             errs = consistency(Path(a.change), a.phase, root, a.base)
             print("\n".join(errs) or f"CONSISTENT ({a.phase})")
