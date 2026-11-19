@@ -102,6 +102,8 @@ REASONS = {
     "not-converged",  # findings.md ## Converge has no `Converged:` line
 }
 LOCKED = ("facts.md", "done.json")
+LOCK_FORMAT = 3  # written by `approve` into lock.json; strict records apply to locks of this version or later
+ROUTING = ("size", "visualSource")  # decisions.json fields that route the gate, locked at approval
 TAIL = 60  # stdout lines of a failing check
 BREAKER = 3
 ATTEMPTS = 3
@@ -148,7 +150,22 @@ def criteria_hash(change: Path, checks: object, plan: bool = True) -> dict[str, 
         hashes["plan.milestones"] = hashlib.sha256(
             section(read(change / "plan.md"), "Milestones").encode("utf-8")
         ).hexdigest()
+        hashes["decisions.routing"] = hashlib.sha256(
+            json.dumps(routing(change), sort_keys=True).encode("utf-8")
+        ).hexdigest()
     return hashes
+
+
+def routing(change: Path) -> dict:
+    """The routing fields of decisions.json (an unreadable file locks as itself, so editing it moves the hash)."""
+    path = change / "decisions.json"
+    if not path.exists():
+        return {"missing": True}
+    try:
+        data = json.loads(read(path))
+    except (OSError, ValueError):
+        return {"unreadable": True}
+    return {k: data.get(k) for k in ROUTING} if isinstance(data, dict) else {"unreadable": True}
 
 
 def merges_locally(cfg: dict) -> bool:
@@ -343,13 +360,22 @@ def item_id(item: str) -> str:
 NO_EVIDENCE = {"", "-", "--", "n/a", "na", "none", "tbd", "todo", "?"}
 
 
-def current_format(change: Path) -> bool:
-    """The approval locked `done.json`: the change was written in the format that has it, so its
-    `done.json` and `decisions.json` may not be missing. An older lock keeps the old behaviour."""
+def lock_format(change: Path) -> int:
+    """The format version `approve` wrote into lock.json: 0 for a lock from before it existed or no
+    lock. An unreadable lock reads as the newest format (fail closed)."""
+    if not (change / "lock.json").exists():
+        return 0
     try:
-        return "done.json" in json.loads(read(change / "lock.json")).get("criteria", {})
-    except (ValueError, AttributeError):
-        return False
+        return int(json.loads(read(change / "lock.json")).get("format", 0))
+    except (ValueError, AttributeError, TypeError):
+        return LOCK_FORMAT
+
+
+def current_format(change: Path) -> bool:
+    """Approved under lock format 3 or later: its records may not be missing and its validation rows
+    are strict. An older lock (including one that merely holds done.json) keeps the old behaviour and
+    gets an upgrade-gap note."""
+    return lock_format(change) >= LOCK_FORMAT
 
 
 def approved_facts(change: Path) -> tuple[list[str], list[str]]:
@@ -367,39 +393,62 @@ def approved_facts(change: Path) -> tuple[list[str], list[str]]:
         return [], [problem]
 
 
-def milestone_facts(change: Path) -> tuple[list[str], list[str]]:
-    """(the approved facts this milestone must prove, problems): the `## Milestones` row of
-    `plan.md` for the checked-out `milestone/<slug>-<n>` branch, else every approved fact. On a
-    milestone branch a missing row, or one listing none of the approved facts, is a problem."""
+FACT_RANGE = re.compile(r"\b([A-Z])(\d+)\s*(?:to|\.\.|[-\u2013\u2014])\s*(?:[A-Z])?(\d+)\b")
+
+
+def cell_ids(cell: str, universe: list[str]) -> list[str]:
+    """The ids of `universe` a plan cell names: `F1`, `F1 to F132`, `F1-F7`, `F8\u2013F20`; its order."""
+    named: set[str] = set()
+    for m in FACT_RANGE.finditer(cell):
+        lo, hi = int(m[2]), int(m[3])
+        named.update(f"{m[1]}{k}" for k in range(lo, min(hi, lo + 5000) + 1))
+    named.update(re.findall(r"\b[A-Z]\d+\b", FACT_RANGE.sub(" ", cell)))
+    return [f for f in universe if f in named]
+
+
+def row_facts(plan: str, number: int, facts: list[str]) -> list[str]:
+    """The approved `facts` the `## Milestones` row of milestone `number` lists (`M1 ...` or a bare `1`).
+    A plan with one row whose cell names no id (`rows 0 to 5, 74 facts`) gives that row every fact."""
+    rows = table_rows(section(plan, "Milestones"))[1:]
+    row = next((r for r in rows if len(r) > 1 and re.match(rf"M?{number}\b", r[0])), None)
+    mine = cell_ids(row[1], facts) if row else []
+    if not mine and row and len(rows) == 1 and row[1].strip().lower() not in ("", "none", "-") and not re.search(r"\b[A-Z]\d+\b", row[1]):
+        return list(facts)
+    return mine
+
+
+def milestone_facts(change: Path, number: int | None = None) -> tuple[list[str], list[str]]:
+    """(the approved facts this milestone must prove, problems). Under lock format 3 and for a known
+    milestone `number`, the `## Milestones` row of `plan.md` selects them and a missing or empty row is
+    a problem; an older lock uses every approved fact (its plan rows were never locked)."""
     facts, problems = approved_facts(change)
-    on = re.fullmatch(
-        r"milestone/.+-(\d+)", sh("git", "-C", str(change), "rev-parse", "--abbrev-ref", "HEAD")
-    )
-    if on and facts:
-        rows = table_rows(section(read(change / "plan.md"), "Milestones"))[1:]
-        row = next((r for r in rows if re.match(rf"M{on[1]}\b", r[0]) and len(r) > 1), None)
-        mine = [f for f in facts if row and f in re.findall(r"[A-Z]\d+", row[1])]
+    if number and facts and current_format(change):
+        mine = row_facts(read(change / "plan.md"), number, facts)
         if not mine:
             return [], problems + [
-                f"validation.md: plan.md ## Milestones has no row for M{on[1]} that lists approved facts"
+                f"validation.md: plan.md ## Milestones has no row for M{number} that lists approved facts"
             ]
         return mine, problems
     return facts, problems
 
 
-def validation_gaps(change: Path) -> list[str]:
+def validation_gaps(change: Path, number: int | None = None) -> list[str]:
     """What validation.md lacks: for every approved fact of this milestone one row with the verdict
-    `met` and evidence (a test, a file, an observed artefact: not empty, not a placeholder)."""
+    `met` and evidence (a test, a file, an observed artefact: not empty, not a placeholder). Only a
+    change approved under lock format 3 is held to it; an older one gets an upgrade-gap note instead."""
+    if not current_format(change):
+        return []
     rows = table_rows(read(change / "validation.md"))
     head = [c.lower() for c in rows[0]] if rows else []
     at = head.index("evidence") if "evidence" in head else 3
-    facts, gaps = milestone_facts(change)
+    facts, gaps = milestone_facts(change, number)
     for fact in facts:
-        mine = [r for r in rows if fact in re.findall(r"[A-Z]\d+", r[0] if r else "")]
+        mine = [r for r in rows if fact in cell_ids(r[0] if r else "", [fact])]
         if not mine:
             gaps.append(f"validation.md: {fact} has no row")
         for row in mine:
-            evidence = row[at].strip(" `") if len(row) > at else ""
+            # the verdict is the last cell and never doubles as the evidence cell
+            evidence = row[at].strip(" `") if len(row) > at and at < len(row) - 1 else ""
             if row[-1].strip().lower() != "met":
                 gaps.append(f"validation.md: {fact} is not marked met")
             elif evidence.lower() in NO_EVIDENCE or evidence[:1] == "<":
@@ -441,7 +490,7 @@ def visual_run_required(change: Path, cfg: dict, repo: Path) -> bool:
     is not part of the approval lock, so the attestation is the owner's answer to the dialog
     `Change <id>, finding visual-skip: ...` (options Skip visual evidence, Run visual evidence)."""
     decisions = read_decisions(change) or {}
-    if cfg.get("ux") == "off" or decisions.get("size") == "none":
+    if cfg.get("ux") == "off":
         return False
     skip = str((decisions.get("skips") or {}).get("visual", ""))
     if re.match(r"skip -- \S", skip):
@@ -449,7 +498,8 @@ def visual_run_required(change: Path, cfg: dict, repo: Path) -> bool:
 
         if owner_decisions(repo, change.name).get("visual-skip", ("",))[0] == "skip":
             return False
-    return bool(decisions.get("visualSource")) or sources_present(change)
+    # `size: none` only waives loose sources: an explicit visual source always needs its run
+    return bool(decisions.get("visualSource")) or (decisions.get("size") != "none" and sources_present(change))
 
 
 def refusal(name: str, message: str) -> dict:
@@ -461,7 +511,7 @@ def refusal(name: str, message: str) -> dict:
     }
 
 
-def milestone_blockers(change: Path) -> tuple[str, list[str]] | None:
+def milestone_blockers(change: Path, number: int | None = None) -> tuple[str, list[str]] | None:
     """The records a milestone must close before it passes: (reason, offending lines) or None.
     A residual finding is settled only by the owner's answer to a dialog `Change <id>, finding
     <finding id>: ...` (`marks.owner_decisions`, the one reader gate and status share)."""
@@ -499,7 +549,7 @@ def milestone_blockers(change: Path) -> tuple[str, list[str]] | None:
         return "findings-open", [f"findings.md: open: {i[:80]}" for i in open_items]
     if section(findings, "Converge") and "Converged:" not in findings:
         return "not-converged", ["findings.md: ## Converge has no `Converged: round <n>` line"]
-    if gaps := validation_gaps(change):
+    if gaps := validation_gaps(change, number):
         return "validation-not-met", gaps
     return None
 
@@ -533,6 +583,10 @@ def approve(change: Path, cfg: dict) -> int:
     problems = lint_problems(change) + approval_blockers(change)  # the cheap pure check first
     if gap := full_e2e_gap((cfg.get("checks") or {}).get("milestone") or [], root()):
         problems.append(gap)
+    if not (change / "done.json").exists():  # approval requires its artifacts
+        problems.append("done.json is missing: the approved facts cannot be locked without it")
+    elif approved_facts(change)[1]:
+        problems.append("done.json is unreadable or has no `facts` list")
     if problems:
         print("\n".join(problems[:TAIL]))
         return end(f"APPROVE FAIL {change.name} problems={len(problems)}", 1)
@@ -542,6 +596,7 @@ def approve(change: Path, cfg: dict) -> int:
         "criteria": criteria_hash(change, cfg.get("checks", {})),
         "order": "cost",  # a lock without this key keeps the declared order (before 3.18.0)
         "manifest": "required",  # from 3.21.0 visual work needs verify/shots/manifest.json
+        "format": LOCK_FORMAT,  # strict validation rows and records apply to this lock and later ones
     }
     (change / "lock.json").write_text(json.dumps(lock, indent=2) + "\n", encoding="utf-8")
     print(f"locked {', '.join(lock['criteria'])} in {change.name}/lock.json -- commit it")
@@ -837,12 +892,16 @@ def run(
         lock = json.loads(lock_path.read_text(encoding="utf-8"))
         locked = lock["criteria"]
         declared = lock.get("order") != "cost"
-        old_plan = "plan.milestones" not in locked  # an approval before the plan rows were locked
-        now = criteria_hash(change, cfg.get("checks", {}), not old_plan)
+        old_plan = lock.get("format", 0) < LOCK_FORMAT or "plan.milestones" not in locked
+        now = criteria_hash(change, cfg.get("checks", {}))
+        for key in ("plan.milestones", "decisions.routing"):
+            if key not in locked:
+                now.pop(key, None)  # an older lock never hashed it: reported below, not a move
         if old_plan and scope == "milestone":
             gap = (
-                "lock.json predates plan.milestones: the rows of the plan's ## Milestones that decide "
-                "which facts this milestone proves are not locked; the engineer approves again to lock them"
+                f"lock.json predates lock format {LOCK_FORMAT}: every approved fact is expected, validation "
+                "rows, plan.milestones and decisions.routing are not enforced; the engineer approves "
+                "again to lock them"
             )
             print(f"upgrade gap: {gap}")
             report.setdefault("upgrade_gaps", []).append(gap)
@@ -882,7 +941,7 @@ def run(
             print("  git fetch origin && " + " && ".join(f"git merge {b}" for b in behind))
             return finish(f"VERIFY FAIL {scope} {change.name} check=parent-sync", 1)
 
-    if scope == "milestone" and (blocker := milestone_blockers(change)):
+    if scope == "milestone" and (blocker := milestone_blockers(change, number)):
         print("\n".join(blocker[1][:TAIL]))
         return finish(f"VERIFY BLOCKED reason={blocker[0]}", 3)
     if scope == "milestone" and legacy_marks() and has_bundle_inputs(change):

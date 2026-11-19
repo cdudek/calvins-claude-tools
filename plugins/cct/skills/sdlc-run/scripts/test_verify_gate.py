@@ -1650,7 +1650,7 @@ def test_a_milestone_with_a_visual_source_fails_before_the_suites_without_a_visu
     ("decisions", "ux"),
     [
         ({**VISUAL, "skips": {"visual": "skip -- the screens are unchanged, the owner agreed"}}, "on"),
-        ({**VISUAL, "size": "none"}, "on"),  # no interface change
+        ({"size": "none"}, "on"),  # no interface change and no visual source
         (VISUAL, "off"),
         (None, "on"),  # no visual source, no reference, no manifest
     ],
@@ -1747,16 +1747,22 @@ def test_expand_quotes_what_it_substitutes() -> None:
 # --- Review (security): current-format changes cannot lose the records the gate derives from ----
 
 
-def test_an_unparsable_done_json_on_a_current_format_change_blocks(tmp_path: Path) -> None:
+def test_an_unparsable_done_json_is_refused_at_approval(tmp_path: Path) -> None:
     repo = _repo(tmp_path, [])
     cfg = json.loads((repo / "sdlc.json").read_text())
     (repo / "sdlc.json").write_text(json.dumps({**cfg, "checks": {"milestone": ["true"]}}))
     (repo / "changes" / ID / "done.json").write_text("{not json")
     _git(repo, "add", ".")
     _git(repo, "commit", "-qm", "broken facts")
-    _approve(repo)
-    r = _gate(repo, "milestone", ID)
-    assert _last(r) == "VERIFY BLOCKED reason=validation-not-met" and "done.json" in r.stdout
+    r = _gate(repo, "approve", ID)
+    assert r.returncode == 1 and "done.json" in r.stdout
+
+
+def test_an_unparsable_done_json_after_approval_blocks_as_a_moved_lock(tmp_path: Path) -> None:
+    repo = _milestone_repo(tmp_path)
+    (repo / "changes" / ID / "done.json").write_text("{not json")
+    _git(repo, "commit", "-qam", "broken facts")
+    assert _last(_gate(repo, "milestone", ID)) == "VERIFY BLOCKED reason=protected-path"
 
 
 def test_a_legacy_change_without_done_json_keeps_the_old_behaviour(tmp_path: Path) -> None:
@@ -1767,26 +1773,51 @@ def test_a_legacy_change_without_done_json_keeps_the_old_behaviour(tmp_path: Pat
     (repo / "changes" / ID / "validation.md").unlink()
     _git(repo, "add", "-A")
     _git(repo, "commit", "-qm", "legacy")
-    _approve(repo)
+    lock = {"approved_at": "x", "sha": "", "criteria": criteria_of_legacy(repo)}  # a pre-format lock
+    (repo / "changes" / ID / "lock.json").write_text(json.dumps(lock))
+    _git(repo, "add", "-A")
+    _git(repo, "commit", "-qm", "old lock")
     assert _last(_gate(repo, "milestone", ID)).startswith(f"VERIFY PASS milestone {ID}")
+
+
+def criteria_of_legacy(repo: Path) -> dict:
+    def digest(data: bytes) -> str:
+        return hashlib.sha256(data).hexdigest()
+
+    change = repo / "changes" / ID
+    return {
+        "facts.md": digest((change / "facts.md").read_bytes()),
+        "checks": digest(json.dumps(json.loads((repo / "sdlc.json").read_text())["checks"], sort_keys=True).encode()),
+    }
 
 
 def test_a_missing_decisions_json_on_a_current_format_change_blocks(tmp_path: Path) -> None:
     repo = _milestone_repo(tmp_path)
+    (repo / "changes" / ID / "decisions.json").unlink()  # present at approval, gone later: a moved lock
+    _git(repo, "add", "-A")
+    _git(repo, "commit", "-qm", "no decisions")
+    assert _last(_gate(repo, "milestone", ID)) == "VERIFY BLOCKED reason=protected-path"
+
+
+def test_a_decisions_json_that_never_existed_fails_the_check_on_a_current_format_change(tmp_path: Path) -> None:
+    repo = _repo(tmp_path, [])
+    cfg = json.loads((repo / "sdlc.json").read_text())
+    (repo / "sdlc.json").write_text(json.dumps({**cfg, "checks": {"milestone": ["true"]}}))
     (repo / "changes" / ID / "decisions.json").unlink()
     _git(repo, "add", "-A")
     _git(repo, "commit", "-qm", "no decisions")
+    _approve(repo)
     assert _last(_gate(repo, "milestone", ID)) == f"VERIFY FAIL milestone {ID} check=decisions-json"
 
 
 @pytest.mark.parametrize("content", ["{broken", "[]", "null", '"s"'])
-def test_an_unparsable_or_non_object_decisions_json_reads_as_empty(
+def test_an_unparsable_or_non_object_decisions_json_after_approval_blocks(
     tmp_path: Path, content: str
 ) -> None:
     repo = _milestone_repo(tmp_path)
     (repo / "changes" / ID / "decisions.json").write_text(content)
     _git(repo, "commit", "-qam", "odd decisions")
-    assert _last(_gate(repo, "milestone", ID)).startswith(f"VERIFY PASS milestone {ID}")
+    assert _last(_gate(repo, "milestone", ID)) == "VERIFY BLOCKED reason=protected-path"  # routing is locked
 
 
 PLAN2 = "## Milestones\n\n| Milestone | Features | needs |\n|---|---|---|\n| M1 a | F1 | none |\n"
@@ -1983,6 +2014,10 @@ def test_a_milestone_report_names_its_change_milestone_and_owner_3_20_5(
     (repo / "sdlc.json").write_text(json.dumps(cfg))
     _git(repo, "commit", "-qam", "milestone checks")
     _git(repo, "checkout", "-qb", branch)
+    (repo / "changes" / ID / "plan.md").write_text(
+        f"## Milestones\n\n| Milestone | Features | needs |\n|---|---|---|\n| M{number} a | F1 | none |\n"
+    )
+    _git(repo, "commit", "-qam", "plan row")
     _approve(repo)
     r = _gate(repo, "milestone", ID)
     assert _last(r).startswith(f"VERIFY PASS milestone {ID}"), r.stdout
