@@ -781,8 +781,14 @@ def check(change: Path, sources: list[dict], repo: Path, designs: Path, globs: l
     problems += manifest_problems(change, rows, repo)
     if screens_required(change):
         problems += screens_problems(change)
-    for rid in wanted.keys() - seen:
-        problems.append(f"{rid}: missing row; run marks.py init {change.name}")
+    if not ledger.exists() and screens_required(change):  # per-screen records stand in for the ledger
+        screens = change / "verify" / "screens"
+        for rid in sorted(wanted):
+            if not (screens / f"{rid}.json").is_file():
+                problems.append(f"{rid}: missing screen record; run evidence.py screen {change.name} {rid}")
+    else:
+        for rid in wanted.keys() - seen:
+            problems.append(f"{rid}: missing row; run marks.py init {change.name}")
     for problem in sorted(problems):
         print(problem)
     print(
@@ -837,8 +843,6 @@ def main(argv: list[str]) -> int:
         sources = inventory(change)
         if args.mode == "init":
             return init(change, sources)
-        if not (change / "marks.json").exists() and screens_required(change):
-            sources = []  # the per-screen records are the source of truth; no ledger to inventory
         designs = repo / cfg.get("designsDir", "docs/designs")
         return check(change, sources, repo, designs, cfg.get("testGlobs", TEST_GLOBS))
     except (OSError, ValueError) as exc:
