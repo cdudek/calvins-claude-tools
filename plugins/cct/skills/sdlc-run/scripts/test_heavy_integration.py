@@ -561,3 +561,14 @@ def test_the_blueprint_ci_has_the_templates_preflight_and_spec_jobs() -> None:
     block = template[template.index("  # Seconds, no install: sdlc.json config conflicts") : template.index("  lint:\n")]
     assert block in blueprint
     assert "preflight, spec," in blueprint and "PREFLIGHT" in blueprint  # `check` waits for both
+
+
+def test_the_guard_splits_on_newlines_and_checks_every_argv(tmp_path: Path) -> None:
+    assert _helper_guard(tmp_path, _bash_call("git status\npnpm build", agent_id="a1")).returncode == 2
+    assert _helper_guard(tmp_path, _bash_call("echo hi\ncat x\npnpm lint", agent_id="a1")).returncode == 0
+
+
+@pytest.mark.parametrize("command", ["env -S 'pnpm build'", "env --split-string='nice pnpm build'", "env -S'pnpm build'"])
+def test_the_guard_reads_the_split_string_of_env(tmp_path: Path, command: str) -> None:
+    assert _helper_guard(tmp_path, _bash_call(command, agent_id="a1")).returncode == 2, command
+    assert _helper_guard(tmp_path, _bash_call("env -S 'pnpm lint'", agent_id="a1")).returncode == 0

@@ -338,24 +338,31 @@ OPTION_VALUES = {"xargs": {"-n", "-I", "-P", "-L", "-d", "-E", "-s"}, "nice": {"
 def shell_segments(command: str) -> list[list[str]]:
     """The command split into argv lists at ; && || | & and parentheses. A guard for a careless agent,
     not a sandbox: an unparseable line is one segment of its plain words."""
-    lex = shlex.shlex(command, posix=True, punctuation_chars=True)
-    lex.whitespace_split, lex.commenters = True, "#"
-    try:
-        tokens = list(lex)
-    except ValueError:
-        return [command.split()]
     out: list[list[str]] = [[]]
-    for token in tokens:
-        if token in SEPARATORS:
-            out.append([])
-        else:
-            out[-1].append(token)
+    for line in command.split("\n"):  # a newline separates commands, whatever the quoting
+        lex = shlex.shlex(line, posix=True, punctuation_chars=True)
+        lex.whitespace_split, lex.commenters = True, "#"
+        try:
+            tokens = list(lex)
+        except ValueError:
+            tokens = line.split()
+        out.append([])
+        for token in tokens:
+            if token in SEPARATORS:
+                out.append([])
+            else:
+                out[-1].append(token)
     return [seg for seg in out if seg]
 
 
 def inner_argv(argv: list[str]) -> list[list[str]]:
-    """The commands a segment really runs: wrappers (env, timeout, nice, nohup, time, command, exec,
-    xargs, sh -c, bash -c, find -exec) are looked through to their inner command."""
+    """The commands a segment really runs. An argv the unwrapper cannot resolve stays itself."""
+    return _inner(argv) or ([argv] if argv else [])
+
+
+def _inner(argv: list[str]) -> list[list[str]]:
+    """Wrappers (env, timeout, nice, nohup, time, command, exec, xargs, sh -c, bash -c, find -exec,
+    env -S) are looked through to their inner command."""
     while argv and re.fullmatch(r"\w+=\S*", argv[0]):  # leading VAR=value
         argv = argv[1:]
     if not argv:
@@ -374,6 +381,14 @@ def inner_argv(argv: list[str]) -> list[list[str]]:
         return [argv]
     if first in ("env", "timeout", "nice", "nohup", "time", "command", "exec", "xargs"):
         values = OPTION_VALUES.get(first, set())
+        if first == "env":
+            for j, a in enumerate(rest):  # env -S "cmd args": the string is a command line of its own
+                if a in ("-S", "--split-string") and j + 1 < len(rest):
+                    return inner_argv([w for line in shell_segments(rest[j + 1]) for w in line] + rest[j + 2 :])
+                if a.startswith("--split-string="):
+                    return inner_argv([w for line in shell_segments(a.split("=", 1)[1]) for w in line] + rest[j + 1 :])
+                if a.startswith("-S") and len(a) > 2:
+                    return inner_argv([w for line in shell_segments(a[2:]) for w in line] + rest[j + 1 :])
         i = 0
         while i < len(rest) and (rest[i].startswith("-") or re.fullmatch(r"\w+=\S*", rest[i])):
             i += 2 if rest[i] in values else 1
