@@ -1701,11 +1701,48 @@ def test_adopt_removes_a_generated_decision4_workflow_only(tmp_path: Path) -> No
     assert wf.exists(), "a repo's own workflow is not ours to delete"
 
 
-def test_replacing_the_gate_replaces_its_marks_partner_too_F3(tmp_path: Path) -> None:
+def _kit_marks_of_3_20_1() -> bytes:
+    """The marks.py the 3.20.1 kit shipped: a previous kit version, read from history."""
+    out = subprocess.run(
+        ["git", "show", "8ac4850:plugins/cct/skills/sdlc-run/templates/scripts/marks.py"],
+        cwd=ADOPT.parent, capture_output=True, env=_env(),
+    )  # fmt: skip
+    if out.returncode:
+        pytest.skip("history of the 3.20.1 kit is not in this checkout")
+    return out.stdout
+
+
+def test_replacing_the_gate_replaces_an_unmodified_marks_partner_too_F3(tmp_path: Path) -> None:
     repo = _upgrade_fixture(tmp_path)
-    (repo / "scripts/marks.py").write_text("def sessions(change):\n    return []\n")
+    (repo / "scripts/marks.py").write_bytes(_kit_marks_of_3_20_1())  # a previous kit version
     res = _adopt(repo, "--upgrade", "--apply", "--replace", "scripts/verify_gate.py")
     assert res.returncode == 0, res.stderr
     for name in ("verify_gate.py", "marks.py"):
         kit = (ADOPT.parents[1] / "templates/scripts" / name).read_bytes()
         assert (repo / "scripts" / name).read_bytes() == kit, name
+
+
+def test_replacing_the_gate_never_overwrites_a_customised_marks_M1(tmp_path: Path) -> None:
+    repo = _upgrade_fixture(tmp_path)
+    mine = "def sessions(change):\n    return []  # the repo's own\n"
+    (repo / "scripts/marks.py").write_text(mine)
+    kit = (ADOPT.parents[1] / "templates/scripts/verify_gate.py").read_bytes()
+    for extra in (["--dry-run"], []):  # the diff first, then the apply
+        res = _adopt(repo, "--upgrade", "--apply", "--replace", "scripts/verify_gate.py", *extra)
+        assert res.returncode == 0, res.stderr
+        assert (repo / "scripts/marks.py").read_text() == mine
+        manual = "\n".join(_sections(res.stdout)["MANUAL"])
+        assert "scripts/marks.py is customised" in manual and "scripts/verify_gate.py" in manual
+    assert (repo / "scripts/verify_gate.py").read_bytes() == kit
+
+
+def test_replacing_the_pr_hook_installs_its_pass_proof_dependency_M2(tmp_path: Path) -> None:
+    repo = _upgrade_fixture(tmp_path)
+    (repo / ".claude/hooks/pass_proof.py").unlink()  # a repo adopted before the helper existed
+    hook = repo / ".claude/hooks/pr-gate.sh"
+    hook.write_text(hook.read_text() + "\n# the repo's own edit\n")
+    res = _adopt(repo, "--upgrade", "--apply", "--replace", ".claude/hooks/pr-gate.sh")
+    assert res.returncode == 0, res.stderr
+    for name in ("pr-gate.sh", "pass_proof.py"):
+        kit = (ADOPT.parents[1] / "templates/hooks" / name).read_bytes()
+        assert (repo / ".claude/hooks" / name).read_bytes() == kit, name

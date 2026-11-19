@@ -837,6 +837,16 @@ def apply_tiers_answer(cfg: dict) -> None:
         wrote.append(f"sdlc.json: tiers {str(cfg['tiers']).lower()} (Ship/Show/Ask: {answer})")
 
 
+# sha256[:16] of every marks.py a kit shipped before 3.20.2: a copy that matches one is unedited
+KIT_MARKS = {
+    "1d7b567db399b3f8",
+    "0b01636d6dc4e428",
+    "9b9eb7671a9fee71",
+    "da489951ced4b597",
+    "71e01d1d701f6c28",
+}
+
+
 def finish_upgrade() -> str:
     """After the dry-run flow: everything it would have written or moved becomes a review line,
     and `--replace <file>` shows (or, with --apply, writes) the kit's copy of one file."""
@@ -857,10 +867,25 @@ def finish_upgrade() -> str:
                 f"review: `{w}` is a layout migration or removal that --upgrade does not apply; run `adopt` to apply it"
             )
     out = []
-    # verify_gate.py and marks.py are one pair: either one alone from another kit version breaks
-    # the gate's imports, so replacing one replaces the other when it differs too
-    pair = {"scripts/verify_gate.py": "scripts/marks.py", "scripts/marks.py": "scripts/verify_gate.py"}
-    wanted = list(dict.fromkeys(r for rel in REPLACE for r in (rel, pair.get(rel, rel))))
+    # A file whose partner the replaced one needs: the new gate blocks a milestone without
+    # marks.py's `bundles`, and pr-gate.sh loads pass_proof.py. Replacing the gate takes marks.py
+    # along only when marks.py is a kit version nobody edited (sdlc.json `keep` and a customised
+    # copy stay); a replaced marks.py alone is safe, the older gate imports the same names.
+    partner = {"scripts/verify_gate.py": "scripts/marks.py", ".claude/hooks/pr-gate.sh": ".claude/hooks/pass_proof.py"}
+    wanted = list(dict.fromkeys(REPLACE))
+    for rel in REPLACE:
+        other = partner.get(rel)
+        if other is None or other not in pending:
+            continue  # no partner, or it is the kit's copy already
+        mine = ROOT / other
+        if other == "scripts/marks.py" and mine.exists() and hashlib.sha256(mine.read_bytes()).hexdigest()[:16] not in KIT_MARKS:
+            manual.append(
+                f"--replace {rel}: {other} is customised (it matches no kit version), so it was not "
+                f"replaced with it. The new gate blocks milestone gates until it has `bundles`: merge "
+                f"your changes into the kit's copy, then `adopt --upgrade --replace {other} --apply`"
+            )
+            continue
+        wanted.append(other)
     for rel in wanted:
         if rel not in pending and rel not in REPLACE:
             continue  # the partner is already the kit's copy
