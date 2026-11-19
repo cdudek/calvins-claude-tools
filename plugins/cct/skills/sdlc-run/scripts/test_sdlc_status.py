@@ -1212,3 +1212,46 @@ def test_the_project_history_is_listed_once_per_poll(repo: Path, monkeypatch) ->
     monkeypatch.setattr(sdlc_status, "git", spy)
     assert sdlc_status.goal(repo, repo / "changes" / ID, "milestone", None, gh=_no_gh)[0] == 0
     assert len(logs) == 1, logs
+
+
+def _git(cwd: Path, *args: str) -> str:
+    out = subprocess.run(["git", *args], cwd=cwd, capture_output=True, text=True, env=_env())
+    assert out.returncode == 0, out.stderr
+    return out.stdout
+
+
+def test_worktrees_prune_removes_clean_merged_builder_worktrees(tmp_path: Path) -> None:
+    main = tmp_path / "main"
+    main.mkdir()
+    _git(main, "init", "-q", "-b", "master")
+    for k, v in (("user.email", "a@b.c"), ("user.name", "t")):
+        _git(main, "config", k, v)
+    (main / "sdlc.json").write_text("{}")
+    _git(main, "add", ".")
+    _git(main, "commit", "-qm", "base")
+    _git(main, "checkout", "-qb", "milestone/x-1")
+    for name in ("agent-merged", "agent-unmerged", "agent-dirty", "keep-merged"):
+        wt = main / ".worktrees" / name
+        _git(main, "worktree", "add", "-q", "-b", name, str(wt))
+        (wt / f"{name}.txt").write_text(name)
+        _git(wt, "add", ".")
+        _git(wt, "commit", "-qm", name)
+    for name in ("agent-merged", "agent-dirty", "keep-merged"):
+        _git(main, "merge", "-q", "--no-ff", "-m", f"merge {name}", name)
+    (main / ".worktrees/agent-dirty/scratch.txt").write_text("uncommitted")
+
+    listed = subprocess.run(
+        [sys.executable, str(SCRIPT), "worktrees"], cwd=main, capture_output=True, text=True
+    )
+    assert listed.returncode == 0 and (main / ".worktrees/agent-merged").is_dir(), "no --prune: no removal"
+    assert "agent-merged" in listed.stdout and "prune" in listed.stdout
+
+    res = subprocess.run(
+        [sys.executable, str(SCRIPT), "worktrees", "--prune"], cwd=main, capture_output=True, text=True
+    )
+    assert res.returncode == 0, res.stderr
+    assert not (main / ".worktrees/agent-merged").exists()
+    branches = _git(main, "branch", "--format=%(refname:short)").split()
+    assert "agent-merged" not in branches, "its branch goes with it (git branch -d)"
+    for kept in ("agent-unmerged", "agent-dirty", "keep-merged"):
+        assert (main / ".worktrees" / kept).is_dir() and kept in branches

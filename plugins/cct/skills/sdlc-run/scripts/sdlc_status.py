@@ -5,6 +5,7 @@
     python3 ${CLAUDE_SKILL_DIR}/scripts/sdlc_status.py ids [<id>]
     python3 ${CLAUDE_SKILL_DIR}/scripts/sdlc_status.py readme [<id>]
     python3 ${CLAUDE_SKILL_DIR}/scripts/sdlc_status.py record <id> project --sha <sha> [--accepted]
+    python3 ${CLAUDE_SKILL_DIR}/scripts/sdlc_status.py worktrees [--prune]
 
 Runs from the plugin and is never copied into a repo: run it with the working directory inside the
 adopted repo, which it finds from the cwd. It loads `verify_gate` from the plugin's own
@@ -982,10 +983,61 @@ def write_readme(change: Path, text: str) -> int:
     return 0
 
 
+def git_out(cwd: Path, *args: str) -> tuple[int, str]:
+    res = subprocess.run(["git", *args], cwd=cwd, capture_output=True, text=True)
+    return res.returncode, res.stdout.strip()
+
+
+def worktrees_main(prune: bool) -> int:
+    """List the builder worktrees (`.worktrees/agent-*`) that are clean and merged into the branch
+    checked out here or into the default branch; with --prune remove them and their branches
+    (`git worktree remove` and `git branch -d`, never forced). The close's cleanup, so Stage 7 has
+    nothing left to do."""
+    here = Path.cwd()
+    code, top = git_out(here, "rev-parse", "--show-toplevel")
+    if code:
+        print("not inside a git repo")
+        return 2
+    _, ref = git_out(here, "symbolic-ref", "-q", "--short", "refs/remotes/origin/HEAD")
+    targets = [
+        "HEAD",
+        *[
+            b
+            for b in (ref, "master", "main")
+            if b and git_out(here, "rev-parse", "-q", "--verify", b)[0] == 0
+        ][:1],
+    ]
+    _, listing = git_out(here, "worktree", "list", "--porcelain")
+    for block in listing.split("\n\n"):
+        fields = dict(line.partition(" ")[::2] for line in block.splitlines())
+        path, branch = (
+            Path(fields.get("worktree", "")),
+            fields.get("branch", "").removeprefix("refs/heads/"),
+        )
+        if not (path.name.startswith("agent-") and path.parent.name == ".worktrees" and branch):
+            continue
+        merged = any(
+            git_out(here, "merge-base", "--is-ancestor", branch, t)[0] == 0 for t in targets
+        )
+        clean = git_out(path, "status", "--porcelain")[1] == ""
+        if not (merged and clean) or path.resolve() == Path(top).resolve():
+            print(f"keep {path.name}: {'unmerged' if not merged else 'uncommitted changes'}")
+        elif not prune:
+            print(f"removable {path.name} (merged, clean); add --prune to remove it")
+        elif git_out(here, "worktree", "remove", str(path))[0] == 0:
+            git_out(here, "branch", "-d", branch)
+            print(f"removed {path.name} and branch {branch}")
+        else:
+            print(f"keep {path.name}: git worktree remove refused")
+    return 0
+
+
 def main(argv: list[str]) -> int:
-    if len(argv) < 2 or argv[1] not in ("map", "goal", "ids", "readme", "base", "record", "handoff"):
+    if len(argv) < 2 or argv[1] not in ("map", "goal", "ids", "readme", "base", "record", "handoff", "worktrees"):
         print(__doc__)
         return 2
+    if argv[1] == "worktrees":
+        return worktrees_main("--prune" in argv[2:])
     if argv[1] == "goal":
         return goal_main(argv[2:])
     root = repo_root(Path.cwd())
