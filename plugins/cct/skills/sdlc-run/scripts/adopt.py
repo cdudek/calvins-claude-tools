@@ -940,6 +940,7 @@ KIT_GATE = {
     "74917c7957b4d561",
     "78ccf4afbefea074",
     "96ef7a0baac1edad",
+    "a0ae1a0d71d1589a",
     "a0b381c0b945ecdb",
     "a16cf77a6ddfdc38",
     "a3edd685b6a7a429",

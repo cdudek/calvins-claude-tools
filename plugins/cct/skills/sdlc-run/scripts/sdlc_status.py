@@ -271,6 +271,8 @@ def branches(
     slug = decisions.get("milestone", {}).get("slug") or slug_of(change.name)
     count = planned(change)
     prefix = ((cfg or {}).get("milestones") or {}).get("branchPrefix", "milestone/")
+    if (cfg or {}).get("delivery") == "feature-prs":  # one milestone branch, named without a number
+        return [f"{prefix}{slug}"]
     return [f"{prefix}{slug}-{i}" for i in ([n] if n else range(1, max(count, 1) + 1))]
 
 
@@ -360,6 +362,10 @@ def goal(
         subject = (read_json(spec.state_path(change, "decisions.json")).get("project") or {}).get("slug", "")
         folder = project_record(subject, root) if project else change
     report = read_json(folder / "verify" / "report.json")
+    if scope == "milestone" and n:  # report.json is the last run only: milestone n keeps its own receipt
+        receipt = read_json(folder / "verify" / f"milestone-{n}.json")
+        if receipt and not bound(report, scope, subject, n, project):
+            report = receipt
     result = str(report.get("result", "")) if report.get("scope") == scope else ""
     blocked = re.fullmatch(r"VERIFY BLOCKED reason=([\w-]+)", result)
     if blocked:
@@ -367,7 +373,7 @@ def goal(
     passed = re.fullmatch(rf"VERIFY PASS {scope} {re.escape(subject)} (\w+)", result)
     # a pass counts for the milestone it was gated as (the goal's last one without --milestone) and
     # the project the change belongs to: M1's pass never finishes M2, nor another project's
-    number = (n or max(planned(change), 1)) if scope == "milestone" else None
+    number = (n or (1 if cfg.get("delivery") == "feature-prs" else max(planned(change), 1))) if scope == "milestone" else None
     if passed and scope != "project" and not bound(report, scope, subject, number, project):
         passed = None
     if scope == "milestone" and n and planned(change) and n > planned(change):
@@ -462,6 +468,23 @@ def goal(
         return 0, f"{name} DONE merged={project} gate={passed.group(1)}"
     pr, state = prs[-1]
     return 0, f"{name} DONE pr={pr['number']} state={state} gate={passed.group(1)}"
+
+
+def goal_removed(root: Path, change_id: str, scope: str, n: int | None, gh=gh_json) -> tuple[int, str] | None:
+    """The folder is gone: the owner's rule removes it after merge, so that is the normal end state.
+    A merged PR from the change's milestone branch is the proof; None when there is none."""
+    cfg = config(root) if (root / "sdlc.json").exists() else {}
+    if scope != "milestone" or Path(change_id).name != change_id or change_id in ("", "..", "archive"):
+        return None
+    head = ((cfg.get("milestones") or {}).get("branchPrefix", "milestone/")) + slug_of(change_id)
+    own = rf"{re.escape(head)}(?:-{n})?" if n else rf"{re.escape(head)}(?:-\d+)?"  # unnumbered is milestone 1
+    found = gh(root, "pr", "list", "--state", "merged", "--limit", "200", "--json", "number,headRefName,state")
+    if not found:  # gh failed or nothing merged: no proof, so the id is still unknown
+        return None
+    merged = [p for p in found if re.fullmatch(own, str(p.get("headRefName", "")))]
+    if not merged:
+        return None
+    return 0, f"GOAL {change_id} DONE pr={merged[-1]['number']} state=merged folder=removed"
 
 
 # what is in the way, by the first missing item: (what, why, who acts, the exact step)
@@ -744,6 +767,11 @@ def goal_main(args: list[str]) -> int:
     root = repo_root(Path.cwd())
     scope = "project" if project else flag[2:] if flag else "milestone"
     change = find_change(root, config(root), pos[0]) if root else None
+    if root and not change and (done := goal_removed(root, pos[0], scope, int(value) if flag else None)):
+        print(done[1])
+        if done[0]:
+            print(blocker(pos[0], done[1], scope))
+        return done[0]
     if not root or not change:
         line = f"GOAL {pos[0]} OPEN no-change-folder"
         print(line)

@@ -842,6 +842,10 @@ def lint_problems(change: Path, body: str | None = None) -> list[str]:
     """Plain language: no sentence over SENTENCE_WORDS words, no leftover template prompts, and
     in the files the owner reads no id outside brackets. With `body`, only that text (the PR body
     about to be published) is checked, for ids. Pure file reads."""
+    if body is not None and not change.is_dir():  # the folder is gone: an id the body itself puts in brackets
+        letters = LEGACY_LETTERS
+        defined = {m for b in BRACKETS.findall(body) for m in id_patterns(letters)[0].findall(b)}
+        return [f"pr-body: id {bare} outside brackets, words first: {ctx}" for bare, ctx in bare_ids(body, defined, letters)]
     defined, letters = defined_ids(change), letters_of(change)
     if body is not None:
         return [
@@ -963,27 +967,31 @@ def order_checks(
         text = f"{check['name']} {cmd}".lower()
         return next((c for rx, c in COST_HINTS if rx.search(text)), DEFAULT_COST)
 
-    ordered: list[dict] = []
+    segments: list[list[dict]] = []  # each ends at a serial check: nothing moves across it
     segment: list[dict] = []
     for check in checks:
         if check.get("serial"):
-            ordered += sorted(segment, key=cost) + [check]
+            segments.append(sorted(segment, key=cost) + [check])
             segment = []
         else:
             segment.append(check)
-    ordered += sorted(segment, key=cost)
+    segments.append(sorted(segment, key=cost))
     done: set[str] = set()
-    names = {c["name"] for c in ordered}
     result: list[dict] = []
-    while ordered:
-        # the first check whose named predecessors have run; a cycle or unknown name never blocks
-        nxt = next(
-            (c for c in ordered if all(a in done or a not in names for a in c.get("after") or [])),
-            ordered[0],
-        )
-        ordered.remove(nxt)
-        done.add(nxt["name"])
-        result.append(nxt)
+    for ordered in segments:
+        wall = [ordered.pop()] if ordered and ordered[-1].get("serial") else []  # always last
+        names = {c["name"] for c in ordered}  # a predecessor over the wall is never waited for
+        while ordered:
+            # the first check whose named predecessors have run; a cycle or unknown name never blocks
+            nxt = next(
+                (c for c in ordered if all(a in done or a not in names for a in c.get("after") or [])),
+                ordered[0],
+            )
+            ordered.remove(nxt)
+            done.add(nxt["name"])
+            result.append(nxt)
+        done.update(c["name"] for c in wall)
+        result += wall
     return result
 
 
@@ -1578,7 +1586,11 @@ def main(argv: list[str]) -> int:
     if not change.resolve().is_relative_to(changes) or change.resolve() == changes:
         print(f"the change id {args.id!r} does not name a folder inside {changes.name}/.")
         return end("VERIFY BLOCKED reason=env", 3)
-    if not change.is_dir():
+    if args.scope == "lint" and args.pr_body and not change.is_dir():
+        # a merged change is archived or removed (the owner's rule); its PR body is still linted
+        layouts = (f"archive/{args.id}", f"archive/*/{args.id}", f"archive/*/*/{args.id}")
+        change = next((d for pat in layouts for d in sorted(changes.glob(pat)) if d.is_dir()), change)
+    elif not change.is_dir():
         print(f"no change folder {change.relative_to(repo)}")
         return end("VERIFY BLOCKED reason=env", 3)
     if args.scope == "approve":
