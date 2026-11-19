@@ -194,7 +194,7 @@ status: draft | in-review | approved
 reviewed_by: null | <name or email>
 approved_at: null | YYYY-MM-DD
 created: YYYY-MM-DD
-archived_at: YYYY-MM-DD
+archived_at: YYYY-MM-DD   # older layout only: nothing is archived any more
 ```
 
 `spec/readiness.md`:
@@ -292,7 +292,7 @@ It cannot be disabled in `sdlc.json`, does not change `lock.json`, and fails as 
 | plan approved | `changes(<id>): plan approved` | `status`, `reviewed_by`, `approved_at`, annotations file kept |
 | failing bug test committed | `changes(<id>): failing test locked` | `testLocked: true` |
 | plan changed after approval | in the implementing commit | line under `## Revisions` |
-| archived | `changes(<id>): archived` | `archived_at` |
+| archived (older layout only; no archive since layout 4) | `changes(<id>): archived` | `archived_at` |
 | intent confirmed (milestone process) | `changes(<id>): intent confirmed by <who>` | `intent.md` approved |
 | one gate passed (milestone process) | `changes(<id>): approved by <who>` | facts and plan approved, `lock.json` |
 | feature merged | in the milestone branch | `milestone.md` row → `merged` |
@@ -349,6 +349,12 @@ permalinks; local laptop paths are refused.
 | `responsiveTier` | milestone stage | the `ux-responsive-audit` matrix tier; default `full` |
 | `ux` | skill, hook | `on` or `off`; `off` skips the UX plan and UX checks (python preset default) |
 | `tracker` | skill | `{kind: linear\|github\|beads\|none, …ids}`; the old `linear` key means `linear`; `references/trackers.md` |
+| `heavy` | `heavy.py`, `verify_gate.py`, `sdlc_status.py` | the heavy-job queue: `slots` (default 1), `waitTimeout`, `runTimeout`, `portBase`, `patterns`; `references/heavy-work.md` |
+| `db` | `db.py` | `test` (local Postgres container with a migrated template) and `dev` (a personal cloud database through the auth proxy); every value is a command, so no vendor is named |
+| `preflight` | `preflight.py`, `verify_gate.py` | `tools`, `auth` (`{name, check, fix}`): checked once before the first heavy command |
+| `checkTimeout` | `verify_gate.py` | seconds a gate check may run (default 1800); a check's own `timeout` overrides it; the process group is killed |
+| `layout` | `spec.py`, hooks, gate | `4` opts a repo in to the three-document layout and the living spec; `adopt` never sets it; `references/change-folder.md` |
+| `livingSpecs` | `spec.py` | the folder that holds the living spec (default `specs`); one plain folder name inside the repo; `specsDir` is the old key for designs and is not reused |
 | `protected` | hook | globs refused after approval; default `sdlc.json`, `**/*-snapshots/**`, `**/__screenshots__/**`, `**/*allowlist*` |
 
 `feedback` is repo paths or globs only. Stage 1.3 copies each resource that came with an ask
