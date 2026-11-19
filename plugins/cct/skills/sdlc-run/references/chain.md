@@ -145,7 +145,7 @@ design-system part is missing; `differs` names it, no accepted words needed, not
 `fixed` and `match` must have no `differs`.
 Only `ruled-out` omits `expected` and `shot`, and it requires an existing ADR.
 Every other decision also requires an existing file under `designsDir`.
-Non-fixed or unset statuses block unless `accepted` quotes the engineer's acceptance;
+Non-fixed or unset statuses block unless the owner answered `Accept as is` or `Defer to milestone <n>` to the dialog `Change <id>, finding <row id>: ...` (the transcript's structured answer; typed words never count);
 acceptance never waives evidence or permits an invalid status.
 
 Init keeps filled fields and adds missing rows. It never deletes rows and reports orphans.

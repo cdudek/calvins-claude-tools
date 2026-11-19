@@ -55,24 +55,29 @@ There are two budgets, for two different moments, and they do not add up.
   What is left goes to the owner as a side-by-side list (reference next to build, one row per open
   item) to accept or send back. A new design-system release starts a new budget.
 
-### What the close leaves: one disposition
+### What the close leaves: one owner answer
 
-After the one round, each residual finding gets one durable disposition, a row in `findings.md`
-under `## Dispositions`: `| item | disposition | owner | reason | quote |`. `fixed` is the ticked
-box. `accepted` or `deferred` needs a named owner (the one authorised to take it), a reason of a
-few words and a quote: the engineer's own words, verbatim, at least eight words, which must equal one whole
-sentence of one genuine user message of the session transcript, and that sentence names the item
-id (the transcript is read only from Claude Code's folder for the repo, never from a path anyone
-names, never through a link, and only files you own; hooks refuse any Write, Edit or shell write
-into `~/.claude/projects`); words only the
-agent wrote never count, nor do tool results, hook or command wrappers, reminders or attachments. The table is not locked at approval, because it
-is written after it; the quote is the binding. A deferral names the milestone that builds it.
+After the one round, each residual finding is settled only by the owner's answer to an
+`AskUserQuestion` dialog. The question text starts `Change <change id>, finding <finding id>: ` and
+the options are fixed: `Fix it now`, `Accept as is`, `Defer to milestone <n>` and `Block the close`.
+The gate reads the structured tool results of the session transcript (never free text, an agent
+message, a tool output from elsewhere or a subagent), matches question to change id and finding id
+and takes the selected option as the decision: `Accept as is` and `Defer to milestone <n>` settle,
+`Fix it now` keeps the item open, `Block the close` is terminal (`findings-blocked`; it also stands
+against a ticked box until the owner answers again). The latest answer for a finding wins; an
+answer older than the finding's first appearance in `findings.md` is ignored. The transcript is
+read only from Claude Code's folders for this repo (its working tree and its main checkout), never
+from a path anyone names, never through a link, and only files you own; hooks refuse any Write,
+Edit or shell write into `~/.claude/projects`. The same reader settles an unresolved visual row in
+`marks.json`. There is no table to fill and no quote to copy.
 
 **Threat model.** This protects against a careless or over-eager agent settling a finding without
-the owner. It does not stop someone with a shell who edits files by hand; that is out of scope. The Bash guard matches a normalised command text (quotes, `//`, `/./`, `~` and `$HOME` resolved), so it is a speed bump for a careless agent, not a sandbox: a variable, an encoded string or a script file gets past it. The owner quote stays the binding, because it must equal a sentence the engineer wrote in the transcript and the gate checks that. `blocked` is terminal: the gate stops with
-`findings-blocked`. A `partly` or `not met` fact in `validation.md` is never cleared this way;
-that needs a scope change with a new approval, or the milestone is held. `verify_gate.py
-milestone` reads this table.
+the owner. It does not stop someone with a shell who edits files by hand; that is out of scope. The
+Bash guard matches a normalised command text (quotes, `//`, `/./`, `~` and `$HOME` resolved), so it
+is a speed bump for a careless agent, not a sandbox: a variable, an encoded string or a script file
+gets past it. A fact that is `partly` or `not met` in `validation.md` is never cleared this way;
+that needs a scope change with a new approval, or the milestone is held. `verify_gate.py milestone`
+and `sdlc_status.py` read the answers through one shared reader (`marks.owner_decisions`).
 
 ## Design-system audit and freeze (over about 20 screens)
 

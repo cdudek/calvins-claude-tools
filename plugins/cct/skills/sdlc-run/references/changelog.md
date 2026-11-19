@@ -12,13 +12,13 @@ the engineer. A version with no migration lines needs nothing but a re-run of `a
 - **UX assessment without a PR.** `ux-assessment-run scope=change` takes a local `base`, `head` and `worktree` and hands them to every pass. The milestone close uses it before the gate, so it no longer waits for a PR that only exists after the gate. The PR form is unchanged.
 - **One capture manifest.** One assessment owns every capture, keyed by build, reference revision, screen, state, width and zoom. After a fix only the changed cells are captured again, and a `qa.md` or a capture is stale when its inputs changed. `marks.py check` enforces it when `verify/shots/manifest.json` exists.
 - **One fix round at the close, fed what already exists.** Remediation gets the joined findings and the code review's state directory and never starts a fresh review. Two fix rounds per screen stay for visual work while a screen is built.
-- **Leftovers get a disposition the gate reads.** A row in `findings.md` under `## Dispositions` settles a leftover: accepted or deferred needs a named owner, a reason and the engineer's own words (eight or more, one whole sentence of one real message of the session that also names the item; hooks refuse writes into the session transcripts). Blocked is terminal (`findings-blocked`). A fact that is only partly met is never cleared this way.
+- **Leftovers are settled by the owner's answer the gate reads.** The supervisor asks one `AskUserQuestion` per leftover (`Change <id>, finding <finding id>: ...`; options Fix it now, Accept as is, Defer to milestone <n>, Block the close). The gate reads the structured answer from the session transcript: Accept and Defer settle, Fix keeps it open, Block is terminal (`findings-blocked`). Hooks refuse writes into the session transcripts. A fact that is only partly met is never cleared this way.
 - **Arming waits for the owner.** Auto-merge is armed only after the owner and visual dispositions are recorded. Status never tells anyone to arm a closed or Ask PR.
 - **Tests that can start before the UI exists.** Stage 5 writes the smallest failing assertion from the fact first; browser E2E with live selectors comes after the surface exists. The runner is named; `test-e2e-policy` is the rulebook.
 - **Fact proof is collected once.** Builders return evidence by fact, tag and tested commit. The close reuses it and exercises only what no evidence covers and the seams. The criteria auditor gets an explicit `verify/ac.json`.
 - **The transcript guard runs everywhere.** `chain-gate.sh` refuses a Write into `~/.claude/projects` even in a repo without `sdlc.json`, and `gate-bash.sh` normalises quotes, `//`, `/./`, `~` and `$HOME` before it matches.
 - Mechanical: re-running `adopt` refreshes `scripts/verify_gate.py`, `scripts/marks.py` and `REVIEW.md`, and stamps `sdlcVersion`.
-- Manual: none. A repo with a pending milestone may add a `## Dispositions` table to `findings.md`.
+- Manual: none. A repo with a pending milestone asks the owner through the dialog instead of filling a `## Dispositions` table.
 
 ## 3.20.0 — UI review rounds that end
 

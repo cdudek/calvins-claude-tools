@@ -5,8 +5,11 @@ Exercise owner-mark inventory, retained decisions, evidence checks and report ou
 
 from __future__ import annotations
 
+import datetime as dt
 import hashlib
 import json
+import os
+import re
 import subprocess
 import sys
 from pathlib import Path
@@ -34,10 +37,38 @@ SAMPLE = """# 2026-09-26 08.43
 MULTILINE = '\n4. Keep the `div` and "quotes".\n\n   Here is a second paragraph with a | pipe.\n'
 
 
+def home_of(repo: Path) -> Path:
+    return repo.parent / f"{repo.name}-home"
+
+
 def run(repo: Path, mode: str) -> subprocess.CompletedProcess[str]:
+    env = {**os.environ, "HOME": str(home_of(repo))}
     return subprocess.run(
-        [sys.executable, str(SCRIPT), mode, ID], cwd=repo, capture_output=True, text=True
+        [sys.executable, str(SCRIPT), mode, ID], cwd=repo, capture_output=True, text=True, env=env
     )
+
+
+OPTIONS = ["Fix it now", "Accept as is", "Defer to milestone 2", "Block the close"]
+
+
+def owner_says(repo: Path, row_id: str, label: str = "Accept as is", n: int = 1) -> None:
+    """The owner's structured answer to a dialog about one row, in the session transcript Claude
+    Code keeps for this repo."""
+    slug = re.sub(r"[^A-Za-z0-9]", "-", str(repo.resolve()))
+    folder = home_of(repo) / ".claude/projects" / slug
+    folder.mkdir(parents=True, exist_ok=True)
+    question = f"Change {ID}, finding {row_id}: the spacing differs. What now?"
+    stamp = (dt.datetime.now(dt.timezone.utc) + dt.timedelta(seconds=60 + n)).isoformat()
+    entries = [
+        {"type": "assistant", "timestamp": stamp, "message": {"content": [{
+            "type": "tool_use", "id": f"t{n}", "name": "AskUserQuestion",
+            "input": {"questions": [{"question": question, "options": [{"label": o} for o in OPTIONS]}]},
+        }]}},
+        {"type": "user", "timestamp": stamp, "toolUseResult": {"answers": {question: label}},
+         "message": {"content": [{"type": "tool_result", "tool_use_id": f"t{n}", "content": "ok"}]}},
+    ]  # fmt: skip
+    with (folder / "session.jsonl").open("a") as out:
+        out.write("".join(json.dumps(e) + "\n" for e in entries))
 
 
 def write(path: Path, content: str = "image") -> Path:
@@ -193,7 +224,6 @@ def test_check_failures(repo: Path, field: str, value: object, problem: str) -> 
     write(repo / "outside.md")
     (repo / "docs/designs").mkdir(parents=True)
     data[0][field] = value
-    data[0]["accepted"] = "Accept the gap." if problem != "unresolved status" else ""
     save(repo, data)
     result = run(repo, "check")
     assert result.returncode == 1 and problem in result.stdout
@@ -201,18 +231,20 @@ def test_check_failures(repo: Path, field: str, value: object, problem: str) -> 
 
 
 @pytest.mark.parametrize("status", ["partly", "not-fixed", "contradicted", "cant-see", None, ""])
-def test_unresolved_needs_engineer_words_but_still_needs_evidence(
+def test_unresolved_needs_the_owners_answer_but_still_needs_evidence(
     repo: Path, status: str | None
 ) -> None:
+    """Review finding 7: a typed `accepted` string settles nothing; only the owner's answer to the
+    dialog about this row does."""
     data = resolved(repo)
-    data[0].update(status=status, differs="Spacing still narrow.", accepted=" ")
+    data[0].update(status=status, differs="Spacing still narrow.", accepted="Ship this gap; fix it.")
     save(repo, data)
     assert run(repo, "check").returncode == 1
-    data[0]["accepted"] = True
-    save(repo, data)
+    owner_says(repo, "2026-09-26/001.1", "Fix it now", 1)
     assert run(repo, "check").returncode == 1
-    data[0]["accepted"] = "Ship this gap; fix spacing next milestone."
-    save(repo, data)
+    owner_says(repo, "2026-09-26/001.1", "Block the close", 2)
+    assert run(repo, "check").returncode == 1
+    owner_says(repo, "2026-09-26/001.1", "Defer to milestone 2", 3)
     assert run(repo, "check").returncode == 0
     data[0]["shot"] = ""
     save(repo, data)
@@ -240,10 +272,11 @@ def test_fixed_needs_a_tag_found_in_a_spec(repo: Path) -> None:
 
 def test_open_mark_needs_no_tag_and_testglobs_is_honoured(repo: Path) -> None:
     data = resolved(repo)
-    data[0].update(status="partly", test="", accepted="Ship it.")
+    data[0].update(status="partly", test="")
     save(repo, data)
+    owner_says(repo, "2026-09-26/001.1")
     assert run(repo, "check").returncode == 0
-    data[0].update(status="fixed", accepted="", test="@F1")
+    data[0].update(status="fixed", test="@F1")
     save(repo, data)
     (repo / "sdlc.json").write_text(json.dumps({"testGlobs": ["proofs/*.ts"]}))
     assert "appears in no spec" in run(repo, "check").stdout
@@ -261,8 +294,8 @@ def test_reference_status_rules(repo: Path) -> None:
     row["status"] = "differs"
     save(repo, data)
     assert run(repo, "check").returncode == 1
-    row["accepted"] = "Accept the narrower toolbar."
     save(repo, data)
+    owner_says(repo, row["id"])
     assert run(repo, "check").returncode == 0
     for invalid in ("fixed", "ruled-out"):
         row["status"] = invalid

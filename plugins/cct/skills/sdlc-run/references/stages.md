@@ -553,16 +553,8 @@ person's own browser session. Never use Claude in Chrome or any tool driving tha
    `cct:review-code-run`. Split into parallel parts by the files they touch, one builder and
    worktree per part; each part's fix is a commit on `milestone/<slug>`, never a PR of its own.
    Each fix updates its record: the `validation.md` row re-run and set to `met`, the
-   `findings.md` item ticked. **What the round leaves gets one durable disposition**, a row in
-   `findings.md` under `## Dispositions` (`| item | disposition | owner | reason | quote |`): `fixed` is the
-   ticked box; `accepted` or `deferred` needs a named owner, a reason of a few words (a deferral
-   names the milestone that builds it) and `quote`, the engineer's own words copied verbatim from
-   the session; `blocked` is terminal and the gate answers `findings-blocked`. The gate clears an
-   open item only when the quote (at least eight words) equals one whole sentence of one user
-   message of the session transcript, and that sentence names the item id (never an agent message, tool output or a
-   hook wrapper), the item has an explicit bold id (`**B2**`) that no other open
-   item shares, and no cell is empty or a `<placeholder>`; the agent cannot accept its own finding. A fact that is `partly`
-   or `not met` in `validation.md` is never cleared by a disposition: change the scope with a new
+   `findings.md` item ticked. **What the round leaves is settled by the owner's answer.** Per residual finding the supervisor asks one `AskUserQuestion` whose question text starts `Change <change id>, finding <finding id>: ` (for example `Change 2026-11-19-x, finding B2: the card overflows at 320. What now?`) and whose options are exactly `Fix it now`, `Accept as is`, `Defer to milestone <n>` and `Block the close`. The gate reads the structured tool result of that dialog from the session transcript (never typed text): `Accept as is` and `Defer to milestone <n>` settle the item, `Fix it now` keeps it open, `Block the close` is terminal (`findings-blocked`, also against a ticked box). The latest answer wins, an answer older than the finding is ignored, the item needs an explicit bold id (`**B2**`, `**C1**`) that no other open item shares, and the agent cannot answer for the owner. A fact that is `partly`
+   or `not met` in `validation.md` is never cleared by an answer: change the scope with a new
    approval, or the milestone is held.
 5. Reopen recaptured images and rerun their visual checks. Then
    `python3 scripts/verify_gate.py milestone <id> --visual-check "<checker>" --visual-run "<run>"`
@@ -598,7 +590,7 @@ person's own browser session. Never use Claude in Chrome or any tool driving tha
    gate once and one batched push. Never rerun the pipeline or push a speculative fix.
    **Arm only after** every required disposition is recorded: the owner's acceptance or Hold
    when the dialog below applies, and the owner or visual disposition of each residual finding
-   (`## Dispositions`). Status never recommends arming a PR that is waiting on one: never arm an
+   (the owner's answer to the finding dialog). Status never recommends arming a PR that is waiting on one: never arm an
    `ask`-labelled or a closed PR. Into a project it is an interior PR:
    no tier, auto-merge armed on green once those are recorded. Into the default branch the tier
    decides. **The engineer accepts the milestone** in one `AskUserQuestion`: "Accept

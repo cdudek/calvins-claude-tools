@@ -80,7 +80,7 @@ import sys
 import time
 from pathlib import Path
 
-from marks import bundles, sessions
+from marks import FINDING_ID, bundles, owner_decisions, sessions
 from sdlc_version import kit_version, message
 
 REASONS = {
@@ -226,136 +226,48 @@ def approval_blockers(change: Path) -> list[str]:
 
 
 SETTLED = ("accepted", "deferred")  # `fixed` is the ticked box; `blocked` is terminal
-REASON_WORDS = 3  # a reason is a few words, not one
-QUOTE_WORDS = 8  # a generic "ok go on" never settles a finding
 
 
 def item_id(item: str) -> str:
-    """The id of a findings.md item: its explicit bold label (**B2**) when that is an id of one of
-    the chain's families, else "" (an item without one can never be settled by a row)."""
-    m = re.match(rf"\*\*({ID_TOKEN})\*\*", item.strip())
+    """The id of a findings.md item: its explicit bold label (**B2**, **C1**) when it follows the
+    finding-id grammar shared with the producers, else "" (an item without one can never be
+    settled by an owner answer)."""
+    m = re.match(rf"\*\*({FINDING_ID})\*\*", item.strip())
     return m.group(1) if m else ""
 
 
-# Text Claude Code or a hook injects into a user turn; never the engineer's own words.
-NOT_OWNER = (
-    "<system-reminder", "<task-notification", "<local-command", "<command-name",
-    "<command-message", "<command-args", "<user-prompt-submit-hook", "<session-start-hook",
-    "<post-tool-use", "<ide_", "[Image", "[Pasted",
-)  # fmt: skip
-TAG_WRAPPER = re.compile(r"<[A-Za-z_][\w-]*[\s>/]")  # any other tag: not a plain typed message
-
-
-def owner_messages(repo: Path) -> list[str]:
-    """The engineer's genuine messages in this session, one string each.
-    Only `~/.claude/projects/<repo slug>/*.jsonl` is read (never a path a caller names, and a
-    symlink out of it is skipped). A message counts only if it is a user turn that is not
-    sidechain or meta, holds plain text only (a tool result or attachment block drops it), and
-    carries none of the NOT_OWNER wrappers. None readable gives [], so nothing settles."""
-    home = Path.home()
-    base = home / ".claude/projects" / re.sub(r"[^A-Za-z0-9]", "-", str(repo.resolve()))
-    if any(p.is_symlink() for p in (base, base.parent, base.parent.parent)):
-        return []  # a link could point at a folder the agent wrote
-    root = base.resolve()
-    said: list[str] = []
-    for path in sorted(base.glob("*.jsonl")) if base.is_dir() else []:
-        try:
-            if not path.resolve().is_relative_to(root) or path.stat().st_uid != os.getuid():
-                continue
-            lines = path.read_text(encoding="utf-8").splitlines()
-        except (OSError, ValueError):
-            continue
-        for line in lines:
-            try:
-                entry = json.loads(line)
-            except ValueError:
-                continue
-            if (
-                not isinstance(entry, dict)
-                or entry.get("type") != "user"
-                or entry.get("isSidechain")
-                or entry.get("isMeta")
-                or "toolUseResult" in entry
-            ):
-                continue
-            message = entry.get("message")
-            content = message.get("content") if isinstance(message, dict) else None
-            if isinstance(content, list):
-                if any(not (isinstance(b, dict) and b.get("type") == "text") for b in content):
-                    continue
-                content = " ".join(b.get("text", "") for b in content)
-            if (
-                isinstance(content, str)
-                and not any(w in content for w in NOT_OWNER)
-                and not TAG_WRAPPER.search(content)
-            ):
-                said.append(content)
-    return said
-
-
-def said_it(said: list[str], quote: str, key: str) -> bool:
-    """The quote equals one whole sentence (spaces, case and end punctuation aside) of one
-    message, and that same sentence names the item id."""
-    want = " ".join(quote.split()).strip(" .!?").lower()
-    for text in said:
-        for sentence in re.split(r"(?<=[.!?])\s+|\n+", text):
-            plain = " ".join(sentence.split()).strip(" .!?").lower()
-            if plain == want and re.search(rf"\b{key}\b", sentence):
-                return True
-    return False
-
-
-def placeholder(cell: str) -> bool:
-    """Empty, or an unfilled template prompt: the same test as approval_blockers."""
-    return not cell or cell[0] == "<"
-
-
-def dispositions(findings: str, said: list[str]) -> dict[str, str]:
-    """item id -> kind from `## Dispositions` rows `| item | disposition | owner | reason | quote |`.
-    accepted and deferred count only with a real owner, a reason of a few words and a quote of at
-    least QUOTE_WORDS words that sits inside ONE message of the engineer's (`said`) which also
-    names the item id; blocked needs none. An id with two rows, or any row
-    that fails, settles nothing."""
-    rows: dict[str, list[str]] = {}
-    for row in table_rows(section(findings, "Dispositions"))[1:]:
-        row = (row + [""] * 5)[:5]
-        rows.setdefault(row[0].strip("* "), []).append(row)
-    out: dict[str, str] = {}
-    for key, found in rows.items():
-        if len(found) != 1 or not re.fullmatch(ID_TOKEN, key):
-            continue
-        _, kind, owner, reason, quote = found[0]
-        kind = kind.lower()
-        if kind == "blocked":
-            out[key] = kind
-        elif (
-            kind in SETTLED
-            and not any(placeholder(c) for c in (owner, reason, quote))
-            and len(reason.split()) >= REASON_WORDS
-            and len(quote.split()) >= QUOTE_WORDS
-            and said_it(said, quote, key)
-        ):
-            out[key] = kind
-    return out
-
-
 def milestone_blockers(change: Path) -> tuple[str, list[str]] | None:
-    """The records a milestone must close before it passes: (reason, offending lines) or None."""
+    """The records a milestone must close before it passes: (reason, offending lines) or None.
+    A residual finding is settled only by the owner's answer to a dialog `Change <id>, finding
+    <finding id>: ...` (`marks.owner_decisions`, the one reader gate and status share)."""
     rows = table_rows(read(change / "validation.md"))
     bad = [r for r in rows if any(c.lower() in ("not met", "partly") for c in r)]
     if bad:
         return "validation-not-met", [f"validation.md: {r[0]} {r[-1]}" for r in bad]
     findings = read(change / "findings.md")
     advisory = section(findings, "Advisory")
-    open_items = re.findall(r"^\s*[-*] \[ \] (.*)$", findings.replace(advisory, ""), re.M)
-    ids = [item_id(i) for i in open_items]
-    settled = dispositions(findings, owner_messages(Path.cwd()))
-    # a row binds to exactly one open item: an id shared by two open items settles neither
-    bound = {k: v for k, v in settled.items() if ids.count(k) == 1}
-    blocked = [i for i, k in zip(open_items, ids) if k and bound.get(k) == "blocked"]
+    items = re.findall(r"^\s*[-*] \[([ x])\] (.*)$", findings.replace(advisory, ""), re.M)
+    ids = [item_id(text) for _, text in items]
+    decided = {}
+    if any(ids):
+        repo = Path(sh("git", "-C", str(change), "rev-parse", "--show-toplevel") or ".")
+        decided = owner_decisions(repo, change.name, change / "findings.md", "**{}**")
+    # a terminal `Block the close` answer counts against every finding, ticked or not: a ticked
+    # box is no evidence against the owner's block; a later answer from the owner resolves it
+    blocked = [
+        f"findings.md: blocked: {text[:80]}" + (" (ticked, contradicts the owner's block)" if mark == "x" else "")
+        for (mark, text), k in zip(items, ids)
+        if k and decided.get(k, ("",))[0] == "blocked"
+    ]
     if blocked:
-        return "findings-blocked", [f"findings.md: blocked: {i[:80]}" for i in blocked]
-    open_items = [i for i, k in zip(open_items, ids) if not (k and bound.get(k) in SETTLED)]
+        return "findings-blocked", blocked
+    open_ids = [k for (mark, _), k in zip(items, ids) if mark == " "]
+    # an answer binds to exactly one open item: an id shared by two open items settles neither
+    open_items = [
+        text
+        for (mark, text), k in zip(items, ids)
+        if mark == " " and not (k and open_ids.count(k) == 1 and decided.get(k, ("",))[0] in SETTLED)
+    ]
     if open_items:
         return "findings-open", [f"findings.md: open: {i[:80]}" for i in open_items]
     if section(findings, "Converge") and "Converged:" not in findings:

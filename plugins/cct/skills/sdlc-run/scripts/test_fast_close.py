@@ -76,11 +76,11 @@ def test_the_close_builder_fixes_from_the_joined_findings_and_never_reviews() ->
     assert "never start a review" in CLOSE
 
 
-def test_residual_findings_get_one_durable_disposition() -> None:
+def test_residual_findings_are_settled_by_the_owner_dialog() -> None:
     for text in (STEP4, flat(SKILL / "references/convergence.md")):
-        assert "## Dispositions" in text
-        for word in ("accepted", "deferred", "blocked"):
-            assert word in text
+        assert "Change <change id>, finding <finding id>: " in text
+        for label in ("Fix it now", "Accept as is", "Defer to milestone <n>", "Block the close"):
+            assert f"`{label}`" in text
     assert "second fix round" not in SKILL_MD or "no second fix round" in SKILL_MD.lower()
 
 
@@ -152,10 +152,10 @@ def test_stage_6_calls_the_local_form_before_the_gate() -> None:
     )
 
 
-def test_dispositions_are_bound_to_the_engineers_own_words() -> None:
-    assert "| item | disposition | owner | reason | quote |" in STEP4
-    assert "user message of the session transcript" in STEP4
-    assert "words only the agent wrote never count" in CONVERGENCE
+def test_dispositions_are_bound_to_the_owners_structured_answer() -> None:
+    assert "structured tool result" in STEP4 and "never typed text" in STEP4
+    assert "never free text" in CONVERGENCE
+    assert "| item | disposition | owner | reason | quote |" not in STAGES + CONVERGENCE
 
 
 # 3. One capture manifest
@@ -178,9 +178,10 @@ def test_stage_6_lists_the_assessment_once_and_lets_it_dispatch_the_specialists(
     assert "dispatches the responsive, accessibility and build QA passes" in stage6
 
 
-def test_the_quote_rule_is_one_message_of_at_least_eight_words_naming_the_item() -> None:
-    assert "at least eight words" in STEP4 and "names the item id" in STEP4
+def test_the_answer_names_the_change_and_the_finding_and_no_env_picks_the_evidence() -> None:
+    assert "Change <change id>, finding <finding id>: " in STEP4
     assert "SDLC_TRANSCRIPT" not in CONVERGENCE
+    assert "latest answer wins" in STEP4
 
 
 # 7. Tests first that can start before the UI exists
@@ -225,4 +226,5 @@ def test_the_criteria_auditor_gets_an_explicit_criteria_input() -> None:
 def test_the_threat_model_is_written_down() -> None:
     assert "protects against a careless or over-eager agent" in CONVERGENCE
     assert "someone with a shell" in CONVERGENCE and "out of scope" in CONVERGENCE
-    assert "one whole sentence" in CONVERGENCE and "names the item id" in CONVERGENCE
+    assert "not a sandbox" in CONVERGENCE
+

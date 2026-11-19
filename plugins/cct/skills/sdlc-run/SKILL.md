@@ -252,8 +252,8 @@ debug failures locally, not through remote CI. Commands:
   approval without the engineer's words in `decisions.json` `protectedEdit`. Never re-lock.
 - Decide the ticket, size, kind or milestone yourself; create a ticket without searching.
 - Edit a test to make verify pass, or while `testLocked` without `testEdit`.
-- Start a second fix round at the milestone. What is left gets one disposition in `findings.md`
-  (`## Dispositions`: accepted or deferred by a named owner with a reason, or blocked); the gate reads it.
+- Start a second fix round at the milestone. What is left is settled by the owner's answer to an
+  `AskUserQuestion` (`Change <id>, finding <finding id>: ...`; Fix it now, Accept as is, Defer to milestone <n>, Block the close); the gate reads it.
 - Put a local path in any tracker (`scripts/linear-safe.py`); keep a plan in `.claude/plans/`.
 - Open a PR or push for anything but a milestone close: records, fixes, test repairs and merges
   from the default branch are commits on the milestone branch; a fix for a merged milestone goes

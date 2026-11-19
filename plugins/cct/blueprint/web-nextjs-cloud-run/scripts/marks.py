@@ -29,10 +29,12 @@ capture, so a stale capture is invalidated by its inputs, never reused because i
 from __future__ import annotations
 
 import argparse
+import datetime as dt
 import glob
 import hashlib
 import html
 import json
+import os
 import re
 import subprocess
 import sys
@@ -57,6 +59,136 @@ FILLED = {
 TEST_GLOBS = ["**/*.test.*", "**/*.spec.*", "**/test_*.py", "**/tests/**", "**/e2e/**"]
 SKIP = ("node_modules", ".git", ".worktrees")
 BUNDLE_FILLED = {"rendered": ""}
+
+# One grammar for a finding id, shared by the producer (findings.md items, marks rows) and the parser.
+FINDING_ID = r"[A-Z]\d+"
+ASKED = re.compile(r"\AChange (\S+), finding (\S+): ")  # "Change <id>, finding B2: ..."
+# The fixed options of an owner dialog; the selected label is the decision.
+OWNER_LABELS = {
+    "fix it now": "fix",
+    "accept as is": "accepted",
+    "block the close": "blocked",
+    "accept milestone": "accepted",
+    "hold": "hold",
+}
+DEFER = re.compile(r"defer to milestone (\d+)", re.I)
+
+
+def when(text: object) -> dt.datetime | None:
+    try:
+        stamp = dt.datetime.fromisoformat(str(text).replace("Z", "+00:00"))
+    except ValueError:
+        return None
+    return stamp if stamp.tzinfo else stamp.replace(tzinfo=dt.timezone.utc)  # noqa: UP017 -- macOS python3 3.9
+
+
+def transcript_dirs(repo: Path) -> list[Path]:
+    """Claude Code's project folders for this repo: its working tree and the main checkout it
+    belongs to (a worktree has its own folder, and the owner may have spoken in either). A folder
+    is read only if neither it nor a parent is a link (a link could point at a folder the agent
+    wrote) and it is ours."""
+    roots = {repo.resolve()}
+    common = subprocess.run(
+        ["git", "-C", str(repo), "rev-parse", "--path-format=absolute", "--git-common-dir"],
+        capture_output=True,
+        text=True,
+    ).stdout.strip()
+    if common.endswith("/.git"):
+        roots.add(Path(common).parent.resolve())
+    found = []
+    for root in sorted(roots):
+        base = Path.home() / ".claude/projects" / re.sub(r"[^A-Za-z0-9]", "-", str(root))
+        if base.is_dir() and not any(p.is_symlink() for p in (base, base.parent, base.parent.parent)):
+            found.append(base)
+    return found
+
+
+def first_seen(repo: Path, record: Path, needle: str) -> dt.datetime | None:
+    """When `needle` first appeared in `record`: its first commit, else the file's mtime."""
+    out = subprocess.run(
+        ["git", "-C", str(repo), "log", f"-S{needle}", "--reverse", "--format=%cI", "--", str(record)],
+        capture_output=True,
+        text=True,
+    ).stdout.split()
+    if out:
+        return when(out[0])
+    if record.exists():
+        return dt.datetime.fromtimestamp(record.stat().st_mtime, dt.timezone.utc)  # noqa: UP017
+    return None
+
+
+def owner_decisions(
+    repo: Path, change_id: str, record: Path | None = None, needle: str = "{}"
+) -> dict[str, tuple[str, str]]:
+    """finding id -> (kind, detail) from the owner's answers to AskUserQuestion dialogs whose
+    question starts `Change <change id>, finding <id>: ` and whose options include the selected
+    label. kind is fix | accepted | deferred (detail: the milestone) | blocked | hold. Only the
+    structured tool result counts: typed text, an agent message or a subagent never does. The
+    latest answer wins; an answer older than the finding's first appearance in `record` is ignored
+    (`needle` formats the id into the text searched for). No readable transcript gives {}.
+    Threat model: protects against a careless agent settling its own finding, not against someone
+    with a shell; the transcript folder is read from the calling process's home."""
+    found: dict[str, tuple[tuple[dt.datetime, int], tuple[str, str]]] = {}
+    seen: dict[str, dt.datetime | None] = {}
+    order = 0
+    for base in transcript_dirs(repo):
+        for path in sorted(base.glob("*.jsonl")):
+            try:
+                if path.is_symlink() or path.stat().st_uid != os.getuid():
+                    continue
+                lines = path.read_text(encoding="utf-8").splitlines()
+            except (OSError, ValueError):
+                continue
+            asked: dict[str, dict[str, list]] = {}
+            for line in lines:
+                try:
+                    entry = json.loads(line)
+                except ValueError:
+                    continue
+                message = entry.get("message") if isinstance(entry, dict) else None
+                content = message.get("content") if isinstance(message, dict) else None
+                if not isinstance(content, list) or entry.get("isSidechain"):
+                    continue
+                blocks = [b for b in content if isinstance(b, dict)]
+                if entry.get("type") == "assistant":
+                    for b in blocks:
+                        if b.get("type") == "tool_use" and b.get("name") == "AskUserQuestion":
+                            qs = (b.get("input") or {}).get("questions")
+                            asked[str(b.get("id"))] = {
+                                q["question"]: [
+                                    o.get("label") for o in q.get("options") or [] if isinstance(o, dict)
+                                ]
+                                for q in qs or []
+                                if isinstance(q, dict) and isinstance(q.get("question"), str)
+                            }
+                    continue
+                result = entry.get("toolUseResult")
+                answers = result.get("answers") if isinstance(result, dict) else None
+                stamp = when(entry.get("timestamp"))
+                if entry.get("type") != "user" or not isinstance(answers, dict) or not stamp:
+                    continue
+                for b in blocks:
+                    options = asked.get(str(b.get("tool_use_id")))
+                    if b.get("type") != "tool_result" or b.get("is_error") or options is None:
+                        continue
+                    for question, label in answers.items():
+                        m = ASKED.match(question) if isinstance(question, str) else None
+                        if not m or m[1] != change_id or label not in options.get(question, []):
+                            continue
+                        name = str(label).strip().lower()
+                        defer = DEFER.fullmatch(name)
+                        kind = ("deferred", defer[1]) if defer else (OWNER_LABELS.get(name), "")
+                        if not kind[0]:
+                            continue
+                        fid = m[2]
+                        if record is not None and fid not in seen:
+                            seen[fid] = first_seen(repo, record, needle.format(fid))
+                        if record is not None and (seen[fid] is None or stamp < seen[fid]):
+                            continue  # said before the finding existed
+                        order += 1
+                        if fid not in found or (stamp, order) > found[fid][0]:
+                            found[fid] = ((stamp, order), kind)
+    return {fid: kind for fid, (_, kind) in found.items()}
 
 
 def bundles(change: Path) -> dict[Path, str]:
@@ -269,6 +401,7 @@ def check(change: Path, sources: list[dict], repo: Path, designs: Path, globs: l
     wanted = {row["id"]: row for row in sources}
     seen = set()
     specs = spec_text(repo, globs) if any(row.get("status") == "fixed" for row in rows) else ""
+    owners: dict[str, tuple[str, str]] | None = None
     for row in rows:
         rid = row["id"]
 
@@ -318,10 +451,14 @@ def check(change: Path, sources: list[dict], repo: Path, designs: Path, globs: l
             problem("invalid status")
         if status == "waits-on-design-system" and not filled(row.get("differs")):
             problem("waits-on-design-system must name the missing design-system parts in differs")
-        if status not in ("fixed", "match", "ruled-out", "waits-on-design-system") and not filled(
-            row.get("accepted")
-        ):
-            problem("unresolved status; needs the engineer's accepted words")
+        if status not in ("fixed", "match", "ruled-out", "waits-on-design-system"):
+            if owners is None:
+                owners = owner_decisions(repo, change.name, change / "marks.json")
+            if owners.get(rid, ("",))[0] not in ("accepted", "deferred"):
+                problem(
+                    "unresolved status; needs the owner's Accept as is or Defer to milestone <n> "
+                    f"answer to a dialog starting 'Change {change.name}, finding {rid}: '"
+                )
         if status != "ruled-out":
             if not filled(row.get("expected")):
                 problem("expected is required")

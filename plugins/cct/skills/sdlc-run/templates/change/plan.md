@@ -167,8 +167,8 @@ before any check or push: it owns local iteration, failures and the final full c
   `findings.md` (ticked boxes are not evidence; repeat after the fix round until it adds nothing
   and writes `Converged: round <n>`). Write one `findings.md` section for the subagent's fix
   round: the joined findings and the code review's state directory, so the fix never starts a
-  review. What the round leaves gets a row under `## Dispositions` (accepted or deferred by a named
-  owner with a reason, or blocked). Keep building the next milestone where it does not depend on this one.
+  review. What the round leaves is settled by the owner's answer to an `AskUserQuestion`
+  (`Change <id>, finding <finding id>: ...`; Fix it now, Accept as is, Defer to milestone <n>, Block the close). Keep building the next milestone where it does not depend on this one.
 - **Publish:** only on `VERIFY PASS milestone {{CHANGE}} <sha>` with `<sha>` equal to the local
   head: one push, one PR `milestone/<slug>-<n>` to its parent, then auto-merge with a merge
   commit (`gh pr merge <n> --merge --auto`) only after the owner and visual dispositions are
