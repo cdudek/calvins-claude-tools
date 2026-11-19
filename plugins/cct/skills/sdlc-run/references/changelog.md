@@ -5,6 +5,18 @@ version warning, the **Mechanical** lines are what `adopt` does for you (it adds
 with the stack's defaults and never overwrites a value), the **Manual** lines are printed for
 the engineer. A version with no migration lines needs nothing but a re-run of `adopt`.
 
+## 3.23.0 — screens mode: one record per screen, enforced rounds, a frozen design system, status in screens, a scope guard for visual changes
+
+- **One record per screen.** `evidence.py screen|review|round|status|sheet` keeps `<change>/verify/screens/<id>.json`: status, the frozen defect list, fix rounds in the current design-system release and the capture hashes. One writer per file, so parallel helpers never conflict.
+- **The rules are checked, not only written.** For a change approved from 3.23.0 (`lock.json` `"screens": "required"`), `marks.py check` fails a defect added after the first review unless it is High or a regression, a third fix round in one design-system release, two captures of one screen that differ, and a capture whose bytes no longer match its hash.
+- **Capture once.** A screen is captured again only when it is unstable or its first judgement fails.
+- **Status in screens.** `sdlc_status.py` prints `screens: N of M done · K wait on you · J wait on the design system · L open` under the goal line.
+- **One owner sheet.** `evidence.py sheet` writes `verify/owner-sheet.md`: one table per screen group of what is left after two rounds, answered once per group.
+- **A frozen design system.** `approve` records the design-system version each consumer pins (`sdlc.json` `designSystem`), refuses a change over `designSystem.auditAbove` screens (default 20) without a gap-free `design-system-audit.md`, and the milestone gate fails when a pin moves.
+- **A visual change stays visual.** `chain-gate.sh` refuses migrations, auth and permission paths and new route files outside the approved folders in a change with visual work; `scopeGuard.allow` and `scopeGuard.routes` adjust it. Start a linked change for the rest.
+- Mechanical: re-running `adopt` replaces `verify_gate.py`, `marks.py`, `evidence.py` and `chain-gate.sh`.
+- Manual: to freeze a design system, add `"designSystem": {"package": "<name>", "consumers": ["package.json"]}` to `sdlc.json`. Changes approved before 3.23.0 keep the lenient visual checks; a visual change approved before 3.23.0 that adds a new route must be approved again, because its lock has no approved folders.
+
 ## 3.22.0 — one close job, a machine-wide queue that knows real commands, a safe test database, disk hygiene
 
 - **The milestone close is one job.** `verify_gate.py milestone` runs the light checks first (independent ones side by side), then takes one heavy slot and holds it to the end. A `build` check is reused while the tree is unchanged, and with `db.test` set the whole close uses one database copy, reset from the template between heavy checks (`"resetDb": false` opts a check out). The gate prints queue wait, per-check seconds and the total.
