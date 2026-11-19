@@ -793,8 +793,9 @@ A change folder removed after merge reads `GOAL <id> DONE pr=<n> state=merged fo
 5. **Operational metrics** need no writing: every `verify/report.md` ends with a `## Metrics`
    block (also `metrics` in `report.json`): checks run, cached, passed and failed, retries (earlier
    failed runs of this scope), review rounds, elapsed seconds and open findings. Quote the
-   milestone's block in `milestone.md` under `## Outcome` so a slow or retry-heavy change is
-   visible later.
+   milestone's block into the `.sdlc/outcomes` record (`spec.py outcome record`), because the
+   change folder is removed after the merge and `milestone.md` goes with it, so a slow or
+   retry-heavy change stays visible later.
 
 ## PR bodies and milestone close reports
 
