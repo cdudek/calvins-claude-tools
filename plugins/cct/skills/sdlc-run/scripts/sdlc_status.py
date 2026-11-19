@@ -33,7 +33,7 @@ With sdlc.json `milestones.merge: "local"` and a project branch, a milestone has
 when its `VERIFY PASS milestone` head is an ancestor of the local project/<slug> (line `GOAL <id>
 DONE merged=project/<slug> gate=<sha>`). Each planned milestone counts by its own receipt
 verify/milestone-<n>.json (a pass whose head is in the project branch; the branch need not exist),
-or, without a receipt, by its milestone/<slug>-<n> branch being merged. `--project` reads the project's own record (`VERIFY PASS
+or, without a receipt, by its milestone/<slug>-<n> branch being merged. Every report is read from the checkout and from the gate's shared copy (<git common dir>/sdlc/passes/); the newer wins. `--project` reads the project's own record (`VERIFY PASS
 project <slug>`, written by `verify_gate.py project`) and the PR project/<slug> into the default
 branch, merged or armed, as above.
 """
@@ -53,7 +53,7 @@ for _sub in ("scripts", "hooks"):
     sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "templates" / _sub))
 
 import spec  # noqa: E402
-from pass_proof import bound, change_paths, proves  # noqa: E402
+from pass_proof import bound, change_paths, newest, pass_key, proves, shared  # noqa: E402
 
 STAGES = ("Intent", "UX plan", "Facts", "Tech plan", "Build", "Milestone", "Outcome")
 
@@ -359,15 +359,21 @@ def goal(
     if scope == "project":
         subject = (read_json(spec.state_path(change, "decisions.json")).get("project") or {}).get("slug", "")
         folder = project_record(subject, root) if project else change
-    report = read_json(folder / "verify" / "report.json")
-    result = str(report.get("result", "")) if report.get("scope") == scope else ""
+    number = (n or max(planned(change), 1)) if scope == "milestone" else None
+    if scope == "feature":
+        feature = branches(change, read_json(spec.state_path(change, "decisions.json")), scope, n, cfg)
+        key = pass_key(scope, feature[0]) if feature else None
+    else:
+        key = pass_key(scope, "", number)
+    # the checkout's report and the gate's shared copy: the newest one speaks (pass_proof.newest)
+    report = newest([folder / "verify" / "report.json", shared(root, subject, scope, key)], scope)
+    result = str(report.get("result", ""))
     blocked = re.fullmatch(r"VERIFY BLOCKED reason=([\w-]+)", result)
     if blocked:
         return 3, f"{name} BLOCKED reason={blocked.group(1)}"
     passed = re.fullmatch(rf"VERIFY PASS {scope} {re.escape(subject)} (\w+)", result)
     # a pass counts for the milestone it was gated as (the goal's last one without --milestone) and
     # the project the change belongs to: M1's pass never finishes M2, nor another project's
-    number = (n or max(planned(change), 1)) if scope == "milestone" else None
     if passed and scope != "project" and not bound(report, scope, subject, number, project):
         passed = None
     if scope == "milestone" and n and planned(change) and n > planned(change):
@@ -395,7 +401,7 @@ def goal(
         if planned(change):
             for b in branches(change, read_json(spec.state_path(change, "decisions.json")), scope, n, cfg):
                 i = b.rsplit("-", 1)[1]
-                receipt = read_json(change / "verify" / f"milestone-{i}.json")
+                receipt = newest([change / "verify" / f"milestone-{i}.json", shared(root, change.name, "milestone", i)])
                 tip = git(root, "rev-parse", "--verify", "--quiet", f"{b}^{{commit}}")
                 if receipt:
                     # a receipt counts only for its own milestone and change, never a copy
