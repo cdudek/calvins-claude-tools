@@ -165,7 +165,7 @@ class Repo:
     def in_changes(self, name: str) -> list[Path]:
         """`name` under every supported layout: live, archive/<id> and archive/<year>/<month>/<id>
         (the Stage 7 archive move is the last commit before the push). Nothing deeper is read."""
-        patterns = (f"*/{name}", f"archive/*/{name}", f"archive/*/*/*/{name}")
+        patterns = [f"*/{name}"] + [f"{lay.format(id='*')}/{name}" for lay in proof("LAYOUTS")[1:]]
         return [f for changes in self.change_dirs() for pat in patterns for f in changes.glob(pat)]
 
     def reports(self, scope: str, slug: str) -> list[Path]:

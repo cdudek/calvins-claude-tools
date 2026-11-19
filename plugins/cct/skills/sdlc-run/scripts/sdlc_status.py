@@ -52,7 +52,7 @@ from change_docs import MARKER, ids, readme
 for _sub in ("scripts", "hooks"):
     sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "templates" / _sub))
 
-from pass_proof import bound, proves  # noqa: E402
+from pass_proof import bound, change_paths, proves  # noqa: E402
 
 STAGES = ("Intent", "UX plan", "Facts", "Tech plan", "Build", "Milestone", "Outcome")
 
@@ -90,8 +90,8 @@ def find_change(root: Path, cfg: dict, change_id: str | None) -> Path | None:
         # Stage 7 moved it: no "..", no absolute path, never the archive folder itself
         if Path(change_id).name != change_id or change_id in ("..", "archive"):
             return None
-        found = [base / change_id, *base.glob(f"archive/**/{change_id}")]
-        return next((d for d in found if d.is_dir() and base.resolve() in d.resolve().parents), None)
+        found = change_paths(base, change_id)
+        return next((d for d in found if base.resolve() in d.resolve().parents), None)
     if not base.is_dir():
         return None
     folders = [d for d in base.iterdir() if d.is_dir() and d.name != "archive"]
@@ -339,6 +339,8 @@ def goal(
     number = (n or max(planned(change), 1)) if scope == "milestone" else None
     if passed and scope != "project" and not bound(report, scope, subject, number, project):
         passed = None
+    if scope == "milestone" and n and planned(change) and n > planned(change):
+        return 1, f"{name} OPEN no-such-milestone:{n}"  # an unlisted row: no branch or PR is invented for it
     missing = [] if passed else [f"{scope}-gate-pass"]
     local = scope == "milestone" and project and merges_locally(cfg)
     if local:  # no PR: the gated head must be merged into the local project branch
@@ -511,6 +513,12 @@ BLOCKS = {
         "the agent",
         "on {n}: python3 scripts/verify_gate.py milestone {id} (writes a new receipt)",
     ),
+    "no-such-milestone:": (
+        "the plan has no milestone {n}",
+        "plan.md ## Milestones lists fewer rows",
+        "the agent",
+        "grep -n '^| M' changes/{id}/plan.md, then ask for a listed number",
+    ),
     "no-branch-for-": (
         "the plan names no branch for {n}",
         "plan.md has no matching row",
@@ -611,7 +619,7 @@ def blocker(subject: str, line: str, scope: str = "milestone", base: str = "") -
     for key, (what, why, who, step) in BLOCKS.items():
         if key_of == key or (key.endswith(("-", ":")) and first.startswith(key)):
             n = re.sub(
-                r"^no-pr:|^no-branch-for-|^merge-missing:|^receipt-not-merged:|^gate-sha-not-tip:|^gate-sha-not-pr-|-head$",
+                r"^no-pr:|^no-such-milestone:|^no-branch-for-|^merge-missing:|^receipt-not-merged:|^gate-sha-not-tip:|^gate-sha-not-pr-|-head$",
                 "",
                 first,
             )
@@ -675,6 +683,17 @@ def blocker(subject: str, line: str, scope: str = "milestone", base: str = "") -
     return f"Blocking: {first}, because the goal check lists it; the agent reads `sdlc_status.py goal {subject}`."
 
 
+def security_base(change: Path) -> str:
+    """The commit the goal started from: the `sha` approval recorded in lock.json ("" if none)."""
+    return str(read_json(change / "lock.json").get("sha") or "")
+
+
+def subject_of(change: Path, scope: str) -> str:
+    """What the goal's recovery step names: the change id, or for a project the project slug."""
+    slug = (read_json(change / "decisions.json").get("project") or {}).get("slug") if scope == "project" else ""
+    return slug or change.name
+
+
 def goal_main(args: list[str]) -> int:
     pos, flag, value = (
         list(args),
@@ -706,7 +725,7 @@ def goal_main(args: list[str]) -> int:
     # or else the plan's row
     row = branches(change, read_json(change / "decisions.json"), scope, int(value) if flag else None)
     base = parent_of(change, config(root), scope, head[1] if head else row[0] if scope == "feature" and row else "")
-    if code and (sentence := blocker(change.name, line, scope, base)):
+    if code and (sentence := blocker(subject_of(change, scope), line, scope, base)):
         print(sentence)
     return code
 
@@ -728,7 +747,7 @@ def write_readme(change: Path, text: str) -> int:
 
 
 def main(argv: list[str]) -> int:
-    if len(argv) < 2 or argv[1] not in ("map", "goal", "ids", "readme"):
+    if len(argv) < 2 or argv[1] not in ("map", "goal", "ids", "readme", "base"):
         print(__doc__)
         return 2
     if argv[1] == "goal":
@@ -742,6 +761,10 @@ def main(argv: list[str]) -> int:
     if not change:
         print("no change folder for this branch: pass its id")
         return 2
+    if argv[1] == "base":
+        sha = security_base(change)
+        print(sha or "no recorded start: approve the plan first")
+        return 0 if sha else 1
     s = state(change, root, cfg)
     if argv[1] == "ids":
         print("\n".join(ids(change)))

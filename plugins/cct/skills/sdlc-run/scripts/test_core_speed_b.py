@@ -110,3 +110,107 @@ def test_an_origin_whose_default_branch_cannot_be_seen_is_an_environment_handoff
     _git(repo, "commit", "-qam", "default branch")
     r = _gate(repo, "milestone", ID)
     assert _last(r) == "VERIFY BLOCKED reason=env" and "origin/master" in r.stdout, r.stdout
+
+
+@pytest.mark.parametrize("layout", ["x", "archive/x", "archive/2026/2026-11/x"])
+def test_one_resolver_finds_a_change_in_every_layout_and_none_once_it_is_removed(tmp_path: Path, layout: str) -> None:
+    sys.path.insert(0, str(SKILL / "templates/hooks"))
+    import pass_proof
+
+    changes = tmp_path / "changes"
+    folder = changes / layout.replace("x", "2026-11-01-x")
+    folder.mkdir(parents=True)
+    assert pass_proof.change_paths(changes, "2026-11-01-x") == [folder]
+    assert pass_proof.change_paths(changes, "../x") == [] and pass_proof.change_paths(changes, "archive") == []
+    import shutil
+
+    shutil.rmtree(changes)
+    changes.mkdir()
+    assert pass_proof.change_paths(changes, "2026-11-01-x") == []  # removed after merge: nothing to read
+
+
+def test_status_and_the_hook_read_the_same_layouts() -> None:
+    hook = (SKILL / "templates/hooks/pr-gate.sh").read_text()
+    status = (SKILL / "scripts/sdlc_status.py").read_text()
+    assert 'proof("LAYOUTS")' in hook and "change_paths(base, change_id)" in status
+
+
+from test_sdlc_status import BRANCH, PASS, _gate as _status_gate, _goal, repo  # noqa: E402, F401
+from test_sdlc_status import ID as SID  # noqa: E402
+
+import sdlc_status  # noqa: E402
+
+
+def test_a_milestone_the_plan_does_not_have_is_no_pass_and_invents_no_pr(repo: Path) -> None:  # noqa: F811
+    _status_gate(repo, PASS)
+    (repo / "changes" / SID / "plan.md").write_text(
+        "## Milestones\n\n| # | what |\n|---|---|\n| M1 | a |\n| M2 | b |\n"
+    )
+    code, line = _goal(repo, {}, n=99)
+    assert (code, line) == (1, f"GOAL {SID} OPEN no-such-milestone:99")
+    assert "plan.md" in sdlc_status.blocker(SID, line) and "`" in sdlc_status.blocker(SID, line)
+
+
+def test_the_project_hint_names_the_project_slug_not_the_change_id(repo: Path) -> None:  # noqa: F811
+    decisions = repo / "changes" / SID / "decisions.json"
+    data = json.loads(decisions.read_text())
+    decisions.write_text(json.dumps({**data, "project": {"slug": "big", "branch": True}}))
+    assert sdlc_status.subject_of(repo / "changes" / SID, "project") == "big"
+    assert sdlc_status.subject_of(repo / "changes" / SID, "milestone") == SID
+    assert "verify_gate.py project big" in sdlc_status.blocker("big", "GOAL x OPEN project-gate-pass", scope="project")
+
+
+def test_goal_and_map_leave_the_tree_clean(repo: Path) -> None:  # noqa: F811
+    subprocess.run(["git", "add", "-A"], cwd=repo, check=True, env=_env())
+    subprocess.run(["git", "-c", "user.name=t", "-c", "user.email=t@t", "commit", "-qm", "x"], cwd=repo, check=True, env=_env(), capture_output=True)
+    for args in (("map",), ("goal", ID), ("ids", ID)):
+        subprocess.run([sys.executable, str(SKILL / "scripts/sdlc_status.py"), *args], cwd=repo, capture_output=True, env=_env())
+    status = subprocess.run(["git", "status", "--porcelain"], cwd=repo, capture_output=True, text=True, env=_env()).stdout
+    assert status == "", status
+
+
+# --- the states/edges file: equal to the code, and no state without a way out ---------------------
+
+STATES = json.loads((SKILL / "references/states.json").read_text())["states"]
+
+
+def _flags() -> set[str]:
+    import re
+
+    src = (SKILL / "scripts/sdlc_status.py").read_text()
+    return {"pr-" + f for f in re.findall(r'return "[a-z-]+", "([a-z-]+)"', src)} | {"pr-not-merged-or-armed"}
+
+
+def test_the_states_file_covers_every_goal_reason_and_pr_flag() -> None:
+    blocks = set(sdlc_status.BLOCKS)
+    assert blocks <= set(STATES), sorted(blocks - set(STATES))
+    flags = _flags()
+    assert flags <= set(STATES), sorted(flags - set(STATES))
+
+
+def test_no_state_is_a_dead_end() -> None:
+    for name, s in STATES.items():
+        if s["kind"] == "terminal":
+            continue
+        assert s["to"], f"{name} has no edge out"
+        assert s["command"].strip(), f"{name} names no command"
+        assert all(t in STATES for t in s["to"]), f"{name} leads to an unknown state"
+    reach = {"done"}
+    grew = True
+    while grew:  # every state must reach the terminal one
+        grew = False
+        for name, s in STATES.items():
+            if name not in reach and any(t in reach for t in s["to"]):
+                reach.add(name)
+                grew = True
+    assert set(STATES) == reach, sorted(set(STATES) - reach)
+
+
+def test_the_security_review_runs_per_milestone_from_the_recorded_start(repo: Path) -> None:  # noqa: F811
+    (repo / "changes" / SID / "lock.json").write_text(json.dumps({"sha": "c" * 40}))
+    assert sdlc_status.security_base(repo / "changes" / SID) == "c" * 40
+    out = subprocess.run([sys.executable, str(SKILL / "scripts/sdlc_status.py"), "base", SID], cwd=repo, capture_output=True, text=True, env=_env())
+    assert out.stdout.strip() == "c" * 40
+    stages = " ".join((SKILL / "references/stages.md").read_text().split())
+    assert "runs at every milestone close" in stages and "sdlc_status.py base <id>" in stages
+    assert "runs only on the goal's last milestone" not in stages

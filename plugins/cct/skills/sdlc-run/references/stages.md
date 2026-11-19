@@ -514,9 +514,13 @@ person's own browser session. Never use Claude in Chrome or any tool driving tha
    close: six layers, one frozen defect list per screen, capture from one pinned commit;
    [convergence](convergence.md)) runs inside the assessment for a change with a spec folder, and
    only when its `qa.md` is missing or stale. Run the `cct:test-behavior-verifier` and `cct:review-criteria-auditor` agents for job
-   stories and facts. `cct:review-security-run` runs only on the goal's last milestone, on the whole
-   goal diff (`git diff origin/<defaultBranch>...milestone/<slug>-<last>`), and only when auth, money or
-   consent is touched anywhere in it; in a project it waits for Stage 6p. Never on earlier milestones.
+   stories and facts. `cct:review-security-run` runs at every milestone close when auth, money or
+   consent is touched in the goal so far, on the diff from the goal's recorded start:
+   `git diff $(python3 ${CLAUDE_SKILL_DIR}/scripts/sdlc_status.py base <id>)...milestone/<slug>-<n>`.
+   `base` prints the `sha` that `verify_gate.py approve` wrote into `lock.json`, so an earlier
+   milestone that already merged stays in view and a late one cannot hide a risky slice behind
+   a smaller final diff. In a project each milestone is reviewed the same way and Stage 6p
+   reviews the integrated diff once more.
    The read-only review starts while the last feature builds.
    Require the shared visual pass from each UX run: open every image, including responsive
    and state captures, and validate each issue against the repo's documents with the same

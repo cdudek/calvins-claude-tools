@@ -23,6 +23,19 @@ EVIDENCE_FILES = {"marks.json"}
 EVIDENCE_DIRS = {"asks", "evidence", "shots"}
 
 
+# Where a change folder lives: live, flat archive, archive/<year>/<year-month>. One list for the PR
+# hook, the goal check and the gate, so none of them looks shallower or deeper than the runbook writes.
+LAYOUTS = ("{id}", "archive/{id}", "archive/*/{id}", "archive/*/*/{id}")
+
+
+def change_paths(changes: Path, change_id: str) -> list[Path]:
+    """The folders named `change_id` under `changes`, live first. An empty list means the folder was
+    removed after merge (the owner's rule), not an error: nothing is left to read."""
+    if Path(change_id).name != change_id or change_id in ("..", "archive", ""):
+        return []
+    return [d for layout in LAYOUTS for d in sorted(changes.glob(layout.format(id=change_id))) if d.is_dir()]
+
+
 def milestone_of(branch: str, prefix: str, slug: str) -> int | None:
     """The milestone a branch is: `<prefix><slug>-<n>` is n, the unnumbered `<prefix><slug>` is 1,
     any other branch none. `prefix` is sdlc.json `milestones.branchPrefix`. verify_gate.py writes the
