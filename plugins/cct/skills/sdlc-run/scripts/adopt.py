@@ -981,6 +981,7 @@ KIT_PR_GATE = {
     "a7c80708a8719115",
     "ab23e9a14b74d511",
     "ae1f77d4f3ba75d0",
+    "bc4f5d381f088222",
     "d2fe12eaec71434a",
     "dcfc6bfc90098077",
     "dea1af067e0edd92",

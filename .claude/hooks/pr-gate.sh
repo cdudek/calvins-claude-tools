@@ -273,6 +273,25 @@ class Repo:
         found = self.owners(milestone, *refs)
         return next(iter(found)) if len(found) == 1 else ""
 
+    def hotfix_recorded(self, head: str, sha: str) -> bool:
+        """The feature gate recorded `head` as a hotfix (state/heads.json, or the old place) and `sha`
+        is the gated commit or only records after it."""
+        rel = self.changes.relative_to(self.top).as_posix()
+        for path in [*self.in_changes("state/heads.json"), *self.in_changes("heads.json")]:
+            try:
+                rec = json.loads(path.read_text(encoding="utf-8")).get("hotfix")
+            except (OSError, ValueError, AttributeError):
+                continue
+            if isinstance(rec, dict) and rec.get("head") == head and rec.get("sha") and proof("proves")(self.dir, rel, str(rec["sha"]), sha):
+                return True
+        return False
+
+    def contains(self, tip: str, sha: str) -> bool:
+        """`tip` is `sha` or an ancestor of it."""
+        return bool(tip and sha) and subprocess.run(
+            ["git", "-C", str(self.dir), "merge-base", "--is-ancestor", tip, sha], capture_output=True
+        ).returncode == 0
+
     def excepted(self, branch: str) -> bool:
         # the pushed repo's own exceptions, and the session's: the engineer speaks in the session
         start = root / cfg.get("changesDir", "changes")
@@ -373,7 +392,17 @@ def check_push(repo: Repo, args: list[str]) -> None:
                 continue
             if sha and sha == repo.sha(f"origin/{repo.default}"):
                 continue  # creating the project branch from the trunk (Stage 1.2)
-            block(f"a push to {dst}.", "A project branch moves only through milestone PRs. " + RIDE)
+            slug = dst.removeprefix(repo.p)
+            if repo.passed(sha, "project", slug) and repo.contains(repo.sha(f"origin/{repo.default}"), sha):
+                continue  # the final sync (Stage 6p): the default branch merged in, then the project gate passed on this head
+            block(
+                f"a push to {dst}.",
+                "A project branch moves only through milestone PRs. " + RIDE + " The one exception is the final sync: "
+                f"merge origin/{repo.default} into it, run `python3 scripts/verify_gate.py project {slug}`, then push that head once "
+                "(it needs `VERIFY PASS project`).",
+            )
+        if repo.hotfix and dst.startswith("hotfix/") and repo.hotfix_recorded(dst, sha):
+            continue  # a feature gate passed this hotfix head (state/heads.json): the one-go hotfix lane
         if repo.feature_prs:
             continue
         if repo.in_session() and goal_active():
@@ -403,7 +432,10 @@ def check_pr(repo: Repo, args: list[str]) -> None:
             block(f"a PR from {head} into {base} in local milestones mode.", local_merge_route(base, head))
         if not (base.startswith(repo.p) or base == repo.default):
             block(f"a PR from {head} into {base}.", "A milestone PR goes into its parent: project/* or the default branch.")
-        sha = repo.sha(head) if repo.is_this(opts.get("repo", "")) else ""
+        here = repo.is_this(opts.get("repo", ""))
+        sha = (repo.sha(head) or repo.sha(f"origin/{head}")) if here else ""
+        if here and not sha:  # no receipt can be compared for a head that is no commit here
+            block(f"a PR from {head}: it cannot be resolved to a commit in this repo.", f"`git fetch origin {head}` (or push it), then open the PR.")
         parent = repo.project_of(head, sha) if sha else ""
         if parent and base != parent:  # GitHub picks the default branch when --base is left out
             block(f"a PR from {head} into {base}: its project is {parent}.", f"Pass `--base {parent}`.")

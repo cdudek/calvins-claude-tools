@@ -414,8 +414,11 @@ def test_local_mode_opens_the_project_pr_into_the_default_branch_only(repo: Path
 
 def test_pr_mode_keeps_the_project_branch_rule(repo: Path) -> None:
     _local(repo, None)
+    _git(repo, "checkout", "-q", "master")
+    _commit(repo, "src/other.ts", "x\n")
+    _git(repo, "push", "-q", "origin", "master")  # the default branch moved after the project was cut
     _git(repo, "checkout", "-q", "project/trial")
-    _pass_project(repo)  # ignored outside local mode
+    _pass_project(repo)  # a project pass without the default branch merged in opens nothing
     r = _run(repo, "git push -u origin project/trial")
     assert r.returncode == 2 and "only through milestone PRs" in r.stderr
 
