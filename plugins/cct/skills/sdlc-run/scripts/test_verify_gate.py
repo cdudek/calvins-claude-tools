@@ -1494,7 +1494,11 @@ def test_approve_refuses_a_milestone_check_list_without_the_full_e2e(
 
 
 @pytest.mark.parametrize(
-    "milestone", [["pytest -q", "pnpm test:e2e --max-failures=10"], ["pytest -q", "uv run pytest e2e -q"]]
+    "milestone",
+    [
+        ["pytest -q", "pnpm test:e2e --max-failures=10", "pnpm exec playwright test --repeat-each=3 $specs"],
+        ["pytest -q", "uv run pytest e2e -q", "for i in 1 2 3; do uv run pytest e2e/a.py -q; done"],
+    ],
 )
 def test_approve_accepts_a_named_full_e2e_entry(tmp_path: Path, milestone: list) -> None:
     repo = _e2e_repo(tmp_path, milestone)
@@ -1510,6 +1514,10 @@ def test_an_old_lock_reports_an_upgrade_gap_and_still_runs(tmp_path: Path) -> No
     """An approval made before the rule keeps working: the gate says what is missing, never fails."""
     repo = _e2e_repo(tmp_path, ["true"], config=None)
     assert _gate(repo, "approve", ID).returncode == 0
+    _old = repo / "changes" / ID / "lock.json"
+    _lock = json.loads(_old.read_text())
+    _lock.pop("format")
+    _old.write_text(json.dumps(_lock))
     (repo / "e2e").mkdir()
     (repo / "e2e" / "a.spec.ts").write_text("x")
     _git(repo, "add", ".")

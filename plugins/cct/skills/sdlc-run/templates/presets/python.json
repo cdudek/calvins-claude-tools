@@ -76,18 +76,18 @@
       "uv run ruff format --check .",
       "uv run ruff check .",
       "uv run mypy src",
-      "uv run pytest -q"
+      "uv run pytest -q --ignore=e2e"
     ],
     "milestone": [
       "uv run ruff format --check .",
       "uv run ruff check .",
       "uv run mypy src",
-      "uv run pytest -q",
+      "uv run pytest -q --ignore=e2e",
       {"name": "e2e", "run": "[ ! -d e2e ] || uv run pytest e2e -q"},
       {
         "name": "e2e-repeat",
         "after": ["e2e"],
-        "run": "specs=$( { git diff --name-only --diff-filter=d {base}...HEAD -- 'e2e/*.py'; sed 's/[[:space:]]*#.*//' e2e/flaky-specs.txt 2>/dev/null; } | awk 'NF' | sort -u ); [ -z \"$specs\" ] || for i in 1 2 3; do uv run pytest -q $specs || exit 1; done"
+        "run": "changed=$(git diff --name-only --diff-filter=d {base}...HEAD -- 'e2e/*.py') || exit 1; specs=$( { printf '%s\\n' \"$changed\"; sed 's/[[:space:]]*#.*//' e2e/flaky-specs.txt 2>/dev/null; } | awk 'NF' | sort -u ); [ -z \"$specs\" ] || for i in 1 2 3; do uv run pytest -q $specs || exit 1; done"
       }
     ]
   },

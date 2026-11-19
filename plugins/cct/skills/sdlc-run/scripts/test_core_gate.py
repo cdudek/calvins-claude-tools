@@ -4,6 +4,8 @@ from __future__ import annotations
 
 import importlib.util
 import json
+import os
+import subprocess
 import sys
 from pathlib import Path
 
@@ -13,6 +15,7 @@ from test_verify_gate import (
     ID,
     _approve,
     _commit_files,
+    _env,
     _gate,
     _git,
     _last,
@@ -179,3 +182,81 @@ def test_malformed_decisions_json_on_a_new_lock_blocks_instead_of_reading_as_emp
     (repo / "changes" / ID / "decisions.json").write_text("{broken")
     _git(repo, "commit", "-qam", "broken")
     assert _last(_gate(repo, "milestone", ID)) == "VERIFY BLOCKED reason=protected-path"
+
+
+# --- the E2E rule, the preset repeats and the audit (round 2 findings 1, H7, M1, M2) -------------
+
+SKILL = GATE.parents[2]
+
+
+def _preset(name: str) -> dict:
+    return json.loads((SKILL / "templates/presets" / f"{name}.json").read_text())
+
+
+def _entry(name: str, stack: str) -> dict:
+    return next(c for c in _preset(stack)["checks"]["milestone"] if isinstance(c, dict) and c["name"] == name)
+
+
+def test_a_full_e2e_without_the_x3_repeat_is_not_approved(tmp_path: Path) -> None:
+    from test_verify_gate import _e2e_repo
+
+    repo = _e2e_repo(tmp_path, ["pytest -q", "uv run pytest e2e -q"])
+    r = _gate(repo, "approve", ID)
+    assert r.returncode == 1 and "repeat" in r.stdout
+
+
+def test_an_e2e_suite_added_after_a_new_approval_blocks_the_milestone(tmp_path: Path) -> None:
+    from test_verify_gate import _e2e_repo
+
+    repo = _e2e_repo(tmp_path, ["true"], config=None)
+    assert _gate(repo, "approve", ID).returncode == 0
+    (repo / "e2e").mkdir()
+    (repo / "e2e" / "a.spec.ts").write_text("x")
+    _git(repo, "add", ".")
+    _git(repo, "commit", "-qm", "e2e appears")
+    _commit_files(repo, validation_md="| F1 | x | y | z | met |\n")
+    r = _gate(repo, "milestone", ID)
+    assert _last(r) == "VERIFY BLOCKED reason=env" and "full E2E" in r.stdout
+
+
+@pytest.mark.parametrize("stack", ["node", "python"])
+def test_a_repeat_fails_when_git_cannot_select_the_specs(tmp_path: Path, stack: str) -> None:
+    """The diff is run before the pipe, so an unknown base is an error, never an empty selection."""
+    repo = _repo(tmp_path, [])
+    cmd = _entry("e2e-repeat", stack)["run"].replace("{base}", "origin/does-not-exist")
+    bad = subprocess.run(cmd, shell=True, cwd=repo, capture_output=True, text=True, env=_env())
+    assert bad.returncode != 0
+    ok = subprocess.run(cmd.replace("origin/does-not-exist", "HEAD"), shell=True, cwd=repo, capture_output=True, text=True, env=_env())
+    assert ok.returncode == 0, ok.stderr
+
+
+def test_the_repeat_diffs_against_the_real_parent_branch(tmp_path: Path) -> None:
+    mod = _vg()
+    repo = _milestone_repo(tmp_path)
+    change = repo / "changes" / ID
+    (change / "decisions.json").write_text(json.dumps({"size": "S", "project": {"slug": "store"}}))
+    _git(repo, "commit", "-qam", "project")
+    _git(repo, "branch", "project/store")
+    assert mod.parent_ref(change, {"defaultBranch": "master", "milestones": {"merge": "local"}}, repo) == "project/store"
+    assert mod.parent_ref(change, {"defaultBranch": "master"}, repo) == "origin/master"
+    cmd = mod.expand("git diff {base}...HEAD", ID, {"defaultBranch": "master"}, "project/store")
+    assert cmd == "git diff project/store...HEAD"
+
+
+def test_the_python_preset_keeps_e2e_out_of_the_plain_pytest_run() -> None:
+    plain = next(c for c in _preset("python")["checks"]["milestone"] if isinstance(c, str) and "pytest" in c)
+    assert "--ignore=e2e" in plain
+
+
+@pytest.mark.parametrize("stack", ["node", "python"])
+def test_audit_understands_the_preset_repeat_and_its_base_placeholder(tmp_path: Path, stack: str) -> None:
+    from test_verify_gate import _audit, _audit_repo
+
+    entry = _entry("e2e-repeat", stack)
+    repo, env = _audit_repo(tmp_path, [entry], required=None)
+    expanded = entry["run"].replace("{base}", "origin/master")
+    verify = repo / "changes" / ID / "verify"
+    verify.mkdir()
+    (verify / "report.json").write_text(json.dumps({"sha": "abc1234def", "checks": [{"name": "e2e-repeat", "run": expanded, "status": "pass"}]}))
+    r = _audit(repo, env)
+    assert "never ran" not in r.stdout and "does not exist" not in r.stdout, r.stdout
