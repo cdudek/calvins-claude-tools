@@ -31,12 +31,18 @@ def test_the_final_project_sync_is_pushed_once_it_passed_the_project_gate_S5(rep
     assert _run(repo, push).returncode == 2  # one verified push, not an open door
 
 
-def _hotfix(repo: Path, recorded: bool = True, head: str = "hotfix/trial") -> None:
+def _hotfix(repo: Path, recorded: bool = True, head: str = "hotfix/trial", kind: str = "hotfix", passed: bool = True) -> None:
     _git(repo, "checkout", "-qb", "hotfix/trial", "master")
     sha = _commit(repo, "src/fix.ts", "fix\n")
+    change = repo / "changes" / ID
+    (change / "decisions.json").write_text(json.dumps({"milestone": {"slug": "trial", "kind": kind}}))
+    if passed:
+        verify = change / "verify"
+        verify.mkdir(exist_ok=True)
+        (verify / "report.json").write_text(json.dumps({"scope": "feature", "sha": sha, "result": f"VERIFY PASS feature {ID} {sha}", "change": ID, "owner": "", "format": 3}))
     if recorded:
-        state = repo / "changes" / ID / "state"
-        state.mkdir()
+        state = change / "state"
+        state.mkdir(exist_ok=True)
         (state / "heads.json").write_text(json.dumps({"hotfix": {"head": head, "base": "master", "sha": sha}}))
 
 
@@ -71,3 +77,13 @@ def test_a_record_for_another_head_or_a_disabled_hotfix_opens_nothing_S6(repo: P
 def test_a_milestone_pr_whose_head_cannot_be_resolved_is_refused_F4(repo: Path) -> None:  # noqa: F811
     r = _run(repo, "gh pr create --base master --head milestone/trial-9 --title t --body b")
     assert r.returncode == 2 and "milestone/trial-9" in r.stderr and "cannot" in r.stderr
+
+
+def test_a_hotfix_record_without_a_feature_pass_opens_nothing_S6(repo: Path) -> None:  # noqa: F811
+    _hotfix(repo, passed=False)
+    assert _run(repo, "git push -u origin hotfix/trial", goal=True).returncode == 2
+
+
+def test_a_change_that_is_not_a_hotfix_has_no_hotfix_route_S6(repo: Path) -> None:  # noqa: F811
+    _hotfix(repo, kind="new")
+    assert _run(repo, "git push -u origin hotfix/trial", goal=True).returncode == 2

@@ -249,6 +249,14 @@ def project_branch(change: Path, cfg: dict) -> str:
     return ""
 
 
+def hotfix_change(change: Path) -> bool:
+    """The change record says `milestone.kind: hotfix`: only then is its hotfix/* head a route."""
+    try:
+        return (json.loads(read(spec.state_path(change, "decisions.json")) or "{}").get("milestone") or {}).get("kind") == "hotfix"
+    except (ValueError, AttributeError):
+        return False
+
+
 def record_head(change: Path, key: str, name: str | None, value: dict) -> None:
     """Persist the head and base a gate passed in state/heads.json, so a resumed goal or a new session
     reads the same values the gate saw (milestones.<n>, or hotfix). The old place is read first."""
@@ -1113,7 +1121,7 @@ def run(
             branch, default = sh("git", "symbolic-ref", "--short", "-q", "HEAD"), cfg.get("defaultBranch") or "main"
             if scope == "milestone" and number:
                 record_head(change, "milestones", str(number), {"head": branch, "base": project_branch(change, cfg) or default, "sha": report["sha"]})
-            elif scope == "feature" and branch.startswith("hotfix/") and cfg.get("hotfix", True):
+            elif scope == "feature" and branch.startswith("hotfix/") and cfg.get("hotfix", True) and hotfix_change(change):
                 record_head(change, "hotfix", None, {"head": branch, "base": default, "sha": report["sha"]})
         rows = "\n".join(
             f"| {c['name']} | {c['status']} | {c['seconds']} |" for c in report["checks"]

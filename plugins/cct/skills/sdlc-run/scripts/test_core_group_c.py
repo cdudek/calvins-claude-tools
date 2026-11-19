@@ -9,7 +9,7 @@ import sys
 from pathlib import Path
 
 import pytest
-from test_sdlc_status import BRANCH, GATE, ID, MOVED, PASS, _gate, _goal, _plan, _pr, _run, repo  # noqa: F401
+from test_sdlc_status import BRANCH, GATE, ID, MOVED, PASS, _gate, _goal, _owner, _plan, _pr, _run, repo  # noqa: F401
 
 import sdlc_status
 
@@ -158,14 +158,26 @@ def test_a_failed_milestone_run_records_nothing(tmp_path: Path) -> None:
     assert not (repo / "changes" / tvg.ID / "state" / "heads.json").exists()
 
 
-def test_a_hotfix_feature_pass_records_the_hotfix_head(tmp_path: Path) -> None:
+def _hotfix_gate(tmp_path: Path, kind: str) -> Path:
     repo = tvg._repo(tmp_path, ["true"])
+    (repo / "changes" / tvg.ID / "decisions.json").write_text(json.dumps({"size": "S", "milestone": {"kind": kind}}))
+    tvg._git(repo, "commit", "-qam", "kind")
     tvg._approve(repo)
     tvg._git(repo, "checkout", "-q", "-b", "hotfix/trial")
     r = tvg._gate(repo, "feature", tvg.ID)
     assert tvg._last(r).startswith("VERIFY PASS feature"), r.stdout
+    return repo
+
+
+def test_a_hotfix_feature_pass_records_the_hotfix_head(tmp_path: Path) -> None:
+    repo = _hotfix_gate(tmp_path, "hotfix")
     saved = json.loads((repo / "changes" / tvg.ID / "state" / "heads.json").read_text())
     assert saved["hotfix"]["head"] == "hotfix/trial" and saved["hotfix"]["base"] == "main"
+
+
+def test_a_feature_pass_of_a_change_that_is_not_a_hotfix_records_no_hotfix_head(tmp_path: Path) -> None:
+    repo = _hotfix_gate(tmp_path, "new")
+    assert not (repo / "changes" / tvg.ID / "state" / "heads.json").exists()
 
 
 @pytest.mark.parametrize("where", ["state/heads.json", "heads.json"])
@@ -226,25 +238,42 @@ def _status(repo: Path, *args: str) -> subprocess.CompletedProcess[str]:
     return _run(repo, *args)
 
 
-def test_a_branchless_project_is_done_once_integrated_and_accepted(repo: Path) -> None:  # noqa: F811
+def test_a_branchless_project_is_done_once_integrated_and_the_owner_accepted(repo: Path, tmp_path: Path, monkeypatch) -> None:  # noqa: F811
+    monkeypatch.setenv("HOME", str(tmp_path / "home"))
     _branchless(repo)
     sha = _main_branch(repo)
     assert _goal(repo, {}, scope="project")[1].endswith("no-project-branch")
     assert _status(repo, "record", ID, "project", "--sha", sha).returncode == 0
     assert "project-not-accepted" in _goal(repo, {}, scope="project")[1]
+    refused = _status(repo, "record", ID, "project", "--sha", sha, "--accepted")  # the flag alone is not the owner
+    assert refused.returncode == 1 and "has not accepted" in refused.stdout
+    _owner(repo, tmp_path, "PROJECT-big", "Accept milestone", monkeypatch)
     assert _status(repo, "record", ID, "project", "--sha", sha, "--accepted").returncode == 0
+    sys.modules["marks"]._ANSWERS.clear()
     assert _goal(repo, {}, scope="project") == (0, f"GOAL {ID} DONE project=big integrated={sha}")
+
+
+def test_a_hand_written_acceptance_is_not_the_owners(repo: Path, tmp_path: Path, monkeypatch) -> None:  # noqa: F811
+    monkeypatch.setenv("HOME", str(tmp_path / "home"))
+    _branchless(repo)
+    sha = _main_branch(repo)
+    _heads(repo, {"project": {"sha": sha, "accepted": True}})
+    assert "project-not-accepted" in _goal(repo, {}, scope="project")[1]
+    _owner(repo, tmp_path, "PROJECT-big", "Hold", monkeypatch)
+    sys.modules["marks"]._ANSWERS.clear()
+    assert "project-not-accepted" in _goal(repo, {}, scope="project")[1]
 
 
 def test_the_project_record_refuses_a_sha_that_is_not_in_the_default_branch(repo: Path) -> None:  # noqa: F811
     _branchless(repo)
     _main_branch(repo)
-    r = _status(repo, "record", ID, "project", "--sha", "f" * 40, "--accepted")
+    r = _status(repo, "record", ID, "project", "--sha", "f" * 40)
     assert r.returncode == 1 and "not in main" in r.stdout
     assert not (repo / "changes" / ID / "state" / "heads.json").exists()
 
 
-def test_a_recorded_project_sha_that_left_the_default_branch_is_not_integrated(repo: Path) -> None:  # noqa: F811
+def test_a_recorded_project_sha_that_left_the_default_branch_is_not_integrated(repo: Path, tmp_path: Path, monkeypatch) -> None:  # noqa: F811
+    monkeypatch.setenv("HOME", str(tmp_path / "home"))
     _branchless(repo)
     _main_branch(repo)
     _heads(repo, {"project": {"sha": "f" * 40, "accepted": True}})
@@ -328,3 +357,10 @@ def test_the_project_goal_has_a_turn_cap_of_its_own() -> None:
     assert adopt.delivery_values({})["PROJECT_TURNS"] == "30"
     assert adopt.delivery_values({"goal": {"milestoneTurns": 12}})["PROJECT_TURNS"] == "12"
     assert adopt.delivery_values({"goal": {"projectTurns": 50}})["PROJECT_TURNS"] == "50"
+
+
+def test_a_merged_unnumbered_branch_is_milestone_one_only(repo: Path) -> None:  # noqa: F811
+    gh = lambda root, *a: [_merged("milestone/redesign-r2", 5)]  # noqa: E731
+    assert sdlc_status.goal_removed(repo, ID, "milestone", 2, gh=gh) is None
+    assert sdlc_status.goal_removed(repo, ID, "milestone", 1, gh=gh) == (0, f"GOAL {ID} DONE pr=5 state=merged folder=removed")
+    assert sdlc_status.goal_removed(repo, ID, "milestone", None, gh=gh)[0] == 0

@@ -916,6 +916,7 @@ KIT_MARKS = {
 KIT_GATE = {
     "07797d2ae191453e",
     "17c49f302fccaa95",
+    "1841658d833d2487",
     "196e2c2c20e79328",
     "1c17e460c91d2d3d",
     "22d6de1fd42fa247",
@@ -991,6 +992,7 @@ KIT_PR_GATE = {
     "e75851f8eacc7ec7",
     "f87ce3102acb032d",
     "f9f78cded1337388",
+    "fde723ac4ce5fc3f",
 }  # same, for .claude/hooks/pr-gate.sh
 KIT_PASS_PROOF = {
     "06947c4c80aa6dbe",

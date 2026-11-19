@@ -64,7 +64,7 @@ for _sub in ("scripts", "hooks"):
     sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "templates" / _sub))
 
 import spec  # noqa: E402
-from pass_proof import bound, change_paths, proves  # noqa: E402
+from pass_proof import bound, change_paths, milestone_of, proves  # noqa: E402
 
 STAGES = ("Intent", "UX plan", "Facts", "Tech plan", "Build", "Milestone", "Outcome")
 
@@ -394,6 +394,14 @@ def integrated(root: Path, sha: str, default: str) -> bool:
     return any(contains(root, sha, ref) for ref in (default, f"origin/{default}"))
 
 
+def owner_accepted(root: Path, change: Path, slug: str) -> bool:
+    """The owner answered `Change <id>, finding PROJECT-<slug>: ...` with Accept milestone in a dialog (the
+    reader of marks.py, as for an ask PR); a flag the agent writes is never the owner."""
+    from marks import owner_decisions
+
+    return owner_decisions(root, change.name).get(f"PROJECT-{slug}", ("",))[0] == "accepted"
+
+
 def branchless_project(root: Path, change: Path, cfg: dict) -> tuple[int, str] | None:
     """A project with no branch is done by the record `record <id> project` wrote: the default-branch
     commit that holds every milestone, and the owner's acceptance. None when nothing was recorded."""
@@ -403,9 +411,9 @@ def branchless_project(root: Path, change: Path, cfg: dict) -> tuple[int, str] |
     name, sha = f"GOAL {change.name}", str(rec["sha"])
     if not integrated(root, sha, cfg.get("defaultBranch") or "main"):
         return 1, f"{name} OPEN project-not-integrated"
-    if not rec.get("accepted"):
-        return 1, f"{name} OPEN project-not-accepted"
     slug = (read_json(spec.state_path(change, "decisions.json")).get("project") or {}).get("slug", "")
+    if not (rec.get("accepted") and owner_accepted(root, change, slug)):
+        return 1, f"{name} OPEN project-not-accepted"
     return 0, f"{name} DONE project={slug} integrated={sha}"
 
 
@@ -416,6 +424,9 @@ def record_project(root: Path, change: Path, cfg: dict, sha: str, accepted: bool
     default = cfg.get("defaultBranch") or "main"
     if not integrated(root, sha, default):
         return 1, f"{sha or 'no sha'} is not in {default}: merge every milestone into {default} first"
+    slug = (read_json(spec.state_path(change, "decisions.json")).get("project") or {}).get("slug", "")
+    if accepted and not owner_accepted(root, change, slug):
+        return 1, f"the owner has not accepted PROJECT-{slug}: ask `Change {change.name}, finding PROJECT-{slug}: ...` (Accept milestone | Hold) first"
     record_head(change, "project", None, {"sha": sha, "accepted": accepted})
     return 0, f"recorded project sha={sha} accepted={'yes' if accepted else 'no'}"
 
@@ -577,12 +588,14 @@ def goal_removed(root: Path, change_id: str, scope: str, n: int | None, gh=gh_js
     cfg = config(root) if (root / "sdlc.json").exists() else {}
     if scope != "milestone" or Path(change_id).name != change_id or change_id in ("", "..", "archive"):
         return None
-    head = ((cfg.get("milestones") or {}).get("branchPrefix", "milestone/")) + slug_of(change_id)
-    own = rf"{re.escape(head)}(?:-{n})?" if n else rf"{re.escape(head)}(?:-\d+)?"  # unnumbered is milestone 1
+    prefix, slug = (cfg.get("milestones") or {}).get("branchPrefix", "milestone/"), slug_of(change_id)
     found = gh(root, "pr", "list", "--state", "merged", "--limit", "200", "--json", "number,headRefName,state")
     if not found:  # gh failed or nothing merged: no proof, so the id is still unknown
         return None
-    merged = [p for p in found if re.fullmatch(own, str(p.get("headRefName", "")))]
+    merged = [  # the one rule of the gate and the hook: <prefix><slug>-<n> is n, <prefix><slug> is 1
+        p for p in found
+        if (num := milestone_of(str(p.get("headRefName", "")), prefix, slug)) and (n is None or num == n)
+    ]
     if not merged:
         return None
     return 0, f"GOAL {change_id} DONE pr={merged[-1]['number']} state=merged folder=removed"
@@ -696,7 +709,7 @@ BLOCKS = {
         "the owner has not accepted the project",
         "the integrated project is recorded without the owner's acceptance",
         "you",
-        "accept in the project dialog, then `python3 ${{CLAUDE_SKILL_DIR}}/scripts/sdlc_status.py record {id} project --sha <sha> --accepted`",
+        "ask `Change {id}, finding PROJECT-<slug>: ...` with Accept milestone and Hold, then `python3 ${{CLAUDE_SKILL_DIR}}/scripts/sdlc_status.py record {id} project --sha <sha> --accepted`",
     ),
     "no-change-folder": (
         "there is no change folder",

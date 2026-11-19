@@ -274,15 +274,21 @@ class Repo:
         return next(iter(found)) if len(found) == 1 else ""
 
     def hotfix_recorded(self, head: str, sha: str) -> bool:
-        """The feature gate recorded `head` as a hotfix (state/heads.json, or the old place) and `sha`
-        is the gated commit or only records after it."""
+        """`head` is a hotfix head (state/heads.json or the old place) of a change whose record says
+        `milestone.kind: hotfix`, and a feature gate passed for that change on a commit `sha` still
+        holds at (the gated commit or only records after it)."""
         rel = self.changes.relative_to(self.top).as_posix()
         for path in [*self.in_changes("state/heads.json"), *self.in_changes("heads.json")]:
+            folder = path.parent.parent if path.parent.name == "state" else path.parent
             try:
                 rec = json.loads(path.read_text(encoding="utf-8")).get("hotfix")
-            except (OSError, ValueError, AttributeError):
+                decisions = next(json.loads(p.read_text(encoding="utf-8")) for p in (folder / "state" / "intake.json", folder / "decisions.json") if p.exists())
+                report = json.loads((folder / "verify" / "report.json").read_text(encoding="utf-8"))
+            except (OSError, ValueError, AttributeError, StopIteration):
                 continue
-            if isinstance(rec, dict) and rec.get("head") == head and rec.get("sha") and proof("proves")(self.dir, rel, str(rec["sha"]), sha):
+            if not (isinstance(rec, dict) and rec.get("head") == head and (decisions.get("milestone") or {}).get("kind") == "hotfix"):
+                continue
+            if proof("bound")(report, "feature", folder.name) and proof("proves")(self.dir, rel, str(report["sha"]), sha):
                 return True
         return False
 
