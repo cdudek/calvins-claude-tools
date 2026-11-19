@@ -380,6 +380,19 @@ def parent_ref(change: Path, cfg: dict, repo: Path) -> str:
     return f"origin/{cfg.get('defaultBranch') or 'main'}"
 
 
+def parent_gap(repo: Path, base: str) -> list[str]:
+    """Layout 4 compares the change with its parent branch. When no parent resolves (a fresh clone
+    with no `origin`, a renamed default branch) that is the environment's gap, not a failed change:
+    the message and the fix line, or nothing."""
+    if spec.resolve_base(repo, base):
+        return []
+    default = base.removeprefix("origin/")
+    return [
+        f"the parent branch ({base}) cannot be resolved: the living-spec diff has nothing to compare with.",
+        f"Fix: `git fetch origin {default}` (or create the branch), or set sdlc.json `defaultBranch` to its real name; then run again.",
+    ]
+
+
 def expand(cmd: str, change_id: str, cfg: dict, base: str = "") -> str:
     """`{id}` is the change, `{base}` the diff base of a repeat run: `base` (the real parent ref,
     see parent_ref) or else the default branch on origin. Both go into a command run by a shell,
@@ -720,6 +733,9 @@ def approve(change: Path, cfg: dict) -> int:
     problems = lint_problems(change) + approval_blockers(change)  # the cheap pure check first
     if v4:  # the spec, its rule files and the diff against the parent agree before anyone locks it
         base = parent_ref(change, cfg, root())
+        if gap := parent_gap(root(), base):
+            print("\n".join(gap))
+            return end("APPROVE BLOCKED reason=env", 3)
         problems += spec.consistency(change, "approve", root(), base) + spec.check(root(), base)
     else:
         problems += [f"{name} is missing: approval locks it" for name in ("facts.md", "plan.md") if not (change / name).is_file()]
@@ -1119,6 +1135,9 @@ def run(
             return finish(f"VERIFY FAIL {scope} {change.name} check=parent-sync", 1)
 
     if scope == "milestone" and spec.applies(change):  # the living spec: rules, tags and the diff
+        if gap := parent_gap(repo, parent_ref(change, cfg, repo)):
+            print("\n".join(gap))
+            return finish("VERIFY BLOCKED reason=env", 3)
         if drift := spec.check(repo, parent_ref(change, cfg, repo)):
             print("\n".join(drift[:TAIL]))
             return finish(f"VERIFY FAIL {scope} {change.name} check=spec", 1)
