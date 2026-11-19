@@ -21,11 +21,11 @@ import verify_gate  # noqa: E402
 # --- known issues ------------------------------------------------------------------------------
 
 
-def test_feature_pr_mode_asks_for_the_milestone_branch_without_a_number(repo: Path) -> None:  # noqa: F811
+def test_a_leftover_feature_prs_setting_reads_as_one_milestone_pr(repo: Path) -> None:  # noqa: F811
     (repo / "sdlc.json").write_text(json.dumps({"delivery": "feature-prs"}))
     _gate(repo, PASS)
-    assert _goal(repo, {}) == (1, f"GOAL {ID} OPEN no-pr:milestone/redesign-r2")
-    assert _goal(repo, {"milestone/redesign-r2": _pr()}) == (0, f"GOAL {ID} DONE pr=7 state=merged gate={GATE}")
+    assert _goal(repo, {}) == (1, f"GOAL {ID} OPEN no-pr:{BRANCH}")
+    assert _goal(repo, {BRANCH: _pr()}) == (0, f"GOAL {ID} DONE pr=7 state=merged gate={GATE}")
 
 
 def test_milestone_one_stays_done_after_milestone_two_passed(repo: Path) -> None:  # noqa: F811
@@ -95,6 +95,28 @@ def _merged(head: str, number: int = 7, base: str = "main") -> dict:
 def test_a_removed_folder_whose_pr_merged_reads_done(repo: Path) -> None:  # noqa: F811
     code, line = sdlc_status.goal_removed(repo, ID, "milestone", None, gh=lambda root, *a: [_merged(BRANCH)])
     assert (code, line) == (0, f"GOAL {ID} DONE pr=7 state=merged folder=removed")
+
+
+def _open(head: str, armed: bool = True, number: int = 7, base: str = "main") -> dict:
+    return {
+        "number": number, "headRefName": head, "baseRefName": base, "state": "OPEN",
+        "autoMergeRequest": {"mergeMethod": "MERGE"} if armed else None, "labels": [],
+    }  # fmt: skip
+
+
+def test_a_folder_removed_in_the_milestone_pr_reads_done_once_that_pr_is_armed(repo: Path) -> None:  # noqa: F811
+    got = sdlc_status.goal_removed(repo, ID, "milestone", None, gh=lambda root, *a: [_open(BRANCH)])
+    assert got == (0, f"GOAL {ID} DONE pr=7 state=armed folder=removed")
+
+
+def test_a_folder_removed_in_an_unarmed_pr_is_open_until_it_is_armed(repo: Path) -> None:  # noqa: F811
+    got = sdlc_status.goal_removed(repo, ID, "milestone", None, gh=lambda root, *a: [_open(BRANCH, armed=False)])
+    assert got == (1, f"GOAL {ID} OPEN pr-7-not-merged-or-armed")
+
+
+def test_a_closed_pr_never_proves_a_removed_folder(repo: Path) -> None:  # noqa: F811
+    closed = {**_open(BRANCH), "state": "CLOSED", "autoMergeRequest": None}
+    assert sdlc_status.goal_removed(repo, ID, "milestone", None, gh=lambda root, *a: [closed]) is None
 
 
 def test_a_removed_folder_with_no_merged_pr_is_still_no_change_folder(repo: Path) -> None:  # noqa: F811
@@ -344,7 +366,7 @@ def test_the_cli_names_the_next_command_and_resume_clears_it(repo: Path) -> None
 
 
 def test_the_goal_templates_stop_on_a_handoff_and_the_plan_hands_off_at_the_cap() -> None:
-    for name in ("run", "feature", "milestone", "project"):
+    for name in ("run", "project"):
         text = (SKILL / "templates" / "goal" / f"{name}.txt").read_text()
         assert "HANDOFF" in text and len(text) < 600
     plan = (SKILL / "templates" / "change" / "plan.md").read_text()
