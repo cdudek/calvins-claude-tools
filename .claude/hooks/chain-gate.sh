@@ -195,14 +195,23 @@ def is_v4(change_dir: Path, decisions: dict) -> bool:
 
 
 def protected_files(change_dir: Path, decisions: dict) -> tuple[str, ...]:
-    """What a locked change protects: its layout's files, or both layouts' when the lock names none."""
+    """What a locked change protects: its layout's locked documents (pass_proof.LOCKED_FILES, the one
+    list) minus the ones that take ticks, or both layouts' when the lock names none."""
+    try:
+        proof = helper("pass_proof")
+    except Exception:  # missing or broken: a gate that cannot read the list blocks
+        deny(
+            "pass_proof.py is missing or broken beside chain-gate.sh; run `sdlc-run adopt` to restore it.",
+            source="pass_proof.py beside chain-gate.sh",
+            action="run `sdlc-run adopt`",
+        )
     if lock_layout(change_dir) is None and (state_file(change_dir, "lock.json")).exists():
-        return tuple(dict.fromkeys(PROTECTED_FILES + V4_PROTECTED_FILES))
-    return V4_PROTECTED_FILES if is_v4(change_dir, decisions) else PROTECTED_FILES
+        names = [n for files in proof.LOCKED_FILES.values() for n in files]
+    else:
+        names = proof.LOCKED_FILES[4 if is_v4(change_dir, decisions) else 3]
+    return tuple(dict.fromkeys(n for n in names if n not in proof.TICKED_FILES))
 
 
-PROTECTED_FILES = ("facts.md", "done.json", "lock.json")
-V4_PROTECTED_FILES = ("spec.md", "design.md", "done.json", "lock.json")  # tasks.md takes ticks
 PROTECTED_GLOBS = ["sdlc.json", "**/*-snapshots/**", "**/__screenshots__/**", "**/*allowlist*"]
 
 
@@ -433,7 +442,7 @@ if len(parts) >= 3 and parts[0] == changes:
                 "success measure) and have the engineer confirm it first.",
                 source=f"{changes}/{change_id}/intent.md"
             )
-        if base == "facts.md" and decisions.get("size") != "none" and cfg.get("ux", "on") != "off":
+        if base == "facts.md" and decisions.get("size") not in ("none", "S") and cfg.get("ux", "on") != "off":
             needed = ["conformance"] + (["validation"] if decisions.get("size") in ("M", "L") else [])
             missing = [a for a in needed if not activity_done(change_dir, decisions, a)]
             if missing:
@@ -543,6 +552,61 @@ if v3 and decisions.get("kind") == "bug" and decisions.get("testLocked") is True
             "`testEdit` with their words.",
             source=f"{changes}/{change_id}/decisions.json"
         )
+
+def lock_state() -> dict | None:
+    """lock.json as a dict, {} without one, None when it exists but cannot be read (fails closed)."""
+    path = state_file(change_dir, "lock.json")
+    if not path.exists():
+        return {}
+    try:
+        data = json.loads(path.read_text(encoding="utf-8"))
+        return data if isinstance(data, dict) else None
+    except (OSError, ValueError):
+        return None
+
+
+def strings(value: object) -> list[str]:
+    return [v for v in value if isinstance(v, str) and v] if isinstance(value, list) else []
+
+
+# a visual change restyles what exists: no data, no auth, no new pages (those start a linked change)
+SCOPE_GUARD = [
+    "**/migrations/**", "drizzle/**", "prisma/**", "db/migrate/**", "alembic/**",
+    "**/auth/**", "**/permissions/**", *(f"**/*auth*.{e}" for e in ("ts", "tsx", "js", "py", "rb")),
+]
+ROUTE_EXT = ("tsx", "jsx", "ts", "js", "mjs", "mts", "cjs")
+ROUTE_FILES = [f"**/{n}.{e}" for n in ("page", "route", "layout") for e in ROUTE_EXT] + ["**/pages/**", "**/routes/**"]
+
+
+def tracked(path: str) -> bool:
+    return subprocess.run(["git", "-C", str(root), "ls-files", "--error-unmatch", "--", path], capture_output=True).returncode == 0
+
+
+def scope_guard() -> None:
+    lock = lock_state()
+    if lock is not None and not (decisions.get("visualSource") or lock.get("screens") == "required"):
+        return
+    sg = cfg.get("scopeGuard")
+    sg = sg if isinstance(sg, dict) else {}
+    if match_any(rel, strings(sg.get("allow"))):
+        return
+    # the plan's folders are the snapshot approval locked, never the plan.md an edit can change
+    folders = [f.strip("/") for f in strings((lock or {}).get("scopeFolders")) if ".." not in f.split("/") and f.strip("/")]
+    new_route = match_any(rel, strings(sg.get("routes")) or ROUTE_FILES) and not tracked(rel) and not any(rel == f or rel.startswith(f + "/") for f in folders)
+    if lock is None or match_any(rel, SCOPE_GUARD) or new_route:
+        deny(
+            f"{rel}: a visual change does not add data, auth or new pages: start a linked change "
+            "(`sdlc-run` new change) for it. A repo allows a path with sdlc.json `scopeGuard.allow`."
+            + (" lock.json cannot be read, so the guard refuses." if lock is None else ""),
+            source=f"{changes}/{change_id}/lock.json and decisions.json",
+            action="start a linked change for the data, auth or page work",
+        )
+
+
+try:
+    scope_guard()
+except Exception as err:  # a guard that cannot decide refuses (SystemExit from deny passes through)
+    deny(f"the visual scope guard failed ({type(err).__name__}); refusing {rel}. Fix sdlc.json scopeGuard.", source="sdlc.json scopeGuard")
 
 if v3 and not skipped(decisions, "prototype") and not (state_file(change_dir, "lock.json")).exists():  # design only
     for proto in cfg.get("prototypeDirs", []):

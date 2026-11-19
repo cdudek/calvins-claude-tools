@@ -3,7 +3,8 @@ sdlc_status.py (the goal check). stdlib only.
 
 A pass proves the head the gate ran on. A later head counts as the same pass only when the gated
 head is its ancestor and nothing but the change records moved: a file outside the changes folder,
-a locked input (facts.md, done.json, lock.json; the checks live in sdlc.json, outside the folder)
+a locked input (LOCKED_FILES: facts.md, or spec.md, design.md and tasks.md rows, with done.json and
+lock.json; the checks live in sdlc.json, outside the folder)
 or evidence (marks.json and anything under asks/, evidence/, shots/) moved. A record under
 .sdlc/outcomes/ is a change record too. An archive
 move (changes/<id> -> changes/archive/<id> or archive/<year>/<year-month>/<id>) is not a change
@@ -21,7 +22,14 @@ import subprocess
 from pathlib import Path
 from urllib.parse import quote
 
-LOCKED = {"facts.md", "done.json", "lock.json"}
+# The documents approval locks, by layout: the one list. chain-gate.sh protects them (minus the ones
+# that take ticks) and verify_gate.py hashes them into lock.json; test_sdd_hooks pins that the three agree.
+LOCKED_FILES = {
+    3: ("facts.md", "done.json", "lock.json"),
+    4: ("spec.md", "design.md", "tasks.md", "done.json", "lock.json"),
+}
+TICKED_FILES = ("tasks.md",)  # a tick or a handover edit is not an edit: only its task rows are locked
+LOCKED = {name for names in LOCKED_FILES.values() for name in names}
 EVIDENCE_FILES = {"marks.json"}
 EVIDENCE_DIRS = {"asks", "evidence", "shots"}
 OUTCOMES = ".sdlc/outcomes/"  # a record of the success measure (spec.py outcome write): records only
@@ -201,6 +209,31 @@ def _only_archived_at(repo: Path, old: tuple[str, str], new: tuple[str, str]) ->
     return re.fullmatch(r"\d{4}-\d{2}-\d{2}", value) is not None
 
 
+def _task_rows(text: str) -> list[list[str]]:
+    """The table rows of a tasks.md without their State column (the lock hashes the same)."""
+    rows: list[list[str]] = []
+    state: int | None = None
+    head = True
+    for line in text.splitlines():
+        if not line.strip().startswith("|"):
+            head = True
+            continue
+        cells = [c.strip() for c in line.strip().strip("|").split("|")]
+        if head:
+            state = next((i for i, c in enumerate(cells) if c.lower() == "state"), None)
+            head = False
+        rows.append([c for i, c in enumerate(cells) if i != state])
+    return rows
+
+
+def _only_ticks(repo: Path, old: tuple[str, str], new: tuple[str, str]) -> bool:
+    """`new` differs from `old` only outside the task rows or in their State column."""
+    before, after = (
+        _git(repo, "cat-file", "blob", blob).stdout.decode("utf-8", "replace") for blob in (old[0], new[0])
+    )
+    return _task_rows(before) == _task_rows(after)
+
+
 def proves(repo: Path, changes_dir: str, gated: str, head: str) -> bool:
     """True when a pass gated at `gated` still holds at `head`."""
     if not gated or not head:
@@ -219,6 +252,8 @@ def proves(repo: Path, changes_dir: str, gated: str, head: str) -> bool:
     for key in {k for k in before.keys() | after.keys() if (before.get(k) or ("",))[0] != (after.get(k) or ("",))[0]}:
         parts = key.split("/")
         if parts[-1] == "facts.md" and key in before and key in after and _only_archived_at(repo, before[key], after[key]):
+            continue
+        if parts[-1] in TICKED_FILES and key in before and key in after and _only_ticks(repo, before[key], after[key]):
             continue
         if parts[-1] in LOCKED | EVIDENCE_FILES or EVIDENCE_DIRS & set(parts[:-1]):
             return False

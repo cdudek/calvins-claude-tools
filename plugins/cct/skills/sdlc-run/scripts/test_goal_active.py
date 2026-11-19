@@ -203,7 +203,7 @@ def _project(tmp_path: Path, helper: bool = True) -> Path:
     repo = tmp_path / "repo"
     hooks = repo / ".claude" / "hooks"
     hooks.mkdir(parents=True)
-    names = ["pr-gate.sh", "chain-gate.sh", "verify-on-stop.sh", "sdlc-config.sh", "block_state.py"]
+    names = ["pr-gate.sh", "chain-gate.sh", "verify-on-stop.sh", "sdlc-config.sh", "block_state.py", "pass_proof.py"]
     if helper:
         names.append("goal_active.py")
     for name in names:

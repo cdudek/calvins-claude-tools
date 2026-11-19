@@ -22,7 +22,7 @@ APPROVED = "---\nstatus: approved\n---\n"
 def make(tmp_path: Path, v4: bool = True) -> Path:
     repo = tmp_path / "repo"
     (repo / ".claude" / "hooks").mkdir(parents=True)
-    for name in ("chain-gate.sh", "sdlc-config.sh", "goal_active.py", "block_state.py"):
+    for name in ("chain-gate.sh", "sdlc-config.sh", "goal_active.py", "block_state.py", "pass_proof.py"):
         shutil.copy(HOOKS / name, repo / ".claude" / "hooks" / name)
     (repo / "sdlc.json").write_text(json.dumps({"changesDir": "changes"}))
     c = repo / "changes" / ID
@@ -194,3 +194,71 @@ def test_the_hook_reads_state_and_protects_it_like_the_old_place(tmp_path: Path)
     cur = json.loads((c / "state" / "intake.json").read_text())
     r = edit(repo, f"changes/{ID}/state/intake.json", content=json.dumps({k: v for k, v in cur.items() if k != "layout"}))
     assert r.returncode == 2 and "layout" in r.stderr
+
+
+# ------------------------------------------------------------------ one list of locked documents
+
+sys.path.insert(0, str(HOOKS.parent / "scripts"))
+import verify_gate  # noqa: E402
+
+V4_TASKS = "## Tasks\n\n| Task | Rules | State |\n|---|---|---|\n| T1 build | R1 | todo |\n"
+
+
+def _gated_layout4(repo: Path) -> str:
+    c = repo / "changes" / ID
+    c.mkdir(parents=True)
+    for name, text in {"spec.md": "# s\n", "design.md": "# d\n", "tasks.md": V4_TASKS, "lock.json": "{}\n"}.items():
+        (c / name).write_text(text)
+    _git(repo, "init", "-q", "-b", "main")
+    _git(repo, "add", ".")
+    _git(repo, "commit", "-qm", "gated")
+    return _git(repo, "rev-parse", "HEAD")
+
+
+@pytest.mark.parametrize(
+    ("name", "text"),
+    [
+        ("spec.md", "# s changed\n"),
+        ("design.md", "# d changed\n"),
+        ("tasks.md", V4_TASKS.replace("T1 build", "T1 build more")),
+        ("done.json", "{}\n"),
+    ],
+)
+def test_a_post_gate_edit_of_a_layout_4_document_voids_the_pass(tmp_path: Path, name: str, text: str) -> None:
+    gated = _gated_layout4(tmp_path)
+    (tmp_path / "changes" / ID / name).write_text(text)
+    _git(tmp_path, "add", ".")
+    _git(tmp_path, "commit", "-qm", "edit")
+    assert not pass_proof.proves(tmp_path, "changes", gated, _git(tmp_path, "rev-parse", "HEAD"))
+
+
+def test_a_tick_in_tasks_md_after_the_gate_keeps_the_pass(tmp_path: Path) -> None:
+    gated = _gated_layout4(tmp_path)
+    (tmp_path / "changes" / ID / "tasks.md").write_text(V4_TASKS.replace("todo", "done abc123"))
+    _git(tmp_path, "add", ".")
+    _git(tmp_path, "commit", "-qm", "tick")
+    assert pass_proof.proves(tmp_path, "changes", gated, _git(tmp_path, "rev-parse", "HEAD"))
+
+
+@pytest.mark.parametrize("layout", [3, 4])
+def test_the_pass_rule_the_hook_and_the_lock_hash_agree_on_the_locked_documents(tmp_path: Path, layout: int) -> None:
+    c = tmp_path / "changes" / ID
+    c.mkdir(parents=True)
+    docs = (
+        {"spec.md": "# s\n", "design.md": "# d\n", "tasks.md": V4_TASKS}
+        if layout == 4
+        else {"facts.md": "# f\n"}
+    )
+    for name, text in {**docs, "done.json": "{}\n"}.items():
+        (c / name).write_text(text)
+    (c / "decisions.json").write_text(json.dumps({"layout": layout}))
+    hashed = {k for k in verify_gate.criteria_hash(c, []) if k.endswith((".md", ".json")) and "/" not in k}
+    hashed -= {"plan.milestones", "decisions.routing"}
+    locked = set(pass_proof.LOCKED_FILES[layout])
+    assert hashed | {"lock.json"} == locked
+    # the hook protects the same set, except tasks.md, which takes ticks
+    repo = make(tmp_path / "hook", v4=layout == 4)
+    for name in locked - set(pass_proof.TICKED_FILES):
+        (repo / "changes" / ID / name).touch()
+        r = edit(repo, f"changes/{ID}/{name}")
+        assert r.returncode == 2 and "protectedEdit" in r.stderr, name
