@@ -190,6 +190,7 @@
  "scripts/heavy.py": [
   "050107783daa70ff",
   "40e40233bf70ec93",
+  "5deaa2eb45d65844",
   "7dfd1429b4f9cd2d",
   "8b4f8c3dfa44073f",
   "af2eb2673c676348",
@@ -263,7 +264,9 @@
   "d493b854eb70d6ec"
  ],
  "scripts/verify_gate.py": [
+  "0508f0dc95ebd33a",
   "07797d2ae191453e",
+  "083b9bbf75ef9298",
   "17c49f302fccaa95",
   "17f4a67365efcab6",
   "1841658d833d2487",

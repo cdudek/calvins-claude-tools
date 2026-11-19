@@ -738,6 +738,37 @@ def add_ci_commands(cfg: dict, preset: str) -> None:
         )
 
 
+CHEAP = re.compile(r"format|fmt|lint|ruff|eslint|prettier|biome|oxlint|stylelint|typecheck|tsc|mypy|secret|gitleaks|actionlint|shellcheck|docs")
+HEAVY_CI_KEYS = ("unit", "build", "e2e", "e2eTouched")  # the ciCommands that are suites, not installs or lint
+
+
+def add_heavy_patterns(cfg: dict) -> None:
+    """`heavy.patterns` (3.22.0) is the repo's own list of commands that take a heavy slot. The
+    classifier knows builds, servers, browsers and `npm test`; a full suite under another name
+    (`uv run pytest`, `sh scripts/run-suite.sh`) it cannot know. Seeded once, from the milestone checks
+    and the suite jobs of `ciCommands`, for every command that is not a lint/format/type check and
+    that the classifier calls light; `{placeholders}` match anything. A repo that has the key keeps it."""
+    if "patterns" in (cfg.get("heavy") if isinstance(cfg.get("heavy"), dict) else {}):
+        return
+    spec = importlib.util.spec_from_file_location("heavy_kit", TPL / "scripts" / "heavy.py")
+    heavy = importlib.util.module_from_spec(spec)  # type: ignore[arg-type]
+    spec.loader.exec_module(heavy)  # type: ignore[union-attr]
+    commands = [c if isinstance(c, str) else c.get("run") for c in (cfg.get("checks") or {}).get("milestone", [])]
+    commands += [(cfg.get("ciCommands") or {}).get(k) for k in HEAVY_CI_KEYS]
+    seeds: list[str] = []
+    for cmd in commands:
+        if not isinstance(cmd, str) or not cmd.strip() or len(cmd) > 160 or CHEAP.search(cmd):
+            continue  # a long shell fragment is the repo's to list
+        if heavy.is_heavy(["sh", "-c", cmd], {}):
+            continue
+        pattern = ".*".join(re.escape(part) for part in re.split(r"\{\w+\}", cmd.strip()))
+        if pattern not in seeds:
+            seeds.append(pattern)
+    if seeds:
+        cfg.setdefault("heavy", {})["patterns"] = seeds
+        wrote.append(f"sdlc.json: heavy.patterns added ({len(seeds)} suite command(s) from checks.milestone and ciCommands; edit to the repo's own)")
+
+
 BUILDERS = ("claude", "codex")
 EFFORTS = ("low", "medium", "high", "xhigh")
 DEFAULT_MODEL = {"claude": "sonnet", "codex": "gpt-5.5"}
@@ -958,6 +989,7 @@ KIT_SPEC = {
     "d493b854eb70d6ec",
 }
 KIT_HEAVY = {
+    "5deaa2eb45d65844",
     "7dfd1429b4f9cd2d",
     "8b4f8c3dfa44073f",
     "af2eb2673c676348",
@@ -1233,6 +1265,7 @@ def main() -> int:
         add_ci_paths(cfg, preset)
         add_ci_commands(cfg, preset)
         add_builders(cfg)
+        add_heavy_patterns(cfg)
         stamp_version(cfg, fresh=True)
         plan = migrate_plan(cfg) if MIGRATE else {}
         write(cfg_path, json.dumps(cfg, indent=2, ensure_ascii=False) + "\n")
@@ -1261,6 +1294,7 @@ def main() -> int:
             add_ci_paths(cfg, preset)
             add_ci_commands(cfg, preset)
         add_builders(cfg)
+        add_heavy_patterns(cfg)
         check_rules(cfg)
         if "claude" in cfg:
             cfg.pop("claude")

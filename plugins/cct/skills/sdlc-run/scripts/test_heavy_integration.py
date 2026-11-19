@@ -93,10 +93,15 @@ def _milestone(tmp_path: Path, checks: list, **extra: object) -> Path:
     return repo
 
 
-def _run_gate(repo: Path, queue: Path, *prefix: str, timeout: int = 90) -> subprocess.CompletedProcess[str]:
-    env = {**_env(), "SDLC_HEAVY_DIR": str(queue), "SDLC_HEAVY_SLOTS": "1", "SDLC_HEAVY_POLL": "0.1"}
+MARK = {"patterns": ["heavy-marker"]}  # the repo's own override: any command with this word queues
+
+
+def _run_gate(
+    repo: Path, queue: Path, *prefix: str, timeout: int = 90, gate: Path | None = None, **env_extra: str
+) -> subprocess.CompletedProcess[str]:
+    env = {**_env(), "SDLC_HEAVY_DIR": str(queue), "SDLC_HEAVY_SLOTS": "1", "SDLC_HEAVY_POLL": "0.1", **env_extra}
     return subprocess.run(
-        [*prefix, sys.executable, str(SCRIPTS / "verify_gate.py"), "milestone", GID],
+        [*prefix, sys.executable, str(gate or SCRIPTS / "verify_gate.py"), "milestone", GID],
         cwd=repo, capture_output=True, text=True, env=env, timeout=timeout,
     )  # fmt: skip
 
@@ -107,42 +112,192 @@ def test_a_heavy_check_runs_in_a_slot_and_a_light_one_does_not(tmp_path: Path) -
         tmp_path,
         [
             {"name": "light", "run": f"echo \"light=$SDLC_HEAVY_SLOT\" >> {seen}"},
-            {"name": "build", "run": f"echo \"build=$SDLC_HEAVY_SLOT\" >> {seen}"},
+            {"name": "suite", "run": f"echo \"heavy-marker=$SDLC_HEAVY_SLOT\" >> {seen}"},
         ],
+        heavy=MARK,
     )
     r = _run_gate(repo, tmp_path / "queue")
     assert _last(r).startswith(f"VERIFY PASS milestone {GID}"), r.stdout + r.stderr
     lines = set(seen.read_text().split())
-    assert lines == {"light=", "build=0"}, lines
+    assert lines == {"light=", "heavy-marker=0"}, lines
 
 
 def test_a_gate_already_inside_a_slot_passes_straight_through(tmp_path: Path) -> None:
-    repo = _milestone(tmp_path, [{"name": "build", "run": "echo build"}])
+    repo = _milestone(tmp_path, [{"name": "suite", "run": "echo heavy-marker"}], heavy=MARK)
     r = _run_gate(
         repo, tmp_path / "queue", sys.executable, str(HEAVY), "run", "--wait-timeout", "5", "--", timeout=60
     )
     assert _last(r).startswith(f"VERIFY PASS milestone {GID}"), r.stdout + r.stderr
 
 
-def test_a_slot_that_never_frees_is_an_env_handoff_naming_the_holder(tmp_path: Path) -> None:
+def _hold_the_slot(queue: Path, pid: int, **extra: object) -> None:
+    """A ticket for a live process that holds slot 0 (the real holder is `sleep`, started by the test)."""
+    (queue / "tickets").mkdir(parents=True, exist_ok=True)
+    now = time.time()
+    (queue / "tickets" / f"{time.time_ns() - 10**9:020d}-{pid}.json").write_text(
+        json.dumps({"pid": pid, "cmd": ["sleep", "30"], "slot": 0, "since": now, "started": now, "worktree": "/w", **extra})
+    )
+
+
+def test_a_slot_held_past_its_own_deadline_is_an_env_handoff_naming_the_holder(tmp_path: Path) -> None:
     queue = tmp_path / "queue"
-    repo = _milestone(tmp_path, [{"name": "build", "run": "echo build"}], heavy={"waitTimeout": 1})
-    env = {**_env(), "SDLC_HEAVY_DIR": str(queue), "SDLC_HEAVY_SLOTS": "1"}
+    repo = _milestone(tmp_path, [{"name": "suite", "run": "echo heavy-marker"}], heavy={**MARK, "waitTimeout": 1})
+    holder = subprocess.Popen(["sleep", "30"])
+    try:
+        _hold_the_slot(queue, holder.pid, cap=1, started=time.time() - 100)  # outlived its own deadline
+        r = _run_gate(repo, queue, SDLC_HEAVY_GRACE="0")
+    finally:
+        holder.kill()
+        holder.wait()
+    assert r.returncode == 3 and _last(r) == "VERIFY BLOCKED reason=env", r.stdout + r.stderr
+    assert "sleep" in r.stdout and "suite" in r.stdout and "no slot after" in r.stdout
+
+
+def test_the_gate_waits_without_a_deadline_while_the_holder_is_alive(tmp_path: Path) -> None:
+    queue = tmp_path / "queue"
+    repo = _milestone(tmp_path, [{"name": "suite", "run": "echo heavy-marker"}], heavy={**MARK, "waitTimeout": 1})
     holder = subprocess.Popen(
-        [sys.executable, str(HEAVY), "run", "--", "sleep", "30"], cwd=repo, env=env,
-        stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL,
-    )  # fmt: skip
+        [sys.executable, str(HEAVY), "run", "--run-timeout", "0", "--", "sleep", "3"],
+        env={**_env(), "SDLC_HEAVY_DIR": str(queue)}, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL,
+    )
     try:
         for _ in range(100):  # until the holder has its slot
-            if list(queue.glob("*")):
+            if list((queue / "tickets").glob("*.json")):
                 break
             time.sleep(0.1)
         r = _run_gate(repo, queue)
     finally:
         holder.kill()
         holder.wait()
-    assert r.returncode == 3 and _last(r) == "VERIFY BLOCKED reason=env", r.stdout + r.stderr
-    assert "sleep" in r.stdout and "build" in r.stdout
+    assert _last(r).startswith(f"VERIFY PASS milestone {GID}"), r.stdout + r.stderr  # waited 3 s with a 1 s deadline
+
+
+def test_the_gate_takes_one_slot_for_every_heavy_check_and_nested_heavy_calls_pass(tmp_path: Path) -> None:
+    seen, queue = tmp_path / "seen", tmp_path / "queue"
+    nested = f"{sys.executable} {HEAVY} run --wait-timeout 2 -- sh -c 'echo nested >> {seen}'"
+    repo = _milestone(
+        tmp_path,
+        [
+            {"name": "suite", "run": f"echo \"heavy-marker holder=$SDLC_HEAVY_HOLDER slot=$SDLC_HEAVY_SLOT tickets=$(ls {queue}/tickets | wc -l)\" >> {seen}"},
+            {"name": "e2e", "run": f"echo heavy-marker; {nested}; echo \"heavy-marker holder=$SDLC_HEAVY_HOLDER\" >> {seen}"},
+        ],
+        heavy=MARK,
+    )
+    r = _run_gate(repo, queue)
+    assert _last(r).startswith(f"VERIFY PASS milestone {GID}"), r.stdout + r.stderr
+    lines = seen.read_text().splitlines()
+    holders = {w.split("=")[1] for line in lines for w in line.split() if w.startswith("holder=")}
+    assert len(holders) == 1 and holders != {""}, lines
+    first = lines[0].split()
+    assert first[0] == "heavy-marker" and first[2] == "slot=0" and "".join(first[3:]) == "tickets=1", lines
+    assert "nested" in lines
+    assert list((queue / "tickets").glob("*.json")) == [], "the slot is released at the end"
+
+
+def test_the_gate_reports_seconds_queue_wait_and_total(tmp_path: Path) -> None:
+    repo = _milestone(tmp_path, [{"name": "lint", "run": "true"}, {"name": "suite", "run": "echo heavy-marker"}], heavy=MARK)
+    r = _run_gate(repo, tmp_path / "queue")
+    line = next(x for x in r.stdout.splitlines() if x.startswith("timing:"))
+    assert re.fullmatch(r"timing: queue wait \d+(\.\d)?s, total \d+(\.\d)?s; \w+ [\d.]+s, \w+ [\d.]+s", line), line
+    report = json.loads((repo / "changes" / GID / "verify" / "report.json").read_text())
+    assert "queue_wait_s" in report["metrics"] and _last(r).startswith("VERIFY PASS")
+
+
+def test_light_checks_run_side_by_side_before_the_slot(tmp_path: Path) -> None:
+    a, b = (tmp_path / "a"), (tmp_path / "b")
+    both = lambda mine, other: f"touch {mine}; i=0; while [ ! -e {other} ] && [ $i -lt 100 ]; do sleep 0.05; i=$((i+1)); done; test -e {other}"  # noqa: E731
+    repo = _milestone(
+        tmp_path,
+        [{"name": "lint", "run": both(a, b)}, {"name": "types", "run": both(b, a)}],
+    )  # each waits for the other: only a parallel run can pass
+    r = _run_gate(repo, tmp_path / "queue")
+    assert _last(r).startswith(f"VERIFY PASS milestone {GID}"), r.stdout + r.stderr
+
+
+def test_a_light_check_after_a_serial_wall_does_not_run_before_it(tmp_path: Path) -> None:
+    log = tmp_path / "log"
+    repo = _milestone(
+        tmp_path,
+        [
+            {"name": "gen", "run": f"echo gen >> {log}", "serial": True},
+            {"name": "lint", "run": f"echo lint >> {log}"},
+            {"name": "types", "run": f"echo types >> {log}"},
+        ],
+    )
+    r = _run_gate(repo, tmp_path / "queue")
+    assert _last(r).startswith("VERIFY PASS"), r.stdout
+    assert log.read_text().split()[0] == "gen"
+
+
+def _gate_with_fake_db(tmp_path: Path, log: Path) -> Path:
+    """The gate as a repo installs it, with a db.py that logs every call and prints `NAME URL`."""
+    dest = tmp_path / "installed"
+    shutil.copytree(SCRIPTS, dest, ignore=shutil.ignore_patterns("__pycache__"))
+    (dest / "db.py").write_text(
+        "import sys\n"
+        f"open({str(log)!r}, 'a').write(' '.join(sys.argv[1:]) + '\\n')\n"
+        "if sys.argv[2] == 'create':\n"
+        "    name = sys.argv[3] if len(sys.argv) > 3 else 'copy1'\n"
+        "    print(name, 'postgres://127.0.0.1/' + name)\n"
+    )
+    return dest / "verify_gate.py"
+
+
+def test_one_database_copy_for_the_whole_close_reset_between_heavy_checks(tmp_path: Path) -> None:
+    log, urls = tmp_path / "dblog", tmp_path / "urls"
+    repo = _milestone(
+        tmp_path,
+        [
+            {"name": "lint", "run": "true"},
+            {"name": "suite", "run": f"echo heavy-marker-suite $DATABASE_URL >> {urls}"},
+            {"name": "e2e", "run": f"echo heavy-marker-e2e $DATABASE_URL >> {urls}"},
+            {"name": "capture", "run": f"echo heavy-marker-capture $DATABASE_URL >> {urls}", "resetDb": False},
+        ],
+        heavy=MARK, db={"test": {"container": "c", "port": 1, "template": "t"}},
+    )
+    r = _run_gate(repo, tmp_path / "queue", gate=_gate_with_fake_db(tmp_path, log))
+    assert _last(r).startswith(f"VERIFY PASS milestone {GID}"), r.stdout + r.stderr
+    assert log.read_text().splitlines() == [
+        "test create",  # once, when the first heavy check takes the slot
+        "test drop copy1", "test create copy1",  # before the e2e check: a clean copy
+        "test drop copy1",  # capture opted out of a reset; the one drop is the end of the close
+    ], r.stdout
+    assert set(urls.read_text().split()) - {"heavy-marker-suite", "heavy-marker-e2e", "heavy-marker-capture"} == {"postgres://127.0.0.1/copy1"}
+    assert len(urls.read_text().splitlines()) == 3
+
+
+def test_the_database_copy_is_dropped_when_a_check_fails(tmp_path: Path) -> None:
+    log = tmp_path / "dblog"
+    repo = _milestone(
+        tmp_path, [{"name": "suite", "run": "echo heavy-marker; exit 1"}],
+        heavy=MARK, db={"test": {"container": "c", "port": 1, "template": "t"}},
+    )
+    r = _run_gate(repo, tmp_path / "queue", gate=_gate_with_fake_db(tmp_path, log))
+    assert r.returncode == 1 and log.read_text().splitlines() == ["test create", "test drop copy1"]
+    assert list((tmp_path / "queue" / "tickets").glob("*.json")) == []
+
+
+def test_an_unbuildable_database_copy_is_an_env_handoff(tmp_path: Path) -> None:
+    log = tmp_path / "dblog"
+    gate = _gate_with_fake_db(tmp_path, log)
+    gate.with_name("db.py").write_text("import sys\nprint('docker is not running')\nsys.exit(4)\n")
+    repo = _milestone(
+        tmp_path, [{"name": "suite", "run": "echo heavy-marker"}],
+        heavy=MARK, db={"test": {"container": "c", "port": 1, "template": "t"}},
+    )
+    r = _run_gate(repo, tmp_path / "queue", gate=gate)
+    assert r.returncode == 3 and _last(r) == "VERIFY BLOCKED reason=env" and "docker is not running" in r.stdout
+
+
+def test_a_build_check_runs_once_per_tree(tmp_path: Path) -> None:
+    ran = tmp_path / "ran"
+    repo = _milestone(
+        tmp_path, [{"name": "build", "run": f"echo heavy-marker >> {ran}"}], heavy=MARK,
+    )
+    for _ in range(2):
+        r = _run_gate(repo, tmp_path / "queue")
+        assert _last(r).startswith("VERIFY PASS"), r.stdout
+    assert len(ran.read_text().splitlines()) == 1 and "ok (cached) build" in r.stdout
 
 
 def test_a_failed_preflight_stops_the_gate_before_the_first_heavy_command(tmp_path: Path) -> None:
@@ -310,13 +465,17 @@ def test_status_reads_the_failed_stop_and_the_heavy_queue(tmp_path: Path) -> Non
 
 
 def _helper_guard(tmp_path: Path, payload: object, install: bool = True) -> subprocess.CompletedProcess[str]:
-    repo = tmp_path / "guarded"
+    main, repo = tmp_path / "main", tmp_path / "guarded"  # a helper works in a linked worktree
+    if not main.exists():
+        main.mkdir()
+        _git(main, "init", "-q")
+        _git(main, "-c", "user.name=t", "-c", "user.email=t@t", "commit", "-q", "--allow-empty", "-m", "i")
+        _git(main, "worktree", "add", "-q", "-b", "feat", str(repo))
     (repo / ".claude" / "hooks").mkdir(parents=True, exist_ok=True)
     (repo / "scripts").mkdir(exist_ok=True)
     shutil.copy(SCRIPTS.parent / "hooks" / "helper-guard.sh", repo / ".claude" / "hooks" / "helper-guard.sh")
     if install:
         shutil.copy(HEAVY, repo / "scripts" / "heavy.py")
-    subprocess.run(["git", "init", "-q"], cwd=repo, check=True)
     return subprocess.run(
         ["bash", str(repo / ".claude" / "hooks" / "helper-guard.sh")],
         input=payload if isinstance(payload, str) else json.dumps(payload),
