@@ -47,6 +47,48 @@ transcript, `/loop` when time passes, a Stop hook when a script decides.
   is off). Never a session loop.
 - **Never a `/loop` inside a running `/goal`.** Two things then decide when the session stops.
 
+## Layout 4: three documents, a living spec
+
+A change pinned to layout 4 (`"layout": 4` in `decisions.json`, written at intake only in a repo
+whose `sdlc.json` opted in) has three documents instead of intent, facts, plan, checklist, analyze,
+challenge, milestone and the reading map: `spec.md`, `design.md`, `tasks.md`. What differs by
+stage; every stage not named here is unchanged. Full rules: [change-folder](change-folder.md) and
+[living-spec](living-spec.md). A change on the old layout finishes on the old stages below; nothing
+here blocks it.
+
+- **1.1 dialog.** Fork "size" stays the UX size (`ux`). Add the **scope**, S, M or L, picked by risk
+  (data, an API or contract, auth, money, a new dependency, a cross-module boundary or a new screen
+  means L) and the **capabilities** the change touches, proposed from the asks and
+  `specs/CAPABILITIES.md`, confirmed in the same dialog. `decisions.json` gets `"layout": 4`.
+  Read the rules first: `python3 scripts/spec.py find <the ask's words> --paths <paths>` (with
+  `--prs` when `gh` works), open only the rules and tests it names; a miss lists the capability's
+  code and tests.
+- **1.3 / 1.4 intent.** The asks, job stories and success measure are the top of `spec.md`. The
+  agent also drafts the requirements: `spec.py new <capability> "<summary>"` per rule, one EARS
+  sentence each, and the requirements table. The owner's first confirmation covers that file; on
+  scope S and M it is the only gate.
+- **2 UX plan, single pass.** The UX validation (`cct:ux-spec-validate`) runs once, as a **draft**
+  against `spec.md`, with no goal of its own. An in-scope ask may be `pending` (its rule is not
+  written yet); the verdict lists those. Write `prototype: required` or `prototype: none` into
+  `spec.md` before anything else in this stage, and before build QA ever asks for a readiness file:
+  `spec.py qa_applicability` decides first, so `none` skips with a printed reason and no second
+  gate. This closes D1 and S1.
+- **3 Requirements, 4 plan.** No `facts.md` and no `plan.md`. `design.md` (L) or the design notes of
+  `tasks.md` (M) carry the approach, ground truth, rules check, test strategy, risks with proofs and
+  rollout. `tasks.md` derives from the spec and design; builders never edit it, the supervisor
+  ticks `State`.
+- **4.3 gate.** Order: lint; `python3 scripts/spec.py consistency <change> --phase approve`; one
+  reviewer in a fresh context over the three documents (replaces checklist, analyze, challenge);
+  then the owner. Scope L asks twice: `spec.md`, then `design.md` and `tasks.md`.
+- **6 milestone.** Before the gate: `spec.py check --base <parent>`; a changed rule needs a changed
+  test, and a tagged test that is skipped does not count. Only the rules of the milestone's tasks
+  move from `planned` to `live`.
+- **7 outcome, no archive.** After the merge: `spec.py outcome write <folder>`, then remove the
+  folder in one records-only close PR (the pass record stays in `.sdlc/receipts/`). Never remove it
+  before the merge. The measure is read from `.sdlc/outcomes/<id>.json` (`spec.py outcome due`) and
+  recorded there, and in the tracker when there is one: a final change with no tracker and no next
+  PR still has its route (S3). A miss starts the next change with the measurement as its first ask.
+
 ## Stage 1 — Intent
 
 Worktree lifecycle commands follow the [shared worktree policy](../../../references/worktree-usage.md).

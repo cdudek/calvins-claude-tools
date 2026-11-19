@@ -107,22 +107,57 @@ def split_frontmatter(text: str) -> tuple[dict, str]:
     return parse_flat(text[4:end]), text[end + 4 :].lstrip("\n")
 
 
-def git(root: Path, *args: str) -> str | None:
+_STRICT = (
+    False  # set by check_report in CI or with an explicit --base: a failed git call is an error
+)
+
+
+def git(root: Path, *args: str, probe: bool = False) -> str | None:
     try:
         r = subprocess.run(
             ["git", "-C", str(root), *args], capture_output=True, text=True, timeout=60
         )
+        ok = r.returncode == 0
     except (OSError, subprocess.TimeoutExpired):
-        return None
-    return r.stdout if r.returncode == 0 else None
+        ok = False
+    if not ok and _STRICT and not probe:
+        raise SpecError(f"git {' '.join(args[:2])} failed")
+    return r.stdout if ok else None
+
+
+def _inside(root: Path, p: Path) -> bool:
+    try:
+        p.resolve().relative_to(Path(root).resolve())
+        return True
+    except ValueError:
+        return False
+
+
+def _config(root: Path) -> dict:
+    try:
+        return json.loads((Path(root) / "sdlc.json").read_text(encoding="utf-8"))
+    except (OSError, ValueError):
+        return {}
+
+
+def specs_declared(root: Path) -> bool:
+    return bool(_config(root).get("livingSpecs"))
 
 
 def specs_name(root: Path) -> str:
-    try:
-        cfg = json.loads((root / "sdlc.json").read_text(encoding="utf-8"))
-        return str(cfg.get("livingSpecs") or "specs")
-    except (OSError, ValueError):
+    """The living-spec folder: `specs`, or sdlc.json `livingSpecs`, which must be one plain name
+    that stays inside the repo (it becomes a path and a git pathspec)."""
+    name = _config(root).get("livingSpecs")
+    if not name:
         return "specs"
+    if (
+        not isinstance(name, str)
+        or not re.fullmatch(r"[A-Za-z0-9._-]+", name)
+        or name in (".", "..")
+        or not _inside(root, Path(root) / name)
+    ):
+        raise SpecError(f"sdlc.json livingSpecs {name!r} must be one folder name inside the repo")
+    return name
 
 
 # ---------------------------------------------------------------- loading
@@ -261,7 +296,12 @@ def next_id(root: Path) -> int:
 
 def test_files(root: Path, manifests: dict) -> list[Path]:
     """Files that may carry @R tags: the manifests' test roots, else the usual test places."""
-    roots = [root / t for m in manifests.values() for t in _as_list(m.get("tests"))]
+    roots = [
+        r
+        for m in manifests.values()
+        for t in _as_list(m.get("tests"))
+        if (r := _safe_root(root, str(t))) is not None
+    ]
     found: list[Path] = []
     specs = specs_name(root)
     if roots:
@@ -277,11 +317,74 @@ def test_files(root: Path, manifests: dict) -> list[Path]:
             for f in files:
                 if in_tests or re.match(r"(test_.*\.py|.*_test\.py|.*\.(test|spec)\.\w+)$", f):
                     found.append(Path(dirpath) / f)
-    return [p for p in found if p.stat().st_size < 1_000_000]
+    return [p for p in found if _inside(root, p) and p.stat().st_size < 1_000_000]
+
+
+def _safe_root(root: Path, rel: str) -> Path | None:
+    """A manifest test root: relative, no `..`, and (links followed) inside the repo."""
+    p = Path(rel)
+    if p.is_absolute() or ".." in p.parts or not _inside(root, root / p):
+        return None
+    return root / p
 
 
 def _as_list(v) -> list:
     return v if isinstance(v, list) else ([v] if v else [])
+
+
+def _indent(line: str) -> int:
+    return len(line) - len(line.lstrip())
+
+
+def _block(lines: list[str], j: int) -> range:
+    """Line j and what is nested under it (deeper indentation, then a closing `})` line)."""
+    base, k = _indent(lines[j]), j + 1
+    while k < len(lines) and (
+        not lines[k].strip()
+        or _indent(lines[k]) > base
+        or (_indent(lines[k]) == base and lines[k].lstrip().startswith(("}", ")")))
+    ):
+        k += 1
+    return range(j, k)
+
+
+MODULE_SKIP = re.compile(r"^pytestmark\s*=.*\bskip")
+DESCRIBE_SKIP = re.compile(r"\b(describe|context|suite)\.skip\b")
+BARE_SKIP = re.compile(r"\b(test|it)\.skip\(\s*(?![\"'`])")
+CLASS_SKIP = re.compile(r"^\s*@(pytest\.mark\.skip|unittest\.skip)")
+
+
+def skipped_lines(lines: list[str]) -> set[int]:
+    """Lines a file-, describe- or class-level skip covers. Text-based: no runner is called.
+    shortcut: indentation finds the block, so a skip inside one-line or oddly formatted code is
+    missed; upgrade to a real parser if that bites."""
+    out: set[int] = set()
+    for i, line in enumerate(lines):
+        if MODULE_SKIP.match(line):
+            return set(range(len(lines)))
+        if DESCRIBE_SKIP.search(line):
+            out |= set(_block(lines, i))
+        elif BARE_SKIP.search(line):
+            if _indent(line) == 0:
+                return set(range(len(lines)))
+            # a bare skip inside a describe skips the whole enclosing block
+            j = next(
+                (
+                    k
+                    for k in range(i - 1, -1, -1)
+                    if lines[k].strip() and _indent(lines[k]) < _indent(line)
+                ),
+                None,
+            )
+            if j is not None:
+                out |= set(_block(lines, j))
+        elif CLASS_SKIP.match(line):
+            j = i + 1
+            while j < len(lines) and (not lines[j].strip() or lines[j].lstrip().startswith("@")):
+                j += 1
+            if j < len(lines) and lines[j].lstrip().startswith("class "):
+                out |= set(_block(lines, j))
+    return out
 
 
 def scan_tags(files: list[Path], root: Path) -> dict[int, list[tuple[str, int, bool]]]:
@@ -292,11 +395,12 @@ def scan_tags(files: list[Path], root: Path) -> dict[int, list[tuple[str, int, b
             lines = p.read_text(encoding="utf-8").splitlines()
         except (OSError, UnicodeDecodeError):
             continue
+        covered = skipped_lines(lines) if any(TAG.search(ln) for ln in lines) else set()
         for i, line in enumerate(lines):
             for m in TAG.finditer(line):
                 near = "\n".join(lines[max(0, i - 2) : i + 1])
                 out.setdefault(int(m.group(1)), []).append(
-                    (str(p.relative_to(root)), i + 1, bool(SKIP.search(near)))
+                    (str(p.relative_to(root)), i + 1, i in covered or bool(SKIP.search(near)))
                 )
     return out
 
@@ -304,12 +408,16 @@ def scan_tags(files: list[Path], root: Path) -> dict[int, list[tuple[str, int, b
 # ---------------------------------------------------------------- git diff of the branch
 
 
-def resolve_base(root: Path, base: str | None) -> str | None:
+def tip_ref(root: Path, base: str | None) -> str | None:
     for cand in [base, "origin/main", "origin/master", "main", "master"]:
-        if cand and git(root, "rev-parse", "--verify", "-q", cand + "^{commit}"):
-            mb = git(root, "merge-base", cand, "HEAD")
-            return (mb or "").strip() or None
+        if cand and git(root, "rev-parse", "--verify", "-q", cand + "^{commit}", probe=True):
+            return cand
     return None
+
+
+def resolve_base(root: Path, base: str | None) -> str | None:
+    cand = tip_ref(root, base)
+    return ((git(root, "merge-base", cand, "HEAD") or "").strip() or None) if cand else None
 
 
 def changed_files(root: Path, mb: str) -> list[tuple[str, str, str | None]]:
@@ -357,13 +465,31 @@ def changed_rules(root: Path, base: str | None = None) -> dict[str, list[int]]:
 
 
 def check_report(root: Path, base: str | None = None) -> dict[str, list[str]]:
-    """The drift check. `problems` fail it; `warnings` are for people. No specs/ means nothing
-    to check: a repo or change on the old layout is never blocked."""
-    root = Path(root)
+    """The drift check. `problems` fail it; `warnings` are for people. A repo with no specs
+    folder and no `livingSpecs` key is a legacy repo: nothing to check, never blocked. Anything
+    that cannot be checked in CI, or with an explicit `base`, is a problem and never a silent skip."""
+    global _STRICT
+    strict = bool(base) or bool(os.environ.get("CI"))
+    _STRICT = strict
+    try:
+        return _check_report(Path(root), base, strict)
+    except SpecError as e:
+        return {"problems": [str(e)], "warnings": []}
+    finally:
+        _STRICT = False
+
+
+def _check_report(root: Path, base: str | None, strict: bool) -> dict[str, list[str]]:
+    specs = specs_name(root)
+    if not (root / specs).is_dir():
+        if specs_declared(root):
+            return {
+                "problems": [f"sdlc.json names livingSpecs {specs!r} but the folder is missing"],
+                "warnings": [],
+            }
+        return {"problems": [], "warnings": []}
     rules, manifests, problems = load_rules(root)
     warnings: list[str] = []
-    if not (root / specs_name(root)).is_dir():
-        return {"problems": [], "warnings": []}
     seen: dict[int, str] = {}
     for r in rules:
         if r.num in seen:
@@ -380,6 +506,10 @@ def check_report(root: Path, base: str | None = None) -> dict[str, list[str]]:
             problems.append(f"{specs_name(root)}/{cap}/manifest.yaml has no purpose")
         elif m.get("coverage") == "partial":
             warnings.append(f"capability {cap} is only partly catalogued (coverage: partial)")
+    for cap, m in sorted(manifests.items()):
+        for tr in _as_list(m.get("tests")):
+            if _safe_root(root, str(tr)) is None:
+                problems.append(f"{specs}/{cap}/manifest.yaml: tests {tr!r} is outside the repo")
     tags = scan_tags(test_files(root, manifests), root)
     for n, hits in sorted(tags.items()):
         if n not in seen:
@@ -395,6 +525,10 @@ def check_report(root: Path, base: str | None = None) -> dict[str, list[str]]:
     mb = resolve_base(root, base)
     if mb:
         problems += _diff_problems(root, mb, base, rules, tags)
+    elif strict:
+        problems.append(
+            f"cannot resolve the base branch ({base or 'origin/main'}): the diff checks cannot run"
+        )
     return {"problems": problems, "warnings": warnings}
 
 
@@ -406,11 +540,7 @@ def _diff_problems(root, mb, base, rules, tags) -> list[str]:
     out: list[str] = []
     delta = changed_rules(root, base)
     by_num = {r.num: r for r in rules}
-    tip = None
-    for cand in [base, "origin/main", "origin/master", "main", "master"]:
-        if cand and git(root, "rev-parse", "--verify", "-q", cand + "^{commit}"):
-            tip = cand
-            break
+    tip = tip_ref(root, base)
     tip_ids = _ids_at(root, tip) if tip else set()
     hist = history_ids(root, tip) if tip else set()
     for n in delta["added"]:
@@ -449,10 +579,7 @@ def renumber(root: Path, base: str | None = None, dry_run: bool = False) -> dict
     mb = resolve_base(root, base)
     if not mb:
         raise SpecError("no base branch found; pass --base")
-    tip = next(
-        (c for c in [base, "origin/main", "origin/master", "main", "master"]
-         if c and git(root, "rev-parse", "--verify", "-q", c + "^{commit}")), None,
-    )  # fmt: skip
+    tip = tip_ref(root, base)
     delta = changed_rules(root, base)
     tip_ids = _ids_at(root, tip) if tip else set()
     clash = [
@@ -872,6 +999,34 @@ def qa_applicability(change: Path) -> tuple[bool, str]:
     return False, "prototype is not recorded: Stage 2 must write required or none"
 
 
+def task_states(change: Path) -> list[tuple[str, str, str]]:
+    """(task id, state, milestone) from tasks.md, for the status script."""
+    f = Path(change) / "tasks.md"
+    if not f.exists():
+        return []
+    rows = table(f.read_text(encoding="utf-8"), "Tasks")
+    return [(r.get("#", ""), _cell(r, "state"), _cell(r, "milestone")) for r in rows if r.get("#")]
+
+
+def lock_inputs(change: Path) -> dict[str, str]:
+    """What the approval lock hashes, by file: all of spec.md and design.md, and the task rows
+    of tasks.md without the State column. A tick or a handover edit never moves the hash."""
+    change = Path(change)
+    out = {}
+    for name in ("spec.md", "design.md"):
+        if (change / name).exists():
+            out[name] = (change / name).read_text(encoding="utf-8")
+    f = change / "tasks.md"
+    if f.exists():
+        text = f.read_text(encoding="utf-8")
+        keep = []
+        for sec in ("Tasks", "Milestones"):
+            for r in table(text, sec):
+                keep.append("|".join(v for k, v in r.items() if k != "state"))
+        out["tasks.md"] = "\n".join(keep)
+    return out
+
+
 def consistency(
     change: Path, phase: str = "approve", root: Path | None = None, base: str | None = None
 ) -> list[str]:
@@ -947,7 +1102,9 @@ def _rule_file_errors(root: Path, reqs: dict, base: str | None) -> list[str]:
             errs.append(f"R{n} is in {have.cap}, the spec says {r['capability']}")  # type: ignore[union-attr]
         elif r["change"] == "removed" and have is not None:
             errs.append(f"R{n} is listed as removed but its rule file still exists")
-    if resolve_base(root, base):
+    if base and not resolve_base(root, base):
+        errs.append(f"cannot resolve the base branch {base!r}: the diff comparison cannot run")
+    elif resolve_base(root, base):
         delta = changed_rules(root, base)
         touched = set(delta["added"] + delta["changed"] + delta["removed"])
         if touched != set(reqs):

@@ -118,6 +118,19 @@ carry on: it never blocks. `references/changelog.md` lists what each version cha
 | 6p Project | Only in a project, once its last milestone has merged: re-run `checks.milestone` on the whole project, on the default branch, plus `review-security-run` on it when auth, money or consent is touched. No PR. With `project.branch: true`: merge the default branch into `project/<slug>` locally, the same checks, then one PR to the default branch, the one that gets the tier. No second fix round — what is left starts the next project. | **Engineer accepts the project** |
 | 7 Outcome + archive | One short `reflection.md` (repeated lessons are listed for the owner to promote, never written to the agent file by the agent). Archive the folder when the change reaches the default branch. After release, read the success measure from PostHog into `milestone.md`. A miss starts the next change at 1.3. | Engineer reads it |
 
+## Documents and the living spec (layout 4)
+
+A change may keep three documents, `spec.md` (why and what), `design.md` (how) and `tasks.md` (in
+what order), instead of eight; scope S needs only the first, M the first and last, L all three,
+chosen by risk. What the product does today is `specs/<capability>/rules/R123.md`, one file per
+requirement, edited in the PR that changes the behaviour: the PR's git diff is the delta, there is
+no archive and no apply step. `python3 scripts/spec.py` finds rules (`find`), allocates ids (`new`,
+`next`, `renumber`), checks drift (`check`) and the documents (`consistency`), and records the
+outcome after the folder is removed (`outcome`). A repo opts in with `"layout": 4` in `sdlc.json`;
+a change already on the old layout finishes on it. Read [change-folder](references/change-folder.md)
+and [living-spec](references/living-spec.md); the per-stage differences are the first section of
+`references/stages.md`.
+
 ## Agents and models
 
 Agents: every build, fix, test, capture, restack or records agent is `cct:sdlc-feature-builder` (Sonnet); review and checks use their typed agents (`cct:review-code-reviewer`, `cct:test-behavior-verifier`, `cct:review-criteria-auditor`, `cct:ux-usability-reviewer`, `cct:review-finding-validator`). Never launch general-purpose for this work: it inherits the session's model. Any other subagent gets `model: sonnet` explicitly. The session's own model is only for the gate's visual judgement and for decisions. Dispatch builders yourself, never through a closer agent that spawns its own.

@@ -471,3 +471,147 @@ def test_the_shipped_templates_have_the_columns_consistency_reads(repo: Path) ->
         spec.split_frontmatter((SKILL / "templates/specs/rule.md").read_text())[0]["status"]
         == "live"
     )
+
+
+def test_a_tick_never_moves_the_lock_but_a_changed_task_does(repo: Path) -> None:
+    c = _change(repo, "M", tasks=TASKS)
+    before = spec.lock_inputs(c)
+    assert set(before) == {"spec.md", "tasks.md"}
+    (c / "tasks.md").write_text(
+        TASKS.replace("none | M1 | todo", "none | M1 | done abc1234")
+        + "\n## Handover\n\nnew words\n"
+    )
+    assert spec.lock_inputs(c) == before
+    assert spec.task_states(c)[0] == ("T1", "done abc1234", "M1")
+    (c / "tasks.md").write_text(TASKS.replace("test_retry", "test_other"))
+    assert spec.lock_inputs(c) != before
+
+
+# ------------------------------------------------------------------ hardening
+
+
+def _cfg(root: Path, value) -> None:
+    (root / "sdlc.json").write_text(json.dumps({"livingSpecs": value}))
+
+
+@pytest.mark.parametrize("bad", ["../x", "/abs", "a/b", "..", ".", "sp ec", "s;rm"])
+def test_living_specs_must_be_one_plain_name(repo: Path, bad: str) -> None:
+    _cfg(repo, bad)
+    with pytest.raises(spec.SpecError):
+        spec.specs_name(repo)
+    assert any("livingSpecs" in p for p in spec.check(repo))
+
+
+def test_living_specs_may_not_be_a_link_out_of_the_repo(repo: Path, tmp_path_factory) -> None:
+    outside = tmp_path_factory.mktemp("outside")
+    (repo / "docs-specs").symlink_to(outside)
+    _cfg(repo, "docs-specs")
+    assert any("livingSpecs" in p for p in spec.check(repo))
+
+
+def test_manifest_test_roots_stay_inside_the_repo(repo: Path, tmp_path_factory) -> None:
+    outside = tmp_path_factory.mktemp("outside")
+    (outside / "t.py").write_text("# @R1\n")
+    (repo / "link").symlink_to(outside)
+    rule(repo, "a", 1)
+    for bad in ("/etc", "../x", "tests/../../x", "link"):
+        (repo / "specs/a/manifest.yaml").write_text(f"purpose: p\ntests: [{bad}]\n")
+        problems = " ".join(spec.check(repo))
+        assert "outside the repo" in problems, bad
+        assert "t.py" not in problems
+
+
+def test_a_named_specs_folder_that_is_missing_is_a_problem_but_no_key_is_legacy(repo: Path) -> None:
+    assert spec.check(repo) == []
+    _cfg(repo, "contracts")
+    assert any("contracts" in p and "missing" in p for p in spec.check(repo))
+
+
+def test_an_unresolvable_base_fails_in_ci_or_when_given_and_not_otherwise(
+    repo: Path, monkeypatch
+) -> None:
+    rule(repo, "a", 1)
+    tfile(repo, "test_a.py", "# @R1")
+    monkeypatch.delenv("CI", raising=False)
+    sh(repo, "git", "branch", "-m", "trunk")
+    assert spec.check(repo) == []
+    assert any("base" in p for p in spec.check(repo, "nope"))
+    monkeypatch.setenv("CI", "1")
+    assert any("base" in p for p in spec.check(repo))
+
+
+def test_a_git_call_that_fails_while_diffing_is_a_problem_in_strict_mode(
+    repo: Path, monkeypatch
+) -> None:
+    rule(repo, "a", 1)
+    tfile(repo, "test_a.py", "# @R1")
+    commit(repo)
+    real = spec.subprocess.run
+
+    def broken(cmd, *a, **k):
+        if "diff" in cmd:
+            return subprocess.CompletedProcess(cmd, 128, "", "boom")
+        return real(cmd, *a, **k)
+
+    monkeypatch.setattr(spec.subprocess, "run", broken)
+    assert any("git" in p for p in spec.check(repo, "main"))
+
+
+@pytest.mark.parametrize(
+    "name,lines",
+    [
+        (
+            "test_m.py",
+            [
+                "import pytest",
+                "pytestmark = pytest.mark.skip(reason='x')",
+                "def test_a():  # @R1",
+                "    pass",
+            ],
+        ),
+        (
+            "test_c.py",
+            [
+                "import pytest",
+                "@pytest.mark.skip",
+                "class TestA:",
+                "    def test_a(self):",
+                "        # @R1",
+                "        pass",
+            ],
+        ),
+        (
+            "a.test.ts",
+            ["describe.skip('x', () => {", "  it('works', () => {", "    // @R1", "  });", "});"],
+        ),
+        ("b.test.ts", ["test.skip(true, 'later');", "test('works @R1', async () => {", "});"]),
+        (
+            "c.test.ts",
+            [
+                "describe('x', () => {",
+                "  test.skip();",
+                "  test('works @R1', () => {",
+                "  });",
+                "});",
+            ],
+        ),
+    ],
+)
+def test_a_skip_on_the_file_class_or_describe_covers_every_tag_inside(
+    repo: Path, name: str, lines: list[str]
+) -> None:
+    rule(repo, "a", 1)
+    tfile(repo, name, *lines)
+    assert any("skipped tests" in p for p in spec.check(repo)), name
+
+
+def test_a_live_test_next_to_a_skipped_class_still_counts(repo: Path) -> None:
+    rule(repo, "a", 1)
+    rule(repo, "a", 2)
+    tfile(
+        repo, "test_k.py",
+        "import pytest", "@pytest.mark.skip", "class TestA:", "    def test_a(self):  # @R1", "        pass",
+        "", "def test_b():  # @R2", "    pass",
+    )  # fmt: skip
+    problems = " ".join(spec.check(repo))
+    assert "R1 is tagged only in skipped" in problems and "R2" not in problems
