@@ -16,3 +16,12 @@ def _forget_cached_owner_answers():
         if name in sys.modules:
             sys.modules[name]._ANSWERS.clear()
     yield
+
+
+@pytest.fixture(autouse=True)
+def _private_machine_state(tmp_path_factory, monkeypatch):
+    """The heavy queue and the test-database lock are per machine; tests never touch the real ones."""
+    state = tmp_path_factory.mktemp("sdlc-state")
+    monkeypatch.setenv("SDLC_HEAVY_DIR", str(state / "heavy"))
+    monkeypatch.setenv("SDLC_DB_DIR", str(state / "db"))
+    yield
