@@ -16,6 +16,7 @@ the engineer. A version with no migration lines needs nothing but a re-run of `a
 - **Arming waits for the owner.** Auto-merge is armed only after the owner and visual dispositions are recorded. Status never tells anyone to arm a closed or Ask PR.
 - **Tests that can start before the UI exists.** Stage 5 writes the smallest failing assertion from the fact first; browser E2E with live selectors comes after the surface exists. The runner is named; `test-e2e-policy` is the rulebook.
 - **Fact proof is collected once.** Builders return evidence by fact, tag and tested commit. The close reuses it and exercises only what no evidence covers and the seams. The criteria auditor gets an explicit `verify/ac.json`.
+- **The transcript guard runs everywhere.** `chain-gate.sh` refuses a Write into `~/.claude/projects` even in a repo without `sdlc.json`, and `gate-bash.sh` normalises quotes, `//`, `/./`, `~` and `$HOME` before it matches.
 - Mechanical: re-running `adopt` refreshes `scripts/verify_gate.py`, `scripts/marks.py` and `REVIEW.md`, and stamps `sdlcVersion`.
 - Manual: none. A repo with a pending milestone may add a `## Dispositions` table to `findings.md`.
 

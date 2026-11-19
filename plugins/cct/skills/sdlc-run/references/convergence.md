@@ -69,7 +69,7 @@ agent wrote never count, nor do tool results, hook or command wrappers, reminder
 is written after it; the quote is the binding. A deferral names the milestone that builds it.
 
 **Threat model.** This protects against a careless or over-eager agent settling a finding without
-the owner. It does not stop someone with a shell who edits files by hand; that is out of scope. `blocked` is terminal: the gate stops with
+the owner. It does not stop someone with a shell who edits files by hand; that is out of scope. The Bash guard matches a normalised command text (quotes, `//`, `/./`, `~` and `$HOME` resolved), so it is a speed bump for a careless agent, not a sandbox: a variable, an encoded string or a script file gets past it. The owner quote stays the binding, because it must equal a sentence the engineer wrote in the transcript and the gate checks that. `blocked` is terminal: the gate stops with
 `findings-blocked`. A `partly` or `not met` fact in `validation.md` is never cleared this way;
 that needs a scope change with a new approval, or the milestone is held. `verify_gate.py
 milestone` reads this table.

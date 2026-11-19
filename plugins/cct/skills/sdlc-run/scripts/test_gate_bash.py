@@ -123,6 +123,11 @@ def test_a_malformed_rule_is_skipped_and_the_valid_ones_still_apply_F14(repo: Pa
         "sed -i 's/a/b/' ~/.claude/projects/p/s.jsonl",
         "cd ~/.claude/projects/p && printf x > s.jsonl",
         "python3 -c \"open('/home/x/.claude/projects/p/s.jsonl','w')\"",
+        "echo x > ~/.claude//projects/p/s.jsonl",
+        "echo x > ~/.claude/./projects/p/s.jsonl",
+        "echo x > ~/'.claude'/\"projects\"/p/s.jsonl",
+        "echo x > ${HOME}/.claude/projects/p/s.jsonl",
+        "echo x > $HOME/.claude//./projects/p/s.jsonl",
     ],
 )
 def test_bash_writes_into_the_session_transcripts_are_refused(repo: Path, command: str) -> None:

@@ -257,3 +257,18 @@ def test_writing_into_the_session_transcripts_is_refused(repo: Path, tmp_path: P
             env={**os.environ, "CLAUDE_PROJECT_DIR": str(repo), "HOME": str(home)},
         )
         assert r.returncode == 2 and "session transcripts" in r.stderr, file
+
+
+def test_the_transcript_guard_holds_in_a_repo_without_sdlc_json(tmp_path: Path) -> None:
+    """3.21.0: the guard does not depend on the repo having adopted the chain."""
+    home = tmp_path / "home"
+    bare = tmp_path / "bare"
+    bare.mkdir()
+    r = subprocess.run(
+        ["bash", str(HOOKS / "chain-gate.sh")],
+        input=json.dumps({"tool_input": {"file_path": str(home / ".claude/projects/p/s.jsonl")}}),
+        capture_output=True,
+        text=True,
+        env={**os.environ, "CLAUDE_PROJECT_DIR": str(bare), "HOME": str(home)},
+    )
+    assert r.returncode == 2 and "session transcripts" in r.stderr

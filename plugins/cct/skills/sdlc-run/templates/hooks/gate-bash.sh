@@ -16,16 +16,22 @@ payload=$(cat)
 
 # The session transcripts (~/.claude/projects) are the evidence for an owner quote: any Bash that
 # writes there (redirect, tee, cp, mv, sed -i, an interpreter, a cd into it) is refused, with or
-# without `blocked[]` rules. Reading stays allowed.
+# without `blocked[]` rules. Reading stays allowed. The command is normalised first (quotes and
+# backslashes dropped, `//` and `/./` collapsed, `~` and $HOME expanded) so the cheap spellings of
+# the path do not slip through; this is a speed bump for a careless agent, not a shell parser.
 case "$payload" in
-  *.claude/projects* | *.claude\\/projects*)
+  *claude*projects*)
     if printf '%s' "$payload" | "$SDLC_PY" -c '
-import json, re, sys
+import json, os, re, sys
 try:
     cmd = (json.load(sys.stdin).get("tool_input") or {}).get("command") or ""
 except (ValueError, AttributeError):
     sys.exit(1)
-HOME = r"\.claude(/|\\/)projects"
+home = os.path.expanduser("~")
+cmd = re.sub(r"[\x27\"\\]", "", cmd)
+cmd = re.sub(r"\$\{HOME\}|\$HOME|(?<![\w$])~", home, cmd)
+cmd = re.sub(r"/(\./)+", "/", re.sub(r"/{2,}", "/", cmd))
+HOME = r"\.claude/projects"
 WRITES = (
     r">>?\s*\S*" + HOME,
     r"(^|[\s;&|(])(tee|cp|mv|dd|install|ln|truncate|rm|touch|chmod|rsync)\b",
