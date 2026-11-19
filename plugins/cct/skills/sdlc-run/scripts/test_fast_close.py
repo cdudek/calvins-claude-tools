@@ -243,3 +243,7 @@ def test_the_run_root_is_chosen_once_per_mode_and_base_ref_stays_the_git_ref() -
 def test_stages_say_the_milestone_checks_name_the_full_e2e_and_old_locks_get_a_gap_line() -> None:
     assert "`checks.milestone` names the full suite and the full E2E explicitly" in STAGES
     assert "an older lock gets an `upgrade gap` line" in STAGES
+
+
+def test_stages_say_the_gate_derives_the_required_visual_runs() -> None:
+    assert "fails `check=ux-visual-required` before the suites" in STAGES

@@ -1582,3 +1582,72 @@ def test_a_default_branch_that_is_not_a_plain_ref_is_refused(tmp_path: Path) -> 
     r = _gate(repo, "milestone", ID)
     assert r.returncode == 3 and _last(r) == "VERIFY BLOCKED reason=env" and "defaultBranch" in r.stdout
     assert not (repo / "PWNED").exists()
+
+
+# --- Review finding 7: the required visual runs come from the UX decision and the sources -----
+
+
+def _visual_repo(
+    tmp_path: Path, decisions: dict | None, ux: str = "on", loose_reference: bool = False
+) -> Path:
+    repo = _repo(tmp_path, [])
+    cfg = {"checks": {"milestone": ["true"]}, "ux": ux}
+    (repo / "sdlc.json").write_text(json.dumps(cfg))
+    change = repo / "changes" / ID
+    if decisions is not None:
+        (change / "decisions.json").write_text(json.dumps(decisions))
+    if loose_reference:
+        (change / "asks").mkdir()
+        (change / "asks/wireframe.png").write_bytes(b"reference")
+    _approve(repo)
+    return repo
+
+
+VISUAL = {"size": "M", "visualSource": {"kind": "images", "path": "asks"}}
+
+
+def test_a_milestone_with_a_visual_source_fails_before_the_suites_without_a_visual_run(
+    tmp_path: Path,
+) -> None:
+    repo = _visual_repo(tmp_path, VISUAL)
+    r = _gate(repo, "milestone", ID)
+    assert _last(r) == f"VERIFY FAIL milestone {ID} check=ux-visual-required"
+    report = json.loads((repo / "changes" / ID / "verify/report.json").read_text())
+    assert [c["name"] for c in report["checks"]] == ["ux-visual-required"]  # the suite never ran
+
+
+@pytest.mark.parametrize(
+    ("decisions", "ux"),
+    [
+        ({**VISUAL, "skips": {"visual": "skip -- the screens are unchanged, the owner agreed"}}, "on"),
+        ({**VISUAL, "size": "none"}, "on"),  # no interface change
+        (VISUAL, "off"),
+        (None, "on"),  # no visual source, no reference, no manifest
+    ],
+)
+def test_a_recorded_skip_or_no_interface_needs_no_visual_run(
+    tmp_path: Path, decisions: dict | None, ux: str
+) -> None:
+    repo = _visual_repo(tmp_path, decisions, ux)
+    assert _last(_gate(repo, "milestone", ID)).startswith(f"VERIFY PASS milestone {ID}")
+
+
+def test_a_skip_without_a_reason_is_not_a_recorded_skip(tmp_path: Path) -> None:
+    repo = _visual_repo(tmp_path, {**VISUAL, "skips": {"visual": "skip -- "}})
+    assert _last(_gate(repo, "milestone", ID)).endswith("check=ux-visual-required")
+
+
+def test_a_loose_reference_image_alone_triggers_the_owner_marks_check(tmp_path: Path) -> None:
+    repo = _visual_repo(tmp_path, {"size": "M"}, loose_reference=True)
+    r = _gate(repo, "milestone", ID)
+    assert _last(r) == f"VERIFY FAIL milestone {ID} check=owner-marks"
+
+
+def test_a_capture_manifest_alone_triggers_the_owner_marks_check(tmp_path: Path) -> None:
+    repo = _repo(tmp_path, [])
+    (repo / "sdlc.json").write_text(json.dumps({"checks": {"milestone": ["true"]}, "ux": "off"}))
+    shots = repo / "changes" / ID / "verify/shots"
+    shots.mkdir(parents=True)
+    (shots / "manifest.json").write_text('{"entries": []}')
+    _approve(repo)
+    assert _last(_gate(repo, "milestone", ID)).endswith("check=owner-marks")

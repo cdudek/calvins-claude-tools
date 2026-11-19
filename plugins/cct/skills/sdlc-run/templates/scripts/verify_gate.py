@@ -80,7 +80,7 @@ import sys
 import time
 from pathlib import Path
 
-from marks import FINDING_ID, bundles, owner_decisions, sessions
+from marks import FINDING_ID, bundles, inventory, owner_decisions, sessions
 from sdlc_version import kit_version, message
 
 REASONS = {
@@ -329,6 +329,33 @@ def validation_gaps(change: Path) -> list[str]:
             elif evidence.lower() in NO_EVIDENCE or evidence[:1] == "<":
                 gaps.append(f"validation.md: {fact} is met without evidence")
     return gaps
+
+
+def sources_present(change: Path) -> bool:
+    """The change holds visual inputs: marks.json, owner sessions, a bundle, a loose reference
+    image or a capture manifest (any one makes `marks.py check` mandatory)."""
+    if (change / "marks.json").exists() or (change / "verify/shots/manifest.json").exists():
+        return True
+    try:
+        return bool(inventory(change))
+    except (OSError, ValueError):
+        return True  # an inventory that cannot be read is itself a marks failure
+
+
+def visual_run_required(change: Path, cfg: dict) -> bool:
+    """A milestone needs a current UX visual run when the UX plan is on, the decision says the
+    change has an interface (`size` is not `none`) and a visual source or reference exists, unless
+    `decisions.json` `skips.visual` is a recorded `skip -- <reason>`."""
+    try:
+        decisions = json.loads(read(change / "decisions.json")) or {}
+    except ValueError:
+        decisions = {}
+    if cfg.get("ux") == "off" or decisions.get("size") == "none":
+        return False
+    skip = str((decisions.get("skips") or {}).get("visual", ""))
+    if re.match(r"skip -- \S", skip):
+        return False
+    return bool(decisions.get("visualSource")) or sources_present(change)
 
 
 def milestone_blockers(change: Path) -> tuple[str, list[str]] | None:
@@ -745,7 +772,7 @@ def run(
     # checker or tag never costs a full E2E run (3.21.0).
     evidence: list[dict] = []
     if scope == "milestone" and (
-        (change / "marks.json").exists() or sessions(change) or bundles(change)
+        (change / "marks.json").exists() or sessions(change) or bundles(change) or sources_present(change)
     ):
         evidence.append(
             {
@@ -758,6 +785,21 @@ def run(
                         "check",
                         change.name,
                     ]
+                ),
+            }
+        )
+    if scope == "milestone" and not (visual_check and visual_runs) and visual_run_required(change, cfg):
+        missing = (
+            "this milestone has a UX decision and a visual source, but no --visual-check and "
+            "--visual-run were given: run cct:ux-assessment-run and pass its run, or record "
+            '`"skips": {"visual": "skip -- <reason>"}` in decisions.json'
+        )
+        evidence.append(
+            {
+                "name": "ux-visual-required",
+                "cache": False,
+                "run": shlex.join(
+                    [sys.executable, "-c", f"import sys; print({missing!r}); sys.exit(1)"]
                 ),
             }
         )
