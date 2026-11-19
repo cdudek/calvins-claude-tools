@@ -13,7 +13,12 @@ metadata:
 **Arguments:** `scope=app [extra builds: PR numbers or URLs] [focus]` or
 `scope=change [pr-number | pr-url]` (defaults to the current branch's open PR) or, with no PR,
 the local form `scope=change base=<ref> head=<ref> [worktree=<path>]` (the milestone close, before
-anything is pushed; `worktree` defaults to the current checkout).
+anything is pushed; `worktree` defaults to the current checkout). Either form takes
+`require=<pass,...>`: the checks the caller's milestone requires (the close passes
+`require=responsive,accessibility`, including the 320 px reflow check). A required pass runs
+whatever the dispatch matrix says, and the report carries one coverage line per required pass:
+`ran`, or `skipped -- <reason>` that the caller recorded. A required pass that neither ran nor has a
+recorded skip makes the review BLOCKED, never a quiet pass.
 
 This process coordinates; it does not judge. The verdicts come from the specialists it
 dispatches: `cct:ux-usability-audit` (Nielsen, Shneiderman, the 30 Laws of UX, the dark-pattern
@@ -246,7 +251,10 @@ say so in the report and review from code; that output is BLOCKED for visual rev
 Read `references/dispatch.md`. The always-run set (`documents`, `visual`, `conformance`, `laws`)
 runs on every review; the matrix adds passes by the shape of the change, and a change you are
 unsure about runs everything. Write `$run/passes/00-review.json` as dispatch.md section 5 says,
-listing every pass not picked under `did_not_run` with `not dispatched: <row>`.
+listing every pass not picked under `did_not_run` with `not dispatched: <row>`. Add every pass
+named in `require=` to the picked passes first (the matrix may omit `responsive` for a route-only
+change and `accessibility` for words only), and check coverage before the merge: each required pass
+is in the picked set with a valid findings file, or carries an explicit `skipped -- <reason>`.
 
 Dispatch the picked passes in one message, each with the prompt shape of dispatch.md section 4:
 its pass name, the PR number (local form: base, head and worktree), the interface file list, the screenshots folder, the documents

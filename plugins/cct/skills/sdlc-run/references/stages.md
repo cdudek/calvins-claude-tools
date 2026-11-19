@@ -305,13 +305,18 @@ a change small enough for one milestone has one.
   it the way 1.2 step 5 says. Never rebase a pushed milestone or project branch.
 - **Steps (the goal runs these):**
   1. Start `/goal` with the feature's condition from `## Goal handover`.
-  2. Tests first: `cct:test-e2e-coverage-run` for the feature's facts, tagged `@F<n>`. The feature's
-     journey row in `e2e/journeys.md` is added or updated in the same PR: tier, states and
-     specs (`../test-e2e-policy/references/strategy.md` section 2.8).
+  2. Tests first, the one-go order: write the smallest failing contract assertion from each fact
+     (a unit, API or component test, tagged `@F<n>`) that needs no running surface. Live browser E2E
+     comes only after the surface exists (step 4): its generator needs a running page and reports
+     missing selectors before the feature is built.
      Bugs: `test-behavior-writer` writes the failing test, `testLocked: true`, then
      `review-fix-implementer`.
-  3. Build in the plan's folders. A file elsewhere is `scope-growth`: stop and ask.
-    4. Run the feature's tags with the repo's E2E command (the stack's command in
+  3. Build in the plan's folders until the assertions pass. A file elsewhere is `scope-growth`:
+     stop and ask.
+  4. Live browser coverage, after the build: `cct:test-e2e-coverage-run` for the feature's facts,
+     tagged `@F<n>`; the feature's journey row in `e2e/journeys.md` is added or updated in the same
+     PR: tier, states and specs (`../test-e2e-policy/references/strategy.md` section 2.8). Then run
+     the feature's tags with the repo's E2E command (the stack's command in
      `suite-speed-and-reliability.md`; `cct:test-e2e-policy` is a rulebook, not a runner), locally,
      in the feature's own worktree and E2E slot, in the foreground (see Wall clock below); `test-flake-fix` for an inconsistent test.
   5. `python3 scripts/verify_gate.py feature <id>`, once per feature at the end, never after a
@@ -486,13 +491,16 @@ person's own browser session. Never use Claude in Chrome or any tool driving tha
 1. One go: the same goal continues from Stage 5. Feature PRs: start `/goal` with
    `templates/goal/milestone.txt` filled (`goal.milestoneTurns`).
 2. Run on the diff, each once and in parallel: `cct:ux-assessment-run scope=change base=<parent>
-   head=<milestone head> worktree=<path>` (the local form: the milestone has no PR before the gate
+   head=<milestone head> worktree=<path> require=responsive,accessibility` (the local form: the milestone has no PR before the gate
    passes, and the PR form would stop there; it runs before the gate and passes the same base,
    head and worktree to every child pass), `cct:review-code-run changes
    <parent> --codex` (Claude and Codex; call it with this explicit command, a bare call has none; it reads the repo's `REVIEW.md` when there is one, the only code review the
    change gets, since 3.7.0 nothing reviews in CI),
    The assessment owns the builds and captures, and dispatches the responsive, accessibility and
-   build QA passes itself from its one capture manifest, so none of them is run again on its own:
+   build QA passes itself from its one capture manifest, so none of them is run again on its own.
+   The milestone's required checks go in through `require=`, so a route-only or words-only change
+   still gets the 320 px reflow check and the accessibility pass; the assessment's report must say
+   `ran` or a recorded `skipped -- <reason>` for each, or the review is BLOCKED:
    responsive uses the `responsiveTier` matrix, nothing overflows, reflow at 320 × 640, WCAG 1.4.10
    as written, never a 320 × 256 window; the states of every changed page are in the same
    captures. The full E2E suite is not in this list:

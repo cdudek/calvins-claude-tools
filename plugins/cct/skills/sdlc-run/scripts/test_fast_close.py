@@ -278,3 +278,23 @@ def test_stage_6_merges_the_close_findings_before_the_triager() -> None:
 def test_convergence_documents_the_strict_manifest_and_its_version_boundary() -> None:
     assert '"manifest": "required"' in CONVERGENCE and "full 40-character commit sha" in CONVERGENCE
     assert "`sources`" in CONVERGENCE and "`shared`" in CONVERGENCE and "`Build: <sha>`" in CONVERGENCE
+
+
+# Review fix 14: feature-PR delivery uses the one-go order
+FEATURE_PRS = STAGES.split("### Feature PRs", 1)[1].split("  5. `python3 scripts/verify_gate.py feature", 1)[0]
+
+
+def test_feature_pr_steps_run_the_live_e2e_generator_only_after_the_build() -> None:
+    contract = FEATURE_PRS.index("smallest failing contract assertion")
+    build = FEATURE_PRS.index("3. Build in the plan's folders")
+    live = FEATURE_PRS.index("Live browser coverage, after the build")
+    assert contract < build < live
+    assert FEATURE_PRS.index("cct:test-e2e-coverage-run") > build
+
+
+# Review fix 15: the milestone's required UX checks go into dispatch and are accounted for
+def test_the_close_passes_its_required_ux_checks_and_the_assessment_accounts_for_them() -> None:
+    assert "require=responsive,accessibility" in STAGES
+    assert "require=<pass,...>" in UX and "skipped -- <reason>" in UX
+    assert "overrides the matrix" in DISPATCH
+    assert "still gets the 320 px reflow check and the accessibility pass" in STAGES

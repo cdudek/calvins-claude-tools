@@ -61,6 +61,10 @@ everything.
 | A new screen | x | x | x | x | x | x | x |
 
 - `spec` runs whenever the change has a spec folder, whatever the row.
+- A caller's `require=<pass,...>` (the milestone close requires `responsive` and `accessibility`)
+  overrides the matrix: those passes run even where the row leaves them blank (a route-only change
+  has no `responsive`, a words-only change no `accessibility`), and each one is accounted for as
+  `ran` or `skipped -- <reason>`; one that is neither blocks the review.
 - `sitemap` writes its checks (`SM-<n>`, `RC-<n>`) as findings; a moved address with no
   redirect is at least High, as `cct:ux-sitemap-create` says.
 - The rows follow "Which laws matter most, by what changed" in `laws-of-ux.md`; that table
