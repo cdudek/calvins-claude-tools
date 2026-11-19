@@ -13,7 +13,7 @@ description: >-
 allowed-tools: "Read Grep Glob Edit Write Agent Skill AskUserQuestion Bash(bash */sdlc-run/scripts/*) Bash(python3 */sdlc-run/scripts/*) Bash(python3 */sdlc-run/templates/scripts/sdlc_version.py*) Bash(python3 scripts/sdlc_version.py*) Bash(python3 scripts/verify_gate.py *) Bash(wt *) Bash(git *) Bash(gh *) Bash(bd *) Bash(plannotator *) Bash(make *) Bash(pnpm *) Bash(uv *) Bash(npx *) EnterWorktree mcp__claude_ai_Linear__* mcp__linear__*"
 user_invocable: true
 metadata:
-  version: 3.20.5
+  version: 3.21.0
   author: calvindudek
 effort: high
 ---
@@ -31,7 +31,7 @@ Verification and every push follow the [local-first contract](references/local-f
      ▼                                       questions ─▶ questions.md, never blocking
 6 Milestone: checks + E2E once, validation against the facts, one fix round ─▶ PR, release
      │  (next milestone, cut from this one, builds meanwhile)
-7 Outcome + archive: archive on merge, read the success measure after release
+7 Outcome: remove the folder after merge (no archive), read the success measure after release
 
 Branches: <default> ─ [project/<slug>] ─ milestone/<slug> ─ features
           only the PR into <default> is reviewed and tiered
@@ -111,12 +111,35 @@ carry on: it never blocks. `references/changelog.md` lists what each version cha
 |---|---|---|
 | 1 Intent | 1.0 preconditions · 1.1 one dialog: ticket, design file, size, kind, milestone (new, existing, milestone of one, hotfix) **and project (none, new, existing)** · 1.2 folder, Linear, worktree, the local milestone branch (a project branch only with `project.branch: true`) · 1.3 asks · 1.4 agent **drafts** `intent.md`: asks, job stories (observed/reported/assumed), success measure, the rules that apply (read from `sdlc.json` `rules`). Never skipped. | **Engineer confirms intent** |
 | 2 UX plan | `cct:ux-design-run` (brief, IA, interaction, screens), `cct:ux-sitemap-create diff`, `cct:ux-rules-validate spec` (components: exists / adapt / new, with paths), `cct:ux-copy-write`, then `cct:ux-spec-validate spec` as **one pass**, its findings into the plan. Size `none` or `ux: off` skips; size S does components and words only. Prototype images only when the plan marks the UI risky: `cct:design-mockups-create spec`. | none |
-| 3 Facts | Drafted after the UX plan. Each fact cites asks and rule IDs, names its screen or state, and names the E2E tag that proves it. Clarify (at most 5 questions, then Assumptions); a reviewer writes `checklist.md`. `verify_gate.py lint` on intent, facts and plan. | none |
+| 3 Facts | Drafted after the UX plan. Each fact cites asks and rule IDs, names its screen or state, and names the E2E tag that proves it. Clarify (at most 5 questions, then Assumptions); `verify_gate.py lint` on intent, facts and plan, then a reviewer writes `checklist.md`. | none |
 | 4 Tech plan | `plan.md`: Rules check, Where things go, Milestones and feature rows, Done, How to run (the build's process), Goal handover (kickoff prompt + `/goal` line; the plan keeps `<STATUS>` as written, never a local path; when the `/goal` is written, fill `<STATUS>` with the absolute path of `${CLAUDE_SKILL_DIR}/scripts/sdlc_status.py`, the plugin copy: no repo carries one); `done.json` holds the criteria as data. Author the design sections (boundaries, schema, endpoints) with `cct:arch-plan-write`. Call when relevant: `review-security-run`, `review-dependency-run`, `tracking-apply` (the success-measure events). | **Analyze pass** (read-only, writes `analyze.md`), **challenge pass** (a fresh reviewer argues against the change, writes `challenge.md`), then **one gate for UX plan + facts + plan**, then `verify_gate.py approve` (refuses an open checklist item, an open CRITICAL in analyze or challenge and an unjustified rule violation) |
 | 5 Build | **One go (default):** one `/goal` (`templates/goal/run.txt`, `<STATUS>` filled as above, an end state: `sdlc_status.py goal <ID>` prints `GOAL <ID> DONE` or `BLOCKED`) runs the plan's `## How to run` for every milestone in order, each on a local `milestone/<slug>-<n>` cut from fresh `origin/<default>`, or from the previous milestone only when the plan says `needs: M<k>`: per feature, write its tests, build, commit, next feature at once; each builder gets a context pack (its facts, plan excerpt, cited rule text). **Run touched tests and the repo's pre-commit checks; run the full suite once on the final head before push; GitHub's required checks are the merge gate.** Open questions go to `questions.md` with the default taken and never block; answers become asks of the next milestone. Then Stage 6 for that milestone in the same goal. **Feature PRs:** per feature, inside `/goal` (`templates/goal/feature.txt`): `test-e2e-coverage-run`, `test-e2e-policy` on the feature tags, `test-flake-fix`; bugs via `test-behavior-writer` → locked test → `review-fix-implementer`; `verify_gate.py feature`; `git-pr-run --base milestone/<slug>`; `cct:ux-assessment-run` on that PR's screens, its Critical and High fixed before auto-merge is armed. No tier on this PR — it is interior. When it merges, the next feature starts. | none |
-| 6 Milestone | Inside `/goal` (the same one in one go; `templates/goal/milestone.txt` for feature PRs), on the milestone diff only, in parallel: `cct:ux-assessment-run`, `review-code-run` (Claude and Codex, reading `REVIEW.md` when the repo has one) + `review-fix-run 1` (one round), `ux-responsive-audit` full matrix, states, `ux-accessibility-audit`, the full E2E suite once, ×3 only for changed and flaky specs (`../test-e2e-policy/references/suite-speed-and-reliability.md` section G), `cct:ux-assessment-run` when a screen is new, **validation**: every fact and ask exercised in the built app into `validation.md` (expected, observed, evidence, verdict; `not met` blocks), `cct:ux-build-validate`, the `test-behavior-verifier` and `review-criteria-auditor` agents for jobs and facts, then **converge** (append-only; `references/quality-passes.md`), `verify_gate.py audit` (read-only: is every declared gate enforced; `references/stages.md`), **Last milestone of the goal only:** `review-security-run` on the whole goal diff when auth, money or consent is touched anywhere in it (in a project it waits for 6p). One findings list, one fix round, `verify_gate.py milestone` on a frozen head, one push, one PR **to the milestone's parent** — the default branch, or `project/<slug>` when the project has a branch — merged with a merge commit. | **Engineer accepts the milestone** (one go: only when a Critical or High would be deferred) |
+| 6 Milestone | Inside `/goal` (the same one in one go; `templates/goal/milestone.txt` for feature PRs), on the milestone diff only, in parallel: `cct:ux-assessment-run scope=change base=<parent> head=<head> worktree=<path>` (the local form, once; it owns the captures in one manifest and dispatches responsive, accessibility and build QA), `review-code-run changes <parent> --codex` (Claude and Codex, reading `REVIEW.md` when the repo has one) + one fix round fed the joined findings and that review's state directory (never `review-fix-run`, which starts its own review), ×3 only for changed and flaky specs (`../test-e2e-policy/references/suite-speed-and-reliability.md` section G; the full suite and full E2E run once, inside the gate, its only runner), **validation**: every fact and ask exercised in the built app into `validation.md` (expected, observed, evidence, verdict; `not met` blocks), the `test-behavior-verifier` and `review-criteria-auditor` agents for jobs and facts, then **converge** (append-only; `references/quality-passes.md`), `verify_gate.py audit` (read-only: is every declared gate enforced; `references/stages.md`), **Every milestone close:** `review-security-run` on the diff from the goal's recorded start when auth, money or consent is touched in the goal so far (a project's 6p runs it again on the whole project). One findings list, one fix round, `verify_gate.py milestone` on a frozen head, one push, one PR **to the milestone's parent** — the default branch, or `project/<slug>` when the project has a branch — merged with a merge commit. | **Engineer accepts the milestone** (one go: only when a Critical or High would be deferred) |
 | 6p Project | Only in a project, once its last milestone has merged: re-run `checks.milestone` on the whole project, on the default branch, plus `review-security-run` on it when auth, money or consent is touched. No PR. With `project.branch: true`: merge the default branch into `project/<slug>` locally, the same checks, then one PR to the default branch, the one that gets the tier. No second fix round — what is left starts the next project. | **Engineer accepts the project** |
-| 7 Outcome + archive | One short `reflection.md` (repeated lessons are listed for the owner to promote, never written to the agent file by the agent). Archive the folder when the change reaches the default branch. After release, read the success measure from PostHog into `milestone.md`. A miss starts the next change at 1.3. | Engineer reads it |
+| 7 Outcome | One short `reflection.md` (repeated lessons are listed for the owner to promote, never written to the agent file by the agent). After the merge, write the outcome record (`spec.py outcome write <folder>`) and remove the folder in a records-only PR: there is no archive. After release, read the success measure from PostHog into the outcome record (`spec.py outcome record`). A miss starts the next change at 1.3. | Engineer reads it |
+
+## Documents and the living spec (layout 4)
+
+A change may keep three documents, `spec.md` (why and what), `design.md` (how) and `tasks.md` (in
+what order), instead of eight; scope S needs only the first, M the first and last, L all three,
+chosen by risk. What the product does today is `specs/<capability>/rules/R123.md`, one file per
+requirement, edited in the PR that changes the behaviour: the PR's git diff is the delta, there is
+no archive and no apply step. `python3 scripts/spec.py` finds rules (`find`), allocates ids (`new`,
+`next`, `renumber`), checks drift (`check`) and the documents (`consistency`), and records the
+outcome after the folder is removed (`outcome`). A repo opts in with `"layout": 4` in `sdlc.json`;
+a change already on the old layout finishes on it. Read [change-folder](references/change-folder.md)
+and [living-spec](references/living-spec.md); the per-stage differences are the first section of
+`references/stages.md`.
+
+## Heavy work
+
+Builds, app servers, browsers and the full suite are heavy; format, lint, types and touched unit
+tests are light. A heavy job takes a slot in a per-machine queue (`scripts/heavy.py run|submit`,
+one slot by default), and the milestone gate runs every check through it. A helper's heavy command
+that skips the queue is refused by `helper-guard.sh`. `scripts/db.py test` gives each job a private
+copy of a migrated local Postgres; `db.py dev` connects the engineer to their own cloud database;
+`scripts/preflight.py` checks tools, sign-in and Docker once. All optional (`heavy`, `db`,
+`preflight` in `sdlc.json`); `references/heavy-work.md`.
 
 ## Agents and models
 
@@ -151,9 +174,10 @@ No design gate exists. `cct:ux-spec-validate spec` runs once and its findings go
 `python3 scripts/verify_gate.py feature|milestone <id>` checks `lock.json`, runs
 `sdlc.json` `checks.<scope>` in order, writes `changes/<id>/verify/report.{json,md}` and ends
 with one line: `VERIFY PASS <scope> <id> <sha>`, `VERIFY FAIL … check=<name>` (fix and rerun) or
-`VERIFY BLOCKED reason=<code>` (stop and ask the engineer). Reasons: `validation-not-met`, `findings-open`, `not-converged`, `not-approved`,
+`VERIFY BLOCKED reason=<code>` (stop and ask the engineer). Reasons: `validation-not-met`, `findings-open`, `findings-blocked`, `not-converged`, `not-approved`,
 `protected-path`, `no-progress`, `attempts`, `flaky`, `unknown-verdict`, `needs-baseline`,
 `allowlist-request`, `scope-growth`, `spec-conflict`, `env`, `test-proves-nothing`. A milestone blocks on a `not met` or `partly` row in `validation.md`, an unchecked item in `findings.md` outside `## Advisory`, and a `## Converge` section without `Converged:`.
+`goal` ends in `DONE` or `BLOCKED` with a state; `references/states.json` lists every state and who leaves it.
 Snapmark feedback and supplied reference images require comparison against fresh headless
 screenshots, including ADR refinements; milestone `owner-marks` checks `marks.json` (see `references/stages.md`).
 
@@ -191,8 +215,8 @@ Only a project that asks for a branch (`project.branch: true`) adds one level ab
 - Feature PRs: feature worktrees use the shared Worktrunk-first create flow from
   `origin/milestone/<slug>`, then `EnterWorktree path=` (`references/stages.md` 1.2). Their
   branch names contain the change slug.
-- Builders are `cct:sdlc-feature-builder` agents, at most 4 at once, each dispatched with
-  `isolation: "worktree"` and a `Base: <milestone head sha>` line, which it resets to before any
+- Builders are `cct:sdlc-feature-builder` agents, at most 4 at once (inside about 6 helpers), each dispatched with
+  `isolation: "worktree"` and `Repo`, `Worktree`, `Change` and `Base: <milestone head sha>` lines, checked and reset to before any
   edit: a worktree hook cuts from the trunk. The supervisor commits its records first, edits no
   code, runs no test suite, and is the one integrator. Every builder dispatch carries `sdlc.json` `builderModel` and `builderEffort`
   (default `sonnet`, `high`; set `opus` for a hard change, or let one plan's Approach override
@@ -219,8 +243,7 @@ yet, and they auto-merge on their checks alone.
 `ship-show-ask.yml` enforces this itself, by comparing `github.event.pull_request.base.ref`
 with the repository's default branch, so the rule holds even for a PR opened by hand. The code
 review is not in CI at all (3.7.0): it runs once, locally, at the milestone close, with Claude
-and Codex on the whole milestone diff. A CI review re-read that diff for about $1 a PR and
-needed `ANTHROPIC_API_KEY` in every repo.
+and Codex on the whole milestone diff. A CI review re-read that diff for about $1 a PR.
 
 ### Records, gates and waiting
 
@@ -231,30 +254,32 @@ it is a commit on `milestone/<slug>`, never its own PR or push: fixes found in t
 and flaky-spec repairs, CI timeout tweaks its tests need, and records (plans, handovers, gate
 lines, findings). A record written after a merge is the next milestone's first commit; a fix for
 a merged milestone goes into the next one. The close runs locally: one `cct:sdlc-feature-builder` subagent runs
-unit tests, the full E2E suite, the one fix round and `verify_gate.py milestone`, while the
-supervisor dispatches the reviews and the validation. With `builders: "codex"` the close
-builder runs the checks and the gate but implements nothing: the fix parts go to
-`codex-build.sh`, then the close builder runs the checks and the gate again. Only its
-`VERIFY PASS` head is pushed, once, with one PR and auto-merge armed, while the supervisor builds
+the one fix round and `verify_gate.py milestone`, the only runner of the full suite and the full
+E2E at the close, while the supervisor dispatches the reviews and the validation. With
+`builders: "codex"` the close builder implements nothing: the fix parts go to `codex-build.sh`,
+then the close builder runs the gate once. Only its
+`VERIFY PASS` head is pushed, once, with one PR; auto-merge is armed only after the owner and visual dispositions are recorded (never arm an `ask`-labelled or a closed PR), while the supervisor builds
 the next independent milestone (at most 4 builders). CI is the last check, never the test loop:
 a red check uses the exact-test local failure loop in `references/local-first.md`, then the full suite once and one batched push. Another repository follows
 the same rule on its own milestone branch; an exception needs the engineer's words in
 `decisions.json` `prExceptions`. Agents run only the tests they touched.
-GitHub Actions required checks are the merge gate; the rulesets require them. Nothing local
-(no script, receipt or hook) gates a push or a PR. Run the full suite before every push and
-debug failures locally, not through remote CI. Commands:
+GitHub's required checks are the merge gate; `pr-gate.sh` only enforces branch order (a milestone
+head needs `VERIFY PASS milestone` before it is pushed). Commands:
 `references/stages.md` "Records, gates and waiting", `references/ci-blueprint.md`.
 
 ## Never
 
 - Build outside `/goal`. `chain-gate.sh` refuses the edit; never work around it.
 - Edit `facts.md`, `done.json`, `lock.json`, `sdlc.json` checks, baselines or allowlists after
-  approval without the engineer's words in `decisions.json` `protectedEdit`. Never re-lock.
+  approval without the engineer's words in `decisions.json` `protectedEdit`. Re-lock
+  (`verify_gate.py approve`) only scope the engineer added, never to make a gate pass.
 - Decide the ticket, size, kind or milestone yourself; create a ticket without searching.
 - Edit a test to make verify pass, or while `testLocked` without `testEdit`.
-- Start a second fix round at the milestone. What is left goes to the next milestone.
+- Start a second fix round at the milestone. What is left is settled by the owner's answer to an
+  `AskUserQuestion` (`Change <id>, finding <finding id>: ...`; Fix it now, Accept as is, Defer to milestone <n>, Block the close); the gate reads it.
 - Put a local path in any tracker (`scripts/linear-safe.py`); keep a plan in `.claude/plans/`.
-- Open a PR or push for anything but a milestone close: records, fixes, test repairs and merges
+- Open a PR or push for anything but a milestone close (the one exception: after the merge, the
+  records-only PR that removes the folder, Stage 7): records, fixes, test repairs and merges
   from the default branch are commits on the milestone branch; a fix for a merged milestone goes
   into the next one. Push a milestone head only after `VERIFY PASS milestone` on it, once.
   `pr-gate.sh` refuses the rest; never work around it. Never wait on a PR your code does not
@@ -293,5 +318,8 @@ debug failures locally, not through remote CI. Commands:
 - `references/decision4-pr.md` — Decision4 in a PR: advisory undo level and decision record, no gate.
 - `references/changelog.md` — what each sdlc-run version changed and what a repo must do (`adopt --upgrade` reads it).
 - `references/tiers.md` — Ship / Show / Ask by path.
+- `references/heavy-work.md` — the heavy-job queue, local test databases, a cloud dev database, guards and preflight (`scripts/heavy.py`, `db.py`, `evidence.py`, `preflight.py`), and what the gate, hooks and status do with them.
+- `references/states.json` — every state `sdlc_status.py goal` can print, who leaves it and how; a test keeps it equal to the code.
+- `references/change-folder.md`, `references/living-spec.md` — layout 4: three documents, one file per rule, `spec.py`.
 - `references/playbook.md` — playbook mapping and metrics.
-- `references/layout-research.md` — why `changes/` plus archive.
+- `references/layout-research.md` — why `changes/` (its archive half is superseded: folders are removed after merge).

@@ -21,7 +21,15 @@ The output is the owner-readable gate summary.
 
 ## When It Runs: Twice, Loop First
 
-1. **Spec loop, before the prototype.** Reviewers read the spec text: brief, IA,
+0. **SDLC mode is one draft pass, never a loop.** The parent (sdlc-run, Stage 2) calls this once
+   with the requirements not yet written: run the reviewers once, merge, fix what the spec can
+   fix, and write `<spec>/readiness.md`. Start no `/goal`, and call no other validator. An in-scope
+   ask whose rule or fact is missing is `pending` (layout 4: `Answered by: pending` in `spec.md`);
+   it counts as mapped, is listed under Decisions Needed with its job story and screen, and
+   `verdict: ready` is still possible. The owner gate is where `pending` must be gone (sdlc-run's
+   `spec.py consistency --phase approve` refuses it). Everything below that says "loop" is the
+   standalone mode.
+1. **Spec loop, before the prototype** (standalone mode). Reviewers read the spec text: brief, IA,
    interaction, screens, conformance. There are no images yet; reviewer 3 critiques
    `<spec>/screens.md` and the state tables against the audience scenes and job stories. This pass
    runs as a `/goal` loop:
@@ -78,7 +86,7 @@ The output is the owner-readable gate summary.
 | Check | Pass Rule |
 |---|---|
 | Activities | Every activity ran or was skipped with a reason. |
-| Asks | Every ask maps to a job story, a screen, and a fact or out-of-scope line (sdlc mode) or an Ask Map line (standalone mode). |
+| Asks | Every ask maps to a job story, a screen, and a fact or out-of-scope line (sdlc mode; `pending` passes in the draft pass and is listed) or an Ask Map line (standalone mode). |
 | Findings | No open severity 3 or 4 finding remains. |
 | Laws of UX | The coverage table has all thirty rows and the B rows filled; no row is blank. |
 | Concerns | Every conformance concern is resolved or listed for the owner. |
@@ -91,7 +99,9 @@ Write `<spec>/readiness.md`.
 
 **Mirror it for an older hook.** While `<spec>/validation.md` exists (a folder written before the
 rename), or the repo's `.claude/hooks/chain-gate.sh` does not mention `readiness.md` (an
-`adopt --upgrade` left the hook in place), write the same content to `<spec>/validation.md` on
+`adopt --upgrade` left the hook in place), or the repo's guardrail test (`tests/test_sdlc.py`
+or `tests/sdlc.test.ts`) does not mention `readiness.md` (a selective replace upgraded the hook and
+kept the old guardrail test, which still requires `validation.md` in CI), write the same content to `<spec>/validation.md` on
 every write, loop pass and gate pass alike. The old hook reads only `validation.md`, the new one
 prefers `readiness.md` and reads identical content, so no hook version accepts a stale verdict or
 rejects a fresh one.

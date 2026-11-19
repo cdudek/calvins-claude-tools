@@ -11,15 +11,23 @@
 #      of the stacks you do not use (cosmetic: they are skipped anyway).
 #   5. Fill in the DEPLOY hook or leave it: with no ciCommands.deploy it prints a notice and succeeds.
 #   6. Make `check` the only required status (ruleset A6 in references/ci-blueprint.md).
+#   7. Optional: set ciCommands.buildOutput (the paths the build writes, space separated) and `build` uploads them
+#      once; every E2E shard downloads them instead of building again (five builds became one).
 #
 # How it decides what runs (A1, A5), from sdlc.json `ciPaths`, shell globs where * also crosses /:
-#   - a file in `docs` or neither in `code` nor `config` (Markdown, images, .claude/, plans, notes) runs NOTHING;
-#   - a file in `all` (CI workflows, sdlc.json, lockfiles) runs every step;
+#   - a file in `docs` or neither in `code` nor `config` (Markdown, images, .claude/ notes, plans) runs NOTHING;
+#   - a file in `all` (CI workflows, sdlc.json, lockfiles, the installed hooks .claude/hooks/* and
+#     .claude/settings.json) runs every step. `all` is checked BEFORE `docs`, so executable hooks are code even
+#     though the rest of .claude/ is notes;
 #   - any other code or config file runs the steps whose include matches it and whose exclude does not
 #     (test/ -> lint and unit; e2e/ -> lint and the touched specs; *.css -> lint and e2e; migrations -> unit, e2e, deploy);
-#   - safety net: a push to the default branch runs every step, and a PR into the default branch or `project/*`
+#   - safety net: a push to the default branch runs every step when the files it brought in changed any code or
+#     config (a docs-only PR that merged runs nothing again; an unknown range runs everything), and a PR into the default branch or `project/*`
 #     (or from `milestone/*`) that changes any code or config runs every step and the whole E2E suite in SHARDS shards.
 #     Every other PR runs the E2E specs it touches (`ciPaths.specs`).
+# Fail fast: `preflight` (config conflicts, seconds) gates every expensive job, `lint` gates the E2E shards, and one
+# failing shard cancels its siblings, so a typo never leaves browsers running toward their timeout. `check` needs
+# every job, so a skipped chain can never report green.
 # Unavoidable cost of a PR that changes nothing runnable: the `changes` job (about 10 seconds) and `check`,
 # because a required status that never reports leaves the PR unmergeable. Do not use workflow-level `paths-ignore`.
 #
@@ -62,6 +70,7 @@ jobs:
       unit: ${{ steps.f.outputs.unit }}
       build: ${{ steps.f.outputs.build }}
       deploy: ${{ steps.f.outputs.deploy }}
+      deploy_ok: ${{ steps.f.outputs.deploy_ok }}
       full: ${{ steps.f.outputs.full }}
       matrix: ${{ steps.f.outputs.matrix }}
     steps:
@@ -78,6 +87,10 @@ jobs:
           BASE: ${{ github.base_ref }}
           HEAD: ${{ github.head_ref }}
           DEFAULT: ${{ github.event.repository.default_branch }}
+          BEFORE: ${{ github.event.before }}
+          SHA: ${{ github.sha }}
+          IS_FORK: ${{ github.event.pull_request.head.repo.fork }}
+          IS_DRAFT: ${{ github.event.pull_request.draft }}
         run: |
           # >>> changes-script (scripts/test_ci_changes.sh runs exactly these lines)
           set -eu
@@ -102,16 +115,28 @@ jobs:
             esac
           fi
           specs=""
-          touched=false # did the PR change any code or config at all?
+          touched=false # did the PR (or the push) change any code or config at all?
+          # A push to the default branch lists the files it brought in, so a docs-only PR that merged does not
+          # run the whole pipeline again. An unknown range (a new branch, a failed or capped comparison) runs everything.
           if [ -z "$PR" ]; then
-            everything
-            touched=true
+            files=""
+            case "$BEFORE" in ""|*[!0-9a-f]*|0000000000000000000000000000000000000000) BEFORE="" ;; esac
+            if [ -n "$BEFORE" ] && files=$(gh api --paginate "repos/$GH_REPO/compare/$BEFORE...$SHA" --jq '.files[].filename') \
+              && [ "$(printf '%s\n' "$files" | grep -c .)" -lt 300 ]; then
+              :
+            else
+              everything
+              touched=true
+              files=""
+            fi
           else
             files=$(gh pr diff "$PR" --name-only) # a failure (a diff too large to list) stops the job: fails closed
+          fi
+          if [ -n "$files" ]; then
             while IFS= read -r f; do
               [ -n "$f" ] || continue
-              hit "$f" "$IGNORE" && continue
               if hit "$f" "$ALL"; then everything; touched=true; continue; fi
+              hit "$f" "$IGNORE" && continue
               hit "$f" "$CODE" || continue # neither code nor config: runs nothing
               touched=true
               known=false
@@ -129,9 +154,9 @@ jobs:
                 esac
               fi
             done <<< "$files"
-            # safety net: where the full suite runs, any code or config change runs every step
-            if [ "$touched" = true ] && [ "$full" = true ]; then everything; fi
           fi
+          # safety net: where the full suite runs, any code or config change runs every step
+          if [ "$touched" = true ] && [ "$full" = true ]; then everything; fi
           if [ "$e2e" != true ]; then
             matrix='[]'
           elif [ "$full" = true ]; then
@@ -141,8 +166,13 @@ jobs:
           else
             matrix='[]' # e2e code changed but no spec did: lint and unit cover it; the full run is on the way to main
           fi
+          # Deploy eligibility is the event's, not the paths': a push to the default branch, or a PR from this
+          # repository that is not a draft (a fork has no secrets). `deploy` says deployable code changed.
+          deploy_ok=true
+          if [ -n "$PR" ] && { [ "$IS_FORK" = true ] || [ "$IS_DRAFT" = true ]; }; then deploy_ok=false; fi
           {
             for s in lint unit build deploy; do eval "echo $s=\$$s"; done
+            echo "deploy_ok=$deploy_ok"
             echo "full=$full"
             echo "matrix=$matrix"
           } >> "$GITHUB_OUTPUT"
@@ -154,9 +184,45 @@ jobs:
           } >> "${GITHUB_STEP_SUMMARY:-/dev/null}"
           # <<< changes-script
 
+  # Seconds, no install: sdlc.json config conflicts (scripts/preflight.py --config). Without the script (a repo that
+  # has not adopted it) the job prints a notice and passes.
+  preflight:
+    name: Preflight
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+          sparse-checkout: |
+            sdlc.json
+            scripts
+          sparse-checkout-cone-mode: false
+      - run: |
+          if [ ! -f scripts/preflight.py ]; then echo "::notice::no scripts/preflight.py: run sdlc-run adopt"; exit 0; fi
+          python3 scripts/preflight.py --config
+
+  # The living spec: every changed rule has a changed, tagged test, no rule id is reused, no tag names a missing
+  # rule. A repo with no specs folder (and no sdlc.json livingSpecs) passes at once. The base must resolve, so the
+  # clone is full: a shallow one has no origin/<base> and the strict check would always fail.
+  spec:
+    name: Living spec
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+          fetch-depth: 0
+      - env:
+          BASE: ${{ github.base_ref || github.event.repository.default_branch }}
+        run: |
+          if [ ! -f scripts/spec.py ]; then echo "::notice::no scripts/spec.py: run sdlc-run adopt"; exit 0; fi
+          python3 scripts/spec.py check --base "origin/$BASE"
+
   lint:
     name: Lint and types
-    needs: changes
+    needs: [changes, preflight]
     if: needs.changes.outputs.lint == 'true'
     runs-on: ubuntu-latest
     timeout-minutes: 20
@@ -212,7 +278,7 @@ jobs:
 
   unit:
     name: Unit tests
-    needs: changes
+    needs: [changes, preflight]
     if: needs.changes.outputs.unit == 'true'
     runs-on: ubuntu-latest
     timeout-minutes: 20
@@ -282,7 +348,7 @@ jobs:
 
   build:
     name: Production build
-    needs: changes
+    needs: [changes, preflight]
     if: needs.changes.outputs.build == 'true'
     runs-on: ubuntu-latest
     timeout-minutes: 20
@@ -335,18 +401,35 @@ jobs:
           cmd=$(jq -r '.ciCommands.build // empty' sdlc.json)
           if [ -z "$cmd" ]; then echo "::error::sdlc.json has no ciCommands.build; set it (to true if this repo has no such step)"; exit 1; fi
           echo "+ $cmd"; bash -eo pipefail -c "$cmd"
+      - name: Which paths to share with the E2E shards (ciCommands.buildOutput)
+        id: out
+        run: |
+          paths=$(jq -r '.ciCommands.buildOutput // empty' sdlc.json)
+          { echo "paths<<EOF"; for p in $paths; do echo "$p"; done; echo "EOF"; } >> "$GITHUB_OUTPUT"
+          echo "present=$([ -n "$paths" ] && echo true || echo false)" >> "$GITHUB_OUTPUT"
+      - if: steps.out.outputs.present == 'true'
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with:
+          name: build-output
+          path: ${{ steps.out.outputs.paths }}
+          retention-days: 1
+          if-no-files-found: error
 
   # One matrix leg per entry of the `changes` matrix: the shards of the full suite, or one leg with the touched specs,
-  # or no leg at all. Each leg has its own database and builds the production artifact itself (A2, A3): E2E never
-  # runs against a dev server.
+  # or no leg at all. Each leg has its own database and runs the production artifact (A2, A3): E2E never runs against
+  # a dev server. The artifact comes from `build` when ciCommands.buildOutput is set; otherwise (or when `build` did
+  # not run) the leg builds it itself. A failed preflight, lint or build skips every leg; one failing leg cancels the
+  # others (the run is red either way, and browsers cost the most).
   e2e:
     name: E2E ${{ matrix.name }}
-    needs: changes
-    if: needs.changes.outputs.matrix != '[]'
+    needs: [changes, preflight, lint, build]
+    if: >-
+      !cancelled() && needs.changes.outputs.matrix != '[]' && needs.preflight.result == 'success' &&
+      needs.lint.result != 'failure' && needs.build.result != 'failure'
     runs-on: ubuntu-latest
     timeout-minutes: 45
     strategy:
-      fail-fast: false
+      fail-fast: true
       matrix:
         include: ${{ fromJSON(needs.changes.outputs.matrix) }}
     env:
@@ -411,7 +494,18 @@ jobs:
           cmd=$(jq -r '.ciCommands.install // empty' sdlc.json)
           if [ -z "$cmd" ]; then echo "no ciCommands.install: nothing to install"; exit 0; fi
           echo "+ $cmd"; bash -eo pipefail -c "$cmd"
+      - name: Shared build available?
+        id: shared
+        run: echo "use=$([ "$BUILD_RESULT" = success ] && [ -n "$(jq -r '.ciCommands.buildOutput // empty' sdlc.json)" ] && echo true || echo false)" >> "$GITHUB_OUTPUT"
+        env:
+          BUILD_RESULT: ${{ needs.build.result }}
+      - if: steps.shared.outputs.use == 'true'
+        uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
+        with:
+          name: build-output
+          path: .
       - name: Build the production artifact (ciCommands.build)
+        if: steps.shared.outputs.use != 'true'
         run: |
           cmd=$(jq -r '.ciCommands.build // empty' sdlc.json)
           if [ -z "$cmd" ]; then echo "::error::sdlc.json has no ciCommands.build"; exit 1; fi
@@ -436,15 +530,15 @@ jobs:
   # A preview or staging deploy costs minutes and money, so it runs only when `changes` says deployable code changed.
   # Put your deploy here: either set sdlc.json ciCommands.deploy, or replace the step below with your own steps
   # (cloud auth with Workload Identity Federation, `permissions: id-token: write` on this job, a deploy action).
-  # A pull request from a fork has no secrets: guard the job with
-  #   github.event.pull_request.head.repo.full_name == github.repository
+  # Two questions, answered apart: `deploy` (paths: did deployable code change?) and `deploy_ok` (the event: a push
+  # to the default branch, or a same-repository, non-draft PR; a fork has no secrets). Both must be true.
   # It needs only `changes`, so it starts in parallel with the checks; add lint, unit, build to `needs` to deploy
   # only after they pass (then give the job `if: always() && ...` or a skipped need skips the deploy too).
   # ==========================================================================================================
   deploy:
     name: Deploy
     needs: changes
-    if: needs.changes.outputs.deploy == 'true'
+    if: needs.changes.outputs.deploy == 'true' && needs.changes.outputs.deploy_ok == 'true'
     runs-on: ubuntu-latest
     timeout-minutes: 30
     steps:
@@ -461,7 +555,7 @@ jobs:
   check:
     name: check
     if: always()
-    needs: [changes, lint, unit, build, e2e, deploy]
+    needs: [changes, preflight, spec, lint, unit, build, e2e, deploy]
     runs-on: ubuntu-latest
     timeout-minutes: 5
     steps:

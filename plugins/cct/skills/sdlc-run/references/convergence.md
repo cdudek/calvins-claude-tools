@@ -43,11 +43,41 @@ review ticks items off and may add only a High item or a regression, meaning som
 passed before and fails now. A new Medium or Low item found later is not added; that is what
 kept rounds from ending.
 
-## Budget: two fix rounds per screen per design-system release
+## Budget: one fix round at milestone close, two per screen while building
 
-After two fix rounds on one screen in one design-system release, stop. What is left goes to the
-owner as a side-by-side list (reference next to build, one row per open item) to accept or send
-back. A new design-system release starts a new budget.
+There are two budgets, for two different moments, and they do not add up.
+
+- **One fix round at milestone close**, for every finding source together (code review, visual,
+  converge). The close's visual and build QA are report-only; the supervisor owns the one round
+  and passes it the joined findings.
+- **Two fix rounds per screen per design-system release** for visual work outside the close, the
+  build loop of a screen under construction. After two rounds on one screen in one release, stop.
+  What is left goes to the owner as a side-by-side list (reference next to build, one row per open
+  item) to accept or send back. A new design-system release starts a new budget.
+
+### What the close leaves: one owner answer
+
+After the one round, each residual finding is settled only by the owner's answer to an
+`AskUserQuestion` dialog. The question text starts `Change <change id>, finding <finding id>: ` and
+the options are fixed: `Fix it now`, `Accept as is`, `Defer to milestone <n>` and `Block the close`.
+The gate reads the structured tool results of the session transcript (never free text, an agent
+message, a tool output from elsewhere or a subagent), matches question to change id and finding id
+and takes the selected option as the decision: `Accept as is` and `Defer to milestone <n>` settle,
+`Fix it now` keeps the item open, `Block the close` is terminal (`findings-blocked`; it also stands
+against a ticked box until the owner answers again). The latest answer for a finding wins; an
+answer older than the finding's first appearance in `findings.md` is ignored. The transcript is
+read only from Claude Code's folders for this repo (its working tree and its main checkout), never
+from a path anyone names, never through a link, and only files you own; hooks refuse any Write,
+Edit or shell write into `~/.claude/projects`. The same reader settles an unresolved visual row in
+`marks.json`. There is no table to fill and no quote to copy.
+
+**Threat model.** This protects against a careless or over-eager agent settling a finding without
+the owner. It does not stop someone with a shell who edits files by hand; that is out of scope. The
+Bash guard matches a normalised command text (quotes, `//`, `/./`, `~` and `$HOME` resolved), so it
+is a speed bump for a careless agent, not a sandbox: a variable, an encoded string or a script file
+gets past it. A fact that is `partly` or `not met` in `validation.md` is never cleared this way;
+that needs a scope change with a new approval, or the milestone is held. `verify_gate.py milestone`
+and `sdlc_status.py` read the answers through one shared reader (`marks.owner_decisions`).
 
 ## Design-system audit and freeze (over about 20 screens)
 
@@ -61,7 +91,24 @@ A screen that is done in the app and waits only on a missing design-system part 
 It is not a failure and needs no accepted words. When the release ships, the row is checked again
 and set to `match` or `differs`.
 
-## Capture: one build, one pinned commit
+## Capture: one owner, one manifest, one pinned commit
+
+One assessment (`cct:ux-assessment-run`) owns every capture of a milestone, in
+`verify/shots/manifest.json`, keyed by build SHA, reference revision, screen, state, width and
+zoom. Responsive, accessibility, build QA and the reviewer read those captures; none takes its
+own. After a fix, only the affected cells are captured again, from the new build. A stale `qa.md`
+is invalidated by its inputs (its recorded build against HEAD, the reference bytes), never reused
+because the file exists. `marks.py check` enforces it: a capture or `qa.md` whose build differs
+from HEAD in any file outside the changes folder, a changed reference, a shot missing from the
+manifest, or one cell captured twice is a problem.
+
+For a change approved from 3.21.0 (its `lock.json` has `"manifest": "required"`; older changes keep
+the lenient behaviour) the rules are strict: the manifest must exist when the change holds visual
+work; each `build` is a full 40-character commit sha, never `HEAD` or a branch; each entry carries
+the sha256 `reference` digest; each entry lists the `sources` (repo files or folders) of its screen
+and the manifest lists `shared` dependencies, so a fix to screen A leaves screen B's cell valid and a
+change to a shared file invalidates every cell; and `<spec>/qa.md` must exist and record its own
+`Build: <sha>` line, which is checked against HEAD (the manifest's `qa` metadata is ignored). Fail closed: an unreadable `lock.json` counts as strict; a change with visual rows needs `qa.md` even without a spec folder or a manifest; every declared `sources` and `shared` path must be a plain repo path (no absolute path, `.` or `..`) tracked at HEAD. `lock.json` is protected after approval by `chain-gate.sh`.
 
 Capture all visual evidence from one build per milestone version, from a worktree pinned to one
 commit. Never capture from the live milestone branch: merges moved the branch in the middle of a

@@ -6,14 +6,14 @@
   asks/<session-date>-snapmark/              original session.md, img/, optional PDF/zip
   marks.json                                one row per owner note or reference image
   verify/shots/                             fresh headless screenshots for comparison
-<changesDir>/archive/<year>/<year-month>/<same name>/   archived when the PR is green
+(no archive: the folder is removed after the merge; see change-folder.md)
 <designsDir>/<date>-<type>-<slug>.md          a design or one decision that outlives one PR
 <designsDir>/INDEX.md                         one line per file there, generated; read it first
 ```
 
 One change = one folder = one PR. The id is `<created>-<KEY>-<slug>`, or
 `<created>-<slug>` when there is no Linear issue. `created:` matches the date in the name.
-Archiving moves the folder and never renames it.
+A merged change's folder is removed, never archived (older archives stay readable).
 
 `spec/` is new in v3. It holds this change's design slice. A design that spans changes still
 lives in `docs/designs/`.
@@ -22,7 +22,7 @@ lives in `docs/designs/`.
 
 | Thing | Folder | Lifetime | Linear |
 |---|---|---|---|
-| the work of one PR: `intent.md`, `facts.md`, `plan.md`, `handover.md`, and v3 `spec/*` | `changes/<created>-<KEY>-<slug>/` | archived at merge | **issue** (1:1 with the PR) when there is one |
+| the work of one PR: `intent.md`, `facts.md`, `plan.md`, `handover.md`, and v3 `spec/*` | `changes/<created>-<KEY>-<slug>/` | removed after merge | **issue** (1:1 with the PR) when there is one |
 | a design that outlives one PR: data model, ADR, RFC, screen-by-screen design, API contract | `docs/designs/<date>-<slug>.md` | as long as the behaviour exists; `status` and `supersedes` move | **project** (1:1 with the design), plus a Document for ADR and RFC |
 | runbooks, architecture, security | `docs/` | forever | none |
 
@@ -78,7 +78,7 @@ Two words used to collide, so they are fixed here: the playbook's `spec.md` is o
 | `milestone` | `{"kind": "new"\|"existing"\|"single"\|"hotfix", "slug"}`. Its presence marks a folder on the milestone process. |
 | `prExceptions` | `[{"branch", "words"}]`, or absent. A PR or push `pr-gate.sh` would refuse, allowed for that head branch only, with the engineer's own words. Never written without them. |
 | `project` | `{"kind": "new"\|"existing", "slug"}`, or **absent**. Absent is the normal case: the milestone is cut from the default branch and its PR goes there. Present means the milestone is cut from `project/<slug>` and its PR goes there instead, and the project branch is what later opens the one reviewed, tiered PR into the default branch. |
-| `protectedEdit` | the engineer's words that allow one edit of a protected path after approval. |
+| `protectedEdit` | the engineer's words that allow one edit of a protected path after approval: a string, or `{"path", "words", "sha"}` (or a list) that limits it to one file and to the lock it was given for. The hook spends it on the edit it allows (ledger in the git dir); a ledger it cannot read denies. |
 
 Three processes live side by side, chosen by the folder, never by the date:
 
@@ -145,7 +145,7 @@ design-system part is missing; `differs` names it, no accepted words needed, not
 `fixed` and `match` must have no `differs`.
 Only `ruled-out` omits `expected` and `shot`, and it requires an existing ADR.
 Every other decision also requires an existing file under `designsDir`.
-Non-fixed or unset statuses block unless `accepted` quotes the engineer's acceptance;
+Non-fixed or unset statuses block unless the owner answered `Accept as is` or `Defer to milestone <n>` to the dialog `Change <id>, finding <row id>: ...` (the transcript's structured answer; typed words never count);
 acceptance never waives evidence or permits an invalid status.
 
 Init keeps filled fields and adds missing rows. It never deletes rows and reports orphans.
@@ -194,7 +194,7 @@ status: draft | in-review | approved
 reviewed_by: null | <name or email>
 approved_at: null | YYYY-MM-DD
 created: YYYY-MM-DD
-archived_at: YYYY-MM-DD
+archived_at: YYYY-MM-DD   # older layout only: nothing is archived any more
 ```
 
 `spec/readiness.md`:
@@ -292,7 +292,7 @@ It cannot be disabled in `sdlc.json`, does not change `lock.json`, and fails as 
 | plan approved | `changes(<id>): plan approved` | `status`, `reviewed_by`, `approved_at`, annotations file kept |
 | failing bug test committed | `changes(<id>): failing test locked` | `testLocked: true` |
 | plan changed after approval | in the implementing commit | line under `## Revisions` |
-| archived | `changes(<id>): archived` | `archived_at` |
+| archived (older layout only; no archive since layout 4) | `changes(<id>): archived` | `archived_at` |
 | intent confirmed (milestone process) | `changes(<id>): intent confirmed by <who>` | `intent.md` approved |
 | one gate passed (milestone process) | `changes(<id>): approved by <who>` | facts and plan approved, `lock.json` |
 | feature merged | in the milestone branch | `milestone.md` row → `merged` |
@@ -339,7 +339,7 @@ permalinks; local laptop paths are refused.
 | `rules` | skill | optional list of repo paths holding standing rules (code of conduct, `PRODUCT.md`, `DESIGN.md`, an architecture policy). Stages 1 and 4 read them; intent lists the rule IDs that apply, each fact cites the IDs it touches. Absent: the defaults in `references/quality-passes.md`, existing files only. `adopt` never writes it, keeps it on re-adopt and rejects a value that is not a list of paths |
 | `hotfix` | skill | the hotfix lane on or off; default `true` |
 | `delivery` | skill | `one-go` (default): one `/goal` builds every feature as commits on the milestone branch and closes the milestone; `feature-prs`: one PR per feature into the milestone |
-| `goal` | skill | `{runTurns, featureTurns, milestoneTurns}`; default 150, 40 and 30 |
+| `goal` | skill | `{runTurns, featureTurns, milestoneTurns, projectTurns}`; default 150, 40, 30 and the milestone cap |
 | `builders` | skill, adopt | who builds feature rows and fix parts: `claude` (`cct:sdlc-feature-builder` agents, default) or `codex` (`scripts/codex-build.sh` runs the Codex CLI in the worktree, network off, `.git` read-only; the wrapper checks the result and makes the commit). The supervisor, the milestone close and the gates stay Claude either way |
 | `builderModel`, `builderEffort` | skill, adopt | which model builds and how hard: for `claude` the `model` and `effort` of every `cct:sdlc-feature-builder` dispatch (a Claude Code alias `sonnet`, `opus`, `haiku` or a model id; default `sonnet`, `high`), for `codex` the `--model` and `--reasoning` of `codex-build.sh` (default `gpt-5.5`, `high`). Effort is one of `low`, `medium`, `high`, `xhigh`. A plan's Approach may name another pair for that one change |
 | `languages` | skill, checks | the languages the product ships; default `["en"]` |
@@ -349,6 +349,12 @@ permalinks; local laptop paths are refused.
 | `responsiveTier` | milestone stage | the `ux-responsive-audit` matrix tier; default `full` |
 | `ux` | skill, hook | `on` or `off`; `off` skips the UX plan and UX checks (python preset default) |
 | `tracker` | skill | `{kind: linear\|github\|beads\|none, …ids}`; the old `linear` key means `linear`; `references/trackers.md` |
+| `heavy` | `heavy.py`, `verify_gate.py`, `sdlc_status.py` | the heavy-job queue: `slots` (default 1), `waitTimeout`, `runTimeout`, `portBase`, `patterns`; `references/heavy-work.md` |
+| `db` | `db.py` | `test` (local Postgres container with a migrated template) and `dev` (a personal cloud database through the auth proxy); every value is a command, so no vendor is named |
+| `preflight` | `preflight.py`, `verify_gate.py` | `tools`, `auth` (`{name, check, fix}`): checked once before the first heavy command |
+| `checkTimeout` | `verify_gate.py` | seconds a gate check may run (default 1800); a check's own `timeout` overrides it; the process group is killed |
+| `layout` | `spec.py`, hooks, gate | `4` opts a repo in to the three-document layout and the living spec; `adopt` never sets it; `references/change-folder.md` |
+| `livingSpecs` | `spec.py` | the folder that holds the living spec (default `specs`); one plain folder name inside the repo; `specsDir` is the old key for designs and is not reused |
 | `protected` | hook | globs refused after approval; default `sdlc.json`, `**/*-snapshots/**`, `**/__screenshots__/**`, `**/*allowlist*` |
 
 `feedback` is repo paths or globs only. Stage 1.3 copies each resource that came with an ask

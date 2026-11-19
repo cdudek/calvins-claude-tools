@@ -1,0 +1,383 @@
+"""Group C: the known goal issues, a removed change folder, persisted heads and bases, HANDOFF."""
+
+from __future__ import annotations
+
+import json
+import shutil
+import subprocess
+import sys
+from pathlib import Path
+
+import pytest
+from test_sdlc_status import BRANCH, GATE, ID, MOVED, PASS, _gate, _goal, _owner, _plan, _pr, _run  # noqa: F401
+
+import sdlc_status
+
+SKILL = Path(__file__).resolve().parents[1]
+sys.path.insert(0, str(SKILL / "templates" / "scripts"))
+import verify_gate  # noqa: E402
+
+
+# --- known issues ------------------------------------------------------------------------------
+
+
+def test_feature_pr_mode_asks_for_the_milestone_branch_without_a_number(repo: Path) -> None:  # noqa: F811
+    (repo / "sdlc.json").write_text(json.dumps({"delivery": "feature-prs"}))
+    _gate(repo, PASS)
+    assert _goal(repo, {}) == (1, f"GOAL {ID} OPEN no-pr:milestone/redesign-r2")
+    assert _goal(repo, {"milestone/redesign-r2": _pr()}) == (0, f"GOAL {ID} DONE pr=7 state=merged gate={GATE}")
+
+
+def test_milestone_one_stays_done_after_milestone_two_passed(repo: Path) -> None:  # noqa: F811
+    _plan(repo, 2)
+    _gate(repo, PASS, milestone=1)
+    folder = repo / "changes" / ID / "verify"
+    shutil.copy(folder / "report.json", folder / "milestone-1.json")  # the receipt the gate keeps
+    _gate(repo, f"VERIFY PASS milestone {ID} {MOVED}", milestone=2)  # report.json now holds M2
+    prs = {BRANCH: _pr(), "milestone/redesign-r2-2": _pr(number=8, head=MOVED)}
+    assert _goal(repo, prs, n=1) == (0, f"GOAL {ID} DONE pr=7 state=merged gate={GATE}")
+    assert _goal(repo, prs, n=2)[0] == 0
+
+
+def test_a_milestone_without_a_receipt_still_needs_its_own_report(repo: Path) -> None:  # noqa: F811
+    _plan(repo, 2)
+    _gate(repo, f"VERIFY PASS milestone {ID} {MOVED}", milestone=2)
+    assert "milestone-gate-pass" in _goal(repo, {BRANCH: _pr()}, n=1)[1]
+
+
+def test_a_check_after_a_wall_never_moves_over_it() -> None:
+    checks = [
+        {"name": "x", "run": "x", "after": ["late"]},
+        {"name": "wall", "run": "w", "serial": True},
+        {"name": "late", "run": "l"},
+    ]
+    order = [c["name"] for c in verify_gate.order_checks(checks, {}, ID)]
+    assert order == ["x", "wall", "late"]
+
+
+def test_after_still_orders_checks_inside_one_segment() -> None:
+    checks = [{"name": "tsc", "run": "tsc", "after": ["codegen"]}, {"name": "codegen", "run": "codegen"}]
+    assert [c["name"] for c in verify_gate.order_checks(checks, {}, ID)] == ["codegen", "tsc"]
+
+
+BODY = "- **Requirement (F13):** Filters stay readable, see F13.\n"
+DEFINED = "- [ ] **F13** (A1) Filters stay readable.\n"
+
+
+def _lint(repo: Path, *args: str) -> subprocess.CompletedProcess[str]:
+    return subprocess.run(
+        [sys.executable, str(SKILL / "templates/scripts/verify_gate.py"), "lint", ID, "--pr-body", "-"],
+        cwd=repo, input=BODY, capture_output=True, text=True,
+    )  # fmt: skip
+
+
+@pytest.mark.parametrize("where", ["archive/2026/2026-11", "archive", "gone"])
+def test_lint_pr_body_works_once_the_change_folder_is_archived_or_removed(repo: Path, where: str) -> None:  # noqa: F811
+    live = repo / "changes" / ID
+    (live / "facts.md").write_text(DEFINED)
+    if where == "gone":
+        shutil.rmtree(live)
+    else:
+        target = repo / "changes" / where / ID
+        target.parent.mkdir(parents=True)
+        shutil.move(str(live), str(target))
+    r = _lint(repo)
+    assert r.returncode == 1 and "pr-body: id F13 outside brackets" in r.stdout, (r.stdout, r.stderr)
+
+
+# --- a removed change folder whose PR merged -----------------------------------------------------
+
+
+def _merged(head: str, number: int = 7, base: str = "main") -> dict:
+    return {"number": number, "headRefName": head, "baseRefName": base, "state": "MERGED"}
+
+
+def test_a_removed_folder_whose_pr_merged_reads_done(repo: Path) -> None:  # noqa: F811
+    code, line = sdlc_status.goal_removed(repo, ID, "milestone", None, gh=lambda root, *a: [_merged(BRANCH)])
+    assert (code, line) == (0, f"GOAL {ID} DONE pr=7 state=merged folder=removed")
+
+
+def test_a_removed_folder_with_no_merged_pr_is_still_no_change_folder(repo: Path) -> None:  # noqa: F811
+    assert sdlc_status.goal_removed(repo, ID, "milestone", None, gh=lambda root, *a: [_merged("feat/other")]) is None
+    assert sdlc_status.goal_removed(repo, ID, "milestone", None, gh=lambda root, *a: []) is None
+
+
+def test_a_removed_folder_is_never_done_without_the_merged_pr_when_gh_fails(repo: Path) -> None:  # noqa: F811
+    assert sdlc_status.goal_removed(repo, ID, "milestone", None, gh=lambda root, *a: None) is None
+
+
+def test_a_removed_milestone_n_needs_its_own_merged_head(repo: Path) -> None:  # noqa: F811
+    gh = lambda root, *a: [_merged("milestone/redesign-r2-2", 9)]  # noqa: E731
+    assert sdlc_status.goal_removed(repo, ID, "milestone", 1, gh=gh) is None
+    assert sdlc_status.goal_removed(repo, ID, "milestone", 2, gh=gh) == (0, f"GOAL {ID} DONE pr=9 state=merged folder=removed")
+
+
+def test_the_cli_reads_a_removed_folder_as_done(repo: Path, tmp_path: Path) -> None:  # noqa: F811
+    import os
+
+    shutil.rmtree(repo / "changes" / ID)
+    bin_dir = tmp_path / "bin"
+    bin_dir.mkdir()
+    out = json.dumps([_merged(BRANCH)])
+    (bin_dir / "gh").write_text(f"#!/bin/sh\necho '{out}'\n")
+    (bin_dir / "gh").chmod(0o755)
+    path = f"{bin_dir}{os.pathsep}{Path(shutil.which('git') or '/usr/bin/git').parent}"
+    env = {k: v for k, v in os.environ.items() if not k.startswith("GIT_")} | {"PATH": path}
+    run = subprocess.run([sys.executable, str(SKILL / "scripts/sdlc_status.py"), "goal", ID], cwd=repo, capture_output=True, text=True, env=env)
+    assert (run.returncode, run.stdout.strip()) == (0, f"GOAL {ID} DONE pr=7 state=merged folder=removed")
+
+
+# --- persisted heads and bases (S5 to S8) ---------------------------------------------------------
+
+import test_verify_gate as tvg  # noqa: E402
+
+
+def _heads(repo: Path, data: dict, where: str = "state/heads.json") -> None:
+    path = repo / "changes" / ID / where
+    path.parent.mkdir(exist_ok=True)
+    path.write_text(json.dumps(data))
+
+
+def test_a_milestone_pass_records_its_head_and_base(tmp_path: Path) -> None:
+    repo = tvg._milestone_repo(tmp_path)
+    tvg._git(repo, "checkout", "-q", "-b", "milestone/trial-2")
+    tvg._commit_files(repo, validation_md="| F1 | x | y | z | met |\n")
+    r = tvg._gate(repo, "milestone", tvg.ID)
+    assert tvg._last(r).startswith(f"VERIFY PASS milestone {tvg.ID}"), r.stdout
+    head = subprocess.run(["git", "rev-parse", "HEAD"], cwd=repo, capture_output=True, text=True).stdout.strip()
+    saved = json.loads((repo / "changes" / tvg.ID / "state" / "heads.json").read_text())
+    assert saved["milestones"]["2"] == {"head": "milestone/trial-2", "base": "main", "sha": head}
+
+
+def test_a_failed_milestone_run_records_nothing(tmp_path: Path) -> None:
+    repo = tvg._milestone_repo(tmp_path)
+    tvg._git(repo, "checkout", "-q", "-b", "milestone/trial-1")
+    (repo / "changes" / tvg.ID / "validation.md").write_text("| F1 | x | y | z | not met |\n")
+    tvg._git(repo, "commit", "-qam", "unproven")
+    assert not tvg._last(tvg._gate(repo, "milestone", tvg.ID)).startswith("VERIFY PASS")
+    assert not (repo / "changes" / tvg.ID / "state" / "heads.json").exists()
+
+
+def _hotfix_gate(tmp_path: Path, kind: str) -> Path:
+    repo = tvg._repo(tmp_path, ["true"])
+    (repo / "changes" / tvg.ID / "decisions.json").write_text(json.dumps({"size": "S", "milestone": {"kind": kind}}))
+    tvg._git(repo, "commit", "-qam", "kind")
+    tvg._approve(repo)
+    tvg._git(repo, "checkout", "-q", "-b", "hotfix/trial")
+    r = tvg._gate(repo, "feature", tvg.ID)
+    assert tvg._last(r).startswith("VERIFY PASS feature"), r.stdout
+    return repo
+
+
+def test_a_hotfix_feature_pass_records_the_hotfix_head(tmp_path: Path) -> None:
+    repo = _hotfix_gate(tmp_path, "hotfix")
+    saved = json.loads((repo / "changes" / tvg.ID / "state" / "heads.json").read_text())
+    assert saved["hotfix"]["head"] == "hotfix/trial" and saved["hotfix"]["base"] == "main"
+
+
+def test_a_feature_pass_of_a_change_that_is_not_a_hotfix_records_no_hotfix_head(tmp_path: Path) -> None:
+    repo = _hotfix_gate(tmp_path, "new")
+    assert not (repo / "changes" / tvg.ID / "state" / "heads.json").exists()
+
+
+@pytest.mark.parametrize("where", ["state/heads.json", "heads.json"])
+def test_the_goal_reads_the_recorded_head_and_base_new_place_first(repo: Path, where: str) -> None:  # noqa: F811
+    _gate(repo, PASS)
+    _heads(repo, {"milestones": {"1": {"head": "release/custom-1", "base": "project/x"}}}, where)
+    prs = {"release/custom-1": _pr(base="project/x")}
+    assert _goal(repo, prs) == (0, f"GOAL {ID} DONE pr=7 state=merged gate={GATE}")
+    assert _goal(repo, {BRANCH: _pr()})[1] == f"GOAL {ID} OPEN no-pr:release/custom-1"  # not the derived name
+
+
+def test_a_recorded_base_that_the_pr_does_not_target_is_a_wrong_base(repo: Path) -> None:  # noqa: F811
+    _gate(repo, PASS)
+    _heads(repo, {"milestones": {"1": {"head": BRANCH, "base": "project/x"}}})
+    assert "pr-7-wrong-base" in _goal(repo, {BRANCH: _pr(base="main")})[1]
+
+
+def test_without_a_record_the_derived_name_and_the_parent_stand(repo: Path) -> None:  # noqa: F811
+    _gate(repo, PASS)
+    assert _goal(repo, {BRANCH: _pr()})[0] == 0
+
+
+def _hotfix_change(repo: Path, enabled: bool = True) -> None:
+    decisions = repo / "changes" / ID / "decisions.json"
+    decisions.write_text(json.dumps({"milestone": {"kind": "hotfix", "slug": "redesign-r2"}}))
+    if not enabled:
+        (repo / "sdlc.json").write_text(json.dumps({"hotfix": False}))
+    _heads(repo, {"hotfix": {"head": "hotfix/redesign-r2", "base": "main", "sha": GATE}})
+    _gate(repo, f"VERIFY PASS feature {ID} {GATE}", scope="feature")
+
+
+def test_a_hotfix_goal_follows_the_recorded_hotfix_head_to_the_default_branch(repo: Path) -> None:  # noqa: F811
+    _hotfix_change(repo)
+    assert _goal(repo, {"hotfix/redesign-r2": _pr()}) == (0, f"GOAL {ID} DONE pr=7 state=merged gate={GATE}")
+    assert _goal(repo, {"hotfix/redesign-r2": _pr("OPEN", base="project/x")})[1].startswith(f"GOAL {ID} OPEN pr-7-wrong-base")
+    assert _goal(repo, {})[1] == f"GOAL {ID} OPEN no-pr:hotfix/redesign-r2"
+
+
+def test_a_disabled_hotfix_has_no_hotfix_route(repo: Path) -> None:  # noqa: F811
+    _hotfix_change(repo, enabled=False)
+    assert "milestone-gate-pass" in _goal(repo, {"hotfix/redesign-r2": _pr()})[1]
+
+
+def _main_branch(repo: Path) -> str:
+    sha = tvg._git  # noqa: F841
+    subprocess.run(["git", "-c", "user.name=t", "-c", "user.email=t@t", "commit", "-q", "--allow-empty", "-m", "base"], cwd=repo, check=True)
+    subprocess.run(["git", "branch", "-f", "main"], cwd=repo, check=True)
+    return subprocess.run(["git", "rev-parse", "main"], cwd=repo, capture_output=True, text=True).stdout.strip()
+
+
+def _branchless(repo: Path) -> None:
+    decisions = repo / "changes" / ID / "decisions.json"
+    data = json.loads(decisions.read_text())
+    decisions.write_text(json.dumps({**data, "project": {"slug": "big", "branch": False}}))
+
+
+def _status(repo: Path, *args: str) -> subprocess.CompletedProcess[str]:
+    return _run(repo, *args)
+
+
+def test_a_branchless_project_is_done_once_integrated_and_the_owner_accepted(repo: Path, tmp_path: Path, monkeypatch) -> None:  # noqa: F811
+    monkeypatch.setenv("HOME", str(tmp_path / "home"))
+    _branchless(repo)
+    sha = _main_branch(repo)
+    assert _goal(repo, {}, scope="project")[1].endswith("no-project-branch")
+    assert _status(repo, "record", ID, "project", "--sha", sha).returncode == 0
+    assert "project-not-accepted" in _goal(repo, {}, scope="project")[1]
+    refused = _status(repo, "record", ID, "project", "--sha", sha, "--accepted")  # the flag alone is not the owner
+    assert refused.returncode == 1 and "has not accepted" in refused.stdout
+    _owner(repo, tmp_path, "PROJECT-big", "Accept milestone", monkeypatch)
+    assert _status(repo, "record", ID, "project", "--sha", sha, "--accepted").returncode == 0
+    sys.modules["marks"]._ANSWERS.clear()
+    assert _goal(repo, {}, scope="project") == (0, f"GOAL {ID} DONE project=big integrated={sha}")
+
+
+def test_a_hand_written_acceptance_is_not_the_owners(repo: Path, tmp_path: Path, monkeypatch) -> None:  # noqa: F811
+    monkeypatch.setenv("HOME", str(tmp_path / "home"))
+    _branchless(repo)
+    sha = _main_branch(repo)
+    _heads(repo, {"project": {"sha": sha, "accepted": True}})
+    assert "project-not-accepted" in _goal(repo, {}, scope="project")[1]
+    _owner(repo, tmp_path, "PROJECT-big", "Hold", monkeypatch)
+    sys.modules["marks"]._ANSWERS.clear()
+    assert "project-not-accepted" in _goal(repo, {}, scope="project")[1]
+
+
+def test_the_project_record_refuses_a_sha_that_is_not_in_the_default_branch(repo: Path) -> None:  # noqa: F811
+    _branchless(repo)
+    _main_branch(repo)
+    r = _status(repo, "record", ID, "project", "--sha", "f" * 40)
+    assert r.returncode == 1 and "not in main" in r.stdout
+    assert not (repo / "changes" / ID / "state" / "heads.json").exists()
+
+
+def test_a_recorded_project_sha_that_left_the_default_branch_is_not_integrated(repo: Path, tmp_path: Path, monkeypatch) -> None:  # noqa: F811
+    monkeypatch.setenv("HOME", str(tmp_path / "home"))
+    _branchless(repo)
+    _main_branch(repo)
+    _heads(repo, {"project": {"sha": "f" * 40, "accepted": True}})
+    assert "project-not-integrated" in _goal(repo, {}, scope="project")[1]
+
+
+# --- HANDOFF on a cap (S10) -----------------------------------------------------------------------
+
+
+def _handoff_file(repo: Path) -> Path:
+    return repo / "changes" / ID / "state" / "handoff.json"
+
+
+def test_the_retry_cap_writes_one_handoff_record(tmp_path: Path) -> None:
+    repo = tvg._repo(tmp_path, ["false"])
+    tvg._approve(repo)
+    for _ in range(3):
+        r = tvg._gate(repo, "feature", tvg.ID)
+    assert tvg._last(r).startswith("VERIFY BLOCKED reason=")
+    saved = json.loads((repo / "changes" / tvg.ID / "state" / "handoff.json").read_text())
+    assert saved["cap"] == "retries" and saved["scope"] == "feature"
+    assert "verify/state.json" in saved["next"] and f"verify_gate.py feature {tvg.ID}" in saved["next"]
+    assert saved["what"] and saved["why"]
+
+
+def test_a_pass_clears_the_handoff(tmp_path: Path) -> None:
+    repo = tvg._repo(tmp_path, ["test -f ok"])
+    tvg._approve(repo)
+    for _ in range(3):
+        tvg._gate(repo, "feature", tvg.ID)
+    assert (repo / "changes" / tvg.ID / "state" / "handoff.json").exists()
+    (repo / "ok").write_text("")
+    tvg._git(repo, "add", "ok")
+    tvg._git(repo, "commit", "-qm", "the check can pass")
+    (repo / "changes" / tvg.ID / "verify" / "state.json").unlink()
+    assert tvg._last(tvg._gate(repo, "feature", tvg.ID)).startswith("VERIFY PASS")
+    assert not (repo / "changes" / tvg.ID / "state" / "handoff.json").exists()
+
+
+def test_the_turn_cap_command_writes_the_record_and_prints_it(repo: Path) -> None:  # noqa: F811
+    r = _run(repo, "handoff", ID, "--cap", "turns", "--what", "milestone 2 is built, not gated", "--next", "python3 scripts/verify_gate.py milestone " + ID)
+    assert r.returncode == 0
+    assert r.stdout.strip() == f"HANDOFF {ID} cap=turns next=python3 scripts/verify_gate.py milestone {ID}"
+    saved = json.loads(_handoff_file(repo).read_text())
+    assert saved["cap"] == "turns" and saved["what"] == "milestone 2 is built, not gated" and saved["why"]
+
+
+def test_a_cap_needs_a_known_name(repo: Path) -> None:  # noqa: F811
+    assert _run(repo, "handoff", ID, "--cap", "mood").returncode == 2
+    assert not _handoff_file(repo).exists()
+
+
+def test_an_open_goal_with_a_handoff_says_handoff_and_a_done_goal_does_not(repo: Path) -> None:  # noqa: F811
+    _run(repo, "handoff", ID, "--cap", "fix-rounds", "--what", "two findings stay open", "--next", "fix F2 then gate")
+    assert _goal(repo, {BRANCH: _pr()}) == (4, f"GOAL {ID} HANDOFF cap=fix-rounds")
+    _gate(repo, PASS)
+    assert _goal(repo, {BRANCH: _pr()})[0] == 0  # the work is done: a stale record never hides it
+
+
+def test_the_cli_names_the_next_command_and_resume_clears_it(repo: Path) -> None:  # noqa: F811
+    _run(repo, "handoff", ID, "--cap", "turns", "--what", "stopped at the cap", "--next", "run the gate")
+    out = _run(repo, "goal", ID).stdout.splitlines()
+    assert out[0] == f"GOAL {ID} HANDOFF cap=turns"
+    assert "stopped at the cap" in out[1] and "run the gate" in out[1]
+    assert _run(repo, "handoff", ID, "--resume").returncode == 0
+    assert not _handoff_file(repo).exists()
+    assert "HANDOFF" not in _run(repo, "goal", ID).stdout
+
+
+def test_the_goal_templates_stop_on_a_handoff_and_the_plan_hands_off_at_the_cap() -> None:
+    for name in ("run", "feature", "milestone", "project"):
+        text = (SKILL / "templates" / "goal" / f"{name}.txt").read_text()
+        assert "HANDOFF" in text and len(text) < 600
+    plan = (SKILL / "templates" / "change" / "plan.md").read_text()
+    assert "handoff <ID> --cap turns" in plan or "handoff {{CHANGE}} --cap turns" in plan
+
+
+def test_the_project_goal_has_a_turn_cap_of_its_own() -> None:
+    import adopt
+
+    assert adopt.delivery_values({})["PROJECT_TURNS"] == "30"
+    assert adopt.delivery_values({"goal": {"milestoneTurns": 12}})["PROJECT_TURNS"] == "12"
+    assert adopt.delivery_values({"goal": {"projectTurns": 50}})["PROJECT_TURNS"] == "50"
+
+
+def test_a_merged_unnumbered_branch_is_milestone_one_only(repo: Path) -> None:  # noqa: F811
+    gh = lambda root, *a: [_merged("milestone/redesign-r2", 5)]  # noqa: E731
+    assert sdlc_status.goal_removed(repo, ID, "milestone", 2, gh=gh) is None
+    assert sdlc_status.goal_removed(repo, ID, "milestone", 1, gh=gh) == (0, f"GOAL {ID} DONE pr=5 state=merged folder=removed")
+    assert sdlc_status.goal_removed(repo, ID, "milestone", None, gh=gh)[0] == 0
+
+
+def test_a_removed_layout_4_change_reads_its_milestones_from_tasks_md(repo: Path) -> None:  # noqa: F811
+    """One merged milestone out of two is never DONE, whichever file listed the milestones."""
+    folder = repo / "changes" / ID
+    (folder / "tasks.md").write_text(
+        "## Tasks\n\n| # | Milestone |\n|---|---|\n| T1 | M1 |\n| T2 | M2 |\n\n"
+        "## Milestones\n\n| Milestone | Tasks | needs |\n|---|---|---|\n| M1 a | T1 | none |\n| M2 b | T2 | M1 |\n"
+    )
+    env = {k: v for k, v in __import__("os").environ.items() if not k.startswith("GIT_")}
+    for cmd in (["add", "."], ["-c", "user.name=t", "-c", "user.email=t@t", "commit", "-qm", "c"], ["rm", "-rqf", "changes"]):
+        subprocess.run(["git", *cmd], cwd=repo, check=True, env=env, capture_output=True)
+    subprocess.run(["git", "-c", "user.name=t", "-c", "user.email=t@t", "commit", "-qm", "gone"], cwd=repo, check=True, env=env, capture_output=True)
+    gh = lambda root, *a: [_merged("milestone/redesign-r2-1", 5)]  # noqa: E731
+    assert sdlc_status.goal_removed(repo, ID, "milestone", None, gh=gh) is None
+    both = lambda root, *a: [_merged("milestone/redesign-r2-1", 5), _merged("milestone/redesign-r2-2", 6)]  # noqa: E731
+    assert sdlc_status.goal_removed(repo, ID, "milestone", None, gh=both)[0] == 0

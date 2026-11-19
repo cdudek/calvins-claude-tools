@@ -1,6 +1,6 @@
 # sdlc-run, end to end
 
-Describes sdlc-run 3.20.5.
+Describes sdlc-run 3.21.0.
 
 `/cct:sdlc-run` runs an AI-native software lifecycle in any repo. The agent drafts the intent, the UX plan, the facts and the tech plan. You confirm twice. Then one `/goal` builds the whole milestone as commits, runs the heavy checks once, and opens one PR.
 
@@ -16,6 +16,8 @@ One change folder, `changes/<date>-<slug>/`, holds everything: nothing lives onl
 
 Everything else in the folder is a working file for agents. If a sentence names an id such as F3 or Q7, `sdlc_status.py ids <change>` says what it means and which file decides it.
 
+A repo can opt in to a shorter folder, "layout 4": three documents instead of eight. See [The living spec](#the-living-spec-optional). This page describes the default layout first and says where layout 4 differs.
+
 ## The seven stages
 
 ```mermaid
@@ -28,7 +30,7 @@ flowchart LR
     B["5 Build: one commit per feature"] --> M["6 Milestone: checks once,<br/>validation, one fix round"]
   end
   M -->|you accept| P["milestone PR"]
-  P --> O["7 Outcome and archive"]
+  P --> O["7 Outcome and removal"]
 ```
 
 The two touchpoints are the intent and the plan. After the plan is approved, `lock.json` locks the facts, `done.json` and the checks; only your words can open them. The times are typical for a medium change, not promises. The example is one invented change throughout: "sort the invoice list by date".
@@ -78,9 +80,9 @@ The two touchpoints are the intent and the plan. After the plan is approved, `lo
 
 ### 7 Outcome
 
-- **You get:** the folder archived once the change reaches the default branch, a short `reflection.md` and, after release, the success measure read where `intent.md` says.
-- **Who acts:** the agent archives; **you read** the measure.
-- **Typical time:** a minute to archive; the measure is read days or weeks later.
+- **You get:** after the change reaches the default branch, the folder is removed (there is no archive), a short `reflection.md` written before it goes and, after release, the success measure read where `intent.md` says. What happens to the folder is in [After the merge](#after-the-merge).
+- **Who acts:** the agent removes the folder and records the outcome; **you read** the measure.
+- **Typical time:** a minute to remove the folder; the measure is read days or weeks later.
 - **Example:** "support questions about finding invoices: down 55 percent in 30 days, target met". A miss starts the next change.
 
 A project, work that spans several milestones, adds stage 6p: after the last milestone merges, the milestone checks run once more on the whole project, and **you accept** the project.
@@ -108,7 +110,7 @@ flowchart BT
 <default> ─── project/<slug> ─── milestone/<slug>-<n> ─── <features>  a project that asked for a branch
 ```
 
-**Commits, not PRs.** While a milestone is open, everything that belongs to it is a commit on `milestone/<slug>`: features, fixes found during the build, test and flaky-spec repairs, CI timeout tweaks its tests need, and records (plans, handovers, gate lines, `findings.md`, `validation.md`, `questions.md`). No PR holds only a record, a fix or a test repair.
+**Commits, not PRs.** While a milestone is open, everything that belongs to it is a commit on `milestone/<slug>`: features, fixes found during the build, test and flaky-spec repairs, CI timeout tweaks its tests need, and records (plans, handovers, gate lines, `findings.md`, `validation.md`, `questions.md`). No PR holds only a record, a fix or a test repair. One exception comes after the milestone has merged: the [records-only PR that removes the folder](#after-the-merge).
 
 **PRs that exist:**
 
@@ -137,9 +139,77 @@ Acceptance is separate from PR approval: you accept each milestone at stage 6, a
 | `VERIFY FAIL ... check=<name>` | fixes that check and runs verify again |
 | `VERIFY BLOCKED reason=<code>` | stops and asks you |
 
-Blocked reasons: `not-approved`, `protected-path`, `no-progress`, `flaky`, `unknown-verdict`, `needs-baseline`, `allowlist-request`, `scope-growth`, `spec-conflict`, `env`, `test-proves-nothing`.
+Blocked reasons: `validation-not-met`, `findings-open`, `findings-blocked`, `not-converged`, `not-approved`, `protected-path`, `no-progress`, `attempts`, `flaky`, `unknown-verdict`, `needs-baseline`, `allowlist-request`, `scope-growth`, `spec-conflict`, `env`, `test-proves-nothing`. `env` also covers a heavy slot that never frees and a parent branch the gate cannot find; the line names the fix.
 
 The agent may never build outside `/goal`, change the approved plan, edit a test to make it pass, start a second fix round at a milestone, decide scope for you, or open a PR for work that belongs to an open milestone.
+
+## Where a change stands
+
+`/cct:sdlc-run status` lists every open change and its stage. Inside a `/goal`, `python3 scripts/sdlc_status.py goal <id>` prints one line: `GOAL <id> DONE`, or `BLOCKED` with the state and the command that leaves it. Every state the goal can print is listed in [`states.json`](../plugins/cct/skills/sdlc-run/references/states.json) with who acts and where it leads. A test keeps that file equal to the code and fails when a state is a dead end.
+
+| State | Meaning | Who acts |
+|---|---|---|
+| `gate-pass` | the milestone gate has not passed on this head | the agent runs it |
+| `findings-open`, `validation-not-met`, `not-converged` | the close is missing work | the agent fixes it |
+| `findings-blocked`, `not-approved`, `protected-path`, `scope-growth`, `spec-conflict`, `env` | a decision or a fix that only you can make | you |
+| `no-pr:` | gate passed, no PR yet | the agent opens it |
+| `pr-awaits-owner` | an Ask PR waits for your `Accept milestone` answer | you |
+| `pr-held` | you answered `Hold` or the PR has the `hold` label | you |
+| `pr-ci-failed` | a required check is red | the agent fixes it |
+| `pr-awaiting-ci` | auto-merge is armed and fires on green | GitHub |
+| `done` | merged, with proof | nobody |
+
+A merged Ask PR is not `done` without your answer, and a Hold blocks at any tier.
+
+## Heavy work: builds, browsers and databases
+
+Many helpers can run at once. A machine cannot run many builds, app servers and browsers at once. The kit gives them a queue. Four small scripts, installed by `adopt` into `scripts/`, do the work. Details are in [heavy work](../plugins/cct/skills/sdlc-run/references/heavy-work.md).
+
+- **The queue (`heavy.py`).** A heavy job (a build, an app server, a browser test, the full suite) takes a slot. One slot per machine by default. First come, first served; a dead process never blocks the line; a waiter is told who holds the slot. Waits and runs have deadlines. A light job (format, lint, types, touched unit tests) never waits.
+- **The gate uses it.** Every check of the milestone gate runs through the queue. A slot that never frees ends the gate with `VERIFY BLOCKED reason=env` and names the holder.
+- **Test databases (`db.py test`).** One local Postgres container holds a migrated template. Each job gets a private copy in under a second and drops it afterwards.
+- **Your own dev database (`db.py dev`).** It connects you to your own cloud database through the provider's auth proxy, with your own identity and no shared password. It creates the database once and runs migrations. Every command comes from `sdlc.json` `db`, so the kit names no vendor.
+- **Evidence (`evidence.py`).** One file per screen, so helpers never write the same file. When a text key changes, only the screens that show that key are captured again.
+- **Preflight (`preflight.py`).** Checks the tools, the sign-in and Docker once, before the work starts. It prints one fix line per failure and ends with `PREFLIGHT OK` or `PREFLIGHT FAIL <n>`.
+- **Guard.** The hook `helper-guard.sh` refuses a helper's heavy command that does not go through the queue. Your own session is never refused.
+
+Builders: at most four at once, inside about six helpers in all. A Codex builder runs light checks only; the supervisor runs its heavy checks outside the sandbox. All of it is optional: set `heavy`, `db` and `preflight` in `sdlc.json` to tune it.
+
+## The living spec (optional)
+
+By default a change folder holds eight kinds of file. A repo can opt in to **layout 4** with `"layout": 4` in `sdlc.json` (`adopt` never sets it). A change that started on the old layout finishes on it and is never blocked.
+
+**Three documents per change** replace intent, facts, plan, checklist, analyze, challenge, milestone and the reading map:
+
+- `spec.md`: why and what.
+- `design.md`: how.
+- `tasks.md`: in what order.
+
+Which ones a change gets depends on its risk, not on how much interface it changes: scope S needs only `spec.md`, M needs `spec.md` and `tasks.md`, L needs all three. Machine files (`decisions.json`, `done.json`, `lock.json`, `verify/`) keep their paths. See [the change folder](../plugins/cct/skills/sdlc-run/references/change-folder.md).
+
+**The living spec** is what the product does today: one file per rule, `specs/<capability>/rules/R123.md`, with one `manifest.yaml` per capability and a generated `specs/CAPABILITIES.md`. The PR that changes the behaviour changes the rule file, so the PR's git diff is the delta. There is no archive and no apply step. Rule ids are `R` and a number and are never reused. See [the living spec](../plugins/cct/skills/sdlc-run/references/living-spec.md).
+
+`python3 scripts/spec.py` is the one tool:
+
+```bash
+python3 scripts/spec.py find invoice sort --paths src/invoices   # ranked rules for a request
+python3 scripts/spec.py new billing "retry a failed charge once" # a new rule file with the next free id
+python3 scripts/spec.py check --base origin/main                 # a changed rule needs a changed test
+python3 scripts/spec.py consistency changes/<id> --phase approve # script checks before a model reads
+```
+
+`find` is for the start of a change: read the rules it names before you ask for new ones. It warns when a rule looks stale or an open PR edits it. `check` runs at the milestone gate and in CI. If two PRs take the same rule number, `spec.py renumber` gives the later one the next free number. Other commands: `show`, `next`, `index`, `capabilities`, `eval`, `outcome`, `qa`.
+
+## After the merge
+
+There is no archive. After the PR into the default branch merges:
+
+1. `spec.py outcome write changes/<id>` copies the success measure to `.sdlc/outcomes/<id>.json`. It is the one place the result is recorded, so a change with no tracker and no later PR still has a home for it.
+2. `git rm -r changes/<id>` goes in one records-only PR. Never before the merge: a red-CI rerun needs the folder.
+3. Before it removes anything, the agent runs `git grep -l -F "changes/<id>/"`. A test, script or doc that reads inside the folder would break, so it is repointed first.
+4. After release the measure is read and recorded with `spec.py outcome record`. `spec.py outcome due` lists the ones still waiting.
+
+History stays in git and in the merged PR. Folders archived by older versions stay readable. The status and gate code accept a folder that is gone.
 
 ## Local verification and GitHub setup
 
@@ -179,7 +249,7 @@ It first asks whether to use Ship/Show/Ask merge tiers (a code owner approves ri
 
 ## Staying current
 
-`adopt` writes `"sdlcVersion": "3.20.5"` into `sdlc.json`. Every time the skill runs in the repo, `status` and the verify gate compare the stamp with the installed plugin and print one line when it is missing or older, for example:
+`adopt` writes `"sdlcVersion": "3.21.0"` into `sdlc.json`. Every time the skill runs in the repo, `status` and the verify gate compare the stamp with the installed plugin and print one line when it is missing or older, for example:
 
 ```text
 This repo runs sdlc-run 3.2.0; the kit is 3.3.1. Run `adopt --upgrade` (changes: 3.3.1: adopt --upgrade never overwrites or moves anything; 3.3.0: the CI workflow ships as a template, ciPaths by file type, versioned repos).
@@ -197,3 +267,6 @@ Each version's headline and migration steps are in the skill's [changelog](../pl
 - **Enforcement audit (3.9):** `verify_gate.py audit` says per gate whether it is installed, configured, executed and passed.
 - **Readable folders (3.17):** a generated `README.md` in every change folder, plain words with ids in brackets, `sdlc_status.py ids` and a sentence for what blocks the goal. [More](../plugins/cct/skills/sdlc-run/references/readability.md).
 - **Faster hooks, cheaper gates, local milestones (3.18):** each hook starts Python once per call; `verify_gate.py` runs checks cheapest first; `milestones.merge: "local"` keeps milestone and project branches off GitHub until the one PR into the default branch. [More](../plugins/cct/skills/sdlc-run/references/local-first.md#local-milestones).
+- **A milestone close that is fast and cannot deadlock (3.21):** the milestone gate is the only runner of the full suite and the full E2E, cheap offline checks run first, and your answer to one dialog (not text in a file) settles each leftover finding. Sign-off beats auto-merge: an Ask PR is never `done` without your `Accept milestone`. The full list is in the [changelog](../plugins/cct/skills/sdlc-run/references/changelog.md).
+- **Heavy work (3.21):** the heavy-job queue, local test databases, your own dev database and preflight. See [Heavy work](#heavy-work-builds-browsers-and-databases).
+- **The living spec (3.21, opt-in):** three documents per change, one file per rule, no archive. See [The living spec](#the-living-spec-optional).

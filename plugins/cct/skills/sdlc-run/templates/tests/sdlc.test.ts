@@ -29,6 +29,7 @@ vi.setConfig({ testTimeout: 120_000 });
 const ROOT = resolve(__dirname, "{{ROOT_REL}}");
 const cfg = JSON.parse(readFileSync(join(ROOT, "sdlc.json"), "utf8")) as {
   changesDir: string;
+  docs?: string;
   designsDir: string;
   verify: string;
   verifyDirty: string[];
@@ -233,6 +234,29 @@ function tmp(name: string): string {
 
 // --- designs and changes -------------------------------------------------------------
 
+/**
+ * A change on layout 4 (spec.md, design.md, tasks.md): pinned by `layout: 4` in decisions.json
+ * or, unpinned, a spec.md with no facts.md. Anything else is the intent/facts/plan layout.
+ */
+function isV4(dir: string): boolean {
+  const decisions = join(dir, "decisions.json");
+  if (existsSync(decisions)) {
+    try {
+      if (JSON.parse(readFileSync(decisions, "utf8")).layout === 4) return true;
+    } catch {
+      /* not JSON: fall through to the files */
+    }
+  }
+  return existsSync(join(dir, "spec.md")) && !existsSync(join(dir, "facts.md"));
+}
+
+/** The documents a change must carry: facts.md and plan.md, or on layout 4 spec.md plus what its scope asks for. */
+function requiredDocuments(dir: string): string[] {
+  if (!isV4(dir)) return ["facts.md", "plan.md"];
+  const scope = existsSync(join(dir, "spec.md")) ? frontmatter(join(dir, "spec.md")).scope : "";
+  return ["spec.md", ...(scope === "M" || scope === "L" ? ["tasks.md"] : []), ...(scope === "L" ? ["design.md"] : [])];
+}
+
 function checkChange(parent: string, id: string, archived: boolean) {
   const dir = join(parent, id);
   const parts = CHANGE_DIR.exec(id);
@@ -241,22 +265,27 @@ function checkChange(parent: string, id: string, archived: boolean) {
   const slug = parts?.[3] ?? "";
   it(`${id} carries facts.md and plan.md`, () => {
     expect(id).toMatch(CHANGE_DIR);
-    for (const a of ["facts.md", "plan.md"]) expect(existsSync(join(dir, a)), a).toBe(true);
+    for (const a of requiredDocuments(dir)) expect(existsSync(join(dir, a)), a).toBe(true);
   });
   it(`${id}: frontmatter names its issue, its change and its design`, () => {
-    for (const a of ["intent.md", "facts.md", "plan.md"].filter((a) => existsSync(join(dir, a)))) {
+    const v4 = isV4(dir);
+    for (const a of (v4 ? ["spec.md", "design.md", "tasks.md"] : ["intent.md", "facts.md", "plan.md"]).filter((a) => existsSync(join(dir, a)))) {
       const fm = frontmatter(join(dir, a));
-      expect(fm.linear, `${a}: linear`).toBe(key || "none");
+      // layout 4 names the issue and the design in spec.md only
+      if (!v4 || a === "spec.md") expect(fm.linear, `${a}: linear`).toBe(key || "none");
       // Only for open changes: a folder archived before the date prefix existed carries its
       // ARCHIVE date in the name, and renaming merged history to fix that buys nothing.
       if (!archived) expect(fm.created, `${a}: created must match the date in the folder name`).toBe(date);
       expect(fm.change, `${a}: change`).toBe(id);
-      expect(fm.design, `${a}: design`).toBeTruthy();
-      if (fm.design !== "null") expect(existsSync(join(ROOT, fm.design)), `${a}: design ${fm.design} does not exist`).toBe(true);
-      if (archived) expect(fm.archived_at, `${a}: archived_at`).toMatch(/^\d{4}-\d{2}-\d{2}$/);
+      if (!v4 || a === "spec.md") {
+        expect(fm.design, `${a}: design`).toBeTruthy();
+        if (fm.design !== "null") expect(existsSync(join(ROOT, fm.design)), `${a}: design ${fm.design} does not exist`).toBe(true);
+      }
+      if (archived && !v4) expect(fm.archived_at, `${a}: archived_at`).toMatch(/^\d{4}-\d{2}-\d{2}$/);
     }
   });
   it(`${id}: intent has the playbook sections, plan has order of work, Done and Revisions`, () => {
+    if (isV4(dir)) return; // spec.py check lints the three documents
     if (existsSync(join(dir, "intent.md"))) {
       const text = readFileSync(join(dir, "intent.md"), "utf8");
       expect(INTENT_SECTIONS.filter((s) => !text.includes(s))).toEqual([]);
@@ -271,7 +300,7 @@ function checkChange(parent: string, id: string, archived: boolean) {
     // every change ever shipped. It did: 61 tests, across every folder in a real repo's
     // archive, the first time this ran. The rule is for work going forward; history is
     // evidence, not a target.
-    if (archived) return;
+    if (archived || isV4(dir)) return;
     // And only once the gate has approved it. A draft has nothing to hand over yet, and
     // failing one would make the gate impossible to reach.
     if (frontmatter(join(dir, "plan.md")).status !== "approved") return;
@@ -286,7 +315,7 @@ function checkChange(parent: string, id: string, archived: boolean) {
     // fixed; this catches a folder that reached the repo without the hook — CI, another
     // machine, a repo adopted mid-change. Archived folders are exempt for the same reason
     // the handover rule exempts them: history is evidence, not a target.
-    if (archived) return;
+    if (archived || isV4(dir)) return;
     // And only once the plan is approved, exactly like the handover rule above. A draft
     // plan beside draft facts is the legitimate in-flight state — facts are reviewed, then
     // the plan is written against them — and failing it would make the chain unreachable.
@@ -307,13 +336,13 @@ function checkChange(parent: string, id: string, archived: boolean) {
     ).toBe(true);
   });
   it(`${id}: its design lists it under Milestones`, () => {
-    const fm = frontmatter(join(dir, "plan.md"));
+    const fm = frontmatter(join(dir, isV4(dir) ? "spec.md" : "plan.md"));
     if (fm.design === "null") return;
     const design = readFileSync(join(ROOT, fm.design), "utf8");
     expect(design.includes(slug), `${fm.design} does not mention ${slug}`).toBe(true);
   });
   it(`${id}: v3 approved plans satisfy the spec guardrails`, () => {
-    if (archived || !existsSync(join(dir, "decisions.json"))) return;
+    if (archived || isV4(dir) || !existsSync(join(dir, "decisions.json"))) return;
     const decisions = JSON.parse(readFileSync(join(dir, "decisions.json"), "utf8")) as {
       size?: string;
       kind?: string;
@@ -370,9 +399,6 @@ function checkChange(parent: string, id: string, archived: boolean) {
 describe("changes", () => {
   for (const id of dirs(CHANGES)) checkChange(CHANGES, id, false);
   for (const [parent, id] of archiveChanges(ARCHIVE)) checkChange(parent, id, true);
-  it("has at least one change — the chain was adopted by running it on itself", () => {
-    expect(dirs(CHANGES).length + archiveChanges(ARCHIVE).length).toBeGreaterThan(0);
-  });
   it("keeps no plans or handovers in .claude/plans", () => {
     const plans = join(ROOT, ".claude", "plans");
     expect(!existsSync(plans) || readdirSync(plans).length === 0, ".claude/plans/ is scratch; use the change folder").toBe(true);
@@ -881,8 +907,9 @@ describe.skipIf(!TIERS_ON)("tiers", () => {
 
 describe("docs and workflows", () => {
   it("exist and are linked from CLAUDE.md", () => {
-    expect(existsSync(join(ROOT, "docs", "sdlc.md"))).toBe(true);
-    expect(readFileSync(join(ROOT, "CLAUDE.md"), "utf8")).toContain("docs/sdlc.md");
+    const docs = cfg.docs ?? "docs/sdlc.md";
+    expect(existsSync(join(ROOT, docs))).toBe(true);
+    expect(readFileSync(join(ROOT, "CLAUDE.md"), "utf8")).toContain(docs);
     for (const wf of ["claude-review.yml", "claude.yml", "ci-triage.yml"])
       expect(existsSync(join(ROOT, ".github", "workflows", wf)), `${wf}: no Claude in CI since sdlc-run 3.7.0; run adopt --upgrade`).toBe(false);
     for (const wf of ["ship-show-ask.yml"])

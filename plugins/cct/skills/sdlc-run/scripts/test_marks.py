@@ -5,8 +5,11 @@ Exercise owner-mark inventory, retained decisions, evidence checks and report ou
 
 from __future__ import annotations
 
+import datetime as dt
 import hashlib
 import json
+import os
+import re
 import subprocess
 import sys
 from pathlib import Path
@@ -34,10 +37,38 @@ SAMPLE = """# 2026-09-26 08.43
 MULTILINE = '\n4. Keep the `div` and "quotes".\n\n   Here is a second paragraph with a | pipe.\n'
 
 
+def home_of(repo: Path) -> Path:
+    return repo.parent / f"{repo.name}-home"
+
+
 def run(repo: Path, mode: str) -> subprocess.CompletedProcess[str]:
+    env = {**os.environ, "HOME": str(home_of(repo))}
     return subprocess.run(
-        [sys.executable, str(SCRIPT), mode, ID], cwd=repo, capture_output=True, text=True
+        [sys.executable, str(SCRIPT), mode, ID], cwd=repo, capture_output=True, text=True, env=env
     )
+
+
+OPTIONS = ["Fix it now", "Accept as is", "Defer to milestone 2", "Block the close"]
+
+
+def owner_says(repo: Path, row_id: str, label: str = "Accept as is", n: int = 1) -> None:
+    """The owner's structured answer to a dialog about one row, in the session transcript Claude
+    Code keeps for this repo."""
+    slug = re.sub(r"[^A-Za-z0-9]", "-", str(repo.resolve()))
+    folder = home_of(repo) / ".claude/projects" / slug
+    folder.mkdir(parents=True, exist_ok=True)
+    question = f"Change {ID}, finding {row_id}: the spacing differs. What now?"
+    stamp = (dt.datetime.now(dt.timezone.utc) + dt.timedelta(seconds=60 + n)).isoformat()
+    entries = [
+        {"type": "assistant", "timestamp": stamp, "message": {"content": [{
+            "type": "tool_use", "id": f"t{n}", "name": "AskUserQuestion",
+            "input": {"questions": [{"question": question, "options": [{"label": o} for o in OPTIONS]}]},
+        }]}},
+        {"type": "user", "timestamp": stamp, "toolUseResult": {"answers": {question: label}},
+         "message": {"content": [{"type": "tool_result", "tool_use_id": f"t{n}", "content": "ok"}]}},
+    ]  # fmt: skip
+    with (folder / "session.jsonl").open("a") as out:
+        out.write("".join(json.dumps(e) + "\n" for e in entries))
 
 
 def write(path: Path, content: str = "image") -> Path:
@@ -193,7 +224,6 @@ def test_check_failures(repo: Path, field: str, value: object, problem: str) -> 
     write(repo / "outside.md")
     (repo / "docs/designs").mkdir(parents=True)
     data[0][field] = value
-    data[0]["accepted"] = "Accept the gap." if problem != "unresolved status" else ""
     save(repo, data)
     result = run(repo, "check")
     assert result.returncode == 1 and problem in result.stdout
@@ -201,18 +231,20 @@ def test_check_failures(repo: Path, field: str, value: object, problem: str) -> 
 
 
 @pytest.mark.parametrize("status", ["partly", "not-fixed", "contradicted", "cant-see", None, ""])
-def test_unresolved_needs_engineer_words_but_still_needs_evidence(
+def test_unresolved_needs_the_owners_answer_but_still_needs_evidence(
     repo: Path, status: str | None
 ) -> None:
+    """Review finding 7: a typed `accepted` string settles nothing; only the owner's answer to the
+    dialog about this row does."""
     data = resolved(repo)
-    data[0].update(status=status, differs="Spacing still narrow.", accepted=" ")
+    data[0].update(status=status, differs="Spacing still narrow.", accepted="Ship this gap; fix it.")
     save(repo, data)
     assert run(repo, "check").returncode == 1
-    data[0]["accepted"] = True
-    save(repo, data)
+    owner_says(repo, "2026-09-26/001.1", "Fix it now", 1)
     assert run(repo, "check").returncode == 1
-    data[0]["accepted"] = "Ship this gap; fix spacing next milestone."
-    save(repo, data)
+    owner_says(repo, "2026-09-26/001.1", "Block the close", 2)
+    assert run(repo, "check").returncode == 1
+    owner_says(repo, "2026-09-26/001.1", "Defer to milestone 2", 3)
     assert run(repo, "check").returncode == 0
     data[0]["shot"] = ""
     save(repo, data)
@@ -240,10 +272,11 @@ def test_fixed_needs_a_tag_found_in_a_spec(repo: Path) -> None:
 
 def test_open_mark_needs_no_tag_and_testglobs_is_honoured(repo: Path) -> None:
     data = resolved(repo)
-    data[0].update(status="partly", test="", accepted="Ship it.")
+    data[0].update(status="partly", test="")
     save(repo, data)
+    owner_says(repo, "2026-09-26/001.1")
     assert run(repo, "check").returncode == 0
-    data[0].update(status="fixed", accepted="", test="@F1")
+    data[0].update(status="fixed", test="@F1")
     save(repo, data)
     (repo / "sdlc.json").write_text(json.dumps({"testGlobs": ["proofs/*.ts"]}))
     assert "appears in no spec" in run(repo, "check").stdout
@@ -261,8 +294,8 @@ def test_reference_status_rules(repo: Path) -> None:
     row["status"] = "differs"
     save(repo, data)
     assert run(repo, "check").returncode == 1
-    row["accepted"] = "Accept the narrower toolbar."
     save(repo, data)
+    owner_says(repo, row["id"])
     assert run(repo, "check").returncode == 0
     for invalid in ("fixed", "ruled-out"):
         row["status"] = invalid
@@ -473,6 +506,319 @@ def test_bundle_without_index_html_is_found_through_visual_source(repo: Path) ->
     assert row["kind"] == "bundle" and len(row["hash"]) == 64
 
 
+# 3.21.0: one capture manifest; a capture is reused only while its inputs are unchanged.
+def git(repo: Path, *args: str) -> str:
+    done = subprocess.run(
+        ["git", "-c", "user.name=t", "-c", "user.email=t@t", *args],
+        cwd=repo,
+        check=True,
+        capture_output=True,
+        text=True,
+    )
+    return done.stdout.strip()
+
+
+def with_manifest(repo: Path, **tweak: object) -> dict:
+    """A resolved change, committed, with a manifest whose cells all match the current build."""
+    data = resolved(repo)
+    write(repo / "src/app.ts", "v1")
+    git(repo, "init", "-q")
+    git(repo, "add", ".")
+    git(repo, "commit", "-qm", "build")
+    sha = git(repo, "rev-parse", "HEAD")
+    entries = []
+    for i, row in enumerate(data):
+        reference = hashlib.sha256((change(repo) / row["image"]).read_bytes()).hexdigest()
+        entries.append(
+            {
+                "shot": row["shot"], "build": sha, "reference": reference,
+                "screen": f"s{i}", "state": "open", "width": 1280, "zoom": 100,
+            }
+        )  # fmt: skip
+        entries.append({**entries[-1], "zoom": 150})  # the required matrix has both zooms
+    manifest = {"entries": entries, "qa": {"build": sha}} | tweak
+    write(change(repo) / "verify/shots/manifest.json", json.dumps(manifest))
+    return manifest
+
+
+def test_a_manifest_whose_inputs_are_unchanged_passes(repo: Path) -> None:
+    with_manifest(repo)
+    assert run(repo, "check").returncode == 0
+
+
+def test_a_records_only_commit_keeps_the_captures_valid(repo: Path) -> None:
+    with_manifest(repo)
+    write(change(repo) / "findings.md", "records")
+    git(repo, "add", ".")
+    git(repo, "commit", "-qm", "records")
+    assert run(repo, "check").returncode == 0
+
+
+def test_a_code_change_after_the_capture_makes_it_stale(repo: Path) -> None:
+    with_manifest(repo)
+    write(repo / "src/app.ts", "v2")
+    git(repo, "add", ".")
+    git(repo, "commit", "-qm", "fix")
+    result = run(repo, "check")
+    assert result.returncode == 1 and "stale: src/app.ts changed since build" in result.stdout
+
+
+def test_a_changed_reference_makes_the_capture_stale(repo: Path) -> None:
+    manifest = with_manifest(repo)
+    first = rows(repo)[0]["image"]
+    write(change(repo) / first, "a new reference revision")
+    result = run(repo, "check")
+    assert result.returncode == 1 and "reference changed since capture" in result.stdout
+    assert manifest["entries"]
+
+
+def test_a_shot_missing_from_the_manifest_is_a_problem(repo: Path) -> None:
+    with_manifest(repo, entries=[])
+    assert "not in the capture manifest" in run(repo, "check").stdout
+
+
+def test_one_cell_captured_twice_is_a_problem(repo: Path) -> None:
+    manifest = with_manifest(repo)
+    manifest["entries"][1].update(manifest["entries"][0] | {"shot": manifest["entries"][1]["shot"]})
+    write(change(repo) / "verify/shots/manifest.json", json.dumps(manifest))
+    assert "captured twice" in run(repo, "check").stdout
+
+
+def test_a_qa_verdict_is_stale_when_its_build_is(repo: Path) -> None:
+    manifest = with_manifest(repo)
+    write(repo / "src/app.ts", "v2")
+    git(repo, "add", ".")
+    git(repo, "commit", "-qm", "fix")
+    manifest["entries"] = [e | {"build": git(repo, "rev-parse", "HEAD")} for e in manifest["entries"]]
+    write(change(repo) / "verify/shots/manifest.json", json.dumps(manifest))
+    assert "qa.md is stale" in run(repo, "check").stdout
+
+
+def test_no_manifest_means_the_old_behaviour(repo: Path) -> None:
+    resolved(repo)
+    assert run(repo, "check").returncode == 0
+
+
+# Review findings 12 and 13: a strict manifest (changes approved from 3.21.0) cannot be skipped,
+# faked with a moving ref or kept alive by a metadata flag, and goes stale per cell.
+SHA = r"[0-9a-f]{40}"
+
+
+def strict(repo: Path, **tweak: object) -> dict:
+    """with_manifest, then the 3.21.0 form: a lock that requires the manifest, per-cell sources, a
+    shared list and a real qa.md in the spec folder recording its build."""
+    manifest = with_manifest(repo)
+    write(repo / "src/a.ts", "a1")
+    write(repo / "src/b.ts", "b1")
+    write(repo / "src/shared.ts", "s1")
+    for i, entry in enumerate(manifest["entries"]):
+        entry["sources"] = ["src/a.ts"] if i % 2 == 0 else ["src/b.ts"]
+    manifest["shared"] = ["src/shared.ts"]
+    git(repo, "add", ".")
+    git(repo, "commit", "-qm", "sources")
+    sha = git(repo, "rev-parse", "HEAD")
+    for entry in manifest["entries"]:
+        entry["build"] = sha
+    manifest.pop("qa", None)
+    manifest |= tweak
+    write(change(repo) / "verify/shots/manifest.json", json.dumps(manifest))
+    write(change(repo) / "lock.json", json.dumps({"criteria": {}, "manifest": "required"}))
+    write(change(repo) / "spec/qa.md", f"# QA\n\nBuild: {sha}\n")
+    git(repo, "add", ".")
+    git(repo, "commit", "-qm", "records")
+    return manifest
+
+
+def rewrite(repo: Path, manifest: dict) -> None:
+    write(change(repo) / "verify/shots/manifest.json", json.dumps(manifest))
+
+
+def test_a_strict_manifest_in_good_order_passes(repo: Path) -> None:
+    strict(repo)
+    assert run(repo, "check").returncode == 0, run(repo, "check").stdout
+
+
+def test_a_missing_manifest_fails_a_visual_close_that_requires_it(repo: Path) -> None:
+    resolved(repo)
+    write(change(repo) / "lock.json", json.dumps({"criteria": {}, "manifest": "required"}))
+    result = run(repo, "check")
+    assert result.returncode == 1 and "capture manifest is required" in result.stdout
+
+
+@pytest.mark.parametrize("build", ["HEAD", "main", "abc1234", "HEAD~1"])
+def test_a_build_must_be_an_immutable_commit_sha(repo: Path, build: str) -> None:
+    manifest = strict(repo)
+    manifest["entries"][0]["build"] = build
+    rewrite(repo, manifest)
+    result = run(repo, "check")
+    assert result.returncode == 1 and "build must be a full commit sha" in result.stdout
+
+
+@pytest.mark.parametrize("digest", [None, "", "short", "g" * 64])
+def test_the_reference_digest_is_required(repo: Path, digest: object) -> None:
+    manifest = strict(repo)
+    manifest["entries"][0]["reference"] = digest
+    rewrite(repo, manifest)
+    assert "reference digest is required" in run(repo, "check").stdout
+
+
+def test_a_cell_must_name_its_source_files(repo: Path) -> None:
+    manifest = strict(repo)
+    manifest["entries"][0]["sources"] = []
+    rewrite(repo, manifest)
+    assert "must list the source files" in run(repo, "check").stdout
+
+
+def test_manifest_qa_metadata_cannot_stand_in_for_the_qa_file(repo: Path) -> None:
+    manifest = strict(repo)
+    (change(repo) / "spec/qa.md").unlink()
+    manifest["qa"] = {"build": manifest["entries"][0]["build"]}
+    rewrite(repo, manifest)
+    assert "qa.md is missing" in run(repo, "check").stdout
+
+
+def test_qa_md_is_verified_by_its_own_recorded_build(repo: Path) -> None:
+    strict(repo)
+    write(change(repo) / "spec/qa.md", "# QA\n\nno build line\n")
+    assert "qa.md records no `Build: <sha>`" in run(repo, "check").stdout
+    write(change(repo) / "spec/qa.md", f"# QA\n\nBuild: {'1' * 40}\n")
+    assert "qa.md is stale" in run(repo, "check").stdout
+
+
+def commit_all(repo: Path, message: str) -> str:
+    git(repo, "add", ".")
+    git(repo, "commit", "-qm", message)
+    return git(repo, "rev-parse", "HEAD")
+
+
+def test_fixing_one_screen_and_recapturing_it_leaves_the_other_cells_valid(repo: Path) -> None:
+    manifest = strict(repo)
+    write(repo / "src/a.ts", "a2")  # screen A is fixed
+    new = commit_all(repo, "fix a")
+    write(change(repo) / "spec/qa.md", f"# QA\n\nBuild: {new}\n")
+    commit_all(repo, "qa")
+    result = run(repo, "check")
+    assert result.returncode == 1 and "src/a.ts changed since build" in result.stdout
+    assert "src/b.ts" not in result.stdout  # B's inputs did not move
+    for entry in manifest["entries"][::2]:  # recapture only the A cells, from the new build
+        entry["build"] = new
+    rewrite(repo, manifest)
+    assert run(repo, "check").returncode == 0, run(repo, "check").stdout
+
+
+def test_a_shared_dependency_change_invalidates_every_cell(repo: Path) -> None:
+    strict(repo)
+    write(repo / "src/shared.ts", "s2")
+    commit_all(repo, "shared")
+    out = run(repo, "check").stdout
+    assert out.count("src/shared.ts changed since build") >= 2
+
+
+def test_a_well_formed_sha_that_is_no_commit_is_stale(repo: Path) -> None:
+    manifest = strict(repo)
+    manifest["entries"][0]["build"] = "0" * 40
+    rewrite(repo, manifest)
+    assert "is not a commit here" in run(repo, "check").stdout
+
+
+# Security review of the strict manifest: no fail-open edges.
+@pytest.mark.parametrize("content", ["{broken", "[]", "null", ""])
+def test_a_corrupt_lock_turns_the_strict_checks_on_never_off(repo: Path, content: str) -> None:
+    resolved(repo)
+    write(change(repo) / "lock.json", content)
+    result = run(repo, "check")
+    assert result.returncode == 1 and "capture manifest is required" in result.stdout
+
+
+def test_no_lock_at_all_keeps_the_legacy_behaviour(repo: Path) -> None:
+    resolved(repo)
+    assert not (change(repo) / "lock.json").exists()
+    assert run(repo, "check").returncode == 0
+
+
+def test_a_visual_change_without_any_qa_md_fails_even_without_a_spec_folder(repo: Path) -> None:
+    strict(repo)
+    import shutil
+
+    shutil.rmtree(change(repo) / "spec")
+    assert "qa.md is missing" in run(repo, "check").stdout
+
+
+def test_a_strict_change_without_visual_rows_needs_no_qa_md(repo: Path) -> None:
+    write(change(repo) / "marks.json", '{"rows": []}')
+    for path in (change(repo) / "asks").rglob("*"):
+        if path.is_file():
+            path.unlink()
+    write(change(repo) / "lock.json", json.dumps({"criteria": {}, "manifest": "required"}))
+    out = run(repo, "check").stdout
+    assert "qa.md" not in out and "capture manifest is required" not in out
+
+
+def test_the_strict_qa_check_runs_even_when_the_manifest_is_missing(repo: Path) -> None:
+    resolved(repo)
+    write(change(repo) / "lock.json", json.dumps({"criteria": {}, "manifest": "required"}))
+    out = run(repo, "check").stdout
+    assert "capture manifest is required" in out and "qa.md is missing" in out
+
+
+@pytest.mark.parametrize("source", ["/etc/passwd", "/", ".", "..", "../x", "src/../src/a.ts", "src/nothing.ts", "untracked.ts"])
+def test_a_declared_source_must_be_a_plain_path_tracked_at_head(repo: Path, source: str) -> None:
+    manifest = strict(repo)
+    write(repo / "untracked.ts", "x")
+    manifest["entries"][0]["sources"] = [source]
+    rewrite(repo, manifest)
+    out = run(repo, "check").stdout
+    assert "is not a plain repo path tracked at HEAD" in out, out
+
+
+def test_a_shared_dependency_must_be_tracked_too(repo: Path) -> None:
+    manifest = strict(repo)
+    manifest["shared"] = ["src/nowhere.ts"]
+    rewrite(repo, manifest)
+    assert "is not a plain repo path tracked at HEAD" in run(repo, "check").stdout
+
+
+def test_a_source_folder_tracked_at_head_is_accepted(repo: Path) -> None:
+    manifest = strict(repo)
+    manifest["entries"][0]["sources"] = ["src"]
+    rewrite(repo, manifest)
+    assert run(repo, "check").returncode == 0, run(repo, "check").stdout
+
+
+# Security follow-ups: canonical literal sources; qa.md freshness whenever it exists.
+@pytest.mark.parametrize("source", ["src/*", "src/?.ts", "src/[ab].ts", "src\\a.ts", ":(top)src/a.ts", ":src/a.ts", "src/a.ts "])
+def test_a_source_with_glob_or_pathspec_syntax_is_rejected(repo: Path, source: str) -> None:
+    manifest = strict(repo)
+    manifest["entries"][0]["sources"] = [source]
+    rewrite(repo, manifest)
+    assert "is not a plain repo path tracked at HEAD" in run(repo, "check").stdout
+
+
+def test_the_staleness_check_watches_the_canonical_source_path(repo: Path) -> None:
+    manifest = strict(repo)
+    manifest["entries"][0]["sources"] = ["src/a.ts/"]  # a trailing slash is canonicalised, not raw
+    rewrite(repo, manifest)
+    assert run(repo, "check").returncode == 0, run(repo, "check").stdout
+    write(repo / "src/a.ts", "a2")
+    commit_all(repo, "fix a")
+    assert "src/a.ts changed since build" in run(repo, "check").stdout
+
+
+def test_a_stale_qa_md_fails_even_when_the_rows_look_non_visual(repo: Path) -> None:
+    strict(repo)
+    write(change(repo) / "marks.json", '{"rows": []}')  # rows edited away
+    write(change(repo) / "spec/qa.md", f"# QA\n\nBuild: {'1' * 40}\n")
+    out = run(repo, "check").stdout
+    assert "qa.md is stale" in out
+
+
+def test_a_missing_qa_md_fails_when_the_spec_folder_exists_even_without_visual_rows(repo: Path) -> None:
+    strict(repo)
+    write(change(repo) / "marks.json", '{"rows": []}')
+    (change(repo) / "spec/qa.md").unlink()
+    assert "qa.md is missing" in run(repo, "check").stdout
+
+
 def test_render_folder_needs_an_image_for_each_screen_by_name_F11(repo: Path) -> None:
     """render.sh names a shot <screen>--<viewport>@2x.png: two viewports of one screen are one
     screen rendered, not two."""
@@ -635,3 +981,16 @@ def test_a_screen_with_a_double_dash_name_is_satisfied_by_its_rendered_shot_C4(r
     for viewport in ("mobile", "zoom150"):  # the other two viewports are the same screen
         shot = shot.rename(render / f"shots/home--compact--{viewport}@2x.png")
         assert "no image for screen" not in run(repo, "check").stdout
+
+
+def test_decision_evidence_may_live_in_a_capability_decisions_folder(repo: Path) -> None:
+    data = resolved(repo)
+    write(repo / "specs/billing/decisions/choice.md", "# ADR\n")
+    write(repo / "specs/billing/rules/R1.md", "# a rule, not a decision\n")
+    data[0].update(decision="specs/billing/decisions/choice.md", status="ruled-out", expected="", shot="")
+    save(repo, data)
+    assert run(repo, "check").returncode == 0
+    data[0]["decision"] = "specs/billing/rules/R1.md"
+    save(repo, data)
+    result = run(repo, "check")
+    assert result.returncode == 1 and "decision must be" in result.stdout

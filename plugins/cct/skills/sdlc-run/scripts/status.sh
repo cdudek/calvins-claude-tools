@@ -3,7 +3,8 @@
 #
 #   status.sh            open changes: id · linear · state · PR
 #   status.sh --current  the change for the checked-out branch (slug match), or "none"
-#   status.sh --shipped [n]  the archive, newest SHIPPED first (default 20)
+#   status.sh --shipped [n]  shipped changes, newest first (default 20): the archive of an older
+#                            repo, and `.sdlc/outcomes/` for a change whose folder was removed
 #   status.sh <id>       one change, plus `git log --follow` of its plan.md (the revision history)
 #
 # Every run first says whether this repo's copied hooks, workflows and guardrail test still
@@ -26,6 +27,11 @@ else
 fi
 # -#-#- VERSION -#-#-  one line when sdlc.json sdlcVersion is missing, older or newer than the kit.
 python3 "$(dirname "$0")/../templates/scripts/sdlc_version.py" "$root" 2>/dev/null || true
+# -#-#- HEAVY -#-#-  who holds or waits for a heavy slot (the plugin's own heavy.py, run in the repo); silent when idle.
+here=$(cd "$(dirname "$0")" && pwd)
+if [ -f "$here/../templates/scripts/heavy.py" ]; then
+  (cd "$root" && python3 "$here/../templates/scripts/heavy.py" status 2>/dev/null) | grep -v 'idle' | sed 's/^/heavy=/' || true
+fi
 branch=$(git -C "$root" rev-parse --abbrev-ref HEAD 2>/dev/null || echo "")
 mode="${1:-}"
 
@@ -37,12 +43,19 @@ mode="${1:-}"
 # never renames it", which is what keeps `git log --follow` readable across the boundary.
 if [ "$mode" = "--shipped" ]; then
   limit="${2:-20}"
-  find "$root/$changes/archive" -mindepth 1 -name plan.md -print 2>/dev/null | while read -r plan; do
-    d=$(dirname "$plan")
-    shipped=$(sed -n 's/^archived_at: *//p' "$plan" | head -1)
-    linear=$(sed -n 's/^linear: *//p' "$plan" | head -1)
-    printf '%s\t%s\tlinear=%s\n' "${shipped:-0000-00-00}" "$(basename "$d")" "${linear:-none}"
-  done | sort -r | head -n "$limit" | while IFS=$'\t' read -r shipped id lin; do
+  {
+    find "$root/$changes/archive" -mindepth 1 -name plan.md -print 2>/dev/null | while read -r plan; do
+      d=$(dirname "$plan")
+      shipped=$(sed -n 's/^archived_at: *//p' "$plan" | head -1)
+      linear=$(sed -n 's/^linear: *//p' "$plan" | head -1)
+      printf '%s\t%s\tlinear=%s\n' "${shipped:-0000-00-00}" "$(basename "$d")" "${linear:-none}"
+    done
+    # No archive: a merged change leaves only its outcome record (`spec.py outcome write`), listed by its due date.
+    for o in "$root"/.sdlc/outcomes/*.json; do
+      [ -f "$o" ] || continue
+      printf 'due:%s\t%s\tlinear=none\n' "$(sed -n 's/.*"due": *"\([^"]*\)".*/\1/p' "$o" | head -1)" "$(basename "$o" .json)"
+    done
+  } | sort -r | head -n "$limit" | while IFS=$'\t' read -r shipped id lin; do
     printf 'shipped=%s\t%s\t%s\n' "$shipped" "$id" "$lin"
   done
   exit 0
@@ -51,6 +64,30 @@ fi
 state_of() {
   local d="$1"
   local decisions="$d/decisions.json"
+  # Layout 4 (spec.md, design.md, tasks.md; no facts.md): the stage comes from those documents and the
+  # lock, by the scope the spec names (S: spec alone, M: + tasks, L: all three).
+  if [ -f "$d/spec.md" ] && [ ! -f "$d/facts.md" ]; then
+    python3 - "$d" <<'PY'
+import pathlib, re, sys
+d = pathlib.Path(sys.argv[1])
+def fm(name, key):
+    f = d / name
+    m = re.search(rf"^{key}:\s*(\S+)", f.read_text(encoding="utf-8"), re.M) if f.exists() else None
+    return m.group(1) if m else ""
+scope = fm("spec.md", "scope")
+need = ["spec.md"] + (["tasks.md"] if scope in ("M", "L") else []) + (["design.md"] if scope == "L" else [])
+locked = (d / "state" / "lock.json").exists() or (d / "lock.json").exists()
+if fm("spec.md", "status") == "in-review":
+    print("intent-in-review")
+elif fm("spec.md", "status") != "approved":
+    print("intent")
+elif locked and all(fm(n, "status") == "approved" for n in need):
+    print("build")
+else:
+    print("plan-draft")
+PY
+    return
+  fi
   if [ -f "$d/intent.md" ] && grep -q '^status: in-review' "$d/intent.md"; then echo "intent-in-review"; return; fi
   if [ -f "$decisions" ] && python3 - "$decisions" "$d" <<'PY'
 import json, pathlib, sys
@@ -112,7 +149,7 @@ for d in "$root/$changes"/*/; do
     *) [ "$id" = "$mode" ] || continue ;;
   esac
   found=1
-  linear=$(grep -m1 '^linear:' "$d/plan.md" "$d/facts.md" "$d/intent.md" 2>/dev/null | head -1 | sed 's/^.*linear: *//')
+  linear=$(grep -m1 '^linear:' "$d/spec.md" "$d/plan.md" "$d/facts.md" "$d/intent.md" 2>/dev/null | head -1 | sed 's/^.*linear: *//')
   st=$(state_of "$d")
   pr="none"
   if command -v gh >/dev/null 2>&1; then

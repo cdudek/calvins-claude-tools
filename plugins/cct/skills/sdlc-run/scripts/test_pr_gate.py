@@ -414,8 +414,11 @@ def test_local_mode_opens_the_project_pr_into_the_default_branch_only(repo: Path
 
 def test_pr_mode_keeps_the_project_branch_rule(repo: Path) -> None:
     _local(repo, None)
+    _git(repo, "checkout", "-q", "master")
+    _commit(repo, "src/other.ts", "x\n")
+    _git(repo, "push", "-q", "origin", "master")  # the default branch moved after the project was cut
     _git(repo, "checkout", "-q", "project/trial")
-    _pass_project(repo)  # ignored outside local mode
+    _pass_project(repo)  # a project pass without the default branch merged in opens nothing
     r = _run(repo, "git push -u origin project/trial")
     assert r.returncode == 2 and "only through milestone PRs" in r.stderr
 
@@ -880,3 +883,27 @@ def test_a_local_merge_refuses_a_pass_whose_report_names_another_project(repo: P
     _pass(repo)
     _git(repo, "checkout", "-q", "project/trial")
     assert _run(repo, "git merge --no-ff milestone/trial-1").returncode == 0
+
+
+def test_a_joining_change_without_a_project_is_not_a_second_owner(repo: Path) -> None:
+    """Stage 1 `existing`: a second change joins the milestone; its absent project owns nothing."""
+    _local(repo)
+    joiner = repo / "changes" / "2026-11-02-joiner"
+    joiner.mkdir()
+    (joiner / "decisions.json").write_text(json.dumps({"milestone": {"slug": "trial"}}))
+    _git(repo, "add", ".")
+    _git(repo, "commit", "-qm", "a second change joins the milestone")
+    _pass(repo)
+    _git(repo, "checkout", "-q", "project/trial")
+    assert _run(repo, "git merge --no-ff milestone/trial-1").returncode == 0
+
+
+def test_the_change_record_is_found_when_it_sits_in_state(repo: Path) -> None:
+    c = repo / "changes" / ID
+    (c / "state").mkdir()
+    (c / "decisions.json").rename(c / "state" / "intake.json")  # the new place of decisions.json
+    _commit(repo, f"changes/{ID}/milestone.md", "moved\n")
+    cmd = "gh pr create --base project/trial --title 'Milestone 1' --body x"
+    assert _run(repo, cmd).returncode == 2
+    _pass(repo, owner="")
+    assert _run(repo, cmd).returncode == 0

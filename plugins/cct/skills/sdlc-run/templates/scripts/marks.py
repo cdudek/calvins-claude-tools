@@ -21,18 +21,43 @@ A fixed note names its proof in `test` (a tag such as @F1) found in a testGlobs 
 Init preserves existing rows and fields. Check inventories sources again, so missing,
 duplicate, changed and orphaned rows cannot silently pass. This checks coverage, not pixels:
 the reviewer must inspect each pair using the existing UX visual pass and ledger.
+
+Captures have one owner: verify/shots/manifest.json, {"entries": [{shot, build, reference,
+screen, state, width, zoom}], "qa": {"build": <sha>}}. `build` is the commit captured, `reference`
+the sha256 of the reference image. When the file exists, check refuses a shot that is not in it,
+one cell (screen, state, width, zoom) captured twice, a capture or `qa.md` whose build differs
+from HEAD in any file outside the changes folder, and a reference whose bytes changed since
+capture, so a stale capture is invalidated by its inputs, never reused because it exists.
 """
 
 from __future__ import annotations
 
 import argparse
+import datetime as dt
 import glob
 import hashlib
 import html
 import json
+import os
 import re
+import subprocess
 import sys
 from pathlib import Path
+
+sys.dont_write_bytecode = True  # the spec import must not leave __pycache__ in a clean checkout
+
+
+def state_path(change: Path, name: str) -> Path:
+    """A machine file of a change: spec.py's reader of the state/ move, imported only for layout 4
+    (a state/ folder or a spec.md). An older layout reads the old place, so a repo whose spec.py
+    is missing or older still runs this file."""
+    change = Path(change)
+    if (change / "state").is_dir() or (change / "spec.md").is_file():
+        sys.path.insert(0, str(Path(__file__).resolve().parent))  # spec.py sits beside this file
+        import spec  # lazy: layout 4 only
+
+        return spec.state_path(change, name)
+    return change / name
 
 SECTION = re.compile(r"^## (\d{3}) · \d{2}:\d{2}[ \t]*$", re.M)
 NOTE = re.compile(r"^(\d+)\. ([^\n]*(?:\n(?!\d+\. ).*)*)", re.M)
@@ -54,13 +79,205 @@ TEST_GLOBS = ["**/*.test.*", "**/*.spec.*", "**/test_*.py", "**/tests/**", "**/e
 SKIP = ("node_modules", ".git", ".worktrees")
 BUNDLE_FILLED = {"rendered": ""}
 
+# One grammar for a finding id, shared by the producer (findings.md items, marks rows) and the parser.
+FINDING_ID = r"[A-Z][A-Z0-9]*-?\d+"  # B2, C1, PR7 and a specialist's RC-1
+ASKED = re.compile(r"\AChange (\S+), finding (\S+): ")  # "Change <id>, finding B2: ..."
+# The fixed options of an owner dialog; the selected label is the decision.
+OWNER_LABELS = {
+    "fix it now": "fix",
+    "accept as is": "accepted",
+    "block the close": "blocked",
+    "accept milestone": "accepted",
+    "hold": "hold",
+    "skip visual evidence": "skip",
+    "run visual evidence": "run",
+}
+DEFER = re.compile(r"defer to milestone (\d+)", re.I)
+
+
+def when(text: object) -> dt.datetime | None:
+    try:
+        stamp = dt.datetime.fromisoformat(str(text).replace("Z", "+00:00"))
+    except ValueError:
+        return None
+    return stamp if stamp.tzinfo else stamp.replace(tzinfo=dt.timezone.utc)  # noqa: UP017 -- macOS python3 3.9
+
+
+def transcript_dirs(repo: Path) -> list[Path]:
+    """Claude Code's project folders for this repo: its working tree and the main checkout it
+    belongs to (a worktree has its own folder, and the owner may have spoken in either). A folder
+    is read only if neither it nor a parent is a link (a link could point at a folder the agent
+    wrote) and it is ours."""
+    roots = {repo.resolve()}
+    common = subprocess.run(
+        ["git", "-C", str(repo), "rev-parse", "--path-format=absolute", "--git-common-dir"],
+        capture_output=True,
+        text=True,
+    ).stdout.strip()
+    if common.endswith("/.git"):
+        roots.add(Path(common).parent.resolve())
+    found = []
+    for root in sorted(roots):
+        base = Path.home() / ".claude/projects" / re.sub(r"[^A-Za-z0-9]", "-", str(root))
+        if base.is_dir() and not any(p.is_symlink() for p in (base, base.parent, base.parent.parent)):
+            found.append(base)
+    return found
+
+
+def first_seen(repo: Path, record: Path, needle: str) -> dt.datetime | None:
+    """When the current incarnation of `needle` began in `record`: the newest commit that took it
+    from absent to present, else the file's mtime (an uncommitted or untracked finding). An id that
+    was removed and reused later is a new finding: an answer to the old one is older than this."""
+    rel = record.resolve().relative_to(repo.resolve()).as_posix() if record.exists() else str(record)
+
+    def has(rev: str) -> bool:
+        out = subprocess.run(["git", "-C", str(repo), "show", f"{rev}:{rel}"], capture_output=True, text=True)
+        return out.returncode == 0 and needle in out.stdout
+
+    worktree = record.exists() and needle in record.read_text(encoding="utf-8", errors="ignore")
+    if worktree and not has("HEAD"):
+        return dt.datetime.fromtimestamp(record.stat().st_mtime, dt.timezone.utc)  # noqa: UP017
+    log = subprocess.run(
+        ["git", "-C", str(repo), "log", f"-S{needle}", "--format=%H %cI", "--", rel],
+        capture_output=True,
+        text=True,
+    ).stdout.splitlines()
+    for line in log:  # newest first
+        sha, _, stamp = line.partition(" ")
+        if has(sha) and not has(f"{sha}^"):
+            return when(stamp)
+    if record.exists():
+        return dt.datetime.fromtimestamp(record.stat().st_mtime, dt.timezone.utc)  # noqa: UP017
+    return None
+
+
+_ANSWERS: dict[tuple[str, str], list[tuple[str, tuple[str, str], dt.datetime]]] = {}
+
+
+def change_born(repo: Path, change_id: str) -> dt.datetime | None:
+    """When the change folder came to exist: its first commit, else the folder's mtime. No session
+    file last written before then can hold an answer about it."""
+    try:
+        changes = json.loads((repo / "sdlc.json").read_text(encoding="utf-8")).get("changesDir", "changes")
+    except (OSError, ValueError, AttributeError):
+        changes = "changes"
+    folder = repo / changes / change_id
+    first = subprocess.run(
+        ["git", "-C", str(repo), "log", "--reverse", "--format=%cI", "--", f"{changes}/{change_id}"],
+        capture_output=True,
+        text=True,
+    ).stdout.split()
+    if first:
+        return when(first[0])
+    if folder.exists():
+        return dt.datetime.fromtimestamp(folder.stat().st_mtime, dt.timezone.utc)  # noqa: UP017
+    return None
+
+
+def answers(repo: Path, change_id: str) -> list[tuple[str, tuple[str, str], dt.datetime]]:
+    """Every owner answer about `change_id` in the transcripts, as (finding id, kind, time), parsed
+    once per process and only from sessions written since the change folder was born."""
+    key = (str(repo.resolve()), change_id)
+    if key in _ANSWERS:
+        return _ANSWERS[key]
+    out: list[tuple[str, tuple[str, str], dt.datetime]] = []
+    born = change_born(repo, change_id)
+    for base in transcript_dirs(repo):
+        for path in sorted(base.glob("*.jsonl")):
+            try:
+                info = path.stat()
+                if path.is_symlink() or info.st_uid != os.getuid():
+                    continue
+                if born and dt.datetime.fromtimestamp(info.st_mtime, dt.timezone.utc) < born:  # noqa: UP017
+                    continue
+                lines = path.read_text(encoding="utf-8").splitlines()
+            except (OSError, ValueError):
+                continue
+            out += _answers_in(lines, change_id)
+    _ANSWERS[key] = out
+    return out
+
+
+def _label(label: object) -> str:
+    """The option's meaning: lowercase, without a trailing `(Recommended)` the skill adds."""
+    return re.sub(r"\s*\(recommended\)\s*$", "", str(label).strip(), flags=re.I).lower()
+
+
+def _answers_in(lines: list[str], change_id: str) -> list[tuple[str, tuple[str, str], dt.datetime]]:
+    out = []
+    asked: dict[str, dict[str, list]] = {}
+    for line in lines:
+        try:
+            entry = json.loads(line)
+        except ValueError:
+            continue
+        message = entry.get("message") if isinstance(entry, dict) else None
+        content = message.get("content") if isinstance(message, dict) else None
+        if not isinstance(content, list) or entry.get("isSidechain"):
+            continue
+        blocks = [b for b in content if isinstance(b, dict)]
+        if entry.get("type") == "assistant":
+            for b in blocks:
+                if b.get("type") == "tool_use" and b.get("name") == "AskUserQuestion":
+                    qs = (b.get("input") or {}).get("questions")
+                    asked[str(b.get("id"))] = {
+                        q["question"]: [o.get("label") for o in q.get("options") or [] if isinstance(o, dict)]
+                        for q in qs or []
+                        if isinstance(q, dict) and isinstance(q.get("question"), str)
+                    }
+            continue
+        result = entry.get("toolUseResult")
+        given = result.get("answers") if isinstance(result, dict) else None
+        stamp = when(entry.get("timestamp"))
+        if entry.get("type") != "user" or not isinstance(given, dict) or not stamp:
+            continue
+        for b in blocks:
+            options = asked.get(str(b.get("tool_use_id")))
+            if b.get("type") != "tool_result" or b.get("is_error") or options is None:
+                continue
+            for question, label in given.items():
+                m = ASKED.match(question) if isinstance(question, str) else None
+                if not m or m[1] != change_id or label not in options.get(question, []):
+                    continue
+                name = _label(label)
+                defer = DEFER.fullmatch(name)
+                kind = ("deferred", defer[1]) if defer else (OWNER_LABELS.get(name), "")
+                if kind[0]:
+                    out.append((m[2], kind, stamp))
+    return out
+
+
+def owner_decisions(
+    repo: Path, change_id: str, record: Path | None = None, needle: str = "{}", with_time: bool = False
+) -> dict[str, tuple]:
+    """finding id -> (kind, detail) from the owner's answers to AskUserQuestion dialogs whose
+    question starts `Change <change id>, finding <id>: ` and whose options include the selected
+    label (a trailing `(Recommended)` is ignored). kind is fix | accepted | deferred (detail: the milestone) | blocked | hold. Only the
+    structured tool result counts: typed text, an agent message or a subagent never does. The
+    latest answer wins; an answer older than the finding's first appearance in `record` is ignored
+    (`needle` formats the id into the text searched for). No readable transcript gives {}.
+    Threat model: protects against a careless agent settling its own finding, not against someone
+    with a shell; the transcript folder is read from the calling process's home."""
+    found: dict[str, tuple[tuple[dt.datetime, int], tuple[str, str]]] = {}
+    seen: dict[str, dt.datetime | None] = {}
+    for order, (fid, kind, stamp) in enumerate(answers(repo, change_id)):
+        if record is not None and fid not in seen:
+            seen[fid] = first_seen(repo, record, needle.format(fid))
+        if record is not None and (seen[fid] is None or stamp < seen[fid]):
+            continue  # said before this incarnation of the finding existed
+        if fid not in found or (stamp, order) > found[fid][0]:
+            found[fid] = ((stamp, order), kind)
+    if with_time:  # (kind, detail, when it was answered)
+        return {fid: (*kind, stamp) for fid, ((stamp, _), kind) in found.items()}
+    return {fid: kind for fid, (_, kind) in found.items()}
+
 
 def bundles(change: Path) -> dict[Path, str]:
     """Export bundle folders under asks/, with their hash: any folder holding index.html, plus
     the folder decisions.json names as visualSource.path (a React export has no index.html)."""
     folders = {index.parent for index in (change / "asks").rglob("index.html")}
     try:
-        declared = json.loads((change / "decisions.json").read_text(encoding="utf-8"))
+        declared = json.loads(state_path(change, "decisions.json").read_text(encoding="utf-8"))
         path = (change / declared["visualSource"]["path"]).resolve()
         if path.is_dir() and path.is_relative_to((change / "asks").resolve()):
             folders.add(path)
@@ -159,6 +376,20 @@ def inside_file(base: Path, value: object, boundary: Path) -> bool:
     return path.is_relative_to(boundary.resolve()) and path.is_file()
 
 
+def in_capability_decisions(repo: Path, value: object) -> bool:
+    """`<livingSpecs>/<capability>/decisions/<file>`: the decision home of a living spec."""
+    try:
+        name = json.loads((repo / "sdlc.json").read_text(encoding="utf-8")).get("livingSpecs") or "specs"
+    except (OSError, ValueError, AttributeError):
+        name = "specs"
+    if not isinstance(name, str) or not re.fullmatch(r"[A-Za-z0-9._-]+", name) or name in (".", ".."):
+        return False
+    if not inside_file(repo, value, repo / name):
+        return False
+    parts = (repo / str(value)).resolve().relative_to((repo / name).resolve()).parts
+    return len(parts) >= 3 and parts[1] == "decisions"
+
+
 def inside_dir(boundary: Path, path: Path) -> bool:
     return path.resolve().is_relative_to(boundary.resolve())
 
@@ -248,12 +479,204 @@ def init(change: Path, sources: list[dict]) -> int:
     return 0
 
 
+def stale_build(
+    repo: Path, change: Path, build: object, paths: list[str] | None = None, strict: bool = False
+) -> str:
+    """Why a capture of commit `build` no longer describes HEAD, or "" when it still does: only
+    records under the changes folder may differ. With `paths` (the cell's own sources plus the
+    shared dependencies) only a change to one of those files, or under one of those folders,
+    makes it stale. `strict` also demands a full commit sha, never a moving ref."""
+    if not filled(build):
+        return "no build commit recorded"
+    if strict and not re.fullmatch(r"[0-9a-f]{40}", str(build)):
+        return f"build must be a full commit sha, not {build!r}"
+    known = subprocess.run(
+        ["git", "-C", str(repo), "cat-file", "-t", f"{build}^{{commit}}"], capture_output=True, text=True
+    )
+    if known.returncode or known.stdout.strip() != "commit":
+        return f"build {str(build)[:12]} is not a commit here"
+    records = change.parent.relative_to(repo.resolve()).as_posix()
+    done = subprocess.run(
+        ["git", "-C", str(repo), "diff", "-z", "--name-only", build, "HEAD", "--", ".", f":!{records}"],
+        capture_output=True,
+        text=True,
+    )
+    if done.returncode:
+        return f"build {str(build)[:12]} is not a commit here"
+    files = [f for f in done.stdout.split("\0") if f]  # -z: a name may hold spaces
+    if paths is not None:
+        roots = [p.rstrip("/") for p in paths]
+        files = [f for f in files if any(f == r or f.startswith(r + "/") for r in roots)]
+    return f"{files[0]} changed since build {str(build)[:12]}" if files else ""
+
+
+def manifest_required(change: Path) -> bool:
+    """A change approved from 3.21.0 has `"manifest": "required"` in its lock; older changes keep
+    the behaviour in which an absent manifest is fine. Fails closed: a lock.json that exists but
+    cannot be read as an object is treated as strict, never as legacy. (Editing a lock after
+    approval is refused by chain-gate.sh, and the gate compares its hashes.)"""
+    path = state_path(change, "lock.json")
+    if not path.exists():
+        return False
+    try:
+        data = json.loads(path.read_text(encoding="utf-8"))
+    except (OSError, ValueError):
+        return True
+    return not isinstance(data, dict) or data.get("manifest") == "required"
+
+
+def qa_problems(change: Path, repo: Path, visual: bool) -> list[str]:
+    """`<spec>/qa.md` verified by its own recorded `Build: <sha>`, never by manifest metadata. It is
+    required when the change has visual rows or a spec folder (marks.json is editable, the spec
+    folder is not derived from it); and whenever it exists its build must be fresh."""
+    qa = change / "spec" / "qa.md"
+    if not qa.is_file():
+        if visual or (change / "spec").is_dir():
+            return ["qa.md is missing: build QA has not been recorded for this change"]
+        return []
+    text = qa.read_text(encoding="utf-8")
+    builds = [m[1] for m in re.finditer(r"^Build:\s*`?(\S+?)`?\s*$", text, re.M | re.I)]
+    rows: list[list[str]] = []
+    for line in text.splitlines():  # the first table only (the header table), never the coverage matrix
+        if line.lstrip().startswith("|"):
+            rows.append([c.strip(" `") for c in line.strip().strip("|").split("|")])
+        elif rows:
+            break
+    head = [c.lower() for c in rows[0]] if rows else []
+    if "build commit" in head:  # the build QA template's table: one commit column
+        at = head.index("build commit")
+        builds += [r[at] for r in rows[1:] if len(r) > at and re.fullmatch(r"[0-9A-Za-z]{7,40}", r[at])]
+    if not builds:
+        return ["qa.md records no `Build: <sha>` line or `Build commit` column, so its inputs cannot be checked"]
+    for build in dict.fromkeys(builds):
+        if why := stale_build(repo, change, build, strict=True):
+            return [f"qa.md is stale: {why}"]
+    return []
+
+
+def canonical_source(repo: Path, source: object) -> str | None:
+    """The canonical repo path of a declared source, or None. Plain only: relative, no `.`, `..` or
+    empty component, no glob or pathspec syntax (`* ? [ ] \\`, a leading `:`), no edge whitespace.
+    It must name a file or folder tracked at HEAD, matched literally, so a narrowed staleness
+    check can never watch nothing or something else."""
+    if not isinstance(source, str) or not source or source != source.strip():
+        return None
+    if Path(source).is_absolute() or source[0] == ":" or any(c in source for c in "*?[]\\"):
+        return None
+    parts = source.rstrip("/").split("/")
+    if any(p in ("", ".", "..") for p in parts):
+        return None
+    path = "/".join(parts)
+    listed = subprocess.run(
+        ["git", "-C", str(repo), "ls-tree", "-r", "--name-only", "HEAD", "--", f":(literal){path}"],
+        capture_output=True,
+        text=True,
+    )
+    return path if listed.returncode == 0 and listed.stdout.strip() else None
+
+
+ZOOMS = (100, 150)  # the build QA looks at every state at 100 and 150 percent
+
+
+def matrix_problems(entries: list[dict]) -> list[str]:
+    """The required capture matrix: every entry names its screen, state, width and zoom, and each
+    screen-state-width it shows has a capture at every zoom of ZOOMS."""
+    problems = []
+    for e in entries:
+        missing = [k for k in ("screen", "state", "width", "zoom") if e.get(k) in (None, "")]
+        if missing:
+            problems.append(f"capture {e.get('shot')}: cell lacks {', '.join(missing)}")
+    seen: dict[tuple, set] = {}
+    for e in entries:
+        if all(e.get(k) not in (None, "") for k in ("screen", "state", "width", "zoom")):
+            seen.setdefault((e["screen"], e["state"], e["width"]), set()).add(str(e["zoom"]).rstrip("%"))
+    for cell, zooms in sorted(seen.items(), key=str):
+        gone = [z for z in ZOOMS if str(z) not in zooms]
+        if gone:
+            problems.append(f"capture matrix: {cell} lacks zoom {', '.join(map(str, gone))}")
+    return problems
+
+
+def manifest_problems(change: Path, rows: list[dict], repo: Path) -> list[str]:
+    """Problems with verify/shots/manifest.json against the rows. An absent file is a problem only
+    when the lock requires one (3.21.0) and rows hold visual work; the strict rules (commit sha,
+    reference digest, per-cell sources, a real qa.md) apply to those changes only."""
+    path = change / "verify/shots/manifest.json"
+    strict = manifest_required(change)
+    visual = any(filled(r.get("shot")) for r in rows) or any(
+        r.get("kind") in ("reference", "bundle") for r in rows
+    )
+    problems = qa_problems(change, repo, visual) if strict else []  # whether or not a manifest exists
+    if not path.exists():
+        if strict and visual:
+            problems.append("capture manifest is required (verify/shots/manifest.json): no capture is recorded")
+        return problems
+    try:
+        data = json.loads(path.read_text(encoding="utf-8"))
+        entries = [e for e in data["entries"] if isinstance(e, dict)]
+    except (OSError, ValueError, KeyError, TypeError):
+        return problems + ["capture manifest: unreadable; it needs an entries list"]
+    cells = [(e.get("screen"), e.get("state"), e.get("width"), e.get("zoom")) for e in entries]
+    problems += [f"capture manifest: cell {c} captured twice" for c in sorted(set(
+        c for c in cells if cells.count(c) > 1), key=str)]  # fmt: skip
+    shared = data.get("shared") if isinstance(data.get("shared"), list) else []
+    if strict:
+        problems += matrix_problems(entries)
+        problems += [
+            f"capture manifest: shared dependency {x!r} is not a plain repo path tracked at HEAD"
+            for x in shared
+            if canonical_source(repo, x) is None
+        ]
+    for entry in entries:
+        mine = entry.get("sources")
+        paths = None
+        if strict:
+            if not (isinstance(mine, list) and mine and all(filled(x) for x in mine)):
+                problems.append(f"capture {entry.get('shot')}: must list the source files of its screen")
+            else:
+                canon = [canonical_source(repo, x) for x in mine]
+                problems += [
+                    f"capture {entry.get('shot')}: source {x!r} is not a plain repo path tracked at HEAD"
+                    for x, c in zip(mine, canon)
+                    if c is None
+                ]
+                # only canonical, tracked paths narrow the check; a bad one fails the cell above
+                paths = [c for c in canon if c] + [
+                    c for x in shared if (c := canonical_source(repo, x))
+                ]
+            ref = entry.get("reference")
+            if not (isinstance(ref, str) and re.fullmatch(r"[0-9a-f]{64}", ref)):
+                problems.append(f"capture {entry.get('shot')}: reference digest is required (sha256)")
+        if why := stale_build(repo, change, entry.get("build"), paths, strict):
+            problems.append(f"capture {entry.get('shot')}: stale: {why}")
+    if not strict:
+        qa = data.get("qa")
+        if isinstance(qa, dict) and (why := stale_build(repo, change, qa.get("build"))):
+            problems.append(f"qa.md is stale: {why}")
+    for row in rows:
+        shot = row.get("shot")
+        if not filled(shot):
+            continue
+        mine = [e for e in entries if e.get("shot") == shot]
+        if not mine:
+            problems.append(f"{row['id']}: shot {shot} is not in the capture manifest")
+            continue
+        image = row.get("image")
+        if filled(image) and (change / image).is_file():
+            digest = hashlib.sha256((change / image).read_bytes()).hexdigest()
+            known = [e["reference"] for e in mine if filled(e.get("reference"))]
+            if known and digest not in known:
+                problems.append(f"{row['id']}: reference changed since capture; capture again")
+    return problems
+
+
 def check(change: Path, sources: list[dict], repo: Path, designs: Path, globs: list[str]) -> int:
     rows = read_rows(change / "marks.json")
     problems = []
     wanted = {row["id"]: row for row in sources}
     seen = set()
     specs = spec_text(repo, globs) if any(row.get("status") == "fixed" for row in rows) else ""
+    owners: dict[str, tuple[str, str]] | None = None
     for row in rows:
         rid = row["id"]
 
@@ -313,10 +736,14 @@ def check(change: Path, sources: list[dict], repo: Path, designs: Path, globs: l
             problem("invalid status")
         if status == "waits-on-design-system" and not filled(row.get("differs")):
             problem("waits-on-design-system must name the missing design-system parts in differs")
-        if status not in ("fixed", "match", "ruled-out", "waits-on-design-system") and not filled(
-            row.get("accepted")
-        ):
-            problem("unresolved status; needs the engineer's accepted words")
+        if status not in ("fixed", "match", "ruled-out", "waits-on-design-system"):
+            if owners is None:
+                owners = owner_decisions(repo, change.name, change / "marks.json")
+            if owners.get(rid, ("",))[0] not in ("accepted", "deferred"):
+                problem(
+                    "unresolved status; needs the owner's Accept as is or Defer to milestone <n> "
+                    f"answer to a dialog starting 'Change {change.name}, finding {rid}: '"
+                )
         if status != "ruled-out":
             if not filled(row.get("expected")):
                 problem("expected is required")
@@ -324,8 +751,8 @@ def check(change: Path, sources: list[dict], repo: Path, designs: Path, globs: l
                 problem("shot must be an existing file inside the change folder")
         decision = row.get("decision")
         if status == "ruled-out" or decision is not None:
-            if not inside_file(repo, decision, designs):
-                problem("decision must be an existing file under designsDir")
+            if not (inside_file(repo, decision, designs) or in_capability_decisions(repo, decision)):
+                problem("decision must be an existing file under designsDir or a capability's decisions/ folder")
         if status == "fixed":
             tag = row.get("test")
             if not filled(tag) or not tag.startswith("@"):
@@ -334,6 +761,7 @@ def check(change: Path, sources: list[dict], repo: Path, designs: Path, globs: l
                 problem(f"test tag {tag} appears in no spec or test file")
         if status in ("fixed", "match") and row.get("differs") not in (None, ""):
             problem("fixed/match must have no differs")
+    problems += manifest_problems(change, rows, repo)
     for rid in wanted.keys() - seen:
         problems.append(f"{rid}: missing row; run marks.py init {change.name}")
     for problem in sorted(problems):

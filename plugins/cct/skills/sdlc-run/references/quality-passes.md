@@ -91,7 +91,8 @@ After validation, before the fix round. Append-only: it adds to `findings.md`, n
 2. Per item, one verdict: `missing`, `partial`, `contradicts` (the build does the opposite) or
    `unrequested` (built, no ask or fact). Append each as `- [ ] **C<n>** <verdict>: <F or A id>
    — <source ref: file:line, test name or shot>` under `## Converge` in `findings.md`.
-3. The one fix round closes the items. Run the pass again; items it adds are fixed in the same
+3. The one fix round at milestone close closes the items. What it leaves is settled by the owner's answer to a dialog
+   ([convergence](convergence.md)). Run the pass again; items it adds are fixed in the same
    round if small, else they start the next milestone. A pass that adds nothing writes
    `Converged: round <n>` and the milestone may close.
 

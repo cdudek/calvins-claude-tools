@@ -25,6 +25,10 @@
 #   7. protected paths after approval    -- facts.md, done.json, lock.json, sdlc.json and the
 #                                           `protected` globs, unless protectedEdit quotes the engineer
 #
+# Layout 4 (spec.py `applies`) has no rules 2-4: its plan gate is `status: approved` on spec.md,
+# design.md and tasks.md plus lock.json; after the lock spec.md, design.md, specs/*/rules/R*.md and
+# .sdlc/last-rule-id need `protectedEdit` (a rule's `status:` line and task ticks stay open).
+#
 # v3 = decisions.json has `size`; v2 folders keep the v2 rules, v3 folders without `milestone`
 # keep the v3 rules, so in-flight changes finish on the process they started. Rules 5-7 fire
 # only when the checked-out branch has a change folder: no folder, no opinion. Bash wrapper,
@@ -35,6 +39,24 @@ export PYTHONDONTWRITEBYTECODE=1 # a hook must not leave __pycache__ in a clean 
 : "${SDLC_PY:=python3}" # an older sdlc-config.sh (one-file upgrade) does not set it
 
 payload=$(cat)
+
+# The session transcripts are the evidence for an owner quote (verify_gate.py reads them): no
+# Write or Edit may touch ~/.claude/projects, in any repo, with or without sdlc.json or a goal.
+if ! printf '%s' "$payload" | "$SDLC_PY" -c '
+import json, os, sys
+try:
+    f = json.load(sys.stdin)["tool_input"]["file_path"]
+except (ValueError, KeyError, TypeError):
+    sys.exit(0)
+if not f:
+    sys.exit(0)
+t = os.path.realpath(os.path.expanduser(os.path.expandvars(f)))
+e = os.path.realpath(os.path.expanduser("~/.claude/projects"))
+sys.exit(1 if t == e or t.startswith(e + os.sep) else 0)
+'; then
+  echo 'BLOCKED: ~/.claude/projects holds the session transcripts, the evidence of what the engineer said. They are never written or edited; ask the engineer to say it in the session.' >&2
+  exit 2
+fi
 [ -f "$SDLC_JSON" ] || exit 0
 
 # One interpreter start per call: the payload (fd 3) and sdlc.json are read in the same process.
@@ -129,8 +151,15 @@ def section(path: Path, heading: str) -> str:
     return "\n".join(line for line in body if line.strip())
 
 
+def state_file(change_dir: Path, name: str) -> Path:
+    """A machine file of a change: <change>/state/ first (decisions.json is intake.json there), then
+    the old place. The same reader as spec.py `state_path`, which a hook cannot import."""
+    new = change_dir / "state" / {"decisions.json": "intake.json"}.get(name, name)
+    return new if new.exists() else change_dir / name
+
+
 def load_decisions(change_dir: Path) -> dict:
-    path = change_dir / "decisions.json"
+    path = state_file(change_dir, "decisions.json")
     if not path.exists():
         return {}
     return json.loads(path.read_text(encoding="utf-8"))
@@ -144,7 +173,36 @@ def is_milestone(decisions: dict) -> bool:
     return "milestone" in decisions
 
 
+def lock_layout(change_dir: Path) -> int | None:
+    """The layout `approve` recorded in lock.json: None for a lock without one (an older lock) or
+    an unreadable one. Once a lock exists it, not an editable file, says which layout applies."""
+    try:
+        value = json.loads((state_file(change_dir, "lock.json")).read_text(encoding="utf-8")).get("layout")
+    except (OSError, ValueError, AttributeError):
+        return None
+    return value if isinstance(value, int) else None
+
+
+def is_v4(change_dir: Path, decisions: dict) -> bool:
+    """Layout 4 (spec.py `applies`, which a hook cannot import): pinned in decisions.json, or a
+    spec.md with no facts.md. It has three documents and a living spec, not intent/facts/plan.
+    After approval the lock decides, and a lock with no layout is an older, three-file one."""
+    if (state_file(change_dir, "lock.json")).exists():
+        return lock_layout(change_dir) == 4
+    return decisions.get("layout") == 4 or (
+        (change_dir / "spec.md").exists() and not (change_dir / "facts.md").exists()
+    )
+
+
+def protected_files(change_dir: Path, decisions: dict) -> tuple[str, ...]:
+    """What a locked change protects: its layout's files, or both layouts' when the lock names none."""
+    if lock_layout(change_dir) is None and (state_file(change_dir, "lock.json")).exists():
+        return tuple(dict.fromkeys(PROTECTED_FILES + V4_PROTECTED_FILES))
+    return V4_PROTECTED_FILES if is_v4(change_dir, decisions) else PROTECTED_FILES
+
+
 PROTECTED_FILES = ("facts.md", "done.json", "lock.json")
+V4_PROTECTED_FILES = ("spec.md", "design.md", "done.json", "lock.json")  # tasks.md takes ticks
 PROTECTED_GLOBS = ["sdlc.json", "**/*-snapshots/**", "**/__screenshots__/**", "**/*allowlist*"]
 
 
@@ -208,7 +266,85 @@ def branch_name() -> str:
     return ""
 
 
+def git_dir() -> Path | None:
+    out = subprocess.run(["git", "-C", str(root), "rev-parse", "--absolute-git-dir"], capture_output=True, text=True)
+    return Path(out.stdout.strip()) if out.returncode == 0 and out.stdout.strip() else None
+
+
+def dispatched_change() -> tuple[str, Path, dict] | None:
+    """The change a dispatch named: `<git dir>/sdlc-change` (the supervisor writes it into the
+    builder's worktree) or SDLC_CHANGE. Never guessed from a branch name; an id with no folder is ignored."""
+    ids = []
+    gd = git_dir()
+    if gd and (gd / "sdlc-change").is_file():
+        ids.append((gd / "sdlc-change").read_text(encoding="utf-8").strip())
+    ids.append(os.environ.get("SDLC_CHANGE", "").strip())
+    for change_id in ids:
+        if re.fullmatch(r"[\w.-]+", change_id) and (root / changes / change_id).is_dir():
+            return change_id, root / changes / change_id, load_decisions(root / changes / change_id)
+    return None
+
+
+def authorized(target: str, change_id: str, change_dir: Path, decisions: dict) -> bool:
+    """Does `protectedEdit` allow this edit of `target`? An entry is a quote (a string) or
+    `{"path", "words", "sha"}`: `path` limits it to one file, `sha` to the lock it was given for. It
+    is spent by the edit it allows (the key is kept in the git dir), so each edit needs its own
+    quote. A quote with no words authorizes nothing."""
+    import hashlib
+
+    raw = decisions.get("protectedEdit")
+    entries = raw if isinstance(raw, list) else [raw] if raw else []
+    try:
+        lock_sha = str(json.loads(state_file(change_dir, "lock.json").read_text(encoding="utf-8")).get("sha", ""))
+    except (OSError, ValueError, AttributeError):
+        lock_sha = ""
+    gd = git_dir()
+    used_path = gd / "sdlc-protected-used.json" if gd else None
+    spent = False
+    for entry in entries:
+        path, words, sha = (entry.get("path"), str(entry.get("words", "")), entry.get("sha")) if isinstance(entry, dict) else (None, str(entry), None)
+        if not words.strip() or (path and path.lstrip("./") != target) or (sha and sha != lock_sha):
+            continue
+        # a matching quote needs the ledger: one that cannot be found, read or written denies (fails closed)
+        try:
+            if used_path is None:
+                raise OSError("no git dir")
+            used = json.loads(used_path.read_text(encoding="utf-8")) if used_path.exists() else []
+            if not isinstance(used, list):
+                raise ValueError("not a list")
+        except (OSError, ValueError):
+            print(f"chain-gate: the protectedEdit ledger ({used_path or 'no git dir'}) is missing, unreadable or not a list; refusing the edit.", file=sys.stderr)
+            return False
+        key = hashlib.sha256(f"{change_id}\0{path or '*'}\0{words}\0{lock_sha}".encode()).hexdigest()
+        if key in used:
+            spent = True
+            continue
+        try:
+            used_path.write_text(json.dumps([*used, key]), encoding="utf-8")
+        except OSError:
+            print(f"chain-gate: the protectedEdit ledger ({used_path}) is not writable; refusing the edit.", file=sys.stderr)
+            return False
+        return True
+    if spent:
+        print(f"chain-gate: the protectedEdit quote for {target} is already used; ask the engineer again and record new words.", file=sys.stderr)
+    return False
+
+
 def branch_change() -> tuple[str, Path, dict] | None:
+    """The change of the checked-out branch; the dispatch pointer only fills in when the branch names
+    none. When both name a change and they differ, the edit is refused: a pointer never overrides."""
+    named, pointed = change_of_branch(), dispatched_change()
+    if named and pointed and named[0] != pointed[0]:
+        deny(
+            f"the branch names change {named[0]} but the dispatch pointer (<git dir>/sdlc-change or SDLC_CHANGE) "
+            f"names {pointed[0]}: they disagree. Fix the pointer or the branch; a pointer never overrides the branch.",
+            source="the branch name and the dispatch pointer",
+            action="remove the wrong pointer, or work on the branch of the change",
+        )
+    return named or pointed
+
+
+def change_of_branch() -> tuple[str, Path, dict] | None:
     branch = branch_name()
     if not branch:
         return None
@@ -240,10 +376,33 @@ if len(parts) >= 3 and parts[0] == changes:
     change_dir = root / changes / change_id
     base = parts[-1]
     inside = "/".join(parts[2:])
+    if inside.startswith("state/"):  # state/lock.json is lock.json, state/intake.json is decisions.json
+        inside = {"intake.json": "decisions.json"}.get(inside[6:], inside[6:])
+        base = inside.rsplit("/", 1)[-1]
 
     if base == "decisions.json":
+        lock = state_file(change_dir, "lock.json")
+        if lock.exists() and (state_file(change_dir, "decisions.json")).exists():
+            # `layout` decides which files the lock protects: changing it after approval is a protected edit
+            tool = payload.get("tool_input") or {}
+            now = (state_file(change_dir, "decisions.json")).read_text(encoding="utf-8")
+            new = tool["content"] if "content" in tool else now.replace(
+                str(tool.get("old_string", "")), str(tool.get("new_string", "")), 1 if tool.get("old_string") else 0
+            )
+            def layout_of(text: str) -> object:
+                try:
+                    return json.loads(text).get("layout", "none")
+                except (ValueError, AttributeError):
+                    return "unreadable"
+            if layout_of(new) != layout_of(now) and not authorized(rel, change_id, change_dir, load_decisions(change_dir)):
+                deny(
+                    f"{changes}/{change_id}/decisions.json `layout` is locked since the engineer approved the "
+                    "change. Stop and ask; record their words as `protectedEdit` first.",
+                    source=f"{changes}/{change_id}/lock.json and decisions.json",
+                    action="stop and ask the engineer; their words go in decisions.json as protectedEdit",
+                )
         sys.exit(0)
-    if not (change_dir / "decisions.json").exists():
+    if not (state_file(change_dir, "decisions.json")).exists():
         deny(
             f"the Stage 1.1 dialog has not run for {change_id}. AskUserQuestion must ask ticket "
             f"(search Linear first), intent, design file, size and kind; then write "
@@ -253,16 +412,19 @@ if len(parts) >= 3 and parts[0] == changes:
 
     decisions = load_decisions(change_dir)
     v3 = is_v3(decisions)
+    v4 = is_v4(change_dir, decisions)
 
-    if is_milestone(decisions):
-        if inside in PROTECTED_FILES and (change_dir / "lock.json").exists():
-            if decisions.get("protectedEdit"):
+    if is_milestone(decisions) or v4:
+        if inside in protected_files(change_dir, decisions) and (state_file(change_dir, "lock.json")).exists():
+            if authorized(rel, change_id, change_dir, decisions):
                 sys.exit(0)
             deny(
                 f"{changes}/{change_id}/{inside} is locked since the engineer approved the plan. "
                 "Stop and ask; record their words as `protectedEdit` in decisions.json first.",
                 source=f"{changes}/{change_id}/lock.json and decisions.json", action="stop and ask the engineer; their words go in decisions.json as protectedEdit"
             )
+        if v4:  # no intent/facts/plan ordering: the three documents have one gate, at the lock
+            sys.exit(0)
         if (inside.startswith("spec/") or base == "facts.md") and fm(
             change_dir / "intent.md", "status"
         ) != "approved":
@@ -344,6 +506,23 @@ if len(parts) >= 3 and parts[0] == changes:
             )
     sys.exit(0)
 
+if re.fullmatch(rf"{re.escape(str(cfg.get('livingSpecs') or 'specs'))}/[^/]+/rules/R\d+\.md", rel) or rel == ".sdlc/last-rule-id":
+    # the living spec: rule files and the id floor change by script or git, not by a direct edit,
+    # once a layout-4 change is approved. Flipping a rule's `status:` line is the one open edit.
+    found = branch_change()
+    if found and is_v4(found[1], found[2]) and (state_file(found[1], "lock.json")).exists():
+        tool = payload.get("tool_input") or {}
+        flip = all(re.fullmatch(r"\s*status:\s*\w+\s*", str(tool.get(k, "\n"))) for k in ("old_string", "new_string"))
+        if not flip and not authorized(rel, found[0], found[1], found[2]):
+            deny(
+                f"{rel} is protected since the engineer approved the change. Rule files and the id floor "
+                "change by script (`spec.py new`, `spec.py last-id --write`) or by git; to edit one "
+                f"directly stop and ask, then record the words as `protectedEdit` in {changes}/{found[0]}/decisions.json.",
+                source=f"{changes}/{found[0]}/lock.json and decisions.json",
+                action="stop and ask the engineer; their words go in decisions.json as protectedEdit",
+            )
+    sys.exit(0)
+
 if rel.startswith("docs/") or rel.startswith(f"{designs}/") or rel.startswith(".claude/") or rel.endswith(".md"):
     sys.exit(0)
 
@@ -365,38 +544,52 @@ if v3 and decisions.get("kind") == "bug" and decisions.get("testLocked") is True
             source=f"{changes}/{change_id}/decisions.json"
         )
 
-if v3 and not skipped(decisions, "prototype"):
+if v3 and not skipped(decisions, "prototype") and not (state_file(change_dir, "lock.json")).exists():  # design only
     for proto in cfg.get("prototypeDirs", []):
         p = proto.rstrip("/")
         if rel == p or rel.startswith(p + "/"):
             sys.exit(0)
 
-if is_milestone(decisions):
-    locked = (change_dir / "lock.json").exists()
-    if locked and match_any(rel, cfg.get("protected", PROTECTED_GLOBS)) and not decisions.get("protectedEdit"):
+if is_milestone(decisions) or is_v4(change_dir, decisions):
+    locked = (state_file(change_dir, "lock.json")).exists()
+    v4 = is_v4(change_dir, decisions)
+    if locked and match_any(rel, cfg.get("protected", PROTECTED_GLOBS)) and not authorized(rel, change_id, change_dir, decisions):
         deny(
             f"{rel} is a protected path since the plan was approved. Stop and ask; record the "
             f"engineer's words as `protectedEdit` in {changes}/{change_id}/decisions.json first.",
             source=f"{changes}/{change_id}/lock.json and decisions.json", action="stop and ask the engineer; their words go in decisions.json as protectedEdit"
         )
-    if fm(change_dir / "plan.md", "status") != "approved" or not locked:
+    if v4:  # the plan gate is `status: approved` on each of the three documents, and the lock
+        unapproved = [
+            f for f in ("spec.md", "design.md", "tasks.md")
+            if (change_dir / f).exists() and fm(change_dir / f, "status") != "approved"
+        ] + ([] if (change_dir / "spec.md").exists() else ["spec.md"])
+        # scope S is spec.md alone (no tasks.md, so no handover to require); M and L keep it in tasks.md
+        no_tasks = fm(change_dir / "spec.md", "scope") not in ("M", "L") and not (change_dir / "tasks.md").exists()
+        handover = None if no_tasks else ("tasks.md", "Handover")
+    else:
+        unapproved = [] if fm(change_dir / "plan.md", "status") == "approved" else ["plan.md"]
+        handover = ("plan.md", "Goal handover")
+    if unapproved or not locked:
         deny(
-            f"{changes}/{change_id} is not approved yet. One gate approves UX plan, facts and plan: "
-            f"plannotator annotate {changes}/{change_id}/plan.md --gate, then "
+            f"{changes}/{change_id} is not approved yet ({', '.join(unapproved) or 'lock.json'}). One gate approves the change: "
+            f"plannotator annotate {changes}/{change_id}/{'spec.md' if v4 else 'plan.md'} --gate, then "
             f"python3 scripts/verify_gate.py approve {change_id}.",
-            source=f"{changes}/{change_id}/plan.md and lock.json"
+            source=f"{changes}/{change_id}/{unapproved[0] if unapproved else 'lock.json'} and lock.json"
         )
-    if not section(change_dir / "plan.md", "Goal handover"):
-        deny(f"{changes}/{change_id}/plan.md has an empty ## Goal handover. Write the /goal there first.", source=f"{changes}/{change_id}/plan.md")
+    if handover and not section(change_dir / handover[0], handover[1]):
+        deny(f"{changes}/{change_id}/{handover[0]} has an empty ## {handover[1]}. Write the /goal there first.", source=f"{changes}/{change_id}/{handover[0]}")
     active = goal_active(transcript)
     if active is None:
         print("chain-gate: transcript unreadable, cannot check for an active /goal; allowing.", file=sys.stderr)
     elif not active and os.environ.get("SDLC_GOAL_OFF") != "1":  # the off switch lets build edits through
         deny(
-            "building happens inside /goal. Start it with the condition in "
-            f"{changes}/{change_id}/plan.md ## Goal handover, then edit again.",
+            "building happens inside /goal. Start it "
+            + (f"with the condition in {changes}/{change_id}/{handover[0]} ## {handover[1]}" if handover else f"for {changes}/{change_id}/spec.md")
+            + ", then edit again.",
             source=f"the transcript {transcript}",
-            action=f"start the /goal from the ## Goal handover in {changes}/{change_id}/plan.md (a person types it)",
+            action=(f"start the /goal from the ## {handover[1]} in {changes}/{change_id}/{handover[0]}" if handover else f"start the /goal for {changes}/{change_id}/spec.md")
+            + " (a person types it)",
         )
     sys.exit(0)
 

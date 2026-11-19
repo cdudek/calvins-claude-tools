@@ -3,7 +3,9 @@
 ## Purpose
 
 Compare the built UI against the approved spec and prototype.
-Run up to three fix rounds, then write the verdict.
+Write the verdict. Run as the build loop of a screen, it allows two fix rounds per screen per
+design-system release; run at milestone close it is report-only, because there is one fix round at
+milestone close and the supervisor owns it.
 
 ## Inputs
 
@@ -50,9 +52,9 @@ Run up to three fix rounds, then write the verdict.
     `visual-pass.md`. Keep quoted violations and uncovered problems; report permitted
     departures as removed from the fix list. Propose uncovered rules to `cct:ux-decision-log`.
 14. Write the measurements table.
-15. Let the builder fix and recapture.
+15. Let the builder fix and recapture (build loop only; at the close, report and stop).
 16. Recompare at the same state.
-17. Stop after two or three rounds.
+17. Stop after two rounds.
 18. Run `visual-check.py` on this round before writing `qa.md`; link the ledger and check
     result in Coverage Matrix and carry each convention verdict into Findings or notes.
     Failure means the review did not run and `verdict: fail`. Pass only when the check passes

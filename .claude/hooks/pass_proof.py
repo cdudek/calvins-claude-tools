@@ -4,7 +4,8 @@ sdlc_status.py (the goal check). stdlib only.
 A pass proves the head the gate ran on. A later head counts as the same pass only when the gated
 head is its ancestor and nothing but the change records moved: a file outside the changes folder,
 a locked input (facts.md, done.json, lock.json; the checks live in sdlc.json, outside the folder)
-or evidence (marks.json and anything under asks/, evidence/, shots/) moved. An archive
+or evidence (marks.json and anything under asks/, evidence/, shots/) moved. A record under
+.sdlc/outcomes/ is a change record too. An archive
 move (changes/<id> -> changes/archive/<id> or archive/<year>/<year-month>/<id>) is not a change
 when every file keeps its content, except that facts.md may gain one `archived_at:` frontmatter
 line: Stage 7 requires it in that same commit, and its value must be a real date written the way
@@ -14,13 +15,29 @@ templates/tests/test_sdlc.py accepts (YYYY-MM-DD).
 from __future__ import annotations
 
 import datetime as dt
+import json
 import re
 import subprocess
 from pathlib import Path
+from urllib.parse import quote
 
 LOCKED = {"facts.md", "done.json", "lock.json"}
 EVIDENCE_FILES = {"marks.json"}
 EVIDENCE_DIRS = {"asks", "evidence", "shots"}
+OUTCOMES = ".sdlc/outcomes/"  # a record of the success measure (spec.py outcome write): records only
+
+
+# Where a change folder lives: live, flat archive, archive/<year>/<year-month>. One list for the PR
+# hook, the goal check and the gate, so none of them looks shallower or deeper than the runbook writes.
+LAYOUTS = ("{id}", "archive/{id}", "archive/*/{id}", "archive/*/*/{id}")
+
+
+def change_paths(changes: Path, change_id: str) -> list[Path]:
+    """The folders named `change_id` under `changes`, live first. An empty list means the folder was
+    removed after merge (the owner's rule), not an error: nothing is left to read."""
+    if Path(change_id).name != change_id or change_id in ("..", "archive", ""):
+        return []
+    return [d for layout in LAYOUTS for d in sorted(changes.glob(layout.format(id=change_id))) if d.is_dir()]
 
 
 def milestone_of(branch: str, prefix: str, slug: str) -> int | None:
@@ -36,17 +53,98 @@ def milestone_of(branch: str, prefix: str, slug: str) -> int | None:
     return int(found[1]) if found else None
 
 
-def bound(data: dict, scope: str, subject: str, number: int | None = None, owner: str | None = None) -> bool:
+def bound(
+    data: dict, scope: str, subject: str, number: int | None = None, owner: str | None = None
+) -> bool:
     """A gate report is a pass for this subject: `VERIFY PASS <scope> <subject> <sha>` naming the
     sha it records, and for a milestone the change and the number it was gated as (an unnumbered
     branch is 1; a report with no number is a pass for no numbered milestone). `owner`, when given,
-    is the project branch the caller needs: the report must name the same one."""
+    is the project branch the caller needs: the report must name the same one. A report with no `format`
+    and none of the binding keys (change, owner, milestone) was written by a gate from before they
+    existed (a kept older gate): only its result line is compared. Any other report must carry every
+    binding and match it. The mode comes from the report, never from the checkout's gate text."""
     result, sha = str(data.get("result", "")), data.get("sha")
     if not sha or data.get("scope", scope) != scope or result != f"VERIFY PASS {scope} {subject} {sha}":
         return False
-    if scope == "milestone" and (data.get("change") != subject or number is None or data.get("milestone") != number):
+    if "format" not in data and not {"change", "owner", "milestone"} & data.keys():
+        return True
+    if scope != "project" and data.get("change") != subject:
+        return False
+    if scope == "milestone" and (number is None or data.get("milestone") != number):
         return False
     return owner is None or scope == "project" or data.get("owner") == owner
+
+
+def passes_dir(repo: Path) -> Path | None:
+    """Where the gate keeps a copy of every report it writes: the common git dir, which outlives the
+    worktree and the branch that ran the gate."""
+    out = _git(repo, "rev-parse", "--path-format=absolute", "--git-common-dir").stdout.decode("utf-8", "replace").strip()
+    return Path(out) / "sdlc" / "passes" if out else None
+
+
+def pass_key(scope: str, branch: str, number: int | None = None) -> str | None:
+    """The key of a record inside its change: a milestone's number (`milestone_of` numbers a branch,
+    the caller passes its answer), a feature's branch (percent-encoded: `feat/a-b` and `feat/a/b` stay
+    two keys), `0` for the project. None when the branch is not one the scope can be gated on."""
+    if scope == "milestone":
+        return str(number) if number else None
+    if scope == "feature":
+        return quote(branch, safe="") or None
+    return "0" if scope == "project" else None
+
+
+def shared(repo: Path, change: str, scope: str, key: str | None) -> Path | None:
+    """<common git dir>/sdlc/passes/<change>/<scope>-<key>.json, or None for a name that is not a
+    plain change id or a key that does not exist. The only reader of that folder is this module."""
+    base = passes_dir(repo)
+    if base is None or key is None or Path(change).name != change or change in ("", ".", ".."):
+        return None
+    return base / change / f"{scope}-{key}.json"
+
+
+def _read(path: Path | None) -> tuple[int, dict] | None:
+    try:
+        data = json.loads(path.read_text(encoding="utf-8")) if path else None
+        return (path.stat().st_mtime_ns, data) if isinstance(data, dict) else None
+    except (OSError, ValueError):
+        return None
+
+
+def newest(files: list[Path | None], scope: str | None = None) -> dict:
+    """The newest report among `files` (the checkout's and the shared copy), {} when none reads.
+    With `scope`, a report of another scope is not a candidate (report.json holds the last scope run)."""
+    found = [r for r in map(_read, files) if r and (scope is None or r[1].get("scope") == scope)]
+    return max(found, key=lambda r: r[0])[1] if found else {}
+
+
+def chain(
+    files: list[Path | None], scope: str, subject: str, number: int | None = None, owner: str | None = None
+) -> list[tuple[bool, dict]]:
+    """The reports of `files` that speak for this subject, newest first, as (is a pass, report): the
+    passes (`bound`) down to the first non-pass, which is included and ends the list: a newer
+    failure or block blocks, whichever copy holds it. A non-pass speaks for the subject when it is
+    of this scope and names it (`id`) without naming another milestone or owner; a report of
+    another milestone, owner or change is not about this one."""
+    out = []
+    # on a tie in time a non-pass comes first: the walk fails closed
+    ordered = sorted(
+        filter(None, map(_read, files)),
+        key=lambda r: (r[0], not str(r[1].get("result", "")).startswith("VERIFY PASS")),
+        reverse=True,
+    )
+    for _, data in ordered:
+        if bound(data, scope, subject, number, owner):
+            out.append((True, data))
+        elif (
+            data.get("scope", scope) == scope
+            and not str(data.get("result", "")).startswith("VERIFY PASS")
+            and data.get("id", subject) == subject
+            and data.get("milestone", number) == number
+            and not (owner is not None and data.get("owner", owner) != owner)
+        ):
+            out.append((False, data))
+            break
+    return out
 
 
 def _git(repo: Path, *args: str) -> subprocess.CompletedProcess[bytes]:
@@ -113,7 +211,7 @@ def proves(repo: Path, changes_dir: str, gated: str, head: str) -> bool:
         return False
     rel = changes_dir.rstrip("/")
     moved = _git(repo, "diff", "--name-only", "--no-renames", "-z", gated, head).stdout
-    if any(not p.startswith(rel + "/") for p in moved.decode("utf-8", "replace").split("\0") if p):
+    if any(not p.startswith((rel + "/", OUTCOMES)) for p in moved.decode("utf-8", "replace").split("\0") if p):
         return False
     before, after = _tree(repo, rel, gated), _tree(repo, rel, head)
     if before is None or after is None:

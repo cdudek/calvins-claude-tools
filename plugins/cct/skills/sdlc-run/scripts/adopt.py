@@ -1,13 +1,17 @@
 """Install the SDLC chain into the current repo from sdlc.json.
 
-    python3 adopt.py [--dry-run] [--upgrade] [--apply --replace FILE] [--preset node|python] [--ticket KEY-123] [--tiers yes|no]
+    python3 adopt.py [--dry-run] [--upgrade] [--apply --replace FILE] [--migrate] [--preset node|python] [--ticket KEY-123] [--tiers yes|no]
     python3 adopt.py --templates-hash        # what sdlc.json `kitTemplates` should say
 
 `--upgrade` is for a repo that already runs the chain, and it never overwrites or moves anything:
 it adds the missing sdlc.json keys with the stack's defaults (never changing a value), stamps
 `sdlcVersion`, and lists every file that differs from the kit's copy as `review diff` in MANUAL.
 `--upgrade --replace FILE` shows the diff of one kit-owned file; add `--apply` to replace it.
-`--dry-run` writes nothing at all. A plain `adopt` stamps too and still refreshes the copies.
+`--migrate` is the one way across kit versions: every kit-owned file replaced as one set (`keep` paths
+stay, with a MANUAL line), a file the repo owns at a kit path never overwritten (MANUAL line), archive
+folders removed only for a merged PR from the change's own branch, Claude workflows removed only when
+they match a kit version, `sdlcVersion` stamped, and the in-flight changes listed with the milestone
+gate run each needs. `--dry-run` writes nothing at all. A plain `adopt` stamps too and still refreshes the copies.
 
 `--tiers` writes the engineer's answer to "Use Ship/Show/Ask?" into sdlc.json `tiers`; the
 skill asks it on every adopt. Without the flag, a set `tiers` stays and a missing one means
@@ -75,6 +79,22 @@ APPLY = "--apply" in sys.argv
 REPLACE = [a for a in (sys.argv[i + 1 : i + 2] for i, v in enumerate(sys.argv) if v == "--replace")]
 REPLACE = [r[0] for r in REPLACE if r]
 DRY = DRY_RUN or UPGRADE
+# `--migrate` brings a repo to this kit in one run: every kit-owned file as one set, the merged
+# archive folders removed, the in-flight changes listed with the gate run each needs. A gate or
+# hook file is never replaced alone: a gate beside another version's hook or helper reads a pass
+# another way, so `--upgrade --replace` of one of them says "use --migrate" and stops.
+MIGRATE = "--migrate" in sys.argv
+FORCE_KIT = {sys.argv[i + 1] for i, v in enumerate(sys.argv[:-1]) if v == "--force-kit"}
+if FORCE_KIT and not MIGRATE:
+    sys.exit("--force-kit belongs to --migrate")
+if MIGRATE and (UPGRADE or APPLY or REPLACE):
+    sys.exit("--migrate takes no --upgrade, --apply or --replace: it replaces the whole kit set")
+if UPGRADE and any(r.startswith(("scripts/", ".claude/hooks/")) for r in REPLACE):
+    sys.exit(
+        "the gate, its hooks and helpers are one version: replacing one alone leaves the repo "
+        "with two. Use `python3 adopt.py --migrate`, then re-run the milestone gate on the "
+        "changes it lists."
+    )
 pending: dict[str, tuple[str, bool]] = {}  # file -> (the kit's text, executable) where it differs
 # Ship/Show/Ask when sdlc.json has no `tiers` and adopt got no --tiers. The skill's question
 # recommends the same value.
@@ -94,6 +114,9 @@ def detect_preset() -> str:
         return "node"
     if (ROOT / "pyproject.toml").exists():
         return "python"
+    cfg_path = ROOT / "sdlc.json"
+    if cfg_path.exists():  # an adopted repo says what it runs; only a fresh adopt needs a preset
+        return "python" if json.loads(cfg_path.read_text(encoding="utf-8")).get("tests") == "pytest" else "node"
     sys.exit(
         "cannot detect a preset (no package.json, no pyproject.toml); pass --preset node|python"
     )
@@ -541,6 +564,38 @@ GENERATED_DECISION4 = re.compile(
 )
 
 
+# The Claude workflows older kits wrote, by the hash of their shape: the repo-specific parts (the
+# setup steps, the allowed tools, the CI workflow's name) are masked, everything else must match.
+# A workflow of the repo's own, even one named claude.yml, matches no entry and stays.
+KIT_WORKFLOWS = {
+    "claude-review.yml": {
+        "2bec20cb4b2d2f99",
+        "441961f74ecdd754",
+        "6897e56dc566fe24",
+        "912abc195da2c7ca",
+        "a7c18f9925d59e49",
+    },
+    "claude.yml": {
+        "08fd464d30e21602",
+        "e276c4ad576f9493",
+    },
+    "ci-triage.yml": {
+        "6ef421d7bb6c5dca",
+    },
+}
+
+
+def workflow_shape(text: str) -> str:
+    text = re.sub(r'--allowedTools ".*"', '--allowedTools "X"', text)
+    text = re.sub(r"workflows: \[.*\]", "workflows: [X]", text)
+    return re.sub(r"(fetch-depth: 1\n\n).*?(      - name: Run Claude Code)", r"\1S\n\2", text, flags=re.S)
+
+
+def kit_workflow(path: Path) -> bool:
+    shape = workflow_shape(path.read_text(encoding="utf-8"))
+    return hashlib.sha256(shape.encode("utf-8")).hexdigest()[:16] in KIT_WORKFLOWS.get(path.name, set())
+
+
 def remove(path: Path, why: str) -> None:
     """Take a generated file out of the repo: `git rm`, then unlink whatever git did not track."""
     if not path.exists():
@@ -613,6 +668,21 @@ def render(text: str, values: dict[str, str]) -> str:
     while n:
         text, n = re.subn(r"\{\{#(\w+)\}\}\n?(.*?)\{\{/\1\}\}\n?", block, text, flags=re.DOTALL)
     return re.sub(r"\{\{([A-Z_]+)\}\}", lambda m: values.get(m.group(1), m.group(0)), text)
+
+
+def delivery_values(cfg: dict) -> dict[str, str]:
+    """What plan.md's `Done` and turn caps render by: one block per delivery mode, and the caps from
+    `goal` (defaults 150 for a whole run, 40 per feature, 30 for a milestone close)."""
+    goal = cfg.get("goal") if isinstance(cfg.get("goal"), dict) else {}
+    feature_prs = cfg.get("delivery") == "feature-prs"
+    return {
+        "ONE_GO": "" if feature_prs else "1",
+        "FEATURE_PRS": "1" if feature_prs else "",
+        "RUN_TURNS": str(goal.get("runTurns", 150)),
+        "FEATURE_TURNS": str(goal.get("featureTurns", 40)),
+        "MILESTONE_TURNS": str(goal.get("milestoneTurns", 30)),
+        "PROJECT_TURNS": str(goal.get("projectTurns", goal.get("milestoneTurns", 30))),  # a project close is a milestone-sized run
+    }
 
 
 E2E_CMD = re.compile(r"playwright|test:e2e")
@@ -765,6 +835,32 @@ def adopt_ci(cfg: dict, preset: str) -> None:
     )
 
 
+E2E_SCOPED = re.compile(
+    r"--grep|--only-changed|--last-failed|--repeat-each|\bseq\b|\bfor\b|\brelated\b"
+    r"|\.(?:spec|test)\.\w+|test_\w+\.py|\$specs"
+)  # keep equal to verify_gate.E2E_SCOPED
+
+
+def has_e2e_config() -> bool:
+    return (ROOT / "e2e").is_dir() or any(ROOT.glob("playwright.config.*"))
+
+
+def e2e_gap_note(milestone: list) -> None:
+    """MANUAL line when the repo has an E2E suite and `checks.milestone` lacks the full E2E entry or the
+    x3 repeat of the changed and flaky specs. adopt never re-locks: the engineer approves again."""
+    cmds = [c["run"] if isinstance(c, dict) else c for c in milestone]
+    full = any(E2E_CMD.search(run) and not E2E_SCOPED.search(run) for run in cmds)
+    repeat = any(E2E_CMD.search(run) and re.search(r"--repeat-each|\bseq\s+3\b|\bin\s+1\s+2\s+3\b", run) for run in cmds)
+    if has_e2e_config() and not (full and repeat):
+        what = "no full E2E entry" if not full else "no repeat (x3) of the changed and flaky specs"
+        manual.append(
+            f"sdlc.json checks.milestone has {what} although the repo has an E2E suite: "
+            "add the full E2E command and a repeat (x3) of the changed and flaky specs "
+            "(the preset's `e2e` and `e2e-repeat` entries); the engineer approves the change "
+            "again, adopt never re-locks (an older lock only reports an upgrade gap)"
+        )
+
+
 def migrate_test_cost(cfg: dict, preset: str) -> None:
     """Bring an adopted repo's test cost in line with the preset (measured in leadhub: a
     `--repeat-each 3` over the whole suite took 59-71 min per gate, and the Stop hook fell back
@@ -789,7 +885,9 @@ def migrate_test_cost(cfg: dict, preset: str) -> None:
         cfg["verifyStop"] = npm
         wrote.append(f"sdlc.json: verifyStop `{stop}` -> `{npm}` (this repo uses npm)")
     preset_e2e = " ".join(
-        c for c in base.get("checks", {}).get("milestone", []) if E2E_CMD.search(c)
+        run
+        for c in base.get("checks", {}).get("milestone", [])
+        if E2E_CMD.search(run := c["run"] if isinstance(c, dict) else c)
     )
     found = MAX_FAILURES.search(preset_e2e)
     fail_fast = found.group(0) if found else "--max-failures=10"
@@ -797,7 +895,12 @@ def migrate_test_cost(cfg: dict, preset: str) -> None:
     moved = False
     for i, check in enumerate(milestone):
         cmd = check["run"] if isinstance(check, dict) else check
-        if not WHOLE_SUITE_REPEAT.search(cmd) or "--only-changed" in cmd or "--grep" in cmd:
+        if (
+            not WHOLE_SUITE_REPEAT.search(cmd)
+            or "--only-changed" in cmd
+            or "--grep" in cmd
+            or "flaky-specs" in cmd  # the preset's repeat of changed and flaky specs: leave it
+        ):
             continue
         new = WHOLE_SUITE_REPEAT.sub("", cmd)
         if not MAX_FAILURES.search(new):
@@ -808,6 +911,7 @@ def migrate_test_cost(cfg: dict, preset: str) -> None:
             milestone[i] = new
         wrote.append(f"sdlc.json: checks.milestone `{cmd}` -> `{new}`")
         moved = True
+    e2e_gap_note(milestone)
     if not moved:
         return
     changes = ROOT / cfg.get("changesDir", "changes")
@@ -837,75 +941,85 @@ def apply_tiers_answer(cfg: dict) -> None:
         wrote.append(f"sdlc.json: tiers {str(cfg['tiers']).lower()} (Ship/Show/Ask: {answer})")
 
 
-# sha256[:16] of every copy of these files a kit ever shipped (every blob in the git history of the
-# template, merges and side branches included): a copy that matches one is unedited. A new version
-# of either file adds its hash here; test_adopt.py walks the history and fails on a missing one.
-KIT_MARKS = {
-    "0b01636d6dc4e428",
-    "1d7b567db399b3f8",
-    "6c0c9f03e4eb5e80",
-    "71e01d1d701f6c28",
-    "9b9eb7671a9fee71",
-    "c31c115f84e2d0cb",
-    "d0b8c44c65ff9ef6",
-    "da489951ced4b597",
+# The same lists for the files the kit added after 3.18 and the gate imports or a repo may own a
+# file of that name: adopt writes one of them over an existing file only when the file is one of
+# these (unedited kit copy). test_adopt.py walks the history and fails on a missing hash.
+KIT_SPEC = {
+    "10c861037f2649ee",
+    "b5c5f0e0f76c6562",
+    "132e4bf85fcacc3e",
+    "2371a851cf373336",
+    "52f000090cb648ad",
+    "6e76ac5977b05a94",
+    "6f3bdf69aec3a169",
+    "8958f5cfd24341dc",
+    "b317d0a123e1827a",
+    "c6542ee0d5796633",
+    "d493b854eb70d6ec",
 }
-KIT_GATE = {
-    "07797d2ae191453e",
-    "1c17e460c91d2d3d",
-    "25ea5841fdd27c8c",
-    "3606423109411bd8",
-    "36b65017727d487e",
-    "440df872f222401d",
-    "49c96180a9059469",
-    "4cf1a016840c1594",
-    "5152ca52e4e6ae8b",
-    "573aee9b45171a4c",
-    "642ef78693995803",
-    "96ef7a0baac1edad",
-    "a0b381c0b945ecdb",
-    "a7481173126f7752",
-    "a872c162585a3302",
-    "b4724f2bc5e40f08",
-    "bff25d03c74642b8",
-    "c53ff6ee7a8eb8d9",
-    "dfbfa38f6cd4fec6",
-    "f74bcd2c928e6244",
-}  # same, for scripts/verify_gate.py
-KIT_PR_GATE = {
-    "0a76b3d09e108c32",
-    "23f7c564f4bd72c8",
-    "27fac77913e73fb0",
-    "30b25985ad8654f5",
-    "32c64c35d3cbc40e",
-    "4fe0e4f49faa16aa",
-    "547e89c143f3b75d",
-    "5a07659427f3871f",
-    "7a4751e7cea3d974",
-    "8170d3b4f4ccc09d",
-    "a7c80708a8719115",
-    "ab23e9a14b74d511",
-    "dcfc6bfc90098077",
-    "dea1af067e0edd92",
-    "e68483445418d666",
-    "e75851f8eacc7ec7",
-    "f9f78cded1337388",
-}  # same, for .claude/hooks/pr-gate.sh
-KIT_PASS_PROOF = {
-    "08655b8b92ba1cf3",
-    "66d1b0004ebe5a4f",
-    "6b49e80785b08cd1",
-    "9bf7560ec9b627d8",
-    "ca615d048d30845c",
-    "dfd42c691cbeaf20",
-    "faa52678825431ca",
-}  # same, for .claude/hooks/pass_proof.py
+KIT_HEAVY = {
+    "7dfd1429b4f9cd2d",
+    "8b4f8c3dfa44073f",
+    "af2eb2673c676348",
+    "cc25027d60793b2b",
+    "f411b8feb66c33ed",
+}
+KIT_DB = {
+    "b34ea79ae0841fc5",
+}
+KIT_EVIDENCE = {
+    "6a317db378861d28",
+}
+KIT_PREFLIGHT = {
+    "848114ac6dd4a375",
+    "d5c15466ff9464be",
+}
+KIT_HELPER_GUARD = {
+    "ca26ffb8ad16e8b3",
+}
 KIT_PARTS = {
-    "scripts/marks.py": KIT_MARKS,
-    "scripts/verify_gate.py": KIT_GATE,
-    ".claude/hooks/pr-gate.sh": KIT_PR_GATE,
-    ".claude/hooks/pass_proof.py": KIT_PASS_PROOF,
+    "scripts/spec.py": KIT_SPEC,
+    "scripts/heavy.py": KIT_HEAVY,
+    "scripts/db.py": KIT_DB,
+    "scripts/evidence.py": KIT_EVIDENCE,
+    "scripts/preflight.py": KIT_PREFLIGHT,
+    ".claude/hooks/helper-guard.sh": KIT_HELPER_GUARD,
 }
+# Files a 3.18 kit did not ship: a repo may have its own file at the path.
+NEW_KIT_FILES = {
+    "scripts/spec.py",
+    "scripts/heavy.py",
+    "scripts/db.py",
+    "scripts/evidence.py",
+    "scripts/preflight.py",
+    ".claude/hooks/helper-guard.sh",
+}
+
+
+def kit_hashes() -> dict[str, set[str]]:
+    """Every hook and script version the kit shipped, by installed path (kit-hashes.json)."""
+    data = json.loads((Path(__file__).with_name("kit-hashes.json")).read_text(encoding="utf-8"))
+    return {rel: set(hs) for rel, hs in data.items()}
+
+
+def edited_kit_file(path: Path, text: str) -> bool:
+    """`--migrate` only: a kit-owned hook or script that matches no shipped kit version is the repo's
+    own edit, and stays unless `--force-kit <path>` names it."""
+    rel = path.relative_to(ROOT).as_posix()
+    if not MIGRATE or rel in FORCE_KIT or not path.is_file() or rel not in (known := kit_hashes()):
+        return False
+    mine = path.read_bytes()
+    return mine != text.encode("utf-8") and hashlib.sha256(mine).hexdigest()[:16] not in known[rel]
+
+
+def own_file(path: Path, text: str) -> bool:
+    """True for a file adopt must not overwrite: one at a path the kit added later that is neither
+    the kit's text nor a version the kit shipped."""
+    rel = path.relative_to(ROOT).as_posix()
+    if rel not in NEW_KIT_FILES or not path.is_file():
+        return False
+    mine = path.read_bytes()
+    return mine != text.encode("utf-8") and hashlib.sha256(mine).hexdigest()[:16] not in KIT_PARTS[rel]
 
 
 def finish_upgrade() -> str:
@@ -928,37 +1042,8 @@ def finish_upgrade() -> str:
                 f"review: `{w}` is a layout migration or removal that --upgrade does not apply; run `adopt` to apply it"
             )
     out = []
-    # A file whose partners the replaced one needs: the gate blocks a milestone with design bundles
-    # unless marks.py has `bundles`, and verify_gate.py, pr-gate.sh and pass_proof.py are one
-    # version: a hook beside a different helper or gate judges a pass another way. Replacing one of
-    # the three takes the others along, and the gate takes marks.py, only when the partner is a kit
-    # version nobody edited (a customised copy stays, and a MANUAL line names it).
-    trio = ["scripts/verify_gate.py", ".claude/hooks/pr-gate.sh", ".claude/hooks/pass_proof.py"]
-    partner = {f: [t for t in trio if t != f] for f in trio}
-    partner["scripts/verify_gate.py"].append("scripts/marks.py")
-    PARTNER_NEEDS = {  # noqa: N806 -- what the replaced file cannot work without
-        "scripts/marks.py": "`bundles(change)`: the new gate blocks milestone gates with design bundles until it has it",
-        "scripts/verify_gate.py": "the same kit version (it and the hook read a pass the same way)",
-        ".claude/hooks/pr-gate.sh": "the same kit version (it and the gate read a pass the same way)",
-        ".claude/hooks/pass_proof.py": "the same kit version (`proves(...)`, the one rule for what a pass covers)",
-    }
     wanted = list(dict.fromkeys(REPLACE))
-    for rel in wanted:  # the list grows: a partner's own partners follow
-        for other in partner.get(rel, []):
-            if other not in pending or other in wanted:
-                continue  # it is the kit's copy already, or already on the list
-            mine = ROOT / other
-            if mine.exists() and hashlib.sha256(mine.read_bytes()).hexdigest()[:16] not in KIT_PARTS[other]:
-                manual.append(
-                    f"--replace {rel}: {other} is customised (it matches no kit version), so it was not "
-                    f"replaced with it. {rel} needs {PARTNER_NEEDS[other]}: merge your changes into the "
-                    f"kit's copy, then `adopt --upgrade --replace {other} --apply`"
-                )
-                continue
-            wanted.append(other)
     for rel in wanted:
-        if rel not in pending and rel not in REPLACE:
-            continue  # the partner is already the kit's copy
         if rel not in pending:
             manual.append(
                 f"--replace {rel}: nothing to replace (it is the kit's copy already, or not a file adopt owns)"
@@ -984,6 +1069,141 @@ def finish_upgrade() -> str:
     return "\n".join(out)
 
 
+def merged_heads(root: Path) -> list[str] | None:
+    """Head branch of every merged PR (all pages); None when gh cannot say."""
+    try:
+        out = subprocess.run(
+            ["gh", "api", "--paginate", "repos/{owner}/{repo}/pulls?state=closed&per_page=100",
+             "--jq", ".[] | select(.merged_at) | .head.ref"],
+            cwd=root, capture_output=True, text=True, timeout=600,
+        )  # fmt: skip
+        return out.stdout.split() if out.returncode == 0 else None
+    except (OSError, subprocess.TimeoutExpired):
+        return None
+
+
+def _slug(value: object, prefix: str) -> str | None:
+    """A slug from a decisions.json field: a string (`slug` or the whole branch name) or a dict with
+    `slug`. "" for a missing field, None for a shape adopt cannot read."""
+    if value is None:
+        return ""
+    if isinstance(value, dict):
+        value = value.get("slug", "")
+    if not isinstance(value, str):
+        return None
+    return value.removeprefix(prefix)
+
+
+def own_branch(folder: Path, cfg: dict, head: str) -> bool:
+    """`head` is a branch of this change: milestone/<slug>[-n], project/<slug>, or a branch the
+    change's own plan.md names (the folder name gives the slug when decisions.json names none).
+    Nothing a PR body says counts, and a decisions.json adopt cannot read means the branch is unknown."""
+    decisions: object = {}
+    for path in (folder / "state" / "decisions.json", folder / "decisions.json"):
+        try:
+            decisions = json.loads(path.read_text(encoding="utf-8"))
+            break
+        except (OSError, ValueError):
+            continue
+    if not isinstance(decisions, dict):
+        return False
+    prefix = (cfg.get("milestones") or {}).get("branchPrefix", "milestone/")
+    pprefix = (cfg.get("projects") or {}).get("branchPrefix", "project/")
+    slug = _slug(decisions.get("milestone"), prefix)
+    project = _slug(decisions.get("project"), pprefix)
+    if slug is None or project is None:
+        return False
+    slug = slug or re.sub(r"^([A-Z][A-Z0-9]+-\d+-)?", "", re.sub(r"^\d{4}-\d{2}-\d{2}-", "", folder.name))
+    if re.fullmatch(re.escape(f"{prefix}{slug}") + r"(-\d+)?", head) or (project and head == f"{pprefix}{project}"):
+        return True
+    try:
+        plan = (folder / "plan.md").read_text(encoding="utf-8")
+    except OSError:
+        return False
+    return "/" in head and re.search(rf"(?<![\w/.-]){re.escape(head)}(?![\w/-])", plan) is not None
+
+
+def migrate_plan(cfg: dict) -> dict:
+    """The reads of `--migrate` (gh, branches, every decisions.json), made before anything is
+    written, so a half-migrated tree cannot happen. Returns what to remove and what to list."""
+    changes = ROOT / cfg.get("changesDir", "changes")
+    if not changes.is_dir():
+        changes = ROOT / ".changes"
+    folders = archived_changes(changes / "archive")
+    heads = merged_heads(ROOT)
+    remove_list, kept_lines = [], []
+    for folder in folders:
+        if heads is not None and any(own_branch(folder, cfg, h) for h in heads):
+            remove_list.append(folder)
+        else:
+            kept_lines.append(
+                f"{folder.relative_to(ROOT)}: kept, gh could not confirm a merged PR from {folder.name}'s own branch"
+            )
+    return {
+        "remove": remove_list,
+        "kept": kept_lines,
+        "open": unmerged_branches(ROOT, cfg.get("defaultBranch") or "main", heads),
+    }
+
+
+def migrate_archives(plan: dict) -> None:
+    """An archive folder is removed (the owner's rule is no archive) only when a merged PR came from
+    the change's own branch, and only its tracked files; the others are listed. Runs before the
+    layout migration, whose staged renames would stop `git rm`. A dry run prints the same lines."""
+    manual.extend(plan["kept"])
+    for folder in plan["remove"]:
+        rel = folder.relative_to(ROOT)
+        if DRY:
+            wrote.append(f"{rel} (would be removed: its PR merged, no archive)")
+            continue
+        tracked = subprocess.run(["git", "ls-files", "--", str(folder)], cwd=ROOT, capture_output=True, text=True)
+        gone = tracked.stdout.strip() and subprocess.run(
+            ["git", "rm", "-rq", "--", str(folder)], cwd=ROOT, capture_output=True
+        ).returncode == 0  # fmt: skip
+        if folder.exists() or not gone:
+            manual.append(f"{rel}: kept, untracked files remain (or git could not remove it): check it by hand")
+        else:
+            wrote.append(f"{rel} (removed: its PR merged, no archive)")
+
+
+def migrate_report(cfg: dict, plan: dict) -> None:
+    """Every change still in flight gets the one gate run that writes the new report."""
+    changes = ROOT / cfg.get("changesDir", "changes")
+    for folder in sorted(changes.glob("*")) if changes.is_dir() else ():
+        if not (folder.is_dir() and folder.name != "archive" and (
+            (folder / "lock.json").exists() or (folder / "state" / "lock.json").exists()
+        )):
+            continue
+        for branch in (b for b in plan["open"] if own_branch(folder, cfg, b)):
+            manual.append(
+                f"{folder.name} is in flight on {branch}: `git switch {branch}`, then run "
+                f"`python3 scripts/verify_gate.py milestone {folder.name}` once (it writes the report the new gate reads)"
+            )
+
+
+def unmerged_branches(root: Path, default: str, merged: list[str] | None = None) -> list[str]:
+    """Branches not merged into the default branch (local and origin) and without a merged PR
+    (a squash merge leaves the branch looking unmerged), plus the heads of open PRs."""
+    base = f"origin/{default}" if subprocess.run(
+        ["git", "rev-parse", "--verify", "-q", f"origin/{default}"], cwd=root, capture_output=True
+    ).returncode == 0 else default  # fmt: skip
+    out = subprocess.run(
+        ["git", "for-each-ref", "--no-merged", base, "--format=%(refname:short)", "refs/heads", "refs/remotes/origin"],
+        cwd=root, capture_output=True, text=True,
+    )  # fmt: skip
+    names = [n.removeprefix("origin/") for n in out.stdout.split()] if out.returncode == 0 else []
+    names = [n for n in names if n not in set(merged or ())]
+    try:
+        pr = subprocess.run(
+            ["gh", "pr", "list", "--state", "open", "--json", "headRefName"],
+            cwd=root, capture_output=True, text=True, timeout=60,
+        )  # fmt: skip
+        names += [str(p.get("headRefName", "")) for p in json.loads(pr.stdout or "[]")] if pr.returncode == 0 else []
+    except (OSError, ValueError, subprocess.TimeoutExpired):
+        pass
+    return list(dict.fromkeys(n for n in names if n and n not in (default, "origin", "HEAD")))
+
+
 def main() -> int:
     preset = detect_preset()
     cfg_path = ROOT / "sdlc.json"
@@ -1001,6 +1221,7 @@ def main() -> int:
                 'local milestones, or milestones.merge "pr" with feature PRs.'
             )
         kept.append("sdlc.json")
+        plan = migrate_plan(cfg) if MIGRATE else {}
         if not UPGRADE:
             cfg["kitTemplates"] = templates_hash()
             apply_tiers_answer(cfg)
@@ -1013,6 +1234,7 @@ def main() -> int:
         add_ci_commands(cfg, preset)
         add_builders(cfg)
         stamp_version(cfg, fresh=True)
+        plan = migrate_plan(cfg) if MIGRATE else {}
         write(cfg_path, json.dumps(cfg, indent=2, ensure_ascii=False) + "\n")
         manual.append(
             f"sdlc.json was created from the {preset} preset -- check linear.team/project, verify, blocked"
@@ -1035,19 +1257,22 @@ def main() -> int:
         cfg["changesDir"] = "changes"
         wrote.append("sdlc.json: changesDir .changes -> changes")
     if "sdlc.json" in kept:
-        add_ci_paths(cfg, preset)
-        add_ci_commands(cfg, preset)
+        if not MIGRATE:  # --migrate works with the repo's own settings, never the preset's defaults
+            add_ci_paths(cfg, preset)
+            add_ci_commands(cfg, preset)
         add_builders(cfg)
         check_rules(cfg)
         if "claude" in cfg:
             cfg.pop("claude")
             wrote.append("sdlc.json: claude removed (no Claude in CI since sdlc-run 3.7.0)")
-        if not UPGRADE:
+        if not UPGRADE and not MIGRATE:
             migrate_test_cost(cfg, preset)
-        elif "--repeat-each" in json.dumps(cfg.get("checks", {})):
-            manual.append(
-                "sdlc.json: checks.milestone repeats the whole suite (--repeat-each); `adopt` rewrites it, --upgrade leaves it"
-            )
+        else:
+            if "--repeat-each" in json.dumps(cfg.get("checks", {})):
+                manual.append(
+                    "sdlc.json: checks.milestone repeats the whole suite (--repeat-each); `adopt` rewrites it, --upgrade leaves it"
+                )
+            e2e_gap_note(cfg.get("checks", {}).get("milestone", []))
         stamp_version(cfg, fresh=False)
     changed = UPGRADE and json.dumps(cfg, sort_keys=True) != cfg_before
     if (changed and not DRY_RUN) or (
@@ -1057,9 +1282,14 @@ def main() -> int:
         # Not via write(): sdlc.json is the repo's own file and only gets fields merged in.
         # It still has to reach format_written(), or a prettier repo rejects the commit.
         written.append(cfg_path)
+    if MIGRATE:
+        migrate_archives(plan)  # before the layout moves: their staged renames would stop git rm
     changes_dir = cfg.get("changesDir", "changes")
     designs_dir = cfg.get("designsDir", "docs/designs")
+    living = any((ROOT / "specs").glob("*/rules")) or any((ROOT / "specs").glob("*/manifest.yaml"))
     for old, new in ((ROOT / ".changes", ROOT / changes_dir), (ROOT / "specs", ROOT / designs_dir)):
+        if old.name == "specs" and living:  # living specs (rules/, manifest.yaml) are not old design docs
+            continue
         if old.is_dir() and old != new and not new.exists():
             wrote.append(f"{old.relative_to(ROOT)}/ -> {new.relative_to(ROOT)}/ (migrated)")
             if not DRY:
@@ -1092,6 +1322,29 @@ def main() -> int:
                 review_md.read_text(encoding="utf-8").replace(".changes/", changes_dir + "/"),
                 encoding="utf-8",
             )
+    # The one known template sentence that sent the closer to `review-fix-run` (a second review):
+    # replaced in place; every custom rule of the repo's REVIEW.md stays.
+    old_review = re.compile(
+        r"The review \(`cct:review-code-run` with one `review-fix-run` round\) runs once per milestone,"
+    )
+    if UPGRADE and review_md.exists() and old_review.search(review_md.read_text(encoding="utf-8")):
+        manual.append(
+            "REVIEW.md: the template sentence `The review (`cct:review-code-run` with one `review-fix-run` round) "
+            "runs once per milestone,` starts a second review; --upgrade never edits REVIEW.md (it is yours), so "
+            "replace it by hand with `The review (`cct:review-code-run changes <parent> --codex`, then one fix "
+            "round on its findings) runs once per milestone,`, or run `adopt` (without --upgrade), which does it"
+        )
+    if not UPGRADE and review_md.exists() and old_review.search(review_md.read_text(encoding="utf-8")):
+        wrote.append("REVIEW.md: review-fix-run sentence -> review-code-run changes, then one fix round")
+        if not DRY:
+            review_md.write_text(
+                old_review.sub(
+                    "The review (`cct:review-code-run changes <parent> --codex`, then one fix round "
+                    "on its findings) runs once per milestone,",
+                    review_md.read_text(encoding="utf-8"),
+                ),
+                encoding="utf-8",
+            )
     docs = cfg.get("docs", "docs/sdlc.md")
     today = dt.date.today().isoformat()
     keep_paths = set(cfg.get("keep", []))
@@ -1099,6 +1352,26 @@ def main() -> int:
     def _write(path: Path, text: str, **kw: object) -> None:
         if str(path.relative_to(ROOT)) in keep_paths:
             kept.append(str(path.relative_to(ROOT)) + " (sdlc.json keep)")
+            if MIGRATE:
+                manual.append(
+                    f"{path.relative_to(ROOT)} is in sdlc.json `keep`, so it was not replaced: it may "
+                    f"belong to an older kit version; compare it with the kit's copy by hand"
+                )
+            return
+        if own_file(path, text):  # a path the kit added after 3.18: the repo's own file stays
+            manual.append(
+                f"{path.relative_to(ROOT)}: a file of your own (it matches no kit version), not "
+                f"overwritten. The kit ships a {path.name} too and its scripts import it: merge the "
+                f"two, or move yours and run `adopt` again"
+            )
+            return
+        if edited_kit_file(path, text):
+            rel = path.relative_to(ROOT).as_posix()
+            sub = "hooks" if rel.startswith(".claude/hooks/") else "scripts"
+            manual.append(
+                f"{rel} matches no shipped kit version, so it stays (compare: `diff {rel} "
+                f"{TPL / sub / path.name}`); `--migrate --force-kit {rel}` replaces it with the kit's copy"
+            )
             return
         write(path, text, **kw)  # type: ignore[arg-type]
 
@@ -1133,7 +1406,7 @@ def main() -> int:
                 )
                 if old.exists():
                     old.unlink()
-    # A LIST, not a dict keyed by event: PreToolUse carries two entries -- gate-bash.sh for
+    # A LIST, not a dict keyed by event: PreToolUse carries several entries -- gate-bash.sh for
     # what sdlc.json blocks, chain-gate.sh for the chain's own gates -- and a dict silently
     # kept only the last one.
     spec = [
@@ -1142,6 +1415,7 @@ def main() -> int:
         ("PermissionRequest", "ExitPlanMode", "plan-gate.sh", 345600),
         ("PreToolUse", "Bash", "gate-bash.sh", 5),
         ("PreToolUse", "Bash", "pr-gate.sh", 20),
+        ("PreToolUse", "Bash", "helper-guard.sh", 5),
         ("PreToolUse", "Edit|Write", "chain-gate.sh", 5),
         ("PostToolUse", "Edit|Write", "lint-on-edit.sh", 30),
         ("Stop", None, "verify-on-stop.sh", 300),
@@ -1248,10 +1522,22 @@ def main() -> int:
         "design_index.py",
         "marks.py",
         "sdlc_version.py",
+        "spec.py",
+        "heavy.py",
+        "db.py",
+        "evidence.py",
+        "preflight.py",
     ):
         _write(ROOT / "scripts" / script, (TPL / "scripts" / script).read_text(encoding="utf-8"))
     # sdlc_status.py runs from the plugin now and is never copied into a repo.
     remove(ROOT / "scripts" / "sdlc_status.py", "now runs from the plugin")
+    for name in ("Makefile", "package.json"):  # named, never edited: they are the repo's own
+        named = ROOT / name
+        for no, line in enumerate(named.read_text(encoding="utf-8").splitlines(), 1) if named.is_file() else ():
+            if "scripts/sdlc_status.py" in line:
+                manual.append(
+                    f"{name}:{no} names scripts/sdlc_status.py, which no longer exists (it runs from the plugin): edit that line"
+                )
     gi = ROOT / ".gitignore"
     gi_lines = gi.read_text(encoding="utf-8").splitlines() if gi.exists() else []
     verify_out = f"/{changes_dir}/*/verify/"
@@ -1319,7 +1605,18 @@ def main() -> int:
     # claude-review.yml (+ its merge-gate), claude.yml (@claude) and ci-triage.yml are taken out
     # of every repo that still has them, and no repo needs ANTHROPIC_API_KEY.
     for name in ("claude-review.yml", "claude.yml", "ci-triage.yml"):
-        remove(ROOT / ".github" / "workflows" / name, "no Claude in CI since sdlc-run 3.7.0")
+        old_wf = ROOT / ".github" / "workflows" / name
+        if not old_wf.exists():
+            continue
+        if kit_workflow(old_wf):
+            remove(old_wf, "no Claude in CI since sdlc-run 3.7.0")
+        else:
+            manual.append(
+                f".github/workflows/{name} matches no kit version, so it stays; remove it by hand if "
+                f"you no longer want Claude in CI. Until you do, the guardrail test fails "
+                f"(`test_docs_and_workflows_exist_and_are_linked` in tests/test_sdlc.py, or "
+                f"`docs and workflows exist and are linked from CLAUDE.md` in tests/sdlc.test.ts)"
+            )
     # Decision4 is advisory (no workflow) since 3.12.0. A repo adopted before keeps the workflow
     # adopt wrote then, which calls the shared checker and fails on every PR event. Only a file
     # that matches the generated one exactly goes, and not when sdlc.json `keep` lists it; a
@@ -1564,7 +1861,7 @@ def main() -> int:
     )
     has_archived = archive.exists() and any(p.is_dir() for p in archive.iterdir())
     # A repo that already ran the chain (migrated or not) adopted it back then; no new first change.
-    if not has_open and not has_archived:
+    if not has_open and not has_archived and not MIGRATE:
         cvals = {
             "LINEAR": ticket or "none",
             "CHANGE": first.name,
@@ -1573,6 +1870,7 @@ def main() -> int:
             "DATE": today,
             "TITLE": f"Adopt the AI-native SDLC in {ROOT.name}",
             "VERIFY": cfg["verify"],
+            **delivery_values(cfg),
         }
         for name in ("intent.md", "facts.md", "plan.md"):
             write(first / name, render((TPL / "change" / name).read_text(encoding="utf-8"), cvals))
@@ -1616,6 +1914,8 @@ def main() -> int:
         "monthly job from references/ci-blueprint.md if you want it scheduled"
     )
     diffs = finish_upgrade() if UPGRADE else ""
+    if MIGRATE:
+        migrate_report(cfg, plan)
     format_written()
 
     print("-#-#- WROTE -#-#-")

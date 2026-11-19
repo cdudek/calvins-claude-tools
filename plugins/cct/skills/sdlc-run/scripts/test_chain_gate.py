@@ -240,3 +240,35 @@ def test_status_reads_the_verdict_under_either_name(
         env={**os.environ, "CLAUDE_PROJECT_DIR": str(repo)},
     ).stdout
     assert stage in out.split("templates=")[1], out
+
+
+def test_writing_into_the_session_transcripts_is_refused(repo: Path, tmp_path: Path) -> None:
+    """3.21.0: the transcript is the evidence for an owner quote, so no Write or Edit may touch
+    ~/.claude/projects, whatever the repo or the goal."""
+    home = tmp_path / "home"
+    target = home / ".claude/projects/some-repo/session.jsonl"
+    for file in (str(target), "~/.claude/projects/x.jsonl", str(home / ".claude/projects/../projects/a")):
+        payload = {"tool_input": {"file_path": file}, "transcript_path": ""}
+        r = subprocess.run(
+            ["bash", str(repo / ".claude" / "hooks" / "chain-gate.sh")],
+            input=json.dumps(payload),
+            capture_output=True,
+            text=True,
+            env={**os.environ, "CLAUDE_PROJECT_DIR": str(repo), "HOME": str(home)},
+        )
+        assert r.returncode == 2 and "session transcripts" in r.stderr, file
+
+
+def test_the_transcript_guard_holds_in_a_repo_without_sdlc_json(tmp_path: Path) -> None:
+    """3.21.0: the guard does not depend on the repo having adopted the chain."""
+    home = tmp_path / "home"
+    bare = tmp_path / "bare"
+    bare.mkdir()
+    r = subprocess.run(
+        ["bash", str(HOOKS / "chain-gate.sh")],
+        input=json.dumps({"tool_input": {"file_path": str(home / ".claude/projects/p/s.jsonl")}}),
+        capture_output=True,
+        text=True,
+        env={**os.environ, "CLAUDE_PROJECT_DIR": str(bare), "HOME": str(home)},
+    )
+    assert r.returncode == 2 and "session transcripts" in r.stderr

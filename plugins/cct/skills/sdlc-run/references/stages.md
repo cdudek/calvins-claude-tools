@@ -47,6 +47,48 @@ transcript, `/loop` when time passes, a Stop hook when a script decides.
   is off). Never a session loop.
 - **Never a `/loop` inside a running `/goal`.** Two things then decide when the session stops.
 
+## Layout 4: three documents, a living spec
+
+A change pinned to layout 4 (`"layout": 4` in `decisions.json`, written at intake only in a repo
+whose `sdlc.json` opted in) has three documents instead of intent, facts, plan, checklist, analyze,
+challenge, milestone and the reading map: `spec.md`, `design.md`, `tasks.md`. What differs by
+stage; every stage not named here is unchanged. Full rules: [change-folder](change-folder.md) and
+[living-spec](living-spec.md). A change on the old layout finishes on the old stages below; nothing
+here blocks it.
+
+- **1.1 dialog.** Fork "size" stays the UX size (`ux`). Add the **scope**, S, M or L, picked by risk
+  (data, an API or contract, auth, money, a new dependency, a cross-module boundary or a new screen
+  means L) and the **capabilities** the change touches, proposed from the asks and
+  `specs/CAPABILITIES.md`, confirmed in the same dialog. `decisions.json` gets `"layout": 4`.
+  Read the rules first: `python3 scripts/spec.py find <the ask's words> --paths <paths>` (with
+  `--prs` when `gh` works), open only the rules and tests it names; a miss lists the capability's
+  code and tests.
+- **1.3 / 1.4 intent.** The asks, job stories and success measure are the top of `spec.md`. The
+  agent also drafts the requirements: `spec.py new <capability> "<summary>"` per rule, one EARS
+  sentence each, and the requirements table. The owner's first confirmation covers that file; on
+  scope S and M it is the only gate.
+- **2 UX plan, single pass.** The UX validation (`cct:ux-spec-validate`) runs once, as a **draft**
+  against `spec.md`, with no goal of its own. An in-scope ask may be `pending` (its rule is not
+  written yet); the verdict lists those. Write `prototype: required` or `prototype: none` into
+  `spec.md` before anything else in this stage, and before build QA ever asks for a readiness file:
+  `spec.py qa <change>` decides first (exit 0 runs, 3 skips, 2 unrecorded: stop), so `none` skips with a printed reason and no second
+  gate. This closes D1 and S1.
+- **3 Requirements, 4 plan.** No `facts.md` and no `plan.md`. `design.md` (L) or the design notes of
+  `tasks.md` (M) carry the approach, ground truth, rules check, test strategy, risks with proofs and
+  rollout. `tasks.md` derives from the spec and design; builders never edit it, the supervisor
+  ticks `State`.
+- **4.3 gate.** Order: lint; `python3 scripts/spec.py consistency <change> --phase approve`; one
+  reviewer in a fresh context over the three documents (replaces checklist, analyze, challenge);
+  then the owner. Scope L asks twice: `spec.md`, then `design.md` and `tasks.md`.
+- **6 milestone.** Before the gate: `spec.py check --base <parent>`; a changed rule needs a changed
+  test, and a tagged test that is skipped does not count. Only the rules of the milestone's tasks
+  move from `planned` to `live`.
+- **7 outcome, no archive.** After the merge: `spec.py outcome write <folder>`, then remove the
+  folder in one records-only close PR (history stays in git and the PR). Never remove it
+  before the merge. The measure is read from `.sdlc/outcomes/<id>.json` (`spec.py outcome due`) and
+  recorded there, and in the tracker when there is one: a final change with no tracker and no next
+  PR still has its route (S3). A miss starts the next change with the measurement as its first ask.
+
 ## Stage 1 — Intent
 
 Worktree lifecycle commands follow the [shared worktree policy](../../../references/worktree-usage.md).
@@ -132,7 +174,7 @@ Worktree lifecycle commands follow the [shared worktree policy](../../../referen
 
 - **Steps:**
   1. Collect sources in order: ticket, conversation, the owner-words file from `docs/ux/setup.md`,
-     then every `sdlc.json` `feedback` file since the last archived change for the same screen.
+     then every `sdlc.json` `feedback` file since the last merged change for the same screen.
      Copy each request verbatim into `intent.md` `## Asks` as `A1`, `A2`, …;
      copy resources into `changes/<id>/asks/<source-date>/` and link them.
   2. Copy each Snapmark export whole into `changes/<id>/asks/<session-date>-snapmark/`:
@@ -192,11 +234,11 @@ Skipped for size `none` and for `sdlc.json` `ux: off`, with one printed line.
      recommended answer; each answer goes into the facts at once. Fill the rest with defaults
      under `## Assumptions`; at most 3 `[NEEDS CLARIFICATION]` markers; leftovers under
      `## Deferred` (`references/quality-passes.md`).
-  5. A reviewer in a fresh context writes `checklist.md`: items that test how the facts are
+  5. `python3 scripts/verify_gate.py lint <id>` over intent, facts and plan, **on the draft, before
+     the checklist reviewer is dispatched**: a pure file check is cheaper than a reviewer pass.
+  6. A reviewer in a fresh context writes `checklist.md`: items that test how the facts are
      written (Gap, Ambiguity, Conflict, Assumption), never the behaviour. The agent answers each
      in the facts, and the reviewer ticks it.
-  6. `python3 scripts/verify_gate.py lint <id>` over intent, facts and plan, **on the draft, before
-     the checklist reviewer is dispatched**: a pure file check is cheaper than a reviewer pass.
 - **Gate:** none; `chain-gate.sh` refuses `facts.md` before the UX plan is done or skipped.
 
 ## Stage 4 — Tech plan and the one gate
@@ -212,7 +254,9 @@ Skipped for size `none` and for `sdlc.json` `ux: off`, with one printed line.
   **How to run** (the process of the build, from `templates/change/plan.md`), and **Goal
   handover**: a kickoff prompt plus the `/goal` line. One go: the filled
   `templates/goal/run.txt` (turns from `goal.runTurns`); feature PRs, one filled
-  `templates/goal/feature.txt` per feature (`goal.featureTurns`).
+  `templates/goal/feature.txt` per feature (`goal.featureTurns`). **Done** and its turn cap are
+  rendered for the delivery mode: keep the `{{#ONE_GO}}` or the `{{#FEATURE_PRS}}` block of
+  `templates/change/plan.md`, fill the caps from `goal`, and drop the markers.
 - `done.json`: facts with their tags, pages, states, widths, turn caps — the criteria as data.
 - **Decisions get their own file.** A choice worth its reasons in a year is a new ADR,
   `<designsDir>/<date>-adr-<slug>.md`, with `supersedes` when it replaces one; set the old
@@ -271,19 +315,23 @@ a change small enough for one milestone has one.
    earlier milestone merges, and right before each close (the parent moves while you build).
    The merge may run in the supervisor's worktree. It is a commit, never a PR; `verify_gate.py milestone` fails with
    `check=parent-sync` until it is done, so it cannot be skipped.
-2. Per feature, in order: write the
-   tests for its facts (`cct:test-e2e-coverage-run`, tagged `@F<n>`;
-   bugs: `test-behavior-writer`, then `review-fix-implementer`), build in the plan's folders, commit,
+2. Per feature, in order: write the smallest failing assertion from the approved fact, tagged
+   `@F<n>` (a unit, API or component test that can run before the UI exists; for a control that
+   does not exist yet, assert its observable contract), build in the plan's folders until it runs
+   green, then author the browser E2E with live selectors (`cct:test-e2e-coverage-run`) only after
+   the surface exists; bugs: `test-behavior-writer`, then `review-fix-implementer`. Commit,
    set the row in `milestone.md` to `done <sha>`, start the next feature at once. **Run touched tests and required pre-commit checks between features**; do not
-   repeat the full suite while diagnosing one failure. Before pushing, run the full suite once.
+   repeat the full suite while diagnosing one failure. The full suite and the full E2E run once,
+   inside `verify_gate.py milestone` at the close, never as a separate run before it.
 3. Features that edit different files may build in parallel (Wall clock below): the supervisor
    commits its records, then dispatches each builder with a `Base: <milestone head sha>` line,
    and merges the builders' branches into the milestone branch locally, one at a time. Commits
    need Conventional Commit subjects: a merge commit keeps them, and the release reads them.
 4. When every feature of the milestone is `done`, the supervisor hands the milestone's local
    pipeline to **one `cct:sdlc-feature-builder` subagent with `Mode: close`** and the head it runs on
-   (unit tests, the full E2E suite, the one fix round, `verify_gate.py milestone`; it spawns no
-   agents of its own). Nothing merges into the milestone while it runs: the gate fails
+   (the one fix round with targeted tests, then `verify_gate.py milestone`, the only runner of the
+   full suite and the full E2E; it spawns no agents of its own and takes its own heavy slot for the
+   heavy checks, `heavy.py run --auto`: [heavy work](heavy-work.md)). Nothing merges into the milestone while it runs: the gate fails
    `check=moved` if the head changes. The supervisor dispatches
    the Stage 6 reviews and the validation in parallel, writes the findings the subagent fixes, and
    goes on building the next milestone wherever that does not build on this one. Only a
@@ -302,21 +350,28 @@ a change small enough for one milestone has one.
   it the way 1.2 step 5 says. Never rebase a pushed milestone or project branch.
 - **Steps (the goal runs these):**
   1. Start `/goal` with the feature's condition from `## Goal handover`.
-  2. Tests first: `cct:test-e2e-coverage-run` for the feature's facts, tagged `@F<n>`. The feature's
-     journey row in `e2e/journeys.md` is added or updated in the same PR: tier, states and
-     specs (`../test-e2e-policy/references/strategy.md` section 2.8).
+  2. Tests first, the one-go order: write the smallest failing contract assertion from each fact
+     (a unit, API or component test, tagged `@F<n>`) that needs no running surface. Live browser E2E
+     comes only after the surface exists (step 4): its generator needs a running page and reports
+     missing selectors before the feature is built.
      Bugs: `test-behavior-writer` writes the failing test, `testLocked: true`, then
      `review-fix-implementer`.
-  3. Build in the plan's folders. A file elsewhere is `scope-growth`: stop and ask.
-  4. `cct:test-e2e-policy` on the feature tags locally, in the feature's own worktree and E2E
-     slot, in the foreground (see Wall clock below); `test-flake-fix` for an inconsistent test.
+  3. Build in the plan's folders until the assertions pass. A file elsewhere is `scope-growth`:
+     stop and ask.
+  4. Live browser coverage, after the build: `cct:test-e2e-coverage-run` for the feature's facts,
+     tagged `@F<n>`; the feature's journey row in `e2e/journeys.md` is added or updated in the same
+     PR: tier, states and specs (`../test-e2e-policy/references/strategy.md` section 2.8). Then run
+     the feature's tags with the repo's E2E command (the stack's command in
+     `suite-speed-and-reliability.md`; `cct:test-e2e-policy` is a rulebook, not a runner), locally,
+     in the feature's own worktree and E2E slot, in the foreground (see Wall clock below); `test-flake-fix` for an inconsistent test.
   5. `python3 scripts/verify_gate.py feature <id>`, once per feature at the end, never after a
      task group; between edits run only the test files the change touched, since the gate is
      the final full check. On `FAIL`, use the targeted failure loop in [local-first](local-first.md), then rerun the full gate once: passed checks on an
      unchanged tree are cached, and the third failed run blocks with `reason=attempts`. On `BLOCKED`: one
      `AskUserQuestion` naming the reason in plain words, two or three ways forward, your pick
      first as `(Recommended)` with why.
-  6. `cct:git-pr-run --base milestone/<slug>` (hotfix: the default branch), auto-merge not
+  6. Lint the proposed body first (`python3 scripts/verify_gate.py lint <id> --pr-body <file>`),
+     then `cct:git-pr-run --base milestone/<slug>` (hotfix: the default branch), auto-merge not
      yet armed. The branch and title carry the feature's sub-issue key, never the change's key.
   7. UX check on the feature's own screens: `cct:ux-assessment-run <pr>`, run from the feature's
      worktree and E2E slot. Capture every changed screen and control open.
@@ -345,7 +400,8 @@ a change small enough for one milestone has one.
      does not run on it, and no human is asked to approve it. The workflow skips itself on the
      base ref (`references/tiers.md`). The code is reviewed once, locally, at the milestone
      close.
-  9. On merge: the feature's row in `milestone.md` → `merged`; the next feature starts.
+  9. On merge: the feature's row in `milestone.md` → `merged`; a row that waited on this one's
+     code starts now. Independent rows started at step 8, not here.
 - **Failure modes:** an edit outside `/goal` (refused), a protected-path edit (refused), a test
   edited to pass.
 
@@ -369,7 +425,7 @@ while a dependency PR's CI ran. Four rules, for every stack.
   `VERIFY PASS milestone` on it (a records-only commit after the PASS is fine), and inside
   `/goal` any other PR or push. Another repository follows the same rule with its own milestone
   branch. The only exception is the engineer's words in `decisions.json` `prExceptions`. The
-  archive move (Stage 7) is a commit in the last milestone.
+  folder removal (Stage 7) comes after the merge, in its own records-only PR.
 - **A cross-repo dependency builds against a local copy.** When this repo needs another repo's
   unreleased code (a kit fix found by the app), link or pack it locally (`npm pack`, a
   workspace `file:` path that is not committed) and build on. The published version arrives with
@@ -381,11 +437,12 @@ while a dependency PR's CI ran. Four rules, for every stack.
   does depend, merge the PR's branch into the milestone branch locally
   (`git merge origin/<dependency-branch>`) and build on top; that PR merges when its CI is green.
   When it has merged, the next sync row merges the parent, which already holds those commits.
-- **Never idle on CI.** After the milestone push: arm auto-merge (`gh pr merge <n> --merge --auto`), watch
+- **Never idle on CI.** After the milestone push and after the owner and visual dispositions are
+  recorded (see Stage 6 step 6): arm auto-merge (`gh pr merge <n> --merge --auto`), watch
   the PR in the background (`gh pr checks <n> --watch` as a background command, or `Monitor`),
   and start the next independent row at once. The supervisor watches, not the builder; a
   builder returns when it has pushed. A red check interrupts: dispatch a builder to the PR's
-  branch, then go back. Independent rows build in parallel builders, at most 4 (Wall clock).
+  branch, then go back. Independent rows build in parallel builders, at most 4, inside about 6 helpers (Wall clock).
 - **Agents run what they touched.** A builder runs only the tests or specs its change touched
   (the command per stack: `../../test-e2e-policy/references/suite-speed-and-reliability.md`
   section K, column "Touched tests"). The full suite runs once on the final head before each push; the required GitHub checks are the merge gate, see [local-first](local-first.md).
@@ -413,7 +470,17 @@ disappear.
   `sdlc.json` `builderModel` and `builderEffort` (default `sonnet`, `high`; the agent's own
   frontmatter says the same, so the default changes nothing), or to the pair the plan's
   Approach names for this change. A subagent's result comes back as a file path
-  plus a summary of at most about 2k tokens. At most 4 builders run at once.
+  plus a summary of at most about 2k tokens. At most 4 builders run at once, inside about 6 helpers
+  in all (builders plus the reviewers, validators and fix parts out at the same moment); heavy
+  slots are counted separately ([heavy work](heavy-work.md)).
+- **Dispatch names the workspace.** Every builder prompt (and every Codex brief) starts with four
+  lines: `Repo: <git remote url, no credentials>`, `Worktree: <absolute path>`,
+  `Change: <change id>`, `Base: <milestone head sha>`. The builder checks them before any edit or
+  install and stops, reporting, when `git rev-parse --show-toplevel` is not the Worktree, when
+  `git rev-parse --absolute-git-dir` equals `--git-common-dir` (it is in the main working folder),
+  or when the change folder is not there. A branch name never selects the change. Planned
+  prohibited files (protected paths, lockfiles, locked tests) go into the brief too, and the
+  post-run check stays.
 - **Codex builders (`sdlc.json` `builders: "codex"`).** The same rows go to the Codex CLI
   instead of an agent, one run per worktree, through the kit's `scripts/codex-build.sh`
   (`${CLAUDE_PLUGIN_ROOT}/skills/sdlc-run/scripts/`). Per row: run the stack's install in the
@@ -431,9 +498,10 @@ disappear.
   for any builder. `blocked` or `failed` (exit 4) carries the blockers: answer in the brief and
   re-dispatch. To cancel, kill the process group in `run.json` first; the lock in the worktree's
   git dir refuses a second run while one lives. Loopback stays open with the network off
-  (checked 2026-11-02), so a Codex builder runs its touched E2E specs in its slot like any
-  builder. The milestone close keeps its one `cct:sdlc-feature-builder`, which then runs checks and gate
-  only: Claude checks, Codex fix parts, Claude checks and gate again.
+  (checked 2026-11-02), but its `.git` is read-only, so it cannot take a heavy slot: a Codex
+  builder runs light checks only, and the supervisor runs its touched E2E specs, builds and captures
+  through `heavy.py run` on the worker branch before merging it ([heavy work](heavy-work.md)). The milestone close keeps its one `cct:sdlc-feature-builder`, which runs the gate only:
+  Codex fix parts, then the gate once (it runs the checks).
 - **A builder gets a context pack, not whole files.** The supervisor puts three things in the
   prompt (or in the brief file for Codex): the feature's facts verbatim with their tags, the
   plan excerpt for the feature (its row, the Where-things-go folders, the Rules check and any
@@ -441,9 +509,18 @@ disappear.
   Data-model and contract constraints are quoted, not summarised. The builder opens `plan.md`
   or `facts.md` only for a gap the pack names.
 - **Isolate each worktree's E2E resources.** Give its run an app port, stub port, database and
-  logs, derived from the worktree path. A repo that hard-codes a port or database name gets
-  one env var per value first. Schedule runs under the lock and load policy in
-  `../../test-e2e-policy/references/suite-speed-and-reliability.md` section F.
+  logs. Ports come from the heavy slot (`SDLC_APP_PORT`, `SDLC_STUB_PORT`), never from the
+  worktree path; the database is a private copy from `db.py test`. A repo that hard-codes a port or
+  database name gets one env var per value first. The machine-wide lock and load policy of
+  `../../test-e2e-policy/references/suite-speed-and-reliability.md` section F is this queue.
+- **Heavy work goes through the queue.** Builds, app servers, browser tests, captures and the full
+  suite run as `python3 scripts/heavy.py run -- <command>`; everything else runs without a slot
+  ([heavy work](heavy-work.md)). A builder whose heavy job would queue for long submits it
+  (`heavy.py submit`) and returns its report with the job id; the supervisor wakes the next step on
+  the result. A builder never parks on a queue while light work is waiting.
+- **Builders return evidence keyed by fact, tag and tested SHA.** Each report ends with one line
+  per fact: fact id, `@F<n>` tag, the commit the test ran on, result, test name. The close
+  reuses it (Stage 6, validation).
 - **Builders never wait on background work.** E2E and long gates run in the foreground with a
   long tool timeout. A builder that parks on its own background job stalls the supervisor and
   the next builder.
@@ -451,9 +528,12 @@ disappear.
   asserts text fits its box requires text ≤ 0.9 × the box, or a measured wrap, so a pass on a Mac
   is a pass on CI. Before the milestone PR, where a container runtime exists, run the fit specs
   once in the Playwright Linux image.
-- **The milestone review does not wait for the last feature.** Start the Stage 6 review on the
-  merged features while the last one builds, and review the last one's diff when it lands. Start
-  the full E2E run at the same time as the review, not after it.
+- **The milestone review does not wait for the last feature.** Start the read-only Stage 6 review
+  and the cheap checks on the merged features while the last one builds, and review the last one's
+  diff when it lands. The full E2E does not start here: an early run cannot certify the final tree,
+  and a standalone run leaves the gate's cache empty. `verify_gate.py milestone` is the only runner
+  of the full suite and the full E2E at the close; before it, run only the targeted specs a failure
+  or a fix needs.
 - **The fix round runs in parallel parts.** Split the findings by the files they touch, give each
   part its own builder and worktree, and run the parts at once. Don't hold the fix round for an
   E2E result: dispatch the review's findings at once and add an E2E failure to the part that
@@ -464,7 +544,9 @@ disappear.
 ## Stage 6 — Milestone, inside /goal
 
 Scope: `git diff <parent>...milestone/<slug>` only, where `<parent>` is
-`origin/project/<slug>` when the project has a branch and `origin/<defaultBranch>` otherwise.
+`origin/project/<slug>` when the project has a branch and `origin/<defaultBranch>` otherwise; in
+local mode (`milestones.merge: local`) the project branch exists only locally until 6p, so
+`<parent>` is the local `project/<slug>` and both local reviews and the gate's `{base}` use it.
 Diffing a project's milestone against the trunk pulls in the sibling milestones already
 merged into the project branch, and reviews them again.
 
@@ -474,22 +556,41 @@ person's own browser session. Never use Claude in Chrome or any tool driving tha
 
 1. One go: the same goal continues from Stage 5. Feature PRs: start `/goal` with
    `templates/goal/milestone.txt` filled (`goal.milestoneTurns`).
-2. Run on the diff, each once and in parallel: `cct:ux-assessment-run`, `cct:review-code-run` (Claude
-   and Codex; it reads the repo's `REVIEW.md` when there is one, the only code review the
+2. Run on the diff, each once and in parallel: `cct:ux-assessment-run scope=change base=<parent>
+   head=<milestone head> worktree=<path> require=responsive,accessibility` (the local form: the milestone has no PR before the gate
+   passes, and the PR form would stop there; it runs before the gate and passes the same base,
+   head and worktree to every child pass), `cct:review-code-run changes
+   <parent> --codex` (Claude and Codex; call it with this explicit command, a bare call has none; it reads the repo's `REVIEW.md` when there is one, the only code review the
    change gets, since 3.7.0 nothing reviews in CI),
-   `cct:ux-responsive-audit` (the `responsiveTier` matrix, nothing overflows; reflow at
-   320 × 640, WCAG 1.4.10 as written, never a 320 × 256 window), the states of
-   every changed page, `cct:ux-accessibility-audit`, the full E2E suite once, ×3 only for
-   changed and flaky specs. Use the committed `e2e/flaky-specs.txt` list and the selection
-   and line-format rules in `../../test-e2e-policy/references/suite-speed-and-reliability.md`
-   section G. Send inconsistent results to `test-flake-fix`. Also run `cct:ux-assessment-run` only
-   when the change adds a screen,
-   `cct:ux-build-validate` (six layers, one frozen defect list per screen, two fix rounds, capture
-   from one pinned commit: [convergence](convergence.md)), the `cct:test-behavior-verifier` and `cct:review-criteria-auditor` agents for job
-   stories and facts. `cct:review-security-run` runs only on the goal's last milestone, on the whole
-   goal diff (`git diff origin/<defaultBranch>...milestone/<slug>-<last>`), and only when auth, money or
-   consent is touched anywhere in it; in a project it waits for Stage 6p. Never on earlier milestones.
-   The review starts while the last feature builds, and the full E2E starts with it, not after.
+   The assessment owns the builds and captures, and dispatches the responsive, accessibility and
+   build QA passes itself from its one capture manifest, so none of them is run again on its own.
+   The milestone's required checks go in through `require=`, so a route-only or words-only change
+   still gets the 320 px reflow check and the accessibility pass; the assessment's report must say
+   `ran` or a recorded `skipped -- <reason>` for each, or the review is BLOCKED:
+   responsive uses the `responsiveTier` matrix, nothing overflows, reflow at 320 × 640, WCAG 1.4.10
+   as written, never a 320 × 256 window; the states of every changed page are in the same
+   captures. The full E2E suite is not in this list:
+   `verify_gate.py milestone` is the only runner of the full suite and the full E2E at the close
+   (step 5). Changed and flaky specs run ×3 on the final integrated build; use the committed
+   `e2e/flaky-specs.txt` list and the selection and line-format rules in
+   `../../test-e2e-policy/references/suite-speed-and-reliability.md` section G. Send inconsistent
+   results to `test-flake-fix`. Build QA (`cct:ux-build-validate`, report-only at the
+   close: six layers, one frozen defect list per screen, capture from one pinned commit;
+   [convergence](convergence.md)) runs inside the assessment for a change with a spec folder, and
+   only when its `qa.md` is missing or stale. Run the `cct:test-behavior-verifier` and `cct:review-criteria-auditor` agents for job
+   stories and facts. `cct:review-security-run` runs at every milestone close when auth, money or
+   consent is touched in the goal so far, on the diff from the goal's recorded start:
+   `git diff $(python3 ${CLAUDE_SKILL_DIR}/scripts/sdlc_status.py base <id>)...milestone/<slug>-<n>`.
+   `base` prints the `sha` that `verify_gate.py approve` wrote into `lock.json`, so an earlier
+   milestone that already merged stays in view and a late one cannot hide a risky slice behind
+   a smaller final diff. In a project each milestone is reviewed the same way and Stage 6p
+   reviews the integrated diff once more.
+   The read-only review starts while the last feature builds.
+   **Offline checks first, before any browser or suite starts:** `python3 scripts/preflight.py`
+   (tools, sign-in, Docker), `python3 scripts/verify_gate.py lint <id>`,
+   `python3 scripts/marks.py check <id>` (shape: files and rows exist), the shape of `validation.md`
+   and `findings.md`, and `python3 scripts/evidence.py stale <dir> --catalog <file>` for screens whose
+   text changed. A missing tool, input or evidence file fails in seconds here, not after a browser run.
    Require the shared visual pass from each UX run: open every image, including responsive
    and state captures, and validate each issue against the repo's documents with the same
    three verdicts as Stage 5. Include late feature captures before the final check.
@@ -502,12 +603,16 @@ person's own browser session. Never use Claude in Chrome or any tool driving tha
    gaps, not inferred passes. A `ruled-out` note needs its ADR, not a screenshot.
 2a. **Validation: does each feature do what the plan said?** Separate from the checks, which
    prove the code is sound. For every fact and every ask of this milestone, exercise the
-   built app (E2E with the fact's tag, a headless capture of the named screen and state, or
-   the `cct:test-behavior-verifier` agent driving the flow) and write one row to
+      built app (E2E with the fact's tag, a headless capture of the named screen and state, or
+   the `cct:test-behavior-verifier` agent driving the flow). The close reuses the final-suite
+   evidence of every fact whose tag and tested SHA match the head being closed (a changed row is
+   run again) and exercises only the behaviour no evidence covers and the seams between features and write one row to
    `changes/<id>/validation.md`: `F<n>/A<n>`, expected (the fact's words), observed (what the
    app did), evidence (test name, shot path, command output), verdict `met`, `not met` or
    `partly`. A `not met` or `partly` row is a blocking finding (the gate blocks on it: `validation-not-met`). `cct:review-criteria-auditor` grades the
-   same rows against the code; where it and the observed behaviour disagree, the behaviour
+   same rows against the code, from an explicit input: write `changes/<id>/verify/ac.json`
+   (`{"criteria": [{"id", "text"}]}`, one per fact and ask, the words as written) and name it in
+   its prompt; where it and the observed behaviour disagree, the behaviour
    wins and the row says so. Also list the open `questions.md` rows and the default each took.
 2b. **Converge**, after validation and before the findings are final (`references/quality-passes.md`):
    append-only; a ticked box is not evidence. Re-read every fact and ask against the diff and
@@ -521,20 +626,43 @@ person's own browser session. Never use Claude in Chrome or any tool driving tha
    A `fixed` row names the passing test tag that proves it in `test` (`@F<n>`); the tag must
    appear in a `testGlobs` file or the check fails.
    Only the engineer's words in `accepted` can accept a non-fixed row; never infer acceptance.
-4. One fix round: `cct:review-fix-run 1` (the `1` is `max_iterations`; always pass it) on the blocking items and the converge items only, split into parallel
-   parts by the files they touch, one builder and worktree per part; each part's fix is a commit
-   on `milestone/<slug>`, never a PR of its own. What is left, or new scope, becomes a change in
-   the next milestone. Each fix updates its record: the `validation.md` row re-run and set to
-   `met`, the `findings.md` item ticked.
+4. One fix round at milestone close, for every finding source together (code review, visual,
+   converge): the visual and build QA passes at the close are report-only. The supervisor hands
+   remediation the joined findings (the blocking and converge items of `findings.md`, visual
+   items included) and the code review's state directory from step 2, so the fix consumes the
+   review that already ran. First merge the visual and converge items into that directory's fix input, ids kept (`B2`, `C1`, a specialist's `RC-1`; an item with no label gets `U<position>`): `python3 ${CLAUDE_SKILL_DIR}/scripts/close_findings.py <state directory> changes/<id>/findings.md --change <id>` (the triager reads only `findings.json` and `verdicts.json`, so without it a clean code review leaves the fix set empty). Then `cct:review-fixset-triager <state directory>` (bounded rechecks run
+   concurrently), then `cct:review-feedback-run fix-set <state directory>`. It never starts a
+   fresh review: no `cct:review-fix-run` (it opens with a review of its own) and no second
+   `cct:review-code-run`. Split into parallel parts by the files they touch, one builder and
+   worktree per part; each part's fix is a commit on `milestone/<slug>`, never a PR of its own.
+   Each fix updates its record: the `validation.md` row re-run and set to `met`, the
+   `findings.md` item ticked. **What the round leaves is settled by the owner's answer.** Per residual finding the supervisor asks one `AskUserQuestion` whose question text starts `Change <change id>, finding <finding id>: ` (for example `Change 2026-11-19-x, finding B2: the card overflows at 320. What now?`) and whose options are exactly `Fix it now`, `Accept as is`, `Defer to milestone <n>` and `Block the close`. The gate reads the structured tool result of that dialog from the session transcript (never typed text): `Accept as is` and `Defer to milestone <n>` settle the item, `Fix it now` keeps it open, `Block the close` is terminal (`findings-blocked`, also against a ticked box). The latest answer wins, an answer older than the finding is ignored, the item needs an explicit bold id (`**B2**`, `**C1**`) that no other open item shares, and the agent cannot answer for the owner. A fact that is `partly`
+   or `not met` in `validation.md` is never cleared by an answer: change the scope with a new
+   approval, or the milestone is held.
 5. Reopen recaptured images and rerun their visual checks. Then
    `python3 scripts/verify_gate.py milestone <id> --visual-check "<checker>" --visual-run "<run>"`
    once, after the fixes, never between them, run by the close builder (`Mode: close`) on a
-   head nothing else touches; on `FAIL` use the targeted local failure loop, then the full gate once until `VERIFY PASS` (passed
+   head nothing else touches. The gate runs the offline evidence checks first (`owner-marks`, the
+   visual checkers, required tags), then the suites cheapest first, so a missing screenshot or
+   checker costs seconds, not a full E2E run; on `FAIL` use the targeted local failure loop, then the full gate once until `VERIFY PASS` (passed
    checks on an unchanged tree are cached; the third failed run blocks with `reason=attempts`).
+   `sdlc.json` `checks.milestone` names the full suite and the full E2E explicitly, plus a repeat
+   (×3) of the changed and flaky specs (the presets carry both; `{base}` in a check is the default
+   branch on origin). `verify_gate.py approve` refuses a list with no full E2E entry when the repo
+   has a Playwright config or an `e2e/` folder; an older lock gets an `upgrade gap` line in the gate
+   output and report, never a failure.
    Repeat `--visual-run` for every required current UX run; failures enter
    `verify/report.json` and `report.md` as failed checks. Resolve the checker from the installed
-   cct UX skill, never a cross-plugin relative path. Omit visual flags only for explicitly
-   recorded UX skips. An older gate without these flags needs `sdlc-run adopt`, not a bypass.
+   cct UX skill, never a cross-plugin relative path. The gate derives the need itself: with `ux` on, a size
+   other than `none` and a visual source, a reference image or a capture manifest, a milestone
+   without `--visual-run` fails `check=ux-visual-required` before the suites, unless
+   `decisions.json` records `"skips": {"visual": "skip -- <reason>"}` and the owner attests it
+   (decisions.json is not locked at approval): an `AskUserQuestion` `Change <change id>, finding
+   visual-skip: ...` with the options `Skip visual evidence` and `Run visual evidence`, answered
+   `Skip visual evidence`. A current-format change (its lock holds `done.json`) never loses
+   `done.json` or `decisions.json`: a missing one is a blocker. The validation rows come from
+   `done.json`; on a milestone branch the plan's `## Milestones` row must list the milestone's
+   facts, and that section is part of the approval lock (an older lock reports an `upgrade gap`). An older gate without these flags needs `sdlc-run adopt`, not a bypass.
    The milestone gate also runs `marks.py check` as `owner-marks` when sessions or `marks.json`
    exist, independently of `sdlc.json` checks or UX skips. Paste `python3 scripts/marks.py table <id>`
    into the milestone report, including accepted gaps. A file check proves coverage, not pixels.
@@ -559,12 +687,20 @@ person's own browser session. Never use Claude in Chrome or any tool driving tha
    once. A red CI check: read the exact failed job/test and reason, reproduce locally,
    fix and rerun that test plus the directly affected suite until green, then the full local
    gate once and one batched push. Never rerun the pipeline or push a speculative fix.
-   Into a project it is an interior PR:
-   no tier, auto-merge armed on green. Into the default branch the tier
-   decides. **The engineer accepts the milestone** in one `AskUserQuestion`: "Accept
-   (Recommended)" with the one-line reason, or "Hold" with what is left. One go: no dialog;
-   auto-merge is armed on green and the engineer reads `validation.md` in the PR. The dialog
-   comes only when a Critical or High would be deferred.
+   **Arm only after** every required disposition is recorded: the owner's acceptance or Hold
+   when the dialog below applies, and the owner or visual disposition of each residual finding
+   (the owner's answer to the finding dialog). Status never recommends arming a PR that is waiting on one: never arm an
+   `ask`-labelled or a closed PR. Into a project it is an interior PR:
+   no tier, auto-merge armed on green once those are recorded. Into the default branch the tier
+   decides. **The engineer accepts the milestone** in one `AskUserQuestion` whose question starts
+   `Change <change id>, finding PR<n>: ` and whose options are `Accept milestone` (recommended, with
+   the one-line reason in its description) and `Hold` (with what is left). An `ask`-tier PR is never
+   DONE, armed or not, until that `Accept milestone` answer exists; a recorded `Hold` blocks DONE
+   and arming for any tier, and status never recommends arming before the tier label exists. One go
+   for ship and show: no dialog; auto-merge is armed on green and the engineer reads
+   `validation.md` in the PR. The dialog comes when a Critical or High would be deferred; then open
+   the PR with the label `awaiting-owner` (the workflow arms nothing while it is set, or while
+   `hold` is set) and remove it after the answer.
    In local mode: with a project branch, skip the push, the PR and auto-merge: after `VERIFY PASS milestone`, run `git switch project/<slug> && git merge --no-ff milestone/<slug>` ([Local milestones](local-first.md#local-milestones)). A milestone without a project still opens this one PR.
 
 ### Enforcement audit
@@ -576,7 +712,9 @@ changes nothing and keeps four states apart, because a green run proves only the
 - **configured**: the gate scope that runs it, the CI job (`ci <file>:<job>`) that runs the same
   command, the hook event and matcher in `.claude/settings.json`.
 - **executed**: the newest `verify/report.json` (any change, archive included) that ran it; a hook
-  leaves no log, so it says so.
+  leaves no log, so it says so. A change folder removed after merge takes its report along (it is
+  never committed): the audit reads that as no evidence and does not fail on the missing folder;
+  `--no-evidence` skips the test, as in CI.
 - **passed**: that run's status.
 
 `required` is read from the default branch with `gh api` (rulesets, then branch protection): `yes`
@@ -600,46 +738,64 @@ Only when `decisions.json` has a `project`, and only once its last milestone has
    first time anything looks at the seams between them. Run `cct:review-security-run` on the same diff when auth, money or consent is touched;
    it is the project's only security review. The gate line goes in the project's
    tracker entry. No PR. Remove the flags that hid unfinished work as the project's last
-   change, or record when they go.
+   change, or record when they go. Record it once the owner accepts in the dialog `Change <id>, finding PROJECT-<slug>: ...` (Accept milestone | Hold):
+   `python3 ${CLAUDE_SKILL_DIR}/scripts/sdlc_status.py record <id> project --sha <default-branch commit> --accepted`
+   (state/heads.json); `goal --project` is DONE only with that commit in the default branch and the acceptance.
 2. **With `project.branch: true`:** nothing is pushed to `project/<slug>` directly: every
    milestone merged the default branch in (its sync row), so the project branch carries it.
    Re-run `checks.milestone` on a checkout of `origin/project/<slug>` merged with
    `origin/<defaultBranch>`, then one PR `project/<slug>` → default branch with the gate line
    in its description, merged with a merge commit. This is the PR that gets a tier. If the
-   default branch moved after the last sync, merge it in locally once; never rebase it.
+   default branch moved after the last sync, merge it in locally once; never rebase it. That final
+   sync is the one direct push to `project/<slug>` the hook allows: the default branch merged in,
+   `VERIFY PASS project` on that exact head, then one push.
    In local mode: run `python3 scripts/verify_gate.py project <slug>` on the checked-out `project/<slug>` (merged with `origin/<defaultBranch>`), then push it once and open the one PR ([Local milestones](local-first.md#local-milestones)).
 3. A blocking finding becomes one more milestone, closed and merged like any other.
 4. **The engineer accepts the project** in one `AskUserQuestion`. No second fix round: what is
    left becomes the next project's first change.
 
-## Stage 7 — Outcome and archive
+### Persisted heads and HANDOFF
 
-1. Before the PR into the default branch merges, its last commit does
-   `git mv changes/<id> changes/archive/<year>/<year-month>/<id>`, sets `archived_at` and reads
-   `changes(<id>): archived`: no separate PR after the merge. **Guard, before the move:** run
+The gates write `state/heads.json` (the old place is read second): the head and base of each
+passed milestone, and a hotfix head after a feature pass on `hotfix/*`. `goal` reads them, so a
+resumed goal or a new session looks for the same PR the gate saw. A hotfix change (`milestone.kind: hotfix`) with a recorded
+head and a feature pass is pushed in a one-go goal and read as a feature gate plus a hotfix PR into the default branch.
+When a turn, fix-round or retry cap is hit, `sdlc_status.py handoff <id> --cap turns|fix-rounds|retries --what <words> --next <command>`
+writes one `state/handoff.json` (the retry cap of the gate writes it itself) and `goal` prints
+`GOAL <id> HANDOFF cap=<cap>` while the work is open. A passing gate or `handoff <id> --resume` clears it.
+A change folder removed after merge reads `GOAL <id> DONE pr=<n> state=merged folder=removed` when its milestone PR merged.
+
+## Stage 7 — Outcome and removal
+
+1. There is no archive. After the PR into the default branch merges, `spec.py outcome write
+   changes/<id>` copies the success measure to `.sdlc/outcomes/<id>.json`, then `git rm -r changes/<id>`
+   goes in one records-only PR (never before the merge). A change still on the old layout may carry the
+   old `changes/archive/` move; the readers accept both, and a folder that is gone is not an error.
+   **Guard, before the removal:** run
    `git grep -l -F "changes/<id>/" -- . ':!changes'`. A test, script or doc that reads or writes
    inside the folder breaks the day it moves. Promote what it reads to `docs/` (product truth, not
-   a change record) or write outputs under `test-results/`, repoint the reference, and archive only
+   a change record) or write outputs under `test-results/`, repoint the reference, and remove only
    when the grep is empty. After it merges: comment the merge
    SHA in the tracker, `ExitWorktree keep`, then remove the owned path using the shared policy’s `wt remove`
    command (Git fallback; a worktree entered by path is never removed by `ExitWorktree`). Move the tracker forward only, never backwards.
 2. After release: read the success measure from PostHog (`cct:posthog-manage` or the insight
    named in `intent.md`) and write it in the tracker at once and under `## Outcome` in the
-   archived `milestone.md`, committed with the next change's PR, never a PR of its own.
+   outcome record (`spec.py outcome record`), committed with the next change's PR; with no later change it is one records-only PR, never a PR of its own for anything else.
 3. A miss starts the next change at 1.3, with the measurement as its first ask.
-4. **Reflection**, before the archive move: one short `reflection.md` in the change folder, four
+4. **Reflection**, before the folder is removed: one short `reflection.md` in the change folder, four
    lines: what surprised us, what the challenge or analyze pass caught (or missed), what we would
    do differently, and one **Lesson** sentence a future agent could act on (or `none`). The agent
    writes it, the engineer may edit it. It is not a report; skip a line rather than pad it.
-   When the same lesson appears in two or more archived `reflection.md` files, the agent lists it
+   When the same lesson appears in two or more `reflection.md` files, the agent lists it
    in the milestone message as "repeated lesson, promote?". Only the owner moves it into the repo's
    agent file (`CLAUDE.md` or `AGENTS.md`, its pitfalls section); the agent never edits that file
    for this.
 5. **Operational metrics** need no writing: every `verify/report.md` ends with a `## Metrics`
    block (also `metrics` in `report.json`): checks run, cached, passed and failed, retries (earlier
    failed runs of this scope), review rounds, elapsed seconds and open findings. Quote the
-   milestone's block in `milestone.md` under `## Outcome` so a slow or retry-heavy change is
-   visible later.
+   milestone's block into the `.sdlc/outcomes` record (`spec.py outcome record`), because the
+   change folder is removed after the merge and `milestone.md` goes with it, so a slow or
+   retry-heavy change stays visible later.
 
 ## PR bodies and milestone close reports
 

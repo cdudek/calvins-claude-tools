@@ -21,6 +21,7 @@ import pytest
 REPO_ROOT = Path(__file__).resolve().parents[{{ROOT_DEPTH}}]
 CFG = json.loads((REPO_ROOT / "sdlc.json").read_text(encoding="utf-8"))
 CHANGES = REPO_ROOT / CFG.get("changesDir", "changes")
+DOCS = CFG.get("docs", "docs/sdlc.md")
 ARCHIVE = CHANGES / "archive"
 HOOKS = REPO_ROOT / ".claude" / "hooks"
 SETTINGS = REPO_ROOT / ".claude" / "settings.json"
@@ -180,6 +181,30 @@ def _parts(change: Path) -> dict[str, str]:
     return {k: v or "" for k, v in m.groupdict().items()}
 
 
+def _v4(change: Path) -> bool:
+    """A change on layout 4 (spec.md, design.md, tasks.md): pinned by `layout: 4` in decisions.json
+    or, unpinned, a spec.md with no facts.md. Anything else is the intent/facts/plan layout."""
+    decisions = change / "decisions.json"
+    if decisions.exists():
+        try:
+            if json.loads(decisions.read_text(encoding="utf-8")).get("layout") == 4:
+                return True
+        except ValueError:
+            pass
+    return (change / "spec.md").exists() and not (change / "facts.md").exists()
+
+
+def _documents(change: Path) -> tuple[str, ...]:
+    """The documents a change must carry: facts.md and plan.md, or on layout 4 spec.md plus what
+    its scope asks for (S: the spec alone; M: tasks.md too; L: design.md as well)."""
+    if not _v4(change):
+        return ("facts.md", "plan.md")
+    scope = ""
+    if (change / "spec.md").exists():
+        scope = _frontmatter(change / "spec.md").get("scope", "")
+    return ("spec.md", *(("tasks.md",) if scope in ("M", "L") else ()), *(("design.md",) if scope == "L" else ()))
+
+
 # --- designs and changes ---------------------------------------------------------------
 
 
@@ -188,7 +213,7 @@ def _parts(change: Path) -> dict[str, str]:
 )
 def test_change_folder_is_named_and_carries_facts_and_plan(change: Path, archived: bool) -> None:
     assert CHANGE_DIR.match(change.name), f"{change.name}: wrong shape"
-    for a in ("facts.md", "plan.md"):
+    for a in _documents(change):
         assert (change / a).is_file(), f"{change.name}: missing {a}"
 
 
@@ -197,11 +222,14 @@ def test_change_folder_is_named_and_carries_facts_and_plan(change: Path, archive
 )
 def test_frontmatter_names_issue_change_and_spec(change: Path, archived: bool) -> None:
     parts = _parts(change)
-    for a in ("intent.md", "facts.md", "plan.md"):
+    v4 = _v4(change)
+    for a in ("spec.md", "design.md", "tasks.md") if v4 else ("intent.md", "facts.md", "plan.md"):
         if not (change / a).exists():
             continue
         fm = _frontmatter(change / a)
-        assert fm.get("linear") == (parts["key"] or "none"), f"{change.name}/{a}: linear"
+        # layout 4 names the issue and the design in spec.md only
+        if not v4 or a == "spec.md":
+            assert fm.get("linear") == (parts["key"] or "none"), f"{change.name}/{a}: linear"
         # Only for open changes: a folder archived before the date prefix existed carries its
         # ARCHIVE date in the name, and renaming merged history to fix that buys nothing.
         if not archived:
@@ -209,12 +237,13 @@ def test_frontmatter_names_issue_change_and_spec(change: Path, archived: bool) -
                 f"{change.name}/{a}: created must match the date in the folder name"
             )
         assert fm.get("change") == change.name, f"{change.name}/{a}: change"
-        assert fm.get("design"), f"{change.name}/{a}: design"
-        if fm["design"] != "null":
-            assert (REPO_ROOT / fm["design"]).is_file(), (
-                f"{change.name}/{a}: design {fm['design']} does not exist"
-            )
-        if archived:
+        if not v4 or a == "spec.md":
+            assert fm.get("design"), f"{change.name}/{a}: design"
+            if fm["design"] != "null":
+                assert (REPO_ROOT / fm["design"]).is_file(), (
+                    f"{change.name}/{a}: design {fm['design']} does not exist"
+                )
+        if archived and not v4:  # layout 4 has no archive: Stage 7 removes the folder
             assert re.fullmatch(r"\d{4}-\d{2}-\d{2}", fm.get("archived_at", "")), (
                 f"{change.name}/{a}: archived_at"
             )
@@ -224,6 +253,8 @@ def test_frontmatter_names_issue_change_and_spec(change: Path, archived: bool) -
     ("change", "archived"), _changes(), ids=lambda x: x.name if isinstance(x, Path) else ""
 )
 def test_intent_and_plan_have_their_sections(change: Path, archived: bool) -> None:
+    if _v4(change):  # spec.py check lints the three documents
+        return
     if (change / "intent.md").exists():
         text = (change / "intent.md").read_text(encoding="utf-8")
         assert not [s for s in INTENT_SECTIONS if s not in text], f"{change.name}/intent.md"
@@ -259,7 +290,7 @@ def test_an_approved_plan_hands_its_goal_over(change: Path, archived: bool) -> N
     # verbatim, never renamed" - so a new required section applied to history fails
     # every change ever shipped. It did: 61 tests across a real repo's archive, the
     # first time this ran. The rule is for work going forward; history is evidence.
-    if archived:
+    if archived or _v4(change):
         return
     plan_path = change / "plan.md"
     # And only once the gate has approved it. A draft has nothing to hand over yet,
@@ -280,7 +311,7 @@ def test_plan_stands_on_approved_facts_and_intent_is_recorded(change: Path, arch
     # fixed; this catches a folder that reached the repo without the hook - CI, another
     # machine, a repo adopted mid-change. Archived folders are exempt for the same reason
     # the handover rule exempts them: history is evidence, not a target.
-    if archived:
+    if archived or _v4(change):
         return
     # And only once the plan is approved, exactly like the handover rule above. A draft
     # plan beside draft facts is the legitimate in-flight state - facts are reviewed, then
@@ -309,7 +340,7 @@ def test_plan_stands_on_approved_facts_and_intent_is_recorded(change: Path, arch
     ("change", "archived"), _changes(), ids=lambda x: x.name if isinstance(x, Path) else ""
 )
 def test_v3_approved_plan_has_spec_guardrails(change: Path, archived: bool) -> None:
-    if archived or not (change / "decisions.json").exists():
+    if archived or _v4(change) or not (change / "decisions.json").exists():
         return
     decisions = json.loads((change / "decisions.json").read_text(encoding="utf-8"))
     if "size" not in decisions:
@@ -360,7 +391,7 @@ def test_v3_approved_plan_has_spec_guardrails(change: Path, archived: bool) -> N
     ("change", "archived"), _changes(), ids=lambda x: x.name if isinstance(x, Path) else ""
 )
 def test_spec_lists_the_change_under_milestones(change: Path, archived: bool) -> None:
-    fm = _frontmatter(change / "plan.md")
+    fm = _frontmatter(change / ("spec.md" if _v4(change) else "plan.md"))
     if fm["design"] == "null":
         return
     slug = _parts(change)["slug"]
@@ -381,10 +412,6 @@ def test_the_design_index_is_current() -> None:
     assert r.returncode == 0, r.stdout + r.stderr
 
 
-def test_this_repo_has_at_least_one_change() -> None:
-    assert _changes(), f"{CFG.get('changesDir', 'changes')}/ is empty"
-
-
 def test_no_plans_or_handovers_in_claude_plans() -> None:
     plans = REPO_ROOT / ".claude" / "plans"
     assert not plans.exists() or not any(plans.iterdir()), (
@@ -402,6 +429,7 @@ EXPECTED_HOOKS = [
     ("PermissionRequest", "plan-gate.sh"),
     ("PreToolUse", "gate-bash.sh"),
     ("PreToolUse", "pr-gate.sh"),
+    ("PreToolUse", "helper-guard.sh"),
     ("PreToolUse", "chain-gate.sh"),
     ("PostToolUse", "lint-on-edit.sh"),
     ("Stop", "verify-on-stop.sh"),
@@ -892,8 +920,8 @@ def test_classify_picks_the_riskiest_tier() -> None:
 
 
 def test_docs_and_workflows_exist_and_are_linked() -> None:
-    assert (REPO_ROOT / "docs" / "sdlc.md").is_file()
-    assert "docs/sdlc.md" in (REPO_ROOT / "CLAUDE.md").read_text(encoding="utf-8")
+    assert (REPO_ROOT / DOCS).is_file()
+    assert DOCS in (REPO_ROOT / "CLAUDE.md").read_text(encoding="utf-8")
     for wf in ("claude-review.yml", "claude.yml", "ci-triage.yml"):
         assert not (REPO_ROOT / ".github" / "workflows" / wf).is_file(), (
             f"{wf}: no Claude in CI since sdlc-run 3.7.0; run adopt --upgrade"

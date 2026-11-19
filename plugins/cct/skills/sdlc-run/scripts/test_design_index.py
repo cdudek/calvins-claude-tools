@@ -37,3 +37,16 @@ def test_every_entry_is_followed_by_its_read_when_line(tmp_path: Path) -> None:
     entries = [i for i, ln in enumerate(lines) if ln.startswith("- [")]
     assert len(entries) == 4
     assert all(lines[i + 1].startswith("  Read when: ") for i in entries)
+
+
+def test_capability_decisions_folders_are_scanned_with_links_relative_to_the_index(tmp_path: Path) -> None:
+    designs = _designs(tmp_path)
+    d = tmp_path / "specs" / "billing" / "decisions"
+    d.mkdir(parents=True)
+    (d / "2026-11-20-adr-retry.md").write_text("---\ntitle: Retry once\nstatus: accepted\n---\n")
+    (tmp_path / "specs" / "billing" / "rules").mkdir()
+    (tmp_path / "specs" / "billing" / "rules" / "R1.md").write_text("---\nid: R1\n---\n")
+    out = design_index.render(designs, tmp_path / "specs")
+    assert "[Retry once](../../specs/billing/decisions/2026-11-20-adr-retry.md)" in out
+    assert "R1" not in out
+    assert "Retry once" not in design_index.render(designs)

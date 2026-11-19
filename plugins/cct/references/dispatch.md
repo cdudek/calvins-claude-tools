@@ -61,6 +61,10 @@ everything.
 | A new screen | x | x | x | x | x | x | x |
 
 - `spec` runs whenever the change has a spec folder, whatever the row.
+- A caller's `require=<pass,...>` (the milestone close requires `responsive` and `accessibility`)
+  overrides the matrix: those passes run even where the row leaves them blank (a route-only change
+  has no `responsive`, a words-only change no `accessibility`), and each one is accounted for as
+  `ran` or `skipped -- <reason>`; one that is neither blocks the review.
 - `sitemap` writes its checks (`SM-<n>`, `RC-<n>`) as findings; a moved address with no
   redirect is at least High, as `cct:ux-sitemap-create` says.
 - The rows follow "Which laws matter most, by what changed" in `laws-of-ux.md`; that table
@@ -71,7 +75,8 @@ everything.
 Never paste a skill's or a reference's body into the prompt; name it and let the pass read it.
 Each pass gets:
 
-1. Its name from section 1 and the task: the PR, the interface files, the screenshots folder,
+1. Its name from section 1 and the task: the PR (the local form passes base, head and worktree
+   instead, and the pass reads `git -C <worktree> diff <base>...<head>`), the interface files, the screenshots folder,
    the documents table, and `finding-format.md` for how to write each field.
 2. The scope it must cover and the rules that apply (`conflicts.md` for rungs and exceptions).
 3. The output path, `<run>/passes/<pass>.json`, and the instruction: "Write ONLY JSON matching

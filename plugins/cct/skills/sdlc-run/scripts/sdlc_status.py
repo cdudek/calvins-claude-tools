@@ -4,6 +4,7 @@
     python3 ${CLAUDE_SKILL_DIR}/scripts/sdlc_status.py goal <id> [--milestone <n> | --feature <n> | --project]
     python3 ${CLAUDE_SKILL_DIR}/scripts/sdlc_status.py ids [<id>]
     python3 ${CLAUDE_SKILL_DIR}/scripts/sdlc_status.py readme [<id>]
+    python3 ${CLAUDE_SKILL_DIR}/scripts/sdlc_status.py record <id> project --sha <sha> [--accepted]
 
 Runs from the plugin and is never copied into a repo: run it with the working directory inside the
 adopted repo, which it finds from the cwd. It loads `verify_gate` from the plugin's own
@@ -26,6 +27,16 @@ n from plan.md `## Milestones`) merged or open with auto-merge armed, the last
 that is missing or fails is `OPEN gh-unavailable`, never DONE. When the goal is not DONE a second
 line `Blocking: <what>, because <why>; <who> runs `<step>`.` says the one thing in the way.
 
+`record <id> project --sha <sha> [--accepted]` persists, for a project with no branch, the default-branch
+commit that holds every milestone and the owner's acceptance (state/heads.json); `goal <id> --project`
+is DONE only with both. The gates persist each milestone's head and base there, and a hotfix head.
+
+`handoff <id> --cap turns|fix-rounds|retries [--what <words>] [--next <command>]` writes the one HANDOFF
+record of a hit cap (state/handoff.json: what, why, the exact next command) and prints it; the retry
+cap of the gate writes it itself. While the goal is still open it prints `GOAL <id> HANDOFF cap=<cap>`
+(exit 4) and a `Blocking:` line with the next command. A passing gate or `handoff <id> --resume`
+clears it.
+
 `ids` prints every id the change defines with its one-line meaning and the file that decides it.
 `readme` writes `<change>/README.md`, the reading map (`references/readability.md`).
 
@@ -33,7 +44,7 @@ With sdlc.json `milestones.merge: "local"` and a project branch, a milestone has
 when its `VERIFY PASS milestone` head is an ancestor of the local project/<slug> (line `GOAL <id>
 DONE merged=project/<slug> gate=<sha>`). Each planned milestone counts by its own receipt
 verify/milestone-<n>.json (a pass whose head is in the project branch; the branch need not exist),
-or, without a receipt, by its milestone/<slug>-<n> branch being merged. `--project` reads the project's own record (`VERIFY PASS
+or, without a receipt, by its milestone/<slug>-<n> branch being merged. Every report is read from the checkout and from the gate's shared copy (<git common dir>/sdlc/passes/); the newer wins. `--project` reads the project's own record (`VERIFY PASS
 project <slug>`, written by `verify_gate.py project`) and the PR project/<slug> into the default
 branch, merged or armed, as above.
 """
@@ -52,7 +63,8 @@ from change_docs import MARKER, ids, readme
 for _sub in ("scripts", "hooks"):
     sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "templates" / _sub))
 
-from pass_proof import bound, proves  # noqa: E402
+import spec  # noqa: E402
+from pass_proof import _read, bound, change_paths, milestone_of, newest, pass_key, proves, shared  # noqa: E402
 
 STAGES = ("Intent", "UX plan", "Facts", "Tech plan", "Build", "Milestone", "Outcome")
 
@@ -90,8 +102,8 @@ def find_change(root: Path, cfg: dict, change_id: str | None) -> Path | None:
         # Stage 7 moved it: no "..", no absolute path, never the archive folder itself
         if Path(change_id).name != change_id or change_id in ("..", "archive"):
             return None
-        found = [base / change_id, *base.glob(f"archive/**/{change_id}")]
-        return next((d for d in found if d.is_dir() and base.resolve() in d.resolve().parents), None)
+        found = change_paths(base, change_id)
+        return next((d for d in found if base.resolve() in d.resolve().parents), None)
     if not base.is_dir():
         return None
     folders = [d for d in base.iterdir() if d.is_dir() and d.name != "archive"]
@@ -138,7 +150,10 @@ def initiative(change: Path, root: Path, decisions: dict) -> tuple[str, int, int
 
 
 def features(change: Path, root: Path, cfg: dict, decisions: dict) -> list[dict]:
-    """Rows of the milestone's Features table: [{id, feature, state}]."""
+    """Rows of the milestone's Features table: [{id, feature, state}]. In layout 4 the tasks of
+    tasks.md are the rows."""
+    if spec.applies(change):
+        return [{"id": t, "feature": m, "state": st} for t, st, m in spec.task_states(change)]
     milestone = change / "milestone.md"
     slug = decisions.get("milestone", {}).get("slug", "")
     if not milestone.exists() and slug:
@@ -160,17 +175,19 @@ def features(change: Path, root: Path, cfg: dict, decisions: dict) -> list[dict]
 def stage_of(change: Path, rows: list[dict]) -> int:
     if "archive" in change.parts:
         return 7
-    if (change / "lock.json").exists():
+    if spec.state_path(change, "lock.json").exists():
         return 6 if rows and all(r["state"].startswith(("merged", "done")) for r in rows) else 5
-    if (change / "plan.md").exists():
+    if (change / "plan.md").exists() or (change / "tasks.md").exists():
         return 4
+    if frontmatter(change / "spec.md", "status") == "approved":
+        return 3
     if (change / "facts.md").exists():
         return 3
     return 2 if frontmatter(change / "intent.md", "status") == "approved" else 1
 
 
 def state(change: Path, root: Path, cfg: dict) -> dict:
-    decisions = read_json(change / "decisions.json")
+    decisions = read_json(spec.state_path(change, "decisions.json"))
     name, pos, total = initiative(change, root, decisions)
     rows = features(change, root, cfg, decisions)
     return {
@@ -193,6 +210,29 @@ def milestone_map(s: dict) -> str:
     lines += [f"    {r['id']:<4} {r['feature']:<32} {r['state']}" for r in s["features"]]
     lines.append(f"  stage  {s['stage']}/7 {STAGES[s['stage'] - 1]}")
     return "\n".join(lines)
+
+
+def side_notes(root: Path) -> list[str]:
+    """What the map adds only when there is something to say: a stop whose verification failed (the
+    stop hook lets a session end on an unchanged failing tree, which is not a pass) and who holds or
+    waits for a heavy slot (the plugin's heavy.py run in the repo, so a waiting helper is visible)."""
+    lines = []
+    gitdir = git(root, "rev-parse", "--absolute-git-dir")
+    try:
+        stop = json.loads((Path(gitdir) / "sdlc-stop-status.json").read_text(encoding="utf-8"))
+    except (OSError, ValueError):
+        stop = {}
+    if isinstance(stop, dict) and stop.get("status") == "failed":
+        lines.append(f"  last stop  verify FAILED (`{stop.get('verify', '')}`): a stop is not a pass; the uncommitted source was never verified")
+    heavy = Path(__file__).resolve().parents[1] / "templates" / "scripts" / "heavy.py"  # the plugin's own copy: status never runs repo code
+    if heavy.is_file():
+        try:
+            out = subprocess.run([sys.executable, str(heavy), "status"], capture_output=True, text=True, timeout=10, cwd=root).stdout
+        except (OSError, subprocess.TimeoutExpired):
+            out = ""
+        queue = [line for line in out.splitlines() if line.strip() and "idle" not in line]
+        lines += ["  heavy queue"] + [f"    {line}" for line in queue] if queue else []
+    return lines
 
 
 def gh_json(root: Path, *args: str) -> list | None:
@@ -221,26 +261,60 @@ def same_head(root: Path, cfg: dict, gated: str, head: str) -> bool:
 
 
 def planned(change: Path) -> int:
-    """How many milestones plan.md lists."""
+    """How many milestones plan.md lists (the distinct milestones of tasks.md in layout 4)."""
+    if spec.applies(change):
+        return len({m for _, _, m in spec.task_states(change) if m})
     plan = (change / "plan.md").read_text(encoding="utf-8") if (change / "plan.md").exists() else ""
     return sum(1 for line in section(plan, "Milestones") if re.match(r"\|\s*M\d+\b", line))
+
+
+def recorded(change: Path) -> dict:
+    """state/heads.json (the old place second): the head and base each gate passed, persisted so a
+    resumed goal or a new session reads what the gate saw, not a name derived from the plan."""
+    data = read_json(spec.state_path(change, "heads.json"))
+    return data if isinstance(data, dict) else {}
+
+
+def milestone_heads(change: Path, decisions: dict, n: int | None, cfg: dict | None = None) -> list[tuple[int, str]]:
+    """(number, head branch) of the milestone PRs that end the goal: the head the gate recorded for
+    it, else <prefix><slug>-<n> (feature-PR delivery: the one branch <prefix><slug>)."""
+    slug = decisions.get("milestone", {}).get("slug") or slug_of(change.name)
+    prefix = ((cfg or {}).get("milestones") or {}).get("branchPrefix", "milestone/")
+    kept = recorded(change).get("milestones")
+    kept = kept if isinstance(kept, dict) else {}
+    feature_prs = (cfg or {}).get("delivery") == "feature-prs"
+    rows = [n] if n else [1] if feature_prs else range(1, max(planned(change), 1) + 1)
+    return [
+        (i, str((kept.get(str(i)) or {}).get("head") or (f"{prefix}{slug}" if feature_prs else f"{prefix}{slug}-{i}")))
+        for i in rows
+    ]
 
 
 def branches(
     change: Path, decisions: dict, scope: str, n: int | None, cfg: dict | None = None
 ) -> list[str]:
-    """Head branches whose PRs end the goal: <prefix><slug>-<n>, or the Feature PRs row's branch."""
+    """Head branches whose PRs end the goal: the recorded or derived milestone heads, or the Feature
+    PRs row's branch (a hotfix with no row: the head its feature gate recorded)."""
     plan = (change / "plan.md").read_text(encoding="utf-8") if (change / "plan.md").exists() else ""
     if scope == "feature":
         for line in section(plan, "Feature PRs"):
             cells = [c.strip().strip("`") for c in line.strip().strip("|").split("|")]
             if len(cells) >= 4 and cells[0] == str(n):
                 return [cells[3]]
-        return []
-    slug = decisions.get("milestone", {}).get("slug") or slug_of(change.name)
-    count = planned(change)
-    prefix = ((cfg or {}).get("milestones") or {}).get("branchPrefix", "milestone/")
-    return [f"{prefix}{slug}-{i}" for i in ([n] if n else range(1, max(count, 1) + 1))]
+        hotfix = recorded(change).get("hotfix")
+        return [str(hotfix["head"])] if n is None and isinstance(hotfix, dict) and hotfix.get("head") else []
+    return [head for _, head in milestone_heads(change, decisions, n, cfg)]
+
+
+def route(change: Path, cfg: dict, scope: str, n: int | None) -> str:
+    """The scope a goal reads: a hotfix change (decisions milestone.kind, sdlc.json hotfix on) that
+    has a recorded hotfix head is a feature gate and a hotfix PR, not milestone 1."""
+    if scope == "milestone" and n is None and cfg.get("hotfix", True):
+        kind = read_json(spec.state_path(change, "decisions.json")).get("milestone", {}).get("kind")
+        hotfix = recorded(change).get("hotfix")
+        if kind == "hotfix" and isinstance(hotfix, dict) and hotfix.get("head"):
+            return "feature"
+    return scope
 
 
 def parent_of(change: Path, cfg: dict, scope: str, head: str = "") -> str:
@@ -253,26 +327,136 @@ def parent_of(change: Path, cfg: dict, scope: str, head: str = "") -> str:
     if scope == "milestone":
         from verify_gate import project_branch
 
+        for row in (recorded(change).get("milestones") or {}).values():  # the base its gate saw
+            if isinstance(row, dict) and row.get("head") == head and row.get("base"):
+                return str(row["base"])
         return project_branch(change, cfg) or default
     if head.startswith("hotfix/") and cfg.get("hotfix", True):
         return default
-    slug = read_json(change / "decisions.json").get("milestone", {}).get("slug") or slug_of(change.name)
+    slug = read_json(spec.state_path(change, "decisions.json")).get("milestone", {}).get("slug") or slug_of(change.name)
     return f"{(cfg.get('milestones') or {}).get('branchPrefix', 'milestone/')}{slug}"
 
 
-def waiting_on(root: Path, cfg: dict, pr: dict) -> str:
-    """Why an open PR is not armed: the reader decides an `ask` PR while askGatesMerge is on, the
-    tier workflow arms the others into the default branch, and only a repo without that workflow
-    leaves arming to the agent."""
-    if "ask" in {str(x.get("name")) for x in pr.get("labels") or []} and cfg.get("askGatesMerge", True):
-        return "awaits-owner"
+def waiting_on(root: Path, cfg: dict, pr: dict, accepted: bool = False) -> str:
+    """Why an open PR is not armed: the reader decides an `ask` PR while askGatesMerge is on (until
+    the owner accepts: the tier workflow never arms an ask PR, so after the acceptance the agent
+    does), the tier workflow arms the others into the default branch, and only a repo without that
+    workflow leaves arming to the agent."""
+    ask = "ask" in {str(x.get("name")).lower() for x in pr.get("labels") or []}
+    if ask and cfg.get("askGatesMerge", True):
+        return "not-merged-or-armed" if accepted else "awaits-owner"
     workflow = (root / ".github" / "workflows" / "ship-show-ask.yml").exists()
     if workflow and pr.get("baseRefName") == (cfg.get("defaultBranch") or "main"):
         return "awaits-workflow"
     return "not-merged-or-armed"
 
 
+FAILED_CHECKS = {"FAILURE", "TIMED_OUT", "CANCELLED", "ACTION_REQUIRED", "STARTUP_FAILURE", "ERROR"}
+
+
+def pr_flag(root: Path, cfg: dict, pr: dict, answer: str = "") -> tuple[str, str]:
+    """(phase, flag) of one PR. Phases: merged, awaiting-ci (armed, nothing left for the agent),
+    published (open, not armed), awaiting-owner, held, failed (red CI) and closed. The flag is the
+    word after `pr-<n>-` in the goal line, empty for the two phases that are done. `answer` is the
+    owner's latest answer to `Change <id>, finding PR<n>: ...` (accepted | hold | ""), read only for
+    an ask PR."""
+    names = {str(x.get("name", "")).lower() for x in pr.get("labels") or []}
+    merged = pr.get("state") == "MERGED" or bool(pr.get("mergedAt"))
+    armed = pr.get("state") == "OPEN" and bool(pr.get("autoMergeRequest"))
+    gating = "ask" in names and cfg.get("askGatesMerge", True)
+    accepted = answer == "accepted"
+    if answer == "hold" or "hold" in names:
+        return "held", "held"
+    if pr.get("state") == "CLOSED":
+        return "closed", "closed"
+    if gating and not accepted:  # a merge that outran the owner is still unsigned
+        return "awaiting-owner", "awaits-owner"
+    if merged:
+        return "merged", ""
+    if "awaiting-owner" in names:
+        return ("published", "label-awaiting-owner") if accepted else ("awaiting-owner", "awaits-owner")
+    if any(str(c.get("conclusion", "")).upper() in FAILED_CHECKS for c in pr.get("statusCheckRollup") or [] if isinstance(c, dict)):
+        return "failed", "ci-failed"
+    if armed:
+        return "awaiting-ci", ""
+    tiered = (
+        pr.get("baseRefName") == (cfg.get("defaultBranch") or "main")
+        and cfg.get("tiers") is not False
+        and (root / ".github" / "workflows" / "ship-show-ask.yml").exists()  # it sets the label
+    )
+    if tiered and not names & {"ask", "show", "ship"}:
+        return "published", "awaits-tier"
+    return "published", waiting_on(root, cfg, pr, accepted)
+
+
+def integrated(root: Path, sha: str, default: str) -> bool:
+    """`sha` is in the default branch, local or as origin has it."""
+    return any(contains(root, sha, ref) for ref in (default, f"origin/{default}"))
+
+
+def owner_accepted(root: Path, change: Path, slug: str) -> bool:
+    """The owner answered `Change <id>, finding PROJECT-<slug>: ...` with Accept milestone in a dialog (the
+    reader of marks.py, as for an ask PR); a flag the agent writes is never the owner."""
+    from marks import owner_decisions
+
+    return owner_decisions(root, change.name).get(f"PROJECT-{slug}", ("",))[0] == "accepted"
+
+
+def branchless_project(root: Path, change: Path, cfg: dict) -> tuple[int, str] | None:
+    """A project with no branch is done by the record `record <id> project` wrote: the default-branch
+    commit that holds every milestone, and the owner's acceptance. None when nothing was recorded."""
+    rec = recorded(change).get("project")
+    if not isinstance(rec, dict) or not rec.get("sha"):
+        return None
+    name, sha = f"GOAL {change.name}", str(rec["sha"])
+    if not integrated(root, sha, cfg.get("defaultBranch") or "main"):
+        return 1, f"{name} OPEN project-not-integrated"
+    slug = (read_json(spec.state_path(change, "decisions.json")).get("project") or {}).get("slug", "")
+    if not (rec.get("accepted") and owner_accepted(root, change, slug)):
+        return 1, f"{name} OPEN project-not-accepted"
+    return 0, f"{name} DONE project={slug} integrated={sha}"
+
+
+def record_project(root: Path, change: Path, cfg: dict, sha: str, accepted: bool) -> tuple[int, str]:
+    """Persist the integrated default-branch commit of a branchless project and the owner's acceptance."""
+    from verify_gate import record_head
+
+    default = cfg.get("defaultBranch") or "main"
+    if not integrated(root, sha, default):
+        return 1, f"{sha or 'no sha'} is not in {default}: merge every milestone into {default} first"
+    slug = (read_json(spec.state_path(change, "decisions.json")).get("project") or {}).get("slug", "")
+    if accepted and not owner_accepted(root, change, slug):
+        return 1, f"the owner has not accepted PROJECT-{slug}: ask `Change {change.name}, finding PROJECT-{slug}: ...` (Accept milestone | Hold) first"
+    record_head(change, "project", None, {"sha": sha, "accepted": accepted})
+    return 0, f"recorded project sha={sha} accepted={'yes' if accepted else 'no'}"
+
+
+def handoff_of(change: Path) -> dict:
+    """state/handoff.json: the record a hit cap left (verify_gate.write_handoff)."""
+    data = read_json(spec.state_path(change, "handoff.json"))
+    return data if isinstance(data, dict) and data.get("cap") else {}
+
+
+def handoff_sentence(change: Path) -> str:
+    rec = handoff_of(change)
+    return (
+        f"Blocking: {rec.get('what', 'a cap was reached')}, because {rec.get('why', 'the cap was reached')}; "
+        f"you run `{rec.get('next', '')}`."
+    )
+
+
 def goal(
+    root: Path, change: Path, scope: str = "milestone", n: int | None = None, gh=gh_json
+) -> tuple[int, str]:
+    """`goal_state` plus the handoff: a goal still OPEN or BLOCKED when a cap stopped the run reads
+    HANDOFF (the retry cap leaves a blocked gate report beside its record, and the record is the
+    one that names the next command)."""
+    code, line = goal_state(root, change, scope, n, gh)
+    cap = handoff_of(change).get("cap")
+    return (4, f"GOAL {change.name} HANDOFF cap={cap}") if code in (1, 3) and cap else (code, line)
+
+
+def goal_state(
     root: Path, change: Path, scope: str = "milestone", n: int | None = None, gh=gh_json
 ) -> tuple[int, str]:
     """(exit code, the one line) for the change's goal; `gh(root, *args)` is injectable. The gate's
@@ -282,23 +466,46 @@ def goal(
 
     name = f"GOAL {change.name}"
     cfg = config(root) if (root / "sdlc.json").exists() else {}
+    scope = route(change, cfg, scope, n)
     project = project_branch(change, cfg)
+    if scope == "project" and not project and (done := branchless_project(root, change, cfg)):
+        return done
     subject = change.name
     folder = change
     if scope == "project":
-        subject = (read_json(change / "decisions.json").get("project") or {}).get("slug", "")
+        subject = (read_json(spec.state_path(change, "decisions.json")).get("project") or {}).get("slug", "")
         folder = project_record(subject, root) if project else change
-    report = read_json(folder / "verify" / "report.json")
-    result = str(report.get("result", "")) if report.get("scope") == scope else ""
+    number = (n or (1 if cfg.get("delivery") == "feature-prs" else max(planned(change), 1))) if scope == "milestone" else None
+    if scope == "feature":
+        feature = branches(change, read_json(spec.state_path(change, "decisions.json")), scope, n, cfg)
+        key = pass_key(scope, feature[0]) if feature else None
+    else:
+        key = pass_key(scope, "", number)
+    # the checkout's report and the gate's shared copy: the newest one speaks (pass_proof.newest)
+    report = newest([folder / "verify" / "report.json", shared(root, subject, scope, key)], scope)
+    if scope == "milestone" and n:  # report.json is the last run only: milestone n keeps its own receipt
+        files = [folder / "verify" / f"milestone-{n}.json", shared(root, subject, "milestone", str(n))]
+        receipt = newest(files)
+        if receipt and not bound(report, scope, subject, n, project):
+            # the receipt stands in for report.json (the last run of any scope), unless report.json
+            # is a newer failure of this milestone: the newest report wins, whichever gate wrote it
+            last = _read(folder / "verify" / "report.json")
+            about = last and last[1].get("scope") == "milestone" and last[1].get("id", subject) == subject
+            about = about and last[1].get("milestone", n) == n
+            newer = about and last[0] > max(r[0] for r in map(_read, files) if r)
+            if not newer:
+                report = receipt
+    result = str(report.get("result", ""))
     blocked = re.fullmatch(r"VERIFY BLOCKED reason=([\w-]+)", result)
     if blocked:
         return 3, f"{name} BLOCKED reason={blocked.group(1)}"
     passed = re.fullmatch(rf"VERIFY PASS {scope} {re.escape(subject)} (\w+)", result)
     # a pass counts for the milestone it was gated as (the goal's last one without --milestone) and
     # the project the change belongs to: M1's pass never finishes M2, nor another project's
-    number = (n or max(planned(change), 1)) if scope == "milestone" else None
     if passed and scope != "project" and not bound(report, scope, subject, number, project):
         passed = None
+    if scope == "milestone" and n and planned(change) and n > planned(change):
+        return 1, f"{name} OPEN no-such-milestone:{n}"  # an unlisted row: no branch or PR is invented for it
     missing = [] if passed else [f"{scope}-gate-pass"]
     local = scope == "milestone" and project and merges_locally(cfg)
     if local:  # no PR: the gated head must be merged into the local project branch
@@ -309,10 +516,20 @@ def goal(
         # report.json holds the last gate run only: each planned milestone is done by its own
         # receipt (verify/milestone-<n>.json), whose gated head is in the project branch; the
         # branch merge is the fallback for a change gated before receipts existed
+        merged_in: list[str] | None = None  # the project history, listed once per poll
+
+        def brought_in(gated: str) -> str:
+            """The second parent of the oldest first-parent merge on the project branch that holds `gated`."""
+            nonlocal merged_in
+            if merged_in is None:
+                log = git(root, "log", "--first-parent", "--merges", "--reverse", "--format=%P", into)
+                merged_in = [p[1] for p in (line.split() for line in log.splitlines()) if len(p) > 1]
+            return next((p for p in merged_in if contains(root, gated, p)), "")
+
         if planned(change):
-            for b in branches(change, read_json(change / "decisions.json"), scope, n, cfg):
-                i = b.rsplit("-", 1)[1]
-                receipt = read_json(change / "verify" / f"milestone-{i}.json")
+            for i, b in milestone_heads(change, read_json(spec.state_path(change, "decisions.json")), n, cfg):
+                receipt = newest([change / "verify" / f"milestone-{i}.json", shared(root, change.name, "milestone", str(i))])
+                i = str(i)
                 tip = git(root, "rev-parse", "--verify", "--quiet", f"{b}^{{commit}}")
                 if receipt:
                     # a receipt counts only for its own milestone and change, never a copy
@@ -320,7 +537,13 @@ def goal(
                     if not (ok and contains(root, str(receipt.get("sha", "")), into)):
                         missing.append(f"receipt-not-merged:{i}")
                         continue
-                    if not tip:  # the branch is gone: the receipt stands in for it
+                    if not tip:  # the branch is gone: the merge that brought it in stands in for it
+                        sha = str(receipt.get("sha", ""))
+                        second = brought_in(sha)
+                        if not second:  # a fast-forward leaves no merge commit to prove against
+                            missing.append(f"receipt-not-merged:{i}")
+                        elif not same_head(root, cfg, sha, second):
+                            missing.append(f"gate-sha-not-tip:{b}")  # the merge carried more than records
                         continue
                 if not contains(root, tip, into):  # no receipt, or the branch is still there
                     missing.append(f"merge-missing:{b}")
@@ -331,7 +554,7 @@ def goal(
         if not names:
             missing.append("no-project-branch")
     else:
-        names = branches(change, read_json(change / "decisions.json"), scope, n, cfg)
+        names = branches(change, read_json(spec.state_path(change, "decisions.json")), scope, n, cfg)
     if not names and not local and scope != "project":
         missing.append(f"no-branch-for-{scope}-{n}")
     prs = []
@@ -339,7 +562,7 @@ def goal(
         found = gh(
             root,
             *("pr", "list", "--head", branch, "--state", "all", "--limit", "1"),
-            *("--json", "number,headRefOid,state,autoMergeRequest,mergedAt,baseRefName,labels"),
+            *("--json", "number,headRefOid,state,autoMergeRequest,mergedAt,baseRefName,labels,statusCheckRollup"),
         )
         if found is None:
             return 1, f"{name} OPEN gh-unavailable"
@@ -348,16 +571,22 @@ def goal(
             continue
         pr = found[0]
         merged = pr.get("state") == "MERGED" or bool(pr.get("mergedAt"))
-        armed = pr.get("state") == "OPEN" and bool(pr.get("autoMergeRequest"))
+        # the owner's answer to `Change <id>, finding PR<n>: ...` (Accept milestone | Hold), for
+        # every PR, merged ones too: a Hold blocks at any tier, and an Ask PR accepted and then merged
+        # stays DONE. Parsed once per process, from sessions newer than the change (marks.answers)
+        from marks import owner_decisions
+
+        answer = owner_decisions(root, change.name).get(f"PR{pr['number']}", ("",))[0]
+        _, flag = pr_flag(root, cfg, pr, answer)
         if pr.get("baseRefName") != parent_of(change, cfg, scope, branch):
             missing.append(f"pr-{pr['number']}-wrong-base")  # first: arming it would merge elsewhere
-        if not (merged or armed):
-            missing.append(f"pr-{pr['number']}-{waiting_on(root, cfg, pr)}")
+        if flag:
+            missing.append(f"pr-{pr['number']}-{flag}")
         prs.append((pr, "merged" if merged else "armed"))
     if prs and passed and not same_head(root, cfg, passed.group(1), prs[-1][0].get("headRefOid", "")):
         missing.append(f"gate-sha-not-pr-{prs[-1][0]['number']}-head")
     if scope == "milestone":
-        if blocker := milestone_blockers(change):  # the gate's own record rules, one definition
+        if blocker := milestone_blockers(change, number):  # the gate's own record rules, one definition
             missing.append(blocker[0])
     if missing:
         return 1, f"{name} OPEN " + ",".join(missing)
@@ -365,6 +594,53 @@ def goal(
         return 0, f"{name} DONE merged={project} gate={passed.group(1)}"
     pr, state = prs[-1]
     return 0, f"{name} DONE pr={pr['number']} state={state} gate={passed.group(1)}"
+
+
+def planned_in_history(root: Path, cfg: dict, change_id: str) -> int:
+    """How many milestones the removed change listed, read from the last commit that held its
+    plan.md or (layout 4) tasks.md, any ref; 0 when no file is left to read."""
+    for name in ("plan.md", "tasks.md"):
+        rel = f"{cfg.get('changesDir', 'changes')}/{change_id}/{name}"
+        commit = git(root, "log", "--all", "--diff-filter=AM", "-n1", "--format=%H", "--", rel)
+        text = git(root, "show", f"{commit}:{rel}") if commit else ""
+        if total := sum(1 for line in section(text, "Milestones") if re.match(r"\|\s*M\d+\b", line)):
+            return total
+    return 0
+
+
+def goal_removed(root: Path, change_id: str, scope: str, n: int | None, gh=gh_json) -> tuple[int, str] | None:
+    """The folder is gone: the owner's rule removes it after merge, so that is the normal end state.
+    Merged PRs from the change's milestone branches are the proof; None when they do not prove it.
+    `--milestone n` needs milestone n merged. The whole goal needs every planned milestone merged
+    (the plan is read from history), or, with no plan left, a merged PR into the default branch: a
+    milestone merged into a project branch counts only with the project's own PR merged there."""
+    cfg = config(root) if (root / "sdlc.json").exists() else {}
+    if scope != "milestone" or Path(change_id).name != change_id or change_id in ("", "..", "archive"):
+        return None
+    prefix, slug = (cfg.get("milestones") or {}).get("branchPrefix", "milestone/"), slug_of(change_id)
+    default = cfg.get("defaultBranch") or "main"
+    found = gh(root, "pr", "list", "--state", "merged", "--limit", "200", "--json", "number,headRefName,baseRefName,state")
+    if not found:  # gh failed or nothing merged: no proof, so the id is still unknown
+        return None
+    merged = [  # the one rule of the gate and the hook: <prefix><slug>-<n> is n, <prefix><slug> is 1
+        (num, p) for p in found
+        if (num := milestone_of(str(p.get("headRefName", "")), prefix, slug)) and (n is None or num == n)
+    ]
+    if not merged:
+        return None
+    last = merged[-1][1]
+    if n is None:
+        parents = {str(p.get("baseRefName", "")) for _, p in merged}
+        project = next((p for p in found if p.get("headRefName") in parents and p.get("baseRefName") == default), None)
+        total = planned_in_history(root, cfg, change_id)
+        if project:
+            last = project
+        elif total:
+            if not set(range(1, total + 1)) <= {num for num, _ in merged}:
+                return None
+        elif not any(p.get("baseRefName") == default for _, p in merged):
+            return None
+    return 0, f"GOAL {change_id} DONE pr={last['number']} state=merged folder=removed"
 
 
 # what is in the way, by the first missing item: (what, why, who acts, the exact step)
@@ -398,6 +674,12 @@ BLOCKS = {
         "findings.md has an unchecked item",
         "the agent",
         "fix each open item in findings.md, tick it, commit",
+    ),
+    "findings-blocked": (
+        "a review finding is blocked",
+        "findings.md has an item whose disposition says blocked",
+        "you",
+        "decide: a scope change with a new approval, or fix the named blocker",
     ),
     "validation-not-met": (
         "a fact has no proof",
@@ -441,11 +723,35 @@ BLOCKS = {
         "the agent",
         "on {n}: python3 scripts/verify_gate.py milestone {id} (writes a new receipt)",
     ),
+    "no-such-milestone:": (
+        "the plan has no milestone {n}",
+        "plan.md ## Milestones lists fewer rows",
+        "the agent",
+        "grep -n '^| M' changes/{id}/plan.md, then ask for a listed number",
+    ),
     "no-branch-for-": (
         "the plan names no branch for {n}",
         "plan.md has no matching row",
         "you",
         "add the row to plan.md ## Feature PRs",
+    ),
+    "no-project-branch": (
+        "the project has no branch and nothing records it integrated",
+        "no default-branch commit that holds every milestone is recorded",
+        "the agent",
+        "python3 ${{CLAUDE_SKILL_DIR}}/scripts/sdlc_status.py record {id} project --sha <default-branch commit that holds every milestone>",
+    ),
+    "project-not-integrated": (
+        "the recorded project commit is not in the default branch",
+        "the commit was recorded before the milestones merged, or it left the default branch",
+        "the agent",
+        "merge every milestone into the default branch, then `python3 ${{CLAUDE_SKILL_DIR}}/scripts/sdlc_status.py record {id} project --sha <sha>`",
+    ),
+    "project-not-accepted": (
+        "the owner has not accepted the project",
+        "the integrated project is recorded without the owner's acceptance",
+        "you",
+        "ask `Change {id}, finding PROJECT-<slug>: ...` with Accept milestone and Hold, then `python3 ${{CLAUDE_SKILL_DIR}}/scripts/sdlc_status.py record {id} project --sha <sha> --accepted`",
     ),
     "no-change-folder": (
         "there is no change folder",
@@ -541,29 +847,61 @@ def blocker(subject: str, line: str, scope: str = "milestone", base: str = "") -
     for key, (what, why, who, step) in BLOCKS.items():
         if key_of == key or (key.endswith(("-", ":")) and first.startswith(key)):
             n = re.sub(
-                r"^no-pr:|^no-branch-for-|^merge-missing:|^receipt-not-merged:|^gate-sha-not-tip:|^gate-sha-not-pr-|-head$",
+                r"^no-pr:|^no-such-milestone:|^no-branch-for-|^merge-missing:|^receipt-not-merged:|^gate-sha-not-tip:|^gate-sha-not-pr-|-head$",
                 "",
                 first,
             )
             fill = {"scope": scope, "id": subject, "n": n, "base": base or "<parent branch>"}
             return f"Blocking: {what.format(**fill)}, because {why}; {who} runs `{step.format(**fill)}`."
-    pr = re.fullmatch(r"pr-(\d+)-(not-merged-or-armed|awaits-owner|awaits-workflow|wrong-base)", first)
-    if pr and pr[2] == "awaits-owner":
+    waits = re.fullmatch(
+        r"pr-(\d+)-(closed|held|awaits-tier|awaits-owner|awaits-workflow|wrong-base|ci-failed|label-awaiting-owner)", first
+    )
+    if waits and waits[2] == "awaits-owner":
         return (
-            f"Blocking: PR {pr[1]} is labelled ask and waits for a person, because askGatesMerge "
-            f"is on; you read it and decide, then approve or close it (no one arms auto-merge)."
+            f"Blocking: PR {waits[1]} waits for its owner's acceptance, because it is labelled ask "
+            f"(or awaiting-owner) and askGatesMerge is on; the agent asks the owner "
+            f"`AskUserQuestion` \"Change {subject}, finding PR{waits[1]}: ...\" with the options "
+            f"Accept milestone and Hold, and arms nothing before the answer."
         )
-    if pr and pr[2] == "awaits-workflow":
+    if waits and waits[2] == "label-awaiting-owner":
         return (
-            f"Blocking: PR {pr[1]} is open without auto-merge, because the tier workflow arms ship "
-            f"and show PRs into the default branch; the workflow runs "
-            f"`gh pr view {pr[1]} --json labels,autoMergeRequest` to check it."
+            f"Blocking: PR {waits[1]} is accepted but still carries the awaiting-owner label, which "
+            f"stops the tier workflow; the agent runs `gh pr edit {waits[1]} --remove-label awaiting-owner`."
         )
-    if pr and pr[2] == "wrong-base":
+    if waits and waits[2] == "ci-failed":
         return (
-            f"Blocking: PR {pr[1]} targets the wrong branch, because the {scope} PR goes into "
-            f"{base or 'its parent'}; the agent runs `gh pr edit {pr[1]} --base {base or '<parent branch>'}`."
+            f"Blocking: a check of PR {waits[1]} failed, so arming it would never merge; the agent "
+            f"runs `gh pr checks {waits[1]}`, fixes the failure on the branch and pushes."
         )
+    if waits and waits[2] == "awaits-workflow":
+        return (
+            f"Blocking: PR {waits[1]} is open without auto-merge, because the tier workflow arms ship "
+            f"and show PRs into the default branch; the agent runs "
+            f"`gh pr view {waits[1]} --json labels,autoMergeRequest` to see whether it ran."
+        )
+    if waits and waits[2] == "wrong-base":
+        return (
+            f"Blocking: PR {waits[1]} targets the wrong branch, because the {scope} PR goes into "
+            f"{base or 'its parent'}; the agent runs `gh pr edit {waits[1]} --base {base or '<parent branch>'}`."
+        )
+    if waits:
+        what, step = {
+            "closed": (
+                "closed without merging, so there is nothing to arm",
+                f"the agent runs `gh pr create --base {base or '<parent branch>'} --fill` for the gated head",
+            ),
+            "held": (
+                "on Hold, so nothing arms it",
+                f"you decide: `gh pr edit {waits[1]} --remove-label hold` for a label, or answer "
+                f"the dialog \"Change {subject}, finding PR{waits[1]}: ...\" with Accept milestone",
+            ),
+            "awaits-tier": (
+                "waiting for its tier label, so nothing arms it",
+                f"the agent runs `gh pr view {waits[1]} --json labels` until the workflow has set it",
+            ),
+        }[waits[2]]
+        return f"Blocking: PR {waits[1]} is {what}; {step}."
+    pr = re.fullmatch(r"pr-(\d+)-not-merged-or-armed", first)
     if pr:
         flag = "--merge" if scope in ("milestone", "project") else "--squash"  # as the tier workflow
         return (
@@ -571,6 +909,17 @@ def blocker(subject: str, line: str, scope: str = "milestone", base: str = "") -
             f"the agent runs `gh pr merge {pr[1]} {flag} --auto`."
         )
     return f"Blocking: {first}, because the goal check lists it; the agent reads `sdlc_status.py goal {subject}`."
+
+
+def security_base(change: Path) -> str:
+    """The commit the goal started from: the `sha` approval recorded in lock.json ("" if none)."""
+    return str(read_json(spec.state_path(change, "lock.json")).get("sha") or "")
+
+
+def subject_of(change: Path, scope: str) -> str:
+    """What the goal's recovery step names: the change id, or for a project the project slug."""
+    slug = (read_json(spec.state_path(change, "decisions.json")).get("project") or {}).get("slug") if scope == "project" else ""
+    return slug or change.name
 
 
 def goal_main(args: list[str]) -> int:
@@ -592,6 +941,11 @@ def goal_main(args: list[str]) -> int:
     root = repo_root(Path.cwd())
     scope = "project" if project else flag[2:] if flag else "milestone"
     change = find_change(root, config(root), pos[0]) if root else None
+    if root and not change and (done := goal_removed(root, pos[0], scope, int(value) if flag else None)):
+        print(done[1])
+        if done[0]:
+            print(blocker(pos[0], done[1], scope))
+        return done[0]
     if not root or not change:
         line = f"GOAL {pos[0]} OPEN no-change-folder"
         print(line)
@@ -599,12 +953,15 @@ def goal_main(args: list[str]) -> int:
         return 1
     code, line = goal(root, change, scope, int(value) if flag else None)
     print(line)
+    if code == 4:
+        print(handoff_sentence(change))
+        return code
     head = re.search(r"no-pr:([^,\s]+)", line)
     # a feature's base depends on its branch (a hotfix goes to the default branch): the no-pr one,
     # or else the plan's row
-    row = branches(change, read_json(change / "decisions.json"), scope, int(value) if flag else None)
+    row = branches(change, read_json(spec.state_path(change, "decisions.json")), scope, int(value) if flag else None)
     base = parent_of(change, config(root), scope, head[1] if head else row[0] if scope == "feature" and row else "")
-    if code and (sentence := blocker(change.name, line, scope, base)):
+    if code and (sentence := blocker(subject_of(change, scope), line, scope, base)):
         print(sentence)
     return code
 
@@ -626,7 +983,7 @@ def write_readme(change: Path, text: str) -> int:
 
 
 def main(argv: list[str]) -> int:
-    if len(argv) < 2 or argv[1] not in ("map", "goal", "ids", "readme"):
+    if len(argv) < 2 or argv[1] not in ("map", "goal", "ids", "readme", "base", "record", "handoff"):
         print(__doc__)
         return 2
     if argv[1] == "goal":
@@ -640,6 +997,39 @@ def main(argv: list[str]) -> int:
     if not change:
         print("no change folder for this branch: pass its id")
         return 2
+    if argv[1] == "record":  # record <id> project --sha <sha> [--accepted]
+        rest = argv[3:]
+        sha = rest[rest.index("--sha") + 1] if "--sha" in rest and rest.index("--sha") + 1 < len(rest) else ""
+        if rest[:1] != ["project"]:
+            print(__doc__)
+            return 2
+        code, said = record_project(root, change, cfg, sha, "--accepted" in rest)
+        print(said)
+        return code
+    if argv[1] == "handoff":  # handoff <id> --cap turns|fix-rounds|retries [--what W] [--next C] | --resume
+        from verify_gate import CAPS, write_handoff
+
+        rest, path = argv[3:], change / "state" / "handoff.json"
+        opt = lambda flag: rest[rest.index(flag) + 1] if flag in rest and rest.index(flag) + 1 < len(rest) else ""  # noqa: E731
+        if "--resume" in rest:
+            path.unlink(missing_ok=True)
+            print(f"resumed {change.name}: the handoff is cleared")
+            return 0
+        if opt("--cap") not in CAPS:
+            print(__doc__)
+            return 2
+        resume = f"python3 ${{CLAUDE_SKILL_DIR}}/scripts/sdlc_status.py handoff {change.name} --resume"
+        nxt = opt("--next") or resume
+        write_handoff(
+            change, opt("--cap"), "milestone", opt("--what") or "the run stopped with the goal still open",
+            f"the {opt('--cap')} cap was reached", nxt,
+        )
+        print(f"HANDOFF {change.name} cap={opt('--cap')} next={nxt}")
+        return 0
+    if argv[1] == "base":
+        sha = security_base(change)
+        print(sha or "no recorded start: approve the plan first")
+        return 0 if sha else 1
     s = state(change, root, cfg)
     if argv[1] == "ids":
         print("\n".join(ids(change)))
@@ -647,7 +1037,7 @@ def main(argv: list[str]) -> int:
         stage = f"{s['stage']}/7 {STAGES[s['stage'] - 1]}"
         return write_readme(change, readme(change, stage))
     else:
-        print(milestone_map(s))
+        print("\n".join([milestone_map(s), *side_notes(root)]))
     return 0
 
 

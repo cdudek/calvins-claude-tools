@@ -1,0 +1,8 @@
+# specs/<capability>/manifest.yaml. Flat keys only: `key: value`, `key: [a, b]`, or `key:` and `- item` lines.
+purpose: <one line: what a person can do with this capability>
+aliases: [<other names people use for it>]
+owner: <team or person>
+code: [<paths or folders that implement it>]
+tests: [<folders or files that carry its @R tags>]
+related: [<other capabilities whose rules this one depends on>]
+# coverage: partial   # uncomment while the capability is only partly catalogued; an empty `spec find` is not proof then

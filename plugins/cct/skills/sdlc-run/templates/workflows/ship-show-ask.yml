@@ -13,7 +13,7 @@ name: Ship / Show / Ask
 
 on:
   pull_request:
-    types: [opened, synchronize, reopened, ready_for_review, closed]
+    types: [opened, synchronize, reopened, ready_for_review, closed, unlabeled, labeled]
 
 permissions:
   contents: read # the App token arms auto-merge; github.token only labels
@@ -34,6 +34,7 @@ jobs:
     outputs:
       tier: ${{ steps.classify.outputs.tier }}
       arm: ${{ steps.classify.outputs.arm }}
+      held: ${{ steps.classify.outputs.held }}
     env:
       GH_TOKEN: ${{ github.token }}
       PR: ${{ github.event.pull_request.number }}
@@ -56,15 +57,30 @@ jobs:
             tier=$(python3 scripts/ship_show_ask.py classify $files)
           fi
           echo "tier=$tier" | tee -a "$GITHUB_OUTPUT"
+          # A pending owner acceptance or a Hold (labels `awaiting-owner`, `hold`) arms nothing:
+          # auto-merge must never win the race with the owner's sign-off.
+          # Fails closed: a lookup that cannot be answered counts as a hold.
+          held=false
+          if labels=$(gh pr view "$PR" --json labels --jq '.labels[].name'); then
+            if printf '%s\n' "$labels" | grep -qxE 'awaiting-owner|hold'; then held=true; fi
+          else
+            held=true
+          fi
+          echo "held=$held" | tee -a "$GITHUB_OUTPUT"
           # One decision, read by both the mint and the arm step, so they cannot drift.
 {{#ASK_GATES_MERGE}}
-          if [ "$tier" != "ask" ] && [ "$IS_BOT" != "true" ]; then echo "arm=true"; else echo "arm=false"; fi | tee -a "$GITHUB_OUTPUT"
+          if [ "$tier" != "ask" ] && [ "$IS_BOT" != "true" ] && [ "$held" != "true" ]; then echo "arm=true"; else echo "arm=false"; fi | tee -a "$GITHUB_OUTPUT"
 {{/ASK_GATES_MERGE}}
 {{#ASK_MERGES_ON_GREEN}}
           # sdlc.json `askGatesMerge: false` — the tier says who reads, not who may
           # merge. Every human PR arms auto-merge and lands on green, ask included.
-          if [ "$IS_BOT" != "true" ]; then echo "arm=true"; else echo "arm=false"; fi | tee -a "$GITHUB_OUTPUT"
+          if [ "$IS_BOT" != "true" ] && [ "$held" != "true" ]; then echo "arm=true"; else echo "arm=false"; fi | tee -a "$GITHUB_OUTPUT"
 {{/ASK_MERGES_ON_GREEN}}
+
+      # A hold added after the PR was armed (the `labeled` event re-runs this job) takes the arming back.
+      - name: Disarm a held PR
+        if: steps.classify.outputs.held == 'true'
+        run: gh pr merge "$PR" --disable-auto || true
 
       - name: Apply the one label
         env:
@@ -78,6 +94,16 @@ jobs:
             [ "$old" = "$TIER" ] || gh pr edit "$PR" --remove-label "$old" 2>/dev/null || true
           done
           gh pr edit "$PR" --add-label "$TIER"
+
+      # A bot PR is labelled ship but never armed: the arm job mints the App token for human PRs only.
+      # Without this step a green bot PR waits for nobody. Name the merger instead of leaving it silent.
+      - name: Say who merges a bot PR
+        if: github.event.pull_request.user.type == 'Bot'
+        run: |
+          set -euo pipefail
+          echo "::notice::bot PR labelled ship: this workflow does not arm it. A person merges it on green, or the repo's own bot-merge automation does (references/tiers.md)."
+          gh label create needs-merge --color 5319E7 --description "bot PR: green checks alone do not merge it; a person or the repo's bot-merge automation does" --force
+          gh pr edit "$PR" --add-label needs-merge
 
   # Separate job, NO checkout: the `tier` job executes PR-authored code
   # (scripts/ship_show_ask.py from the PR's merge ref), and a PR could rewrite PATH from

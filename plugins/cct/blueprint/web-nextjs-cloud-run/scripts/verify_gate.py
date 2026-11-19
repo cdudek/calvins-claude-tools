@@ -30,7 +30,7 @@ origin's default branch, or project/<slug> in a project, has commits HEAD lacks:
 locally first. With `milestones.merge: "local"` the local project/<slug> must also be an ancestor
 of HEAD, so a milestone cannot skip an earlier one merged locally. Then it runs the checks cheapest first and the first
 failure stops the run (`--keep-going` runs them all and reports the first failure's verdict), and
-writes <changesDir>/<id>/verify/report.json + report.md (a milestone on branch milestone/<slug>-<n> also milestone-<n>.json, never overwritten by another scope).
+writes <changesDir>/<id>/verify/report.json + report.md (a milestone on branch milestone/<slug>-<n> also milestone-<n>.json, never overwritten by another scope). Every report also gets a copy in <git common dir>/sdlc/passes/<change>/<scope>-<key>.json (atomic), which outlives the worktree; hooks/pass_proof.py reads both.
 
 Cheapest first: a check that passed takes its seconds into verify/durations.json (keyed by command)
 and the next run sorts by them; a check with no record yet sorts by a static guess from its
@@ -69,6 +69,7 @@ from __future__ import annotations
 
 import argparse
 import datetime as dt
+import functools
 import hashlib
 import json
 import os
@@ -79,8 +80,10 @@ import subprocess
 import sys
 import time
 from pathlib import Path
+from urllib.parse import quote
 
 sys.dont_write_bytecode = True  # imports of marks and sdlc_version must not leave __pycache__
+import spec  # noqa: E402  (layout 4: the three documents, the rules, the id families)
 from sdlc_version import kit_version, message  # noqa: E402
 
 REASONS = {
@@ -98,9 +101,13 @@ REASONS = {
     "test-proves-nothing",
     "validation-not-met",  # a `not met` or `partly` row in validation.md
     "findings-open",  # an unchecked item in findings.md outside ## Advisory
+    "findings-blocked",  # an open item whose ## Dispositions row says blocked: terminal
     "not-converged",  # findings.md ## Converge has no `Converged:` line
 }
 LOCKED = ("facts.md", "done.json")
+REPORT_FORMAT = 2  # a report of this format names its change, owner and milestone; hooks/pass_proof.py requires them
+LOCK_FORMAT = 3  # written by `approve` into lock.json; strict records apply to locks of this version or later
+ROUTING = ("size", "visualSource")  # decisions.json fields that route the gate, locked at approval
 TAIL = 60  # stdout lines of a failing check
 BREAKER = 3
 ATTEMPTS = 3
@@ -109,15 +116,30 @@ SENTENCE_WORDS = 25
 OWNER_FILES = ("intent.md", "plan.md", "milestone.md", "questions.md", "pr-body.md")
 # The id families the chain defines: asks, bugs, facts, challenge findings, job stories,
 # non-functional facts, questions, review findings, analyze findings (`references/readability.md`).
-ID_TOKEN = r"[ABFHJNQRX]\d+"
-BARE_ID = re.compile(rf"(?<![\w@/.#-]){ID_TOKEN}\b")
-# A definition label opens a line: `**F3**`, `**F3:**`, `**Q1 (date) the question?**`. The id then
-# stands alone; `**B19 blocks the build.**` is a sentence, not a label.
-LABEL = re.compile(
-    rf"^\s*(?:>\s*)?(?:(?:[-*]|\d+\.)\s+(?:\[[ x]\]\s+)?)?\*\*({ID_TOKEN})(?=\*\*|:|\s*\(|\s*$)"
-)
-TABLE_ID = re.compile(rf"^\s*\|\s*({ID_TOKEN})\s*\|")
-IDS_ONLY = re.compile(rf"[\s,;/&+-]*(?:{ID_TOKEN}[\s,;/&+-]*)*")
+LEGACY_LETTERS = "ABFHJNQRX"
+
+
+@functools.lru_cache(maxsize=None)
+def id_patterns(letters: str = LEGACY_LETTERS) -> tuple[re.Pattern, re.Pattern, re.Pattern, re.Pattern]:
+    """(bare id, definition label, table-row id, ids-only cell) for one set of family letters. The
+    letter R is a review finding before layout 4 and a rule in it, where a finding is V."""
+    token = rf"[{letters}]\d+"
+    return (
+        re.compile(rf"(?<![\w@/.#-]){token}\b"),
+        # A definition label opens a line: `**F3**`, `**F3:**`, `**Q1 (date) the question?**`. The id
+        # then stands alone; `**B19 blocks the build.**` is a sentence, not a label.
+        re.compile(
+            rf"^\s*(?:>\s*)?(?:(?:[-*]|\d+\.)\s+(?:\[[ x]\]\s+)?)?\*\*({token})(?=\*\*|:|\s*\(|\s*$)"
+        ),
+        re.compile(rf"^\s*\|\s*({token})\s*\|"),
+        re.compile(rf"[\s,;/&+-]*(?:{token}[\s,;/&+-]*)*"),
+    )
+
+
+def letters_of(change: Path) -> str:
+    return "".join(sorted(spec.id_families(change)))
+
+
 PLACEHOLDER = re.compile(r"\[NEEDS CLARIFICATION: (?:<question>|\.\.\.)\]")  # the template's own words, no other
 BRACKETS = re.compile(r"\([^()]*\)|\[[^\[\]]*\]")  # may span a line wrap, never a blank line
 
@@ -131,16 +153,44 @@ def root() -> Path:
     return Path(sh("git", "rev-parse", "--show-toplevel") or ".").resolve()
 
 
-def criteria_hash(change: Path, checks: object) -> dict[str, str]:
+def criteria_hash(change: Path, checks: object, plan: bool = True) -> dict[str, str]:
+    """Hashes of what approval locks: facts.md, done.json, the checks and (from 3.21.0) the plan's
+    `## Milestones` section, which decides which facts each milestone must prove. `plan=False`
+    reads an older lock, which lacks that key."""
+    v4 = spec.applies(change)
     hashes = {
-        name: hashlib.sha256((change / name).read_bytes()).hexdigest()
-        for name in LOCKED
-        if (change / name).exists()
+        name: hashlib.sha256(spec.state_path(change, name).read_bytes()).hexdigest()
+        for name in (("done.json",) if v4 else LOCKED)
+        if spec.state_path(change, name).exists()
     }
+    if v4:  # the spec, the design and the task rows replace facts.md and the plan's milestones
+        hashes.update(
+            {name: hashlib.sha256(text.encode("utf-8")).hexdigest() for name, text in spec.lock_inputs(change).items()}
+        )
     hashes["checks"] = hashlib.sha256(
         json.dumps(checks, sort_keys=True).encode("utf-8")
     ).hexdigest()
+    if plan and not v4:
+        hashes["plan.milestones"] = hashlib.sha256(
+            section(read(change / "plan.md"), "Milestones").encode("utf-8")
+        ).hexdigest()
+    if plan:  # every layout locks the routing fields
+        hashes["decisions.routing"] = hashlib.sha256(
+            json.dumps(routing(change), sort_keys=True).encode("utf-8")
+        ).hexdigest()
     return hashes
+
+
+def routing(change: Path) -> dict:
+    """The routing fields of decisions.json (an unreadable file locks as itself, so editing it moves the hash)."""
+    path = spec.state_path(change, "decisions.json")
+    if not path.exists():
+        return {"missing": True}
+    try:
+        data = json.loads(read(path))
+    except (OSError, ValueError):
+        return {"unreadable": True}
+    return {k: data.get(k) for k in ROUTING} if isinstance(data, dict) else {"unreadable": True}
 
 
 def merges_locally(cfg: dict) -> bool:
@@ -148,12 +198,29 @@ def merges_locally(cfg: dict) -> bool:
     return (cfg.get("milestones") or {}).get("merge") == "local"
 
 
+def common_git_dir(repo: Path | None = None) -> Path:
+    return Path(sh("git", "-C", str(repo or "."), "rev-parse", "--path-format=absolute", "--git-common-dir") or ".git")
+
+
 def project_record(slug: str, repo: Path | None = None) -> Path:
     """Where `project <slug>` writes its report: the common git dir, shared by all worktrees."""
-    common = sh(
-        "git", "-C", str(repo or "."), "rev-parse", "--path-format=absolute", "--git-common-dir"
-    )
-    return Path(common or ".git") / "sdlc" / "projects" / slug
+    return common_git_dir(repo) / "sdlc" / "projects" / slug
+
+
+def pass_record(scope: str, change: str, branch: str, number: int | None, repo: Path | None = None) -> Path | None:
+    """The shared copy of a report: <common git dir>/sdlc/passes/<change>/<scope>-<key>.json, the file
+    hooks/pass_proof.py `shared` names (test_passes keeps the two equal). The key is the milestone
+    number (`milestone_number`), the feature's branch (percent-encoded) or 0 for the project; None
+    for a milestone branch that is no milestone, which keeps only its checkout report."""
+    key = {"milestone": str(number or ""), "feature": quote(branch, safe=""), "project": "0"}.get(scope)
+    return common_git_dir(repo) / "sdlc" / "passes" / change / f"{scope}-{key}.json" if key else None
+
+
+def write_atomic(path: Path, text: str) -> None:
+    path.parent.mkdir(parents=True, exist_ok=True)
+    tmp = path.with_name(f".{path.name}.{os.getpid()}.tmp")
+    tmp.write_text(text, encoding="utf-8")
+    os.replace(tmp, path)
 
 
 def has_bundle_inputs(change: Path) -> bool:
@@ -162,7 +229,7 @@ def has_bundle_inputs(change: Path) -> bool:
     if next((change / "asks").rglob("index.html"), None):
         return True
     try:
-        declared = json.loads((change / "decisions.json").read_text(encoding="utf-8"))
+        declared = json.loads(spec.state_path(change, "decisions.json").read_text(encoding="utf-8"))
         path = (change / declared["visualSource"]["path"]).resolve()
         return path.is_dir() and path.is_relative_to((change / "asks").resolve())
     except (OSError, ValueError, KeyError, TypeError, AttributeError):
@@ -174,7 +241,7 @@ def milestone_number(change: Path, cfg: dict, branch: str) -> int | None:
     rule of hooks/pass_proof.py `milestone_of`, kept equal by test_contract."""
     prefix = (cfg.get("milestones") or {}).get("branchPrefix", "milestone/")
     try:
-        slug = (json.loads((change / "decisions.json").read_text(encoding="utf-8")).get("milestone") or {}).get("slug")
+        slug = (json.loads(spec.state_path(change, "decisions.json").read_text(encoding="utf-8")).get("milestone") or {}).get("slug")
     except (OSError, ValueError, AttributeError):
         slug = None
     slug = slug or re.sub(r"^[A-Z][A-Z0-9]+-\d+-", "", re.sub(r"^\d{4}-\d{2}-\d{2}-", "", change.name))
@@ -192,12 +259,55 @@ def project_branch(change: Path, cfg: dict) -> str:
     `branch: true` is planning only (3.7.0), but one written before 3.7.0 has no `branch` key
     and keeps its branch."""
     try:
-        project = json.loads((change / "decisions.json").read_text(encoding="utf-8")).get("project")
+        project = json.loads(spec.state_path(change, "decisions.json").read_text(encoding="utf-8")).get("project")
     except (OSError, ValueError, AttributeError):
         project = None
     if isinstance(project, dict) and project.get("slug") and project.get("branch", True):
         return f"{(cfg.get('projects') or {}).get('branchPrefix', 'project/')}{project['slug']}"
     return ""
+
+
+def hotfix_change(change: Path) -> bool:
+    """The change record says `milestone.kind: hotfix`: only then is its hotfix/* head a route."""
+    try:
+        return (json.loads(read(spec.state_path(change, "decisions.json")) or "{}").get("milestone") or {}).get("kind") == "hotfix"
+    except (ValueError, AttributeError):
+        return False
+
+
+def record_head(change: Path, key: str, name: str | None, value: dict) -> None:
+    """Persist the head and base a gate passed in state/heads.json, so a resumed goal or a new session
+    reads the same values the gate saw (milestones.<n>, or hotfix). The old place is read first."""
+    try:
+        data = json.loads(read(spec.state_path(change, "heads.json")) or "{}")
+    except ValueError:
+        data = {}
+    if name is None:
+        data[key] = value
+    else:
+        data.setdefault(key, {})[name] = value
+    path = change / "state" / "heads.json"
+    path.parent.mkdir(exist_ok=True)
+    path.write_text(json.dumps(data, indent=2) + "\n", encoding="utf-8")
+
+
+CAPS = ("turns", "fix-rounds", "retries")
+
+
+def dirty_lines(change: Path) -> list[str]:
+    """`git status --porcelain` minus what the gate itself writes: verify/, and the head and handoff
+    records, which ride along in the next commit (they are records, never criteria)."""
+    own = (f"{change.name}/verify/", f"{change.name}/state/heads.json", f"{change.name}/state/handoff.json")
+    return [line for line in sh("git", "status", "--porcelain", "--untracked-files=all").splitlines() if not any(o in line for o in own)]
+
+
+def write_handoff(change: Path, cap: str, scope: str, what: str, why: str, next_step: str) -> None:
+    """The one HANDOFF record of a hit cap (state/handoff.json): what stopped, why, and the exact next
+    command, so the run ends cleanly and a new session or the owner resumes from the file."""
+    path = change / "state" / "handoff.json"
+    path.parent.mkdir(exist_ok=True)
+    record = {"cap": cap, "scope": scope, "what": what, "why": why, "next": next_step, "at": time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime())}
+    path.write_text(json.dumps(record, indent=2) + "\n", encoding="utf-8")
 
 
 def parent_tips(change: Path, cfg: dict) -> list[tuple[str, str]]:
@@ -256,19 +366,336 @@ def approval_blockers(change: Path) -> list[str]:
     return out
 
 
-def milestone_blockers(change: Path) -> tuple[str, list[str]] | None:
-    """The records a milestone must close before it passes: (reason, offending lines) or None."""
+E2E_ENTRY = re.compile(r"playwright|test:e2e|\be2e\b|cypress")
+E2E_SCOPED = re.compile(
+    r"--grep|--only-changed|--last-failed|--repeat-each|\bseq\b|\bfor\b|\brelated\b"
+    r"|\.(?:spec|test)\.\w+|test_\w+\.py|\$specs"
+)
+
+
+E2E_REPEAT = re.compile(r"--repeat-each|\bseq\s+3\b|\bin\s+1\s+2\s+3\b|--count[= ]3")
+
+
+def has_e2e_config(repo: Path) -> bool:
+    """The repo has an E2E suite of its own: a playwright config or an e2e/ folder."""
+    return (repo / "e2e").is_dir() or any(repo.glob("playwright.config.*"))
+
+
+def full_e2e_gap(checks: list, repo: Path) -> str:
+    """"" when `checks.milestone` names a full E2E entry (or the repo has no E2E suite), else why
+    not: the gate is the only runner of the full suite, so a list without it never runs it."""
+    if not has_e2e_config(repo):
+        return ""
+    cmds = [c["run"] if isinstance(c, dict) else c for c in checks]
+    full = any(E2E_ENTRY.search(c) and not E2E_SCOPED.search(c) for c in cmds)
+    repeat = any(E2E_ENTRY.search(c) and E2E_REPEAT.search(c) for c in cmds)
+    if full and repeat:
+        return ""
+    return (
+        "sdlc.json checks.milestone has no full E2E entry and a repeat (x3) of the changed and flaky specs "
+        "although the repo has an E2E suite: add the full E2E command (the stack's, run once) and the repeat"
+        if not full
+        else "sdlc.json checks.milestone has a full E2E entry but no repeat (x3) of the changed and flaky specs "
+        "although the repo has an E2E suite: add the repeat"
+    )
+
+
+PLAIN_ID = re.compile(r"[A-Za-z0-9][A-Za-z0-9._-]*")  # one path component, never a flag
+PLAIN_BRANCH = re.compile(r"[A-Za-z0-9][A-Za-z0-9._/-]*")
+
+
+def plain_id(name: str) -> bool:
+    return bool(PLAIN_ID.fullmatch(name)) and ".." not in name
+
+
+def plain_branch(name: str) -> bool:
+    return bool(PLAIN_BRANCH.fullmatch(name)) and all(p not in ("", "..") for p in name.split("/"))
+
+
+def unsafe_substitutions(change_id: str, cfg: dict) -> str:
+    """Why `{id}` or `{base}` may not be put into a shell command line, or "" when both are plain."""
+    if not plain_id(change_id):
+        return (
+            f"the change id {change_id!r} is not a plain name "
+            "(start with a letter or digit; then letters, digits, . _ -; no ..)"
+        )
+    branch = cfg.get("defaultBranch") or "main"
+    if not plain_branch(branch):
+        return (
+            f"sdlc.json defaultBranch {branch!r} is not a plain branch name "
+            "(start with a letter or digit; no leading -, no .. or empty component)"
+        )
+    return ""
+
+
+def parent_ref(change: Path, cfg: dict, repo: Path) -> str:
+    """The ref a milestone's diff base is: the project branch it merges into (origin's, or the
+    local one in local mode) when the change has a project branch that exists, else the default
+    branch on origin."""
+    if (pb := project_branch(change, cfg)) and plain_branch(pb):
+        local = merges_locally(cfg) and sh("git", "-C", str(repo), "rev-parse", "--verify", "--quiet", f"{pb}^{{commit}}")
+        if local:
+            return pb
+        if sh("git", "-C", str(repo), "rev-parse", "--verify", "--quiet", f"origin/{pb}^{{commit}}"):
+            return f"origin/{pb}"
+    return f"origin/{cfg.get('defaultBranch') or 'main'}"
+
+
+def parent_gap(repo: Path, base: str) -> list[str]:
+    """Layout 4 compares the change with its parent branch. When no parent resolves (a fresh clone
+    with no `origin`, a renamed default branch) that is the environment's gap, not a failed change:
+    the message and the fix line, or nothing."""
+    if spec.resolve_base(repo, base):
+        return []
+    default = base.removeprefix("origin/")
+    return [
+        f"the parent branch ({base}) cannot be resolved: the living-spec diff has nothing to compare with.",
+        f"Fix: `git fetch origin {default}` (or create the branch), or set sdlc.json `defaultBranch` to its real name; then run again.",
+    ]
+
+
+def expand(cmd: str, change_id: str, cfg: dict, base: str = "") -> str:
+    """`{id}` is the change, `{base}` the diff base of a repeat run: `base` (the real parent ref,
+    see parent_ref) or else the default branch on origin. Both go into a command run by a shell,
+    so only plain names are substituted."""
+    if why := unsafe_substitutions(change_id, cfg):
+        raise ValueError(why)
+    base = base or f"origin/{cfg.get('defaultBranch') or 'main'}"
+    if not plain_branch(base):
+        raise ValueError(f"the diff base {base!r} is not a plain ref")
+    return cmd.replace("{id}", shlex.quote(change_id)).replace("{base}", shlex.quote(base))
+
+
+SETTLED = ("accepted", "deferred")  # `fixed` is the ticked box; `blocked` is terminal
+
+
+def item_id(item: str) -> str:
+    """The id of a findings.md item: its explicit bold label (**B2**, **C1**) when it follows the
+    finding-id grammar shared with the producers, else "" (an item without one can never be
+    settled by an owner answer)."""
+    from marks import FINDING_ID  # lazy: an old marks.py never breaks approve, audit or lint
+
+    m = re.match(rf"\*\*({FINDING_ID})\*\*", item.strip())
+    return m.group(1) if m else ""
+
+
+NO_EVIDENCE = {"", "-", "--", "n/a", "na", "none", "tbd", "todo", "?"}
+
+
+def lock_format(change: Path) -> int:
+    """The format version `approve` wrote into lock.json: 0 for a lock from before it existed or no
+    lock. An unreadable lock reads as the newest format (fail closed)."""
+    if not spec.state_path(change, "lock.json").exists():
+        return 0
+    try:
+        return int(json.loads(read(spec.state_path(change, "lock.json"))).get("format", 0))
+    except (ValueError, AttributeError, TypeError):
+        return LOCK_FORMAT
+
+
+def current_format(change: Path) -> bool:
+    """Approved under lock format 3 or later: its records may not be missing and its validation rows
+    are strict. An older lock (including one that merely holds done.json) keeps the old behaviour and
+    gets an upgrade-gap note."""
+    return lock_format(change) >= LOCK_FORMAT
+
+
+def approved_facts(change: Path) -> tuple[list[str], list[str]]:
+    """(fact ids of the approved `done.json`, problems). A missing or unparsable file is a problem
+    on a current-format change; a legacy change without one has no facts to derive."""
+    problem = "validation.md: done.json is missing or unreadable, so the approved facts are unknown"
+    if not spec.state_path(change, "done.json").exists():
+        return [], [problem] if current_format(change) else []
+    try:
+        listed = json.loads(read(spec.state_path(change, "done.json"))).get("facts")
+        if not isinstance(listed, list):
+            raise ValueError("facts is not a list")
+        return [str(f["id"] if isinstance(f, dict) else f) for f in listed if f], []
+    except (ValueError, AttributeError, KeyError, TypeError):
+        return [], [problem]
+
+
+FACT_RANGE = re.compile(r"\b([A-Z])(\d+)\s*(?:to|\.\.|[-\u2013\u2014])\s*(?:[A-Z])?(\d+)\b")
+
+
+def cell_ids(cell: str, universe: list[str]) -> list[str]:
+    """The ids of `universe` a plan cell names: `F1`, `F1 to F132`, `F1-F7`, `F8\u2013F20`; its order."""
+    named: set[str] = set()
+    for m in FACT_RANGE.finditer(cell):
+        lo, hi = int(m[2]), int(m[3])
+        named.update(f"{m[1]}{k}" for k in range(lo, min(hi, lo + 5000) + 1))
+    named.update(re.findall(r"\b[A-Z]\d+\b", FACT_RANGE.sub(" ", cell)))
+    return [f for f in universe if f in named]
+
+
+def row_facts(plan: str, number: int, facts: list[str]) -> list[str]:
+    """The approved `facts` the `## Milestones` row of milestone `number` lists (`M1 ...` or a bare `1`).
+    A plan with one row whose cell names no id (`rows 0 to 5, 74 facts`) gives that row every fact."""
+    rows = table_rows(section(plan, "Milestones"))[1:]
+    row = next((r for r in rows if len(r) > 1 and re.match(rf"M?{number}\b", r[0])), None)
+    mine = cell_ids(row[1], facts) if row else []
+    if not mine and row and len(rows) == 1 and row[1].strip().lower() not in ("", "none", "-") and not re.search(r"\b[A-Z]\d+\b", row[1]):
+        return list(facts)
+    return mine
+
+
+def milestone_facts(change: Path, number: int | None = None) -> tuple[list[str], list[str]]:
+    """(the approved facts this milestone must prove, problems). Under lock format 3 and for a known
+    milestone `number`, the `## Milestones` row of `plan.md` selects them and a missing or empty row is
+    a problem; an older lock uses every approved fact (its plan rows were never locked)."""
+    facts, problems = approved_facts(change)
+    if number and facts and spec.applies(change):  # layout 4: the rules of this milestone's tasks
+        tasks = spec.table(read(change / "tasks.md"), "Tasks")
+        if not tasks:  # a scope S change has no task table: one milestone, every rule
+            return facts, problems
+        mine = {
+            f"R{n}"
+            for t in tasks
+            if re.match(rf"M?{number}\b", spec._cell(t, "milestone"))
+            for n in re.findall(r"R(\d+)", spec._cell(t, "rules", "satisf"))
+        }
+        if not mine & set(facts):
+            return [], problems + [f"validation.md: tasks.md has no task for M{number} that lists approved rules"]
+        return [f for f in facts if f in mine], problems
+    if number and facts and current_format(change):
+        mine = row_facts(read(change / "plan.md"), number, facts)
+        if not mine:
+            return [], problems + [
+                f"validation.md: plan.md ## Milestones has no row for M{number} that lists approved facts"
+            ]
+        return mine, problems
+    return facts, problems
+
+
+def validation_gaps(change: Path, number: int | None = None) -> list[str]:
+    """What validation.md lacks: for every approved fact of this milestone one row with the verdict
+    `met` and evidence (a test, a file, an observed artefact: not empty, not a placeholder). Only a
+    change approved under lock format 3 is held to it; an older one gets an upgrade-gap note instead."""
+    if not current_format(change):
+        return []
+    rows = table_rows(read(change / "validation.md"))
+    head = [c.lower() for c in rows[0]] if rows else []
+    at = head.index("evidence") if "evidence" in head else 3
+    facts, gaps = milestone_facts(change, number)
+    for fact in facts:
+        mine = [r for r in rows if fact in cell_ids(r[0] if r else "", [fact])]
+        if not mine:
+            gaps.append(f"validation.md: {fact} has no row")
+        for row in mine:
+            # the verdict is the last cell and never doubles as the evidence cell
+            evidence = row[at].strip(" `") if len(row) > at and at < len(row) - 1 else ""
+            if row[-1].strip().lower() != "met":
+                gaps.append(f"validation.md: {fact} is not marked met")
+            elif evidence.lower() in NO_EVIDENCE or evidence[:1] == "<":
+                gaps.append(f"validation.md: {fact} is met without evidence")
+    return gaps
+
+
+def read_decisions(change: Path) -> dict | None:
+    """decisions.json as a dict ({} when unparsable or not an object), None when the file is missing."""
+    path = spec.state_path(change, "decisions.json")
+    if not path.exists():
+        return None
+    try:
+        data = json.loads(read(path))
+    except (OSError, ValueError, AttributeError):
+        return {}
+    return data if isinstance(data, dict) else {}
+
+
+def sources_present(change: Path) -> bool:
+    """The change holds visual inputs: marks.json, owner sessions, a bundle, a loose reference
+    image or a capture manifest (any one makes `marks.py check` mandatory)."""
+    if (change / "marks.json").exists() or (change / "verify/shots/manifest.json").exists():
+        return True
+    try:
+        from marks import inventory  # absent in an older marks.py: no loose-image check then
+
+        return bool(inventory(change))
+    except ImportError:
+        return False
+    except (OSError, ValueError):
+        return True  # an inventory that cannot be read is itself a marks failure
+
+
+def visual_run_required(change: Path, cfg: dict, repo: Path) -> bool:
+    """A milestone needs a current UX visual run when the UX plan is on, the decision says the
+    change has an interface (`size` is not `none`) and a visual source or reference exists, unless
+    `decisions.json` `skips.visual` is a `skip -- <reason>` that the owner attested. decisions.json
+    is not part of the approval lock, so the attestation is the owner's answer to the dialog
+    `Change <id>, finding visual-skip: ...` (options Skip visual evidence, Run visual evidence)."""
+    decisions = read_decisions(change) or {}
+    if cfg.get("ux") == "off":
+        return False
+    skip = str((decisions.get("skips") or {}).get("visual", ""))
+    if re.match(r"skip -- \S", skip):
+        from marks import owner_decisions
+
+        if owner_decisions(repo, change.name).get("visual-skip", ("",))[0] == "skip":
+            return False
+    # `size: none` only waives loose sources: an explicit visual source always needs its run
+    return bool(decisions.get("visualSource")) or (decisions.get("size") != "none" and sources_present(change))
+
+
+def refusal(name: str, message: str) -> dict:
+    """An evidence check that fails with `message`: the gate says why before any suite runs."""
+    return {
+        "name": name,
+        "cache": False,
+        "run": shlex.join([sys.executable, "-c", f"import sys; print({message!r}); sys.exit(1)"]),
+    }
+
+
+def milestone_blockers(change: Path, number: int | None = None) -> tuple[str, list[str]] | None:
+    """The records a milestone must close before it passes: (reason, offending lines) or None.
+    A residual finding is settled only by the owner's answer to a dialog `Change <id>, finding
+    <finding id>: ...` (`marks.owner_decisions`, the one reader gate and status share)."""
     rows = table_rows(read(change / "validation.md"))
     bad = [r for r in rows if any(c.lower() in ("not met", "partly") for c in r)]
     if bad:
         return "validation-not-met", [f"validation.md: {r[0]} {r[-1]}" for r in bad]
     findings = read(change / "findings.md")
     advisory = section(findings, "Advisory")
-    open_items = re.findall(r"^\s*[-*] \[ \] (.*)$", findings.replace(advisory, ""), re.M)
+    items = re.findall(r"^\s*[-*] \[([ x])\] (.*)$", findings.replace(advisory, ""), re.M)
+    ids = [item_id(text) for _, text in items]
+    decided = {}
+    if any(ids):
+        repo = Path(sh("git", "-C", str(change), "rev-parse", "--show-toplevel") or ".")
+        from marks import owner_decisions
+
+        decided = owner_decisions(repo, change.name, change / "findings.md", "**{}**", with_time=True)
+    # a terminal `Block the close` answer counts against every finding, ticked or not: a ticked
+    # box is no evidence against the owner's block; a later answer from the owner resolves it
+    blocked = [
+        f"findings.md: blocked: {text[:80]}" + (" (ticked, contradicts the owner's block)" if mark == "x" else "")
+        for (mark, text), k in zip(items, ids)
+        if k and decided.get(k, ("",))[0] == "blocked"
+    ]
+    if blocked:
+        return "findings-blocked", blocked
+    open_ids = [k for (mark, _), k in zip(items, ids) if mark == " "]
+
+    def ticked_after_fix(k: str) -> bool:
+        """`Fix it now` is an instruction: a ticked box counts only if it was ticked after it."""
+        from marks import first_seen
+
+        stamp = decided[k][2]
+        began = first_seen(repo, change / "findings.md", f"[x] **{k}**")
+        return bool(began and began > stamp)
+
+    # an answer binds to exactly one open item: an id shared by two open items settles neither
+    open_items = [
+        text
+        for (mark, text), k in zip(items, ids)
+        if (mark == " " and not (k and open_ids.count(k) == 1 and decided.get(k, ("",))[0] in SETTLED))
+        or (mark == "x" and k and decided.get(k, ("",))[0] == "fix" and not ticked_after_fix(k))
+    ]
     if open_items:
         return "findings-open", [f"findings.md: open: {i[:80]}" for i in open_items]
-    if section(findings, "Converge") and "Converged:" not in findings:
+    if (section(findings, "Converge") or current_format(change)) and "Converged:" not in findings:
         return "not-converged", ["findings.md: ## Converge has no `Converged: round <n>` line"]
+    if gaps := validation_gaps(change, number):
+        return "validation-not-met", gaps
     return None
 
 
@@ -287,8 +714,9 @@ def has_owner_marks(change: Path) -> bool:
     return bool(
         (change / "marks.json").exists()
         or marks.sessions(change)
-        or (callable(getattr(marks, "bundles", None)) and marks.bundles(change))
-    )  # an old marks.py has no `bundles`: the milestone gate blocks it only when a bundle exists
+        or (callable(getattr(marks, "bundles", None)) and marks.bundles(change))  # an old marks.py has no `bundles`
+        or sources_present(change)
+    )
 
 
 def end(line: str, code: int) -> int:
@@ -296,18 +724,105 @@ def end(line: str, code: int) -> int:
     return code
 
 
+def graph_problems(plan: str) -> list[str]:
+    """The plan's `## Milestones` graph must be buildable: unique ids, every `needs` defined, no
+    milestone needing itself and no cycle (two milestones waiting on each other's merge)."""
+    rows = [r for r in table_rows(section(plan, "Milestones"))[1:] if r and re.match(r"M\d+\b", r[0])]
+    ids = [re.match(r"M\d+", r[0])[0] for r in rows]
+    problems = [f"plan.md: {i} is defined twice" for i in dict.fromkeys(ids) if ids.count(i) > 1]
+    needs: dict[str, list[str]] = {}
+    for r in rows:
+        mine = re.match(r"M\d+", r[0])[0]
+        listed = re.findall(r"M\d+", r[2]) if len(r) > 2 else []
+        needs[mine] = listed
+        problems += [f"plan.md: {mine} needs itself" for _ in listed if _ == mine]
+        problems += [f"plan.md: {mine} needs {n}, which the plan does not define (unknown milestone)" for n in listed if n not in ids]
+    done: set[str] = set()
+    for start in needs:  # depth-first, one report per cycle
+        stack, on = [(start, iter(needs[start]))], {start}
+        while stack:
+            node, it = stack[-1]
+            nxt = next((n for n in it if n in needs and n != node), None)
+            if nxt is None:
+                stack.pop()
+                on.discard(node)
+                done.add(node)
+            elif nxt in on:
+                problems.append(f"plan.md: circular milestones: {node} and {nxt} wait on each other")
+                break
+            elif nxt not in done:
+                on.add(nxt)
+                stack.append((nxt, iter(needs[nxt])))
+    return list(dict.fromkeys(problems))
+
+
+def branch_mode_problems(change: Path, cfg: dict) -> list[str]:
+    """Delivery and merge modes that cannot both be served: feature PRs publish a milestone branch
+    that local milestones, once the change has a project branch, never push (checked at approval,
+    before any branch or goal exists)."""
+    if cfg.get("delivery") == "feature-prs" and merges_locally(cfg) and project_branch(change, cfg):
+        return [
+            'sdlc.json: delivery "feature-prs" needs a remote milestone branch, which milestones.merge '
+            '"local" never pushes for a change with a project branch; choose delivery "one-go" with '
+            'local milestones, or milestones.merge "pr" with feature PRs'
+        ]
+    return []
+
+
+def v4_done(change: Path) -> dict:
+    """done.json of a layout-4 change, derived from the spec: one fact per rule the change adds or
+    changes (id R<n>, tag @R<n>), with the screens and states its UX table names."""
+    ux = spec.table(read(change / "spec.md"), "UX")
+    facts = []
+    for n, rule in sorted(spec.change_rules(change).items()):
+        if rule["change"] == "removed":
+            continue
+        rows = [r for r in ux if re.search(rf"\bR{n}\b", spec._cell(r, "rule"))]
+        facts.append(
+            {
+                "id": f"R{n}",
+                "tag": f"@R{n}",
+                "screens": sorted({spec._cell(r, "screen") for r in rows}),
+                "states": sorted({spec._cell(r, "state") for r in rows}),
+            }
+        )
+    return {"facts": facts}
+
+
 def approve(change: Path, cfg: dict) -> int:
+    v4 = spec.applies(change)
     problems = lint_problems(change) + approval_blockers(change)  # the cheap pure check first
+    if v4:  # the spec, its rule files and the diff against the parent agree before anyone locks it
+        base = parent_ref(change, cfg, root())
+        if gap := parent_gap(root(), base):
+            print("\n".join(gap))
+            return end("APPROVE BLOCKED reason=env", 3)
+        problems += spec.consistency(change, "approve", root(), base) + spec.check(root(), base)
+    else:
+        problems += [f"{name} is missing: approval locks it" for name in ("facts.md", "plan.md") if not (change / name).is_file()]
+        problems += graph_problems(read(change / "plan.md"))
+    problems += branch_mode_problems(change, cfg)
+    if gap := full_e2e_gap((cfg.get("checks") or {}).get("milestone") or [], root()):
+        problems.append(gap)
+    if not v4 and not spec.state_path(change, "done.json").exists():  # approval requires its artifacts
+        problems.append("done.json is missing: the approved facts cannot be locked without it")
+    elif not v4 and approved_facts(change)[1]:
+        problems.append("done.json is unreadable or has no `facts` list")
     if problems:
         print("\n".join(problems[:TAIL]))
         return end(f"APPROVE FAIL {change.name} problems={len(problems)}", 1)
+    if v4:
+        spec.state_path(change, "done.json").write_text(json.dumps(v4_done(change), indent=2) + "\n", encoding="utf-8")
     lock = {
         "approved_at": dt.datetime.now(dt.timezone.utc).isoformat(timespec="seconds"),  # noqa: UP017 -- runs on macOS python3 3.9
         "sha": sh("git", "rev-parse", "HEAD"),
         "criteria": criteria_hash(change, cfg.get("checks", {})),
         "order": "cost",  # a lock without this key keeps the declared order (before 3.18.0)
+        "manifest": "required",  # from 3.21.0 visual work needs verify/shots/manifest.json
+        "format": LOCK_FORMAT,  # strict validation rows and records apply to this lock and later ones
+        "layout": 4 if v4 else 3,  # the hooks read the layout here, not from files an edit can change
     }
-    (change / "lock.json").write_text(json.dumps(lock, indent=2) + "\n", encoding="utf-8")
+    spec.state_path(change, "lock.json").write_text(json.dumps(lock, indent=2) + "\n", encoding="utf-8")
     print(f"locked {', '.join(lock['criteria'])} in {change.name}/lock.json -- commit it")
     return 0
 
@@ -327,21 +842,23 @@ def prose(text: str) -> list[str]:
 def defined_ids(change: Path) -> set[str]:
     """The ids this change defines: a table row that opens with the id, or a definition label.
     An id defined nowhere ("Press F5", "before Q4") is ordinary text and never flagged."""
+    _, label, table_id, _ = id_patterns(letters_of(change))
     found = set()
     for path in change.rglob("*.md"):
         if path.name == "README.md" or {"asks", "verify"} & set(path.relative_to(change).parts):
             continue
         for line in path.read_text(encoding="utf-8").splitlines():
-            if m := TABLE_ID.match(line) or LABEL.match(line):
+            if m := table_id.match(line) or label.match(line):
                 found.add(m.group(1))
     return found
 
 
-def bare_ids(text: str, defined: set[str]) -> list[tuple[str, str]]:
+def bare_ids(text: str, defined: set[str], letters: str = LEGACY_LETTERS) -> list[tuple[str, str]]:
     """(id, context) for every defined id in running text that is not inside brackets: "plain words
     first, the id in brackets after". Headings, code, the first cell of a table row, a cell that
     holds only ids, a definition label and the verbatim Words column of the intent's Asks table are
     structure; every other table cell is prose."""
+    bare, label, _, ids_only = id_patterns(letters)
     text = re.sub(r"\A---\n.*?\n---\n", "", text, flags=re.S)
     text = re.sub(r"```.*?```|<!--.*?-->", "", text, flags=re.S)
     found: list[tuple[str, str]] = []
@@ -353,7 +870,7 @@ def bare_ids(text: str, defined: set[str]) -> list[tuple[str, str]]:
         para.clear()
         for _ in range(3):  # nested brackets: (A1; see [F2])
             body = BRACKETS.sub("", body)
-        for m in BARE_ID.finditer(body):
+        for m in bare.finditer(body):
             if m.group(0) in defined:
                 around = " ".join(body[max(0, m.start() - 30) : m.end() + 30].split())
                 found.append((m.group(0), around))
@@ -371,13 +888,13 @@ def bare_ids(text: str, defined: set[str]) -> list[tuple[str, str]]:
             header = header or [c.lower() for c in cells]
             for i, cell in enumerate(cells[1:], 1):
                 verbatim = heading == "asks" and header[i : i + 1] == ["words"]
-                if not verbatim and not IDS_ONLY.fullmatch(cell):
+                if not verbatim and not ids_only.fullmatch(cell):
                     para.append(cell)
                     flush()
         else:
             if re.match(r"(?:[-*]|\d+\.)\s", s):
                 flush()  # a new list item never shares a bracket with the one before
-            para.append(re.sub(r"`[^`]*`", "", LABEL.sub("", line)))
+            para.append(re.sub(r"`[^`]*`", "", label.sub("", line)))
     flush()
     return found
 
@@ -386,19 +903,25 @@ def lint_problems(change: Path, body: str | None = None) -> list[str]:
     """Plain language: no sentence over SENTENCE_WORDS words, no leftover template prompts, and
     in the files the owner reads no id outside brackets. With `body`, only that text (the PR body
     about to be published) is checked, for ids. Pure file reads."""
-    defined = defined_ids(change)
+    if body is not None and not change.is_dir():  # the folder is gone: an id the body itself puts in brackets
+        letters = LEGACY_LETTERS
+        defined = {m for b in BRACKETS.findall(body) for m in id_patterns(letters)[0].findall(b)}
+        return [f"pr-body: id {bare} outside brackets, words first: {ctx}" for bare, ctx in bare_ids(body, defined, letters)]
+    defined, letters = defined_ids(change), letters_of(change)
     if body is not None:
         return [
             f"pr-body: id {bare} outside brackets, words first: {ctx}"
-            for bare, ctx in bare_ids(body, defined)
+            for bare, ctx in bare_ids(body, defined, letters)
         ]
     problems = []
-    for name in OWNER_FILES:
+    v4 = spec.applies(change)
+    docs = spec.documents(change)  # the three documents in layout 4, intent/facts/plan before
+    for name in (*docs, "questions.md", "pr-body.md") if v4 else OWNER_FILES:
         path = change / name
         if path.exists():
-            for bare, ctx in bare_ids(path.read_text(encoding="utf-8"), defined):
+            for bare, ctx in bare_ids(path.read_text(encoding="utf-8"), defined, letters):
                 problems.append(f"{name}: id {bare} outside brackets, words first: {ctx}")
-    for name in ("intent.md", "facts.md", "plan.md"):
+    for name in docs if v4 else ("intent.md", "facts.md", "plan.md"):
         path = change / name
         if not path.exists():
             continue
@@ -491,40 +1014,92 @@ COST_HINTS = (
 DEFAULT_COST = 60.0  # unit tests and anything unrecognised
 
 
-def order_checks(checks: list[dict], durations: dict[str, float], change_id: str) -> list[dict]:
+def order_checks(
+    checks: list[dict], durations: dict[str, float], change_id: str, cfg: dict | None = None
+) -> list[dict]:
     """Cheapest first: recorded seconds when there are any, else a guess from the command. Stable,
     so ties keep their sdlc.json order; a `serial` check is a wall that nothing moves across, and
     `"after": [<check name>]` keeps a check behind the ones it needs (codegen before tsc)."""
 
     def cost(check: dict) -> float:
-        cmd = check["run"].replace("{id}", change_id)
+        cmd = expand(check["run"], change_id, cfg or {})
         if cmd in durations:
             return durations[cmd]
         text = f"{check['name']} {cmd}".lower()
         return next((c for rx, c in COST_HINTS if rx.search(text)), DEFAULT_COST)
 
-    ordered: list[dict] = []
+    segments: list[list[dict]] = []  # each ends at a serial check: nothing moves across it
     segment: list[dict] = []
     for check in checks:
         if check.get("serial"):
-            ordered += sorted(segment, key=cost) + [check]
+            segments.append(sorted(segment, key=cost) + [check])
             segment = []
         else:
             segment.append(check)
-    ordered += sorted(segment, key=cost)
+    segments.append(sorted(segment, key=cost))
     done: set[str] = set()
-    names = {c["name"] for c in ordered}
     result: list[dict] = []
-    while ordered:
-        # the first check whose named predecessors have run; a cycle or unknown name never blocks
-        nxt = next(
-            (c for c in ordered if all(a in done or a not in names for a in c.get("after") or [])),
-            ordered[0],
-        )
-        ordered.remove(nxt)
-        done.add(nxt["name"])
-        result.append(nxt)
+    for ordered in segments:
+        wall = [ordered.pop()] if ordered and ordered[-1].get("serial") else []  # always last
+        names = {c["name"] for c in ordered}  # a predecessor over the wall is never waited for
+        while ordered:
+            # the first check whose named predecessors have run; a cycle or unknown name never blocks
+            nxt = next(
+                (c for c in ordered if all(a in done or a not in names for a in c.get("after") or [])),
+                ordered[0],
+            )
+            ordered.remove(nxt)
+            done.add(nxt["name"])
+            result.append(nxt)
+        done.update(c["name"] for c in wall)
+        result += wall
     return result
+
+
+CHECK_TIMEOUT = 1800  # seconds a single check may run (sdlc.json `checkTimeout`, or `timeout` on the check)
+
+
+def run_check(cmd: str, cwd: Path, limit: int) -> subprocess.CompletedProcess[str]:
+    """Run a shell check in its own process group; past `limit` seconds kill the group and report 124."""
+    import signal
+
+    proc = subprocess.Popen(
+        cmd, shell=True, cwd=cwd, stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True,
+        stdin=subprocess.DEVNULL, start_new_session=True,
+    )  # fmt: skip
+    try:
+        out, err = proc.communicate(timeout=limit)
+    except subprocess.TimeoutExpired:
+        os.killpg(proc.pid, signal.SIGKILL)
+        out, err = proc.communicate()
+        return subprocess.CompletedProcess(cmd, 124, out or "", (err or "") + f"\ntimed out after {limit}s\n")
+    return subprocess.CompletedProcess(cmd, proc.returncode, out, err)
+
+
+# sha256[:16] of every heavy.py the kit shipped (adopt.py KIT_HEAVY lists the same). The gate runs each
+# check through heavy.py, so a heavy.py of the repo's own could report a pass for a check it never ran.
+KIT_HEAVY = {
+    "7dfd1429b4f9cd2d",
+    "8b4f8c3dfa44073f",
+    "af2eb2673c676348",
+    "cc25027d60793b2b",
+    "f411b8feb66c33ed",
+}
+
+
+def queued(cmd: str, limit: int, cfg: dict) -> tuple[str, int]:
+    """The command the check loop starts and its outer deadline. With heavy.py beside the gate, a heavy
+    check takes a slot and a light one passes straight through (`--auto`); a gate already inside a
+    slot runs it at once, so a close builder's `heavy.py run -- verify_gate.py milestone` never queues
+    behind itself. heavy.py enforces the check's own timeout (`--run-timeout`, the process-group
+    kill); the outer deadline adds the slot wait, so waiting never counts against the check."""
+    heavy = Path(__file__).with_name("heavy.py")
+    if not heavy.is_file():  # a repo adopted before the queue
+        return cmd, limit
+    section = cfg.get("heavy") if isinstance(cfg.get("heavy"), dict) else {}
+    wait = int(section.get("waitTimeout", 1800))
+    wrapped = shlex.join([sys.executable, str(heavy), "run", "--auto", "--run-timeout", str(limit), "--", "sh", "-c", cmd])
+    return wrapped, limit + max(wait, 0) + 60
 
 
 def run(
@@ -536,6 +1111,13 @@ def run(
     visual_runs: list[str] | None = None,
     keep_going: bool = False,
 ) -> int:
+    if why := unsafe_substitutions(change.name, cfg):
+        print(f"refused before any check runs: {why}.")  # the id and branch reach a shell line
+        return end("VERIFY BLOCKED reason=env", 3)
+    heavy = Path(__file__).with_name("heavy.py")
+    if heavy.is_file() and hashlib.sha256(heavy.read_bytes()).hexdigest()[:16] not in KIT_HEAVY:
+        print(f"refused before any check runs: {heavy} is not a kit version, so it could record a pass for a check that never ran")
+        return end("VERIFY BLOCKED reason=env", 3)
     out_dir = change / "verify"
     out_dir.mkdir(exist_ok=True)
     report: dict = {"scope": scope, "id": change.name, "checks": []}
@@ -549,10 +1131,13 @@ def run(
     if notice:
         print(f"WARN {notice}")  # never blocks; the last line stays the verdict
 
-    number = milestone_number(change, cfg, sh("git", "symbolic-ref", "--short", "-q", "HEAD")) if scope == "milestone" else None
+    branch_now = sh("git", "symbolic-ref", "--short", "-q", "HEAD")
+    number = milestone_number(change, cfg, branch_now) if scope == "milestone" else None
+    shared_copy = pass_record(scope, change.name, branch_now, number)  # fixed before any check runs
 
     def finish(line: str, code: int) -> int:
         report["result"] = line
+        report["format"] = REPORT_FORMAT
         report["sha"] = sh("git", "rev-parse", "HEAD")
         if scope != "project":  # what the hook and the goal check bind a pass to
             report["change"], report["owner"] = change.name, project_branch(change, cfg)
@@ -565,6 +1150,19 @@ def run(
         # `sdlc_status.py goal` reads, so a deleted merged branch does not undo a finished milestone
         if scope == "milestone" and number:
             (out_dir / f"milestone-{number}.json").write_text(text, encoding="utf-8")
+        if line.startswith("VERIFY PASS") and scope != "project":  # the work moved on: a cap's handoff is spent
+            (change / "state" / "handoff.json").unlink(missing_ok=True)
+        if line.startswith("VERIFY PASS") and scope in ("milestone", "feature"):
+            branch, default = sh("git", "symbolic-ref", "--short", "-q", "HEAD"), cfg.get("defaultBranch") or "main"
+            if scope == "milestone" and number:
+                record_head(change, "milestones", str(number), {"head": branch, "base": project_branch(change, cfg) or default, "sha": report["sha"]})
+            elif scope == "feature" and branch.startswith("hotfix/") and cfg.get("hotfix", True) and hotfix_change(change):
+                record_head(change, "hotfix", None, {"head": branch, "base": default, "sha": report["sha"]})
+        if shared_copy:  # survives the worktree and the branch; an older writer leaves none
+            try:
+                write_atomic(shared_copy, text)
+            except OSError as err:
+                print(f"WARN pass record not written: {err}")
         rows = "\n".join(
             f"| {c['name']} | {c['status']} | {c['seconds']} |" for c in report["checks"]
         )
@@ -588,7 +1186,7 @@ def run(
             print(f"check out {branch} (the project head) and run the gate there.")
             return finish("VERIFY BLOCKED reason=env", 3)
     else:
-        lock_path = change / "lock.json"
+        lock_path = spec.state_path(change, "lock.json")
         if not lock_path.exists():
             print(f"{change.name}/lock.json is missing: run `verify_gate.py approve {change.name}`")
             print("at the plan gate, when the engineer approves.")
@@ -596,7 +1194,19 @@ def run(
         lock = json.loads(lock_path.read_text(encoding="utf-8"))
         locked = lock["criteria"]
         declared = lock.get("order") != "cost"
+        old_plan = lock.get("format", 0) < LOCK_FORMAT or ("plan.milestones" not in locked and not spec.applies(change))
         now = criteria_hash(change, cfg.get("checks", {}))
+        for key in ("plan.milestones", "decisions.routing"):
+            if key not in locked:
+                now.pop(key, None)  # an older lock never hashed it: reported below, not a move
+        if old_plan and scope == "milestone":
+            gap = (
+                f"lock.json predates lock format {LOCK_FORMAT}: every approved fact is expected, validation "
+                "rows, plan.milestones and decisions.routing are not enforced; the engineer approves "
+                "again to lock them"
+            )
+            print(f"upgrade gap: {gap}")
+            report.setdefault("upgrade_gaps", []).append(gap)
         moved = sorted(k for k in set(locked) | set(now) if locked.get(k) != now.get(k))
         if moved:
             print(
@@ -605,11 +1215,7 @@ def run(
             report["moved"] = moved
             return finish("VERIFY BLOCKED reason=protected-path", 3)
 
-    dirty = [
-        line
-        for line in sh("git", "status", "--porcelain").splitlines()
-        if f"{change.name}/verify/" not in line
-    ]
+    dirty = dirty_lines(change)
     if dirty:
         print("uncommitted changes: a PASS must name a commit. Commit, then run again.")
         print("\n".join(dirty[:TAIL]))
@@ -620,6 +1226,11 @@ def run(
         local = project_branch(change, cfg) if merges_locally(cfg) else ""
         if local and (tip := sh("git", "rev-parse", "--verify", "--quiet", f"{local}^{{commit}}")):
             tips.append((local, tip))
+        default = cfg.get("defaultBranch") or "main"
+        if sh("git", "remote", "get-url", "origin") and not any(n == f"origin/{default}" for n, _ in tips):
+            print(f"origin/{default} cannot be resolved (offline, or the fetch failed): the gate cannot tell whether")
+            print(f"this {scope} contains its parent. Fix the connection, then run `git fetch origin {default}` and the gate again.")
+            return finish("VERIFY BLOCKED reason=env", 3)
         behind = [
             name
             for name, tip in tips
@@ -633,7 +1244,14 @@ def run(
             print("  git fetch origin && " + " && ".join(f"git merge {b}" for b in behind))
             return finish(f"VERIFY FAIL {scope} {change.name} check=parent-sync", 1)
 
-    if scope == "milestone" and (blocker := milestone_blockers(change)):
+    if scope == "milestone" and spec.applies(change):  # the living spec: rules, tags and the diff
+        if gap := parent_gap(repo, parent_ref(change, cfg, repo)):
+            print("\n".join(gap))
+            return finish("VERIFY BLOCKED reason=env", 3)
+        if drift := spec.check(repo, parent_ref(change, cfg, repo)):
+            print("\n".join(drift[:TAIL]))
+            return finish(f"VERIFY FAIL {scope} {change.name} check=spec", 1)
+    if scope == "milestone" and (blocker := milestone_blockers(change, number)):
         print("\n".join(blocker[1][:TAIL]))
         return finish(f"VERIFY BLOCKED reason={blocker[0]}", 3)
     if scope == "milestone" and legacy_marks() and has_bundle_inputs(change):
@@ -645,6 +1263,14 @@ def run(
 
     suite = "milestone" if scope == "project" else scope
     checks = cfg.get("checks", {}).get(suite, [])
+    if suite == "milestone" and (gap := full_e2e_gap(checks, repo)):
+        if current_format(change) and scope == "milestone":
+            # a suite added after approval: the locked checks cannot prove it, the engineer approves again
+            print(gap)
+            return finish("VERIFY BLOCKED reason=env", 3)
+        # an approval made before this rule keeps working: report, never fail
+        print(f"upgrade gap: {gap}")
+        report.setdefault("upgrade_gaps", []).append(gap)
     if not checks:
         print(f"sdlc.json checks.{suite} is empty: nothing would prove this change.")
         return finish("VERIFY BLOCKED reason=env", 3)
@@ -660,9 +1286,21 @@ def run(
     except (OSError, ValueError):
         durations = {}
     if not declared:
-        checks = order_checks(checks, durations, change.name)
+        checks = order_checks(checks, durations, change.name, cfg)
+    # Evidence checks are offline and cheap: they run before the suites, so a missing screenshot,
+    # checker or tag never costs a full E2E run (3.21.0).
+    evidence: list[dict] = []
+    preflight = Path(__file__).with_name("preflight.py")
+    if scope == "milestone" and cfg.get("preflight") and preflight.is_file():  # declared tools and sign-ins, once
+        evidence.append(
+            {
+                "name": "preflight",
+                "cache": False,
+                "run": f"{shlex.join([sys.executable, str(preflight)])} || {{ echo 'VERIFY BLOCKED reason=env'; exit 1; }}",
+            }
+        )
     if scope == "milestone" and has_owner_marks(change):
-        checks.append(
+        evidence.append(
             {
                 "name": "owner-marks",
                 "cache": False,
@@ -676,10 +1314,38 @@ def run(
                 ),
             }
         )
-    for number, visual_run in enumerate(visual_runs or [], 1):
-        checks.append(
+    if scope == "milestone" and read_decisions(change) is None and current_format(change):
+        evidence.append(
+            refusal("decisions-json", "decisions.json is missing: it records the size, the visual source and the skips this gate reads")
+        )
+    elif (
+        scope == "milestone"
+        and not (visual_check and visual_runs)
+        and visual_run_required(change, cfg, repo)
+    ):
+        evidence.append(
+            refusal(
+                "ux-visual-required",
+                "this milestone has a UX decision and a visual source, but no --visual-check and "
+                "--visual-run were given: run cct:ux-assessment-run and pass its run, or have the "
+                "owner attest a skip (decisions.json skips.visual `skip -- <reason>` plus the "
+                "dialog `Change <id>, finding visual-skip: ...` answered Skip visual evidence)",
+            )
+        )
+    if visual_check and (
+        Path(visual_check).name != "visual-check.py"
+        or any(not Path(r).is_dir() for r in visual_runs or [])
+    ):  # the shipped checker over a real run folder, not any command that exits 0
+        evidence.append(
+            refusal(
+                "ux-visual-binding",
+                "--visual-check must be the shipped visual-check.py and every --visual-run an existing run folder",
+            )
+        )
+    for k, visual_run in enumerate(visual_runs or [], 1):  # not `number`: finish() reads the milestone number
+        evidence.append(
             {
-                "name": f"ux-visual-{number}",
+                "name": f"ux-visual-{k}",
                 "cache": False,
                 "run": shlex.join(
                     [
@@ -692,7 +1358,9 @@ def run(
                 ),
             }
         )
+    checks = evidence + checks
 
+    diff_base = parent_ref(change, cfg, repo) if scope == "milestone" else ""
     cache_path = out_dir / "cache.json"
     cache = json.loads(cache_path.read_text()) if cache_path.exists() else {}
     tree = sh("git", "rev-parse", "HEAD^{tree}")
@@ -708,6 +1376,14 @@ def run(
         state_path.write_text(
             json.dumps({"signature": sig, "count": count, "attempts": attempts}) + "\n"
         )
+        capped = count >= BREAKER or attempts[scope] >= ATTEMPTS
+        if capped and scope != "project":  # the retry cap: leave a durable handoff, not a silent stop
+            write_handoff(
+                change, "retries", scope,
+                f"the {scope} gate of {change.name} stopped at check {name}",
+                f"{attempts[scope]} failed runs, or the same failure {count} times: the breaker stops the loop",
+                f"read {change.name}/verify/report.md, fix the cause, delete {change.name}/verify/state.json, then run python3 scripts/verify_gate.py {scope} {change.name}",
+            )  # fmt: skip
         if count >= BREAKER:
             print(f"the same failure {count} runs in a row: the loop is not making progress.")
             return finish("VERIFY BLOCKED reason=no-progress", 3)
@@ -722,7 +1398,7 @@ def run(
     first_failure: tuple[str, str, str] | None = None  # --keep-going: the verdict names the first
     for check in checks:
         name = check["name"]
-        cmd = check["run"].replace("{id}", change.name)
+        cmd = expand(check["run"], change.name, cfg, diff_base)
         key = cache_key(tree, cmd, now) if check.get("cache", True) and tree else ""
         if key in cache:
             report["checks"].append(
@@ -732,10 +1408,14 @@ def run(
             print(f"ok (cached) {name}: {cmd}")
             continue
         started = time.monotonic()
-        proc = subprocess.run(
-            cmd, shell=True, cwd=repo, capture_output=True, text=True, stdin=subprocess.DEVNULL
-        )
+        limit = int(check.get("timeout") or cfg.get("checkTimeout") or CHECK_TIMEOUT)
+        started_cmd, outer = queued(cmd, limit, cfg)
+        proc = run_check(started_cmd, repo, outer)
         output = proc.stdout + proc.stderr
+        if started_cmd != cmd and proc.returncode == 124 and "timed out" not in output:
+            output += f"\ntimed out after {limit}s\n"  # heavy.py killed the group at the check's limit
+        if started_cmd != cmd and proc.returncode == 75 and "heavy: no slot after" in output:
+            output += "\nVERIFY BLOCKED reason=env\n"  # nothing ran: a handoff naming the holder, not a failed check
         tail = "\n".join(output.strip().splitlines()[-TAIL:])
         status = "pass" if proc.returncode == 0 else "fail"
         report["checks"].append(
@@ -750,7 +1430,8 @@ def run(
         )
         print(f"{'ok  ' if status == 'pass' else 'FAIL'} {name}: {cmd}")
         if status == "pass":
-            if key:
+            # staged: a check that ran while the tree moved proves nothing about the starting tree
+            if key and sh("git", "rev-parse", "HEAD^{tree}") == tree and not dirty_lines(change):
                 cache[key] = name
                 cache_path.write_text(json.dumps(cache, indent=2) + "\n", encoding="utf-8")
             durations[cmd] = report["checks"][-1]["seconds"]
@@ -783,11 +1464,7 @@ def run(
 
     # A PASS names one frozen head: a merge or an edit during the checks means they tested
     # something other than the commit the line would name.
-    still_dirty = [
-        line
-        for line in sh("git", "status", "--porcelain").splitlines()
-        if f"{change.name}/verify/" not in line
-    ]
+    still_dirty = dirty_lines(change)
     if sh("git", "rev-parse", "HEAD") != head or still_dirty:
         print(
             "HEAD or the tree changed while the checks ran: nothing may merge or edit during a gate."
@@ -799,6 +1476,7 @@ def run(
 def checker_exists(cmd: str, repo: Path) -> bool:
     """The program a check runs exists. shortcut: reads only the first command of a `a && b`
     line, so a broken second command is not seen; split it into two checks to audit both."""
+    cmd = re.sub(r"^(?:\s*\w+=\$\(\s*(?:\{\s*)?)+", "", cmd)  # `specs=$( { git diff ...`: a shell fragment
     try:
         words = shlex.split(cmd)
     except ValueError:
@@ -906,7 +1584,7 @@ def audit(cfg: dict, repo: Path, evidence: bool = True) -> int:
         for i, check in enumerate(checks, 1):
             check = check if isinstance(check, dict) else {"run": check}
             cmd, name = check["run"], check.get("name") or f"check-{i}"
-            prefix = cmd.split("{id}")[0].strip()
+            prefix = cmd.split("{id}")[0].split("{base}")[0].strip()  # receipts hold the expanded line
             mine = [j for j in jobs if prefix and prefix in j["body"]]
             when = next((v for k, v in sorted(runs.items()) if k.startswith(prefix)), None)
             if not mine:
@@ -992,8 +1670,16 @@ def main(argv: list[str]) -> int:
         change = project_record(args.id, repo)
         change.mkdir(parents=True, exist_ok=True)
         return run(args.scope, change, cfg, repo, keep_going=args.keep_going)
+    changes = (repo / cfg.get("changesDir", "changes")).resolve()
     change = repo / cfg.get("changesDir", "changes") / args.id
-    if not change.is_dir():
+    if not change.resolve().is_relative_to(changes) or change.resolve() == changes:
+        print(f"the change id {args.id!r} does not name a folder inside {changes.name}/.")
+        return end("VERIFY BLOCKED reason=env", 3)
+    if args.scope == "lint" and args.pr_body and not change.is_dir():
+        # a merged change is archived or removed (the owner's rule); its PR body is still linted
+        layouts = (f"archive/{args.id}", f"archive/*/{args.id}", f"archive/*/*/{args.id}")
+        change = next((d for pat in layouts for d in sorted(changes.glob(pat)) if d.is_dir()), change)
+    elif not change.is_dir():
         print(f"no change folder {change.relative_to(repo)}")
         return end("VERIFY BLOCKED reason=env", 3)
     if args.scope == "approve":
@@ -1001,7 +1687,9 @@ def main(argv: list[str]) -> int:
     if args.scope == "lint":
         body = None
         if args.pr_body:
-            body = sys.stdin.read() if args.pr_body == "-" else Path(args.pr_body).read_text("utf-8")
+            body = (
+                sys.stdin.read() if args.pr_body == "-" else Path(args.pr_body).read_text("utf-8")
+            )
         return lint(change, body)
     return run(args.scope, change, cfg, repo, args.visual_check, args.visual_run, args.keep_going)
 

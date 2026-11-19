@@ -1,0 +1,196 @@
+"""Usage: pytest scripts/test_sdd_hooks.py
+
+chain-gate.sh and pr-gate.sh on a layout-4 change. The old layout keeps its rules.
+"""
+
+from __future__ import annotations
+
+import json
+import os
+import shutil
+import subprocess
+from pathlib import Path
+
+import pytest
+
+HOOKS = Path(__file__).resolve().parents[1] / "templates" / "hooks"
+ID = "2026-11-20-retry"
+GOAL = [{"type": "attachment", "attachment": {"type": "goal_status", "met": False, "sentinel": True}}]
+APPROVED = "---\nstatus: approved\n---\n"
+
+
+def make(tmp_path: Path, v4: bool = True) -> Path:
+    repo = tmp_path / "repo"
+    (repo / ".claude" / "hooks").mkdir(parents=True)
+    for name in ("chain-gate.sh", "sdlc-config.sh", "goal_active.py", "block_state.py"):
+        shutil.copy(HOOKS / name, repo / ".claude" / "hooks" / name)
+    (repo / "sdlc.json").write_text(json.dumps({"changesDir": "changes"}))
+    c = repo / "changes" / ID
+    c.mkdir(parents=True)
+    d = {"size": "M", "milestone": {"kind": "single", "slug": "retry"}}
+    if v4:
+        (c / "decisions.json").write_text(json.dumps({**d, "layout": 4}))
+        (c / "spec.md").write_text(APPROVED)
+        (c / "tasks.md").write_text(APPROVED + "\n## Handover\n\nBuild T1.\n")
+    else:
+        (c / "decisions.json").write_text(json.dumps(d))
+        (c / "intent.md").write_text(APPROVED)
+        (c / "facts.md").write_text(APPROVED)
+        (c / "plan.md").write_text(APPROVED + "\n## Goal handover\n\nDeliver.\n")
+    (c / "lock.json").write_text(json.dumps({"layout": 4 if v4 else 3}))
+    env = {k: v for k, v in os.environ.items() if not k.startswith("GIT_")}
+    subprocess.run(["git", "init", "-q", "-b", "feat/retry"], cwd=repo, check=True, env=env)
+    return repo
+
+
+def edit(repo: Path, file: str, **tool: str) -> subprocess.CompletedProcess[str]:
+    t = repo.parent / "t.jsonl"
+    t.write_text("".join(json.dumps(e) + "\n" for e in GOAL))
+    payload = {"tool_input": {"file_path": file, **tool}, "transcript_path": str(t)}
+    return subprocess.run(
+        ["bash", str(repo / ".claude" / "hooks" / "chain-gate.sh")],
+        input=json.dumps(payload),
+        capture_output=True,
+        text=True,
+        env={**os.environ, "CLAUDE_PROJECT_DIR": str(repo)},
+    )
+
+
+RULE = "specs/billing/rules/R1.md"
+
+
+@pytest.mark.parametrize("file", [RULE, ".sdlc/last-rule-id", f"changes/{ID}/spec.md"])
+def test_rule_files_the_floor_and_the_spec_are_protected_after_approval(
+    tmp_path: Path, file: str
+) -> None:
+    repo = make(tmp_path)
+    r = edit(repo, file)
+    assert r.returncode == 2 and "protectedEdit" in r.stderr
+    p = repo / "changes" / ID / "decisions.json"
+    p.write_text(json.dumps({**json.loads(p.read_text()), "protectedEdit": "owner: change it"}))
+    assert edit(repo, file).returncode == 0
+
+
+def _write_decisions(repo: Path, **d: object) -> subprocess.CompletedProcess[str]:
+    return edit(repo, f"changes/{ID}/decisions.json", content=json.dumps(d))
+
+
+def test_the_layout_comes_from_the_lock_not_from_decisions_json_or_file_presence(tmp_path: Path) -> None:
+    repo = make(tmp_path)
+    c = repo / "changes" / ID
+    cur = json.loads((c / "decisions.json").read_text())
+    r = _write_decisions(repo, **{k: v for k, v in cur.items() if k != "layout"})
+    assert r.returncode == 2 and "protectedEdit" in r.stderr
+    assert _write_decisions(repo, **cur, other="fine").returncode == 0  # layout unchanged
+    old = {"old_string": '"layout": 4', "new_string": '"layout": 3'}
+    assert edit(repo, f"changes/{ID}/decisions.json", **old).returncode == 2
+    (c / "facts.md").write_text(APPROVED)  # file presence cannot switch it either
+    assert edit(repo, f"changes/{ID}/spec.md").returncode == 2
+    (c / "decisions.json").write_text(json.dumps({**cur, "protectedEdit": "owner: switch it"}))
+    assert _write_decisions(repo, **{**cur, "layout": 3, "protectedEdit": "owner: switch it"}).returncode == 0
+
+
+@pytest.mark.parametrize("v4", [True, False])
+def test_a_lock_without_a_layout_protects_the_files_of_both_layouts(tmp_path: Path, v4: bool) -> None:
+    repo = make(tmp_path, v4=v4)
+    (repo / "changes" / ID / "lock.json").write_text("{}\n")
+    for f in ("spec.md", "facts.md", "design.md", "done.json"):
+        assert edit(repo, f"changes/{ID}/{f}").returncode == 2, f
+
+
+def test_a_status_flip_of_a_rule_and_a_task_tick_stay_open(tmp_path: Path) -> None:
+    repo = make(tmp_path)
+    r = edit(repo, RULE, old_string="status: planned", new_string="status: live")
+    assert r.returncode == 0, r.stderr
+    assert edit(repo, f"changes/{ID}/tasks.md").returncode == 0
+
+
+def test_the_old_layout_does_not_protect_rule_files_or_spec_md(tmp_path: Path) -> None:
+    repo = make(tmp_path, v4=False)
+    assert edit(repo, RULE).returncode == 0
+    assert edit(repo, f"changes/{ID}/spec.md").returncode == 0
+
+
+def test_layout_4_has_no_intent_or_facts_ordering_rule(tmp_path: Path) -> None:
+    repo = make(tmp_path)
+    (repo / "changes" / ID / "lock.json").unlink()
+    assert edit(repo, f"changes/{ID}/spec/brief.md").returncode == 0
+    assert edit(repo, f"changes/{ID}/design.md").returncode == 0  # no facts.md needed
+    legacy = make(tmp_path / "old", v4=False)
+    (legacy / "changes" / ID / "intent.md").write_text("---\nstatus: draft\n---\n")
+    assert edit(legacy, f"changes/{ID}/spec/brief.md").returncode == 2
+
+
+def test_the_layout_4_plan_gate_is_approved_status_on_the_three_documents(tmp_path: Path) -> None:
+    repo = make(tmp_path)
+    assert edit(repo, "src/app.py").returncode == 0
+    (repo / "changes" / ID / "design.md").write_text("---\nstatus: draft\n---\n")
+    r = edit(repo, "src/app.py")
+    assert r.returncode == 2 and "design.md" in r.stderr
+    (repo / "changes" / ID / "design.md").write_text(APPROVED)
+    (repo / "changes" / ID / "spec.md").write_text("---\nstatus: draft\n---\n")
+    r = edit(repo, "src/app.py")
+    assert r.returncode == 2 and "spec.md" in r.stderr
+
+
+# ------------------------------------------------------------------ outcomes ride along a pass
+
+import sys  # noqa: E402
+
+sys.path.insert(0, str(HOOKS))
+import pass_proof  # noqa: E402
+
+
+def _git(repo: Path, *args: str) -> str:
+    return subprocess.run(
+        ["git", "-c", "user.name=t", "-c", "user.email=t@t", *args],
+        cwd=repo, check=True, capture_output=True, text=True,
+    ).stdout.strip()  # fmt: skip
+
+
+def test_an_outcome_record_after_the_gate_keeps_the_pass_but_source_does_not(tmp_path: Path) -> None:
+    _git(tmp_path, "init", "-q", "-b", "main")
+    (tmp_path / "changes" / ID).mkdir(parents=True)
+    (tmp_path / "changes" / ID / "lock.json").write_text("{}\n")
+    _git(tmp_path, "add", ".")
+    _git(tmp_path, "commit", "-qm", "gated")
+    gated = _git(tmp_path, "rev-parse", "HEAD")
+    (tmp_path / ".sdlc" / "outcomes").mkdir(parents=True)
+    (tmp_path / ".sdlc" / "outcomes" / f"{ID}.json").write_text("{}\n")
+    _git(tmp_path, "add", ".")
+    _git(tmp_path, "commit", "-qm", "outcome")
+    assert pass_proof.proves(tmp_path, "changes", gated, _git(tmp_path, "rev-parse", "HEAD"))
+    (tmp_path / "src.py").write_text("x = 1\n")
+    _git(tmp_path, "add", ".")
+    _git(tmp_path, "commit", "-qm", "source")
+    assert not pass_proof.proves(tmp_path, "changes", gated, _git(tmp_path, "rev-parse", "HEAD"))
+
+
+def test_readers_do_not_fail_when_a_change_folder_was_removed_after_merge(tmp_path: Path) -> None:
+    assert pass_proof.change_paths(tmp_path / "changes", ID) == []
+    (tmp_path / "sdlc.json").write_text("{}")
+    (tmp_path / ".sdlc" / "outcomes").mkdir(parents=True)
+    (tmp_path / ".sdlc" / "outcomes" / f"{ID}.json").write_text(json.dumps({"change": ID, "due": "2026-12-04"}))
+    r = subprocess.run(
+        ["bash", str(HOOKS.parents[1] / "scripts" / "status.sh"), "--shipped"],
+        capture_output=True, text=True, env={**os.environ, "CLAUDE_PROJECT_DIR": str(tmp_path)},
+    )  # fmt: skip
+    assert r.returncode == 0 and ID in r.stdout, r.stderr
+
+
+# ------------------------------------------------------------------ state/ behind one reader
+
+
+def test_the_hook_reads_state_and_protects_it_like_the_old_place(tmp_path: Path) -> None:
+    repo = make(tmp_path)
+    c = repo / "changes" / ID
+    (c / "state").mkdir()
+    (c / "decisions.json").rename(c / "state" / "intake.json")
+    (c / "lock.json").rename(c / "state" / "lock.json")
+    assert edit(repo, "src/app.py").returncode == 0  # decisions and lock found under state/
+    for f in ("state/lock.json", "state/done.json", "lock.json", "spec.md"):
+        r = edit(repo, f"changes/{ID}/{f}")
+        assert r.returncode == 2 and "protectedEdit" in r.stderr, f
+    cur = json.loads((c / "state" / "intake.json").read_text())
+    r = edit(repo, f"changes/{ID}/state/intake.json", content=json.dumps({k: v for k, v in cur.items() if k != "layout"}))
+    assert r.returncode == 2 and "layout" in r.stderr

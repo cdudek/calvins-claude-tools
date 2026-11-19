@@ -2,7 +2,7 @@
   "_comment": "Default sdlc.json ciPaths per stack. adopt copies the stack's block; the repo edits it afterwards. Shell globs: * also crosses /. A changed file that is neither code nor config (and not in all) runs nothing. See references/ci-blueprint.md.",
   "typescript": {
     "docs": ["changes/*", "docs/*", "plans/*", ".claude/*", "design-explorations/*", "*.md", "*.txt"],
-    "all": [".github/workflows/*", "sdlc.json", "package-lock.json", "pnpm-lock.yaml", "yarn.lock"],
+    "all": [".claude/hooks/*", ".claude/settings.json", ".github/workflows/*", "sdlc.json", "package-lock.json", "pnpm-lock.yaml", "yarn.lock"],
     "code": ["src/*", "app/*", "public/*", "e2e/*", "test/*", "*.ts", "*.tsx", "*.js", "*.jsx", "*.mjs", "*.cjs", "*.vue", "*.css", "*.scss", "*.sql", "drizzle/*"],
     "config": ["package.json", "tsconfig*.json", "next.config.*", "vite.config.*", "vitest.config.*", "playwright.config.*", "eslint.config.*", ".eslintrc*", ".nvmrc", "Dockerfile*", "*.tf", "k8s/*", "helm/*", "deploy/*"],
     "specs": ["e2e/*.spec.*"],
@@ -14,7 +14,7 @@
   },
   "python": {
     "docs": ["changes/*", "docs/*", "plans/*", ".claude/*", "design-explorations/*", "*.md", "*.txt"],
-    "all": [".github/workflows/*", "sdlc.json", "uv.lock", "poetry.lock"],
+    "all": [".claude/hooks/*", ".claude/settings.json", ".github/workflows/*", "sdlc.json", "uv.lock", "poetry.lock"],
     "code": ["src/*", "app/*", "tests/*", "e2e/*", "*.py", "*.sql", "alembic/*", "migrations/*"],
     "config": ["pyproject.toml", "*.toml", "*.ini", "*.cfg", ".python-version", "Dockerfile*", "*.tf", "k8s/*", "helm/*", "deploy/*"],
     "specs": ["e2e/*test_*.py", "e2e/*_test.py"],
@@ -26,7 +26,7 @@
   },
   "rust": {
     "docs": ["changes/*", "docs/*", "plans/*", ".claude/*", "design-explorations/*", "*.md", "*.txt"],
-    "all": [".github/workflows/*", "sdlc.json", "Cargo.lock"],
+    "all": [".claude/hooks/*", ".claude/settings.json", ".github/workflows/*", "sdlc.json", "Cargo.lock"],
     "code": ["src/*", "crates/*", "tests/*", "benches/*", "e2e/*", "*.rs", "*.sql"],
     "config": ["Cargo.toml", "*.toml", "build.rs", "rust-toolchain*", "Dockerfile*", "*.tf", "k8s/*", "helm/*", "deploy/*"],
     "specs": ["e2e/*.rs", "tests/e2e/*"],
@@ -38,7 +38,7 @@
   },
   "rails": {
     "docs": ["changes/*", "docs/*", "plans/*", ".claude/*", "design-explorations/*", "*.md", "*.txt"],
-    "all": [".github/workflows/*", "sdlc.json", "Gemfile.lock", "yarn.lock", "package-lock.json", "pnpm-lock.yaml"],
+    "all": [".claude/hooks/*", ".claude/settings.json", ".github/workflows/*", "sdlc.json", "Gemfile.lock", "yarn.lock", "package-lock.json", "pnpm-lock.yaml"],
     "code": ["*.rb", "*.erb", "*.haml", "*.slim", "*.rake", "*.js", "*.ts", "*.css", "*.scss", "app/*", "lib/*", "spec/*"],
     "config": ["config/*", "db/*", "Gemfile*", ".ruby-version", "Dockerfile*", "*.tf", "k8s/*", "helm/*", "deploy/*"],
     "specs": ["spec/system/*_spec.rb"],
@@ -50,7 +50,7 @@
   },
   "kotlin": {
     "docs": ["changes/*", "docs/*", "plans/*", ".claude/*", "design-explorations/*", "*.md", "*.txt"],
-    "all": [".github/workflows/*", "sdlc.json", "gradle.lockfile", "gradle/libs.versions.toml"],
+    "all": [".claude/hooks/*", ".claude/settings.json", ".github/workflows/*", "sdlc.json", "gradle.lockfile", "gradle/libs.versions.toml"],
     "code": ["src/*", "*.kt", "*.java", "*.sql"],
     "config": ["*.kts", "*.gradle", "gradle/*", "gradle.properties", "Dockerfile*", "*.tf", "k8s/*", "helm/*", "deploy/*"],
     "specs": ["src/e2eTest/*"],
@@ -62,7 +62,7 @@
   },
   "scala": {
     "docs": ["changes/*", "docs/*", "plans/*", ".claude/*", "design-explorations/*", "*.md", "*.txt"],
-    "all": [".github/workflows/*", "sdlc.json", "project/build.properties"],
+    "all": [".claude/hooks/*", ".claude/settings.json", ".github/workflows/*", "sdlc.json", "project/build.properties"],
     "code": ["src/*", "*.scala", "*.sql"],
     "config": ["*.sbt", "project/*", "Dockerfile*", "*.tf", "k8s/*", "helm/*", "deploy/*"],
     "specs": ["src/it/*"],
