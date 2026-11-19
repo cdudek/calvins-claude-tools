@@ -6,13 +6,23 @@ repo="$(cd "$(dirname "$0")/.." && pwd)"
 root="$repo/plugins/cct"
 fail=0
 suite_log="$(mktemp)" || exit 1
-trap 'rm -f "$suite_log"' EXIT
+logs="$(mktemp -d)" || exit 1
+trap 'rm -rf "$suite_log" "$logs"' EXIT
+# Test files run side by side (TEST_JOBS, default 4); each writes its own log, results print in file order.
+run_one() { # <test file> <log folder>
+  local f="$1" d b log
+  d="$(dirname "$f")"; b="$(basename "$f")"; log="$2/$(printf '%s' "$f" | tr '/' '_')"
+  if [[ "$b" == *.py ]]; then (cd "$d" && python3 -m pytest -q -p no:cacheprovider "$b" >"$log.out" 2>&1)
+  else (cd "$d" && bash "$b" >"$log.out" 2>&1); fi
+  echo $? >"$log.rc"
+}
+export -f run_one
+files="$(find "$root/hooks" "$root/skills" -type f \( -name 'test_*.py' -o -name 'test_*.sh' \) -not -path '*/templates/*' | sort)"
+printf '%s\n' "$files" | xargs -P "${TEST_JOBS:-4}" -I{} bash -c 'run_one "$1" "$2"' _ {} "$logs"
 while IFS= read -r f; do
-  d="$(dirname "$f")"; b="$(basename "$f")"
-  if [[ "$b" == *.py ]]; then (cd "$d" && python3 -m pytest -q -p no:cacheprovider "$b" >"$suite_log" 2>&1)
-  else (cd "$d" && bash "$b" >"$suite_log" 2>&1); fi
-  if [ $? -eq 0 ]; then echo "ok   ${f#"$root"/}"; else echo "FAIL ${f#"$root"/}"; cat "$suite_log"; fail=1; fi
-done < <(find "$root/hooks" "$root/skills" -type f \( -name 'test_*.py' -o -name 'test_*.sh' \) -not -path '*/templates/*' | sort)
+  log="$logs/$(printf '%s' "$f" | tr '/' '_')"
+  if [ "$(cat "$log.rc" 2>/dev/null)" = 0 ]; then echo "ok   ${f#"$root"/}"; else echo "FAIL ${f#"$root"/}"; cat "$log.out"; fail=1; fi
+done <<<"$files"
 
 # The agent-tracker mod: validate the manifest and the marketplace, type-check the module, run its *.test.ts files.
 # GitHub's runner has no `claude` CLI, so CI skips this block; a local run has it.
