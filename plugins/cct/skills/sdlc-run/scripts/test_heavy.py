@@ -102,7 +102,7 @@ def test_two_slots_run_two_jobs_at_once_with_distinct_slot_numbers(tmp_path: Pat
     ]  # the third has to wait
     _until(lambda: log.exists() and len(log.read_text().split()) == 2, "two jobs running")
     assert sorted(log.read_text().split()) == ["0", "1"]
-    assert len(_tickets(tmp_path)) == 3
+    _until(lambda: len(_tickets(tmp_path)) == 3, "the third job waits with a ticket")
     gate.touch()
     assert [p.wait(timeout=10) for p in procs] == [0, 0, 0]
 

@@ -9,7 +9,7 @@ import sys
 from pathlib import Path
 
 import pytest
-from test_sdlc_status import BRANCH, GATE, ID, MOVED, PASS, _gate, _goal, _owner, _plan, _pr, _run, repo  # noqa: F401
+from test_sdlc_status import BRANCH, GATE, ID, MOVED, PASS, _gate, _goal, _owner, _plan, _pr, _run  # noqa: F401
 
 import sdlc_status
 

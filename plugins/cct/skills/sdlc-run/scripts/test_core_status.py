@@ -55,9 +55,8 @@ def test_the_workflow_reacts_to_a_label_added_after_classification() -> None:
 # --- no dead end: tier x armed x merged x owner answer x labels ---------------------------------
 
 import itertools  # noqa: E402
-import sys  # noqa: E402
 
-from test_sdlc_status import BRANCH, ID, PASS, _gate, _goal, _pr, repo  # noqa: E402, F401
+from test_sdlc_status import BRANCH, ID, PASS, _gate, _goal, _pr  # noqa: E402, F401
 
 import sdlc_status  # noqa: E402
 

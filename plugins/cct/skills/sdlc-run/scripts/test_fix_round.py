@@ -12,7 +12,7 @@ from pathlib import Path
 
 import pytest
 
-from test_sdlc_status import BRANCH, GATE, ID, PASS, _gate, _goal, _owner, _pr, _sh, repo, sdlc_status
+from test_sdlc_status import BRANCH, GATE, ID, PASS, _gate, _goal, _owner, _pr, _sh, sdlc_status
 
 STAMP = 1_000_000_000
 

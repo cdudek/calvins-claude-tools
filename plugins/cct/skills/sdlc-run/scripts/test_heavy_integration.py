@@ -8,7 +8,7 @@ import subprocess
 import sys
 from pathlib import Path
 
-from test_sdd_wiring import ID, TASKS, _change, approved, base_repo, commit, gate, last, rule, sh, v4  # noqa: F401
+from test_sdd_wiring import ID, approved, base_repo, commit, gate, last, rule, sh, v4
 
 SCRIPTS = Path(__file__).resolve().parents[1] / "templates" / "scripts"
 
@@ -163,13 +163,10 @@ def test_a_failed_preflight_stops_the_gate_before_the_first_heavy_command(tmp_pa
 import pytest  # noqa: E402
 from test_chain_gate import ID as CID  # noqa: E402
 from test_chain_gate import _edit as chain_edit  # noqa: E402
-from test_chain_gate import repo as chain_repo  # noqa: E402, F401
 from test_gate_bash import _bash  # noqa: E402
-from test_gate_bash import repo as bash_repo  # noqa: E402, F401
 from test_goal_active import ID as GAID  # noqa: E402
 from test_goal_active import _project, _stop, _transcript  # noqa: E402
 from test_pr_gate import _run as pr_run  # noqa: E402
-from test_pr_gate import repo as pr_repo  # noqa: E402, F401
 
 
 def test_a_rule_with_no_message_refuses_and_names_the_config_owner(bash_repo: Path) -> None:

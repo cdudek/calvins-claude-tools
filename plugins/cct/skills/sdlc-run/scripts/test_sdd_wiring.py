@@ -13,7 +13,7 @@ import sys
 from pathlib import Path
 
 import pytest
-from test_spec import SPEC, TASKS, _change, commit, rule, sh, tfile
+from test_spec import TASKS, _change, commit, rule, sh, tfile
 
 SKILL = Path(__file__).resolve().parents[1]
 GATE = SKILL / "templates" / "scripts" / "verify_gate.py"

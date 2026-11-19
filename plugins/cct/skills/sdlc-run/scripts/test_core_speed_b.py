@@ -135,7 +135,7 @@ def test_status_and_the_hook_read_the_same_layouts() -> None:
     assert 'proof("LAYOUTS")' in hook and "change_paths(base, change_id)" in status
 
 
-from test_sdlc_status import BRANCH, PASS, _gate as _status_gate, _goal, repo  # noqa: E402, F401
+from test_sdlc_status import BRANCH, PASS, _gate as _status_gate, _goal  # noqa: E402, F401
 from test_sdlc_status import ID as SID  # noqa: E402
 
 import sdlc_status  # noqa: E402

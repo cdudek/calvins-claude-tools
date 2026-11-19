@@ -129,7 +129,10 @@ def test_dev_config_gaps_are_named(tmp_path: Path) -> None:
     assert res.returncode == 2 and "db.dev.create" in res.stderr
 
 
-@pytest.mark.skipif(shutil.which("docker") is None, reason="Docker is not installed")
+@pytest.mark.skipif(
+    shutil.which("docker") is None or os.environ.get("SDLC_DB_LIVE") != "1",
+    reason="live database test: set SDLC_DB_LIVE=1 with Docker running",
+)
 def test_live_template_copy_is_fast(tmp_path: Path) -> None:
     ok = subprocess.run(["docker", "info"], capture_output=True).returncode == 0
     if not ok:
