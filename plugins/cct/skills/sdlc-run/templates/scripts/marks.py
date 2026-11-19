@@ -556,22 +556,38 @@ def screens_required(change: Path) -> bool:
     return data is None or data.get("screens") == "required"
 
 
+RENDERED = re.compile(r"--(?:desktop|mobile|zoom150)@2x$")
+
+
 def screen_ids(change: Path, sources: list[dict] | None = None) -> list[str]:
     """The screens the approved inputs hold, one canonical id each: a note and a loose reference are
     their own row id, a design bundle is one `<bundle id>/<page>` per html page (the gallery is not
-    one; a bundle with no page stays one id). evidence.py names the record file from the id."""
-    ids = []
-    for row in sources if sources is not None else inventory(change):
+    one; a bundle with no page stays one id). evidence.py names the record file from the id.
+    A rendered image of a bundle page (`<page>--desktop@2x.png`, what render.sh writes) is that page,
+    not a screen of its own. shortcut: matched by the page path at the end of the image path, fine
+    for render.sh's output; a renamed render folder with other names counts as loose references."""
+    rows = sources if sources is not None else inventory(change)
+    ids, pages = [], set()
+    for row in rows:
         if row["kind"] != "bundle":
-            ids.append(row["id"])
             continue
         folder = change / row["path"]
-        pages = sorted(
+        found = sorted(
             h.relative_to(folder).with_suffix("").as_posix()
             for h in folder.rglob("*.html")
             if h.name != "gallery.html" and not any(part in SKIP for part in h.relative_to(folder).parts)
         )
-        ids += [f"{row['id']}/{page}" for page in pages] or [row["id"]]
+        pages.update(found)
+        ids += [f"{row['id']}/{page}" for page in found] or [row["id"]]
+    for row in rows:
+        if row["kind"] == "bundle":
+            continue
+        image = row.get("image", "")
+        if row["kind"] == "reference" and RENDERED.search(Path(image).stem):
+            name = shot_screen(Path(image))
+            if any(name == page or name.endswith("/" + page) for page in pages):
+                continue
+        ids.append(row["id"])
     return ids
 
 

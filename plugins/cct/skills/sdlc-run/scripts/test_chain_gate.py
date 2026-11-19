@@ -298,7 +298,7 @@ def _visual(repo: Path, allow: list[str] | None = None) -> None:
         "src/app/settings/page.tsx",
         "packages/db/drizzle/0001.sql",
         "services/api/prisma/migrations/1/migration.sql",
-        "src/lib/authService.ts",
+        "src/lib/auth.service.ts",
         "src/login.tsx",
         "src/lib/rbac.ts",
         "src/components/acl-list.tsx",
@@ -321,6 +321,7 @@ def test_a_visual_change_allows_its_own_folders_and_existing_pages(repo: Path) -
     assert _edit(repo, "src/app/page.tsx", "active").returncode == 0
     assert _edit(repo, "src/components/button.tsx", "active").returncode == 0
     assert _edit(repo, "src/components/author.tsx", "active").returncode == 0  # not auth
+    assert _edit(repo, "src/components/LoginButton.tsx", "active").returncode == 0  # a restyle, not the login flow
 
 
 def _commit(repo: Path) -> str:

@@ -573,8 +573,7 @@ ROUTE_FILES = [f"**/{n}.{e}" for n in ("page", "route", "layout") for e in ROUTE
 
 def auth_path(path: str) -> bool:
     for part in path.split("/"):
-        words = re.split(r"[^A-Za-z0-9]+", re.sub(r"([a-z0-9])([A-Z])", r"\1 \2", part))
-        if any(w.lower() in AUTH_WORDS for w in words):
+        if any(w.lower() in AUTH_WORDS for w in re.split(r"[^A-Za-z0-9]+", part)):
             return True
     return False
 

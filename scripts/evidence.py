@@ -279,7 +279,9 @@ def screen_cmd(args) -> int:
                 entry = {"file": f, "sha256": hashlib.sha256((base / f).read_bytes()).hexdigest(),
                          "build": data.get("build", ""), "state": args.state, "viewport": args.viewport,
                          "zoom": args.zoom}  # fmt: skip
-                if entry not in data.setdefault("captures", []):
+                # a recapture of the same file at a newer build replaces the older entry; the same build keeps both
+                data["captures"] = [c for c in data.get("captures", []) if not (c["file"] == f and c.get("build") != entry["build"])]
+                if entry not in data["captures"]:
                     data["captures"].append(entry)
         if args.status:
             data["status"] = args.status
@@ -449,7 +451,7 @@ def sheet_cmd(args) -> int:
         for r in (r for r in left if r.get("group", "") == group):
             cap = (r.get("captures") or [{}])[-1].get("file", "")
             todo = "; ".join(f"{d['id']} {d['severity']} {d['text']}" for d in r["defects"] if d["open"]).replace("|", "/")
-            out.append(f"| {r['screen']} | {r.get('reference', '')} | {cap} | {todo} | {answers.get(r['screen'], '').replace('-', ' ')} |")
+            out.append(f"| {r['screen']} | {r.get('reference', '')} | {cap} | {todo} | {'' if answers.get(r['screen']) == r.get('ownerDecision') else answers.get(r['screen'], '').replace('-', ' ')} |")
         out.append("")
     tmp = path.with_name(f".{path.name}.{os.getpid()}.tmp")
     tmp.write_text("\n".join(out), encoding="utf-8")

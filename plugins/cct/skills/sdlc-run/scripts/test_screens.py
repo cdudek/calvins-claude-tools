@@ -383,3 +383,41 @@ def test_two_parallel_rounds_both_count(repo: Path) -> None:
     assert all(p.wait() == 0 for p in procs)
     assert rec(repo, "home")["rounds"] == 8
     assert not list((change(repo) / "screens").glob(".*.tmp"))
+
+
+def test_a_recapture_at_a_new_build_replaces_the_old_entry_of_the_same_file(repo: Path) -> None:
+    lock(repo, screens="required")
+    path = shot(repo, "home.png", b"one")
+    screen(repo, "home", "--status", "open", "--build", SHA, "--capture", path)
+    shot(repo, "home.png", b"two")  # fixed, rebuilt, captured again at the next build
+    screen(repo, "home", "--build", "b" * 40, "--capture", path)
+    assert marks_check(repo).returncode == 0, marks_check(repo).stdout
+    assert [c["build"] for c in rec(repo, "home")["captures"]] == ["b" * 40]
+    shot(repo, "home.png", b"three")  # same build, different bytes: still unstable
+    screen(repo, "home", "--capture", path)
+    assert marks_check(repo).returncode == 1
+
+
+def test_an_imported_send_back_is_not_imported_again_after_regeneration(repo: Path) -> None:
+    fill(repo)
+    c = str(change(repo))
+    ev(repo, "sheet", c)
+    path = change(repo) / "owner-sheet.md"
+    path.write_text(path.read_text().replace("| f |  |  |  |  |", "| f |  |  |  | send back |"))
+    assert ev(repo, "sheet", c, "--import").returncode == 0
+    assert rec(repo, "f")["rounds"] == 0 and rec(repo, "f")["ownerDecision"] == "send-back"
+    ev(repo, "round", c, "f")
+    ev(repo, "round", c, "f")
+    ev(repo, "sheet", c)
+    assert "| f |" in path.read_text() and "send back" not in path.read_text().split("| f |")[1].splitlines()[0]
+    ev(repo, "sheet", c, "--import")
+    assert rec(repo, "f")["rounds"] == 2
+
+
+def test_rendered_images_of_a_bundle_are_not_screens_of_their_own(repo: Path) -> None:
+    asks(repo, "export/index.html", "export/settings/index.html", "rendered/index--desktop@2x.png",
+         "rendered/settings/index--desktop@2x.png")  # fmt: skip
+    sys.path.insert(0, str(TPL))
+    import marks
+
+    assert len(marks.screen_ids(change(repo))) == 2, marks.screen_ids(change(repo))
