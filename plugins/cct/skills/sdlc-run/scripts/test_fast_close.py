@@ -268,3 +268,8 @@ def test_stages_say_how_the_visual_skip_is_attested_and_what_current_format_requ
     assert "`Skip visual evidence`" in STAGES and "visual-skip" in STAGES
     assert "decisions.json` is not locked at approval" in STAGES or "is not locked at approval" in STAGES
     assert "a missing one is a blocker" in STAGES and "upgrade gap" in STAGES
+
+
+def test_stage_6_merges_the_close_findings_before_the_triager() -> None:
+    assert "scripts/close_findings.py <state directory> changes/<id>/findings.md" in STEP4
+    assert STEP4.index("close_findings.py") < STEP4.index("cct:review-fixset-triager")
