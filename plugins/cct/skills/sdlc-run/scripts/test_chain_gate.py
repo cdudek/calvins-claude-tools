@@ -275,10 +275,7 @@ def test_the_transcript_guard_holds_in_a_repo_without_sdlc_json(tmp_path: Path) 
 
 
 def _visual(repo: Path, allow: list[str] | None = None) -> None:
-    (repo / "changes" / ID / "lock.json").write_text('{"screens": "required"}\n')
-    (repo / "changes" / ID / "plan.md").write_text(
-        PLAN + "\n## Where things go\n\n- `src/screens/`: the new screens\n"
-    )
+    (repo / "changes" / ID / "lock.json").write_text('{"screens": "required", "scopeFolders": ["src/screens"]}\n')
     cfg = {"changesDir": "changes"}
     if allow:
         cfg["scopeGuard"] = {"allow": allow}
@@ -313,6 +310,7 @@ def test_a_visual_change_allows_its_own_folders_and_existing_pages(repo: Path) -
     assert _edit(repo, "src/screens/settings/page.tsx", "active").returncode == 0
     (repo / "src/app").mkdir(parents=True)
     (repo / "src/app/page.tsx").write_text("x")  # an existing route is a restyle, not a new page
+    subprocess.run(["git", "-C", str(repo), "add", "src/app/page.tsx"], check=True)
     assert _edit(repo, "src/app/page.tsx", "active").returncode == 0
     assert _edit(repo, "src/components/button.tsx", "active").returncode == 0
 
@@ -325,3 +323,53 @@ def test_the_scope_guard_allow_list_lets_a_path_through(repo: Path) -> None:
 
 def test_a_change_without_visual_work_may_edit_migrations(repo: Path) -> None:
     assert _edit(repo, "db/migrations/0001.sql", "active").returncode == 0
+
+
+def test_a_malformed_scope_guard_config_fails_closed_not_open(repo: Path) -> None:
+    _visual(repo)
+    (repo / "sdlc.json").write_text(json.dumps({"changesDir": "changes", "scopeGuard": ["x"]}))
+    assert _edit(repo, "prisma/schema.prisma", "active").returncode == 2
+    (repo / "sdlc.json").write_text(json.dumps({"changesDir": "changes", "scopeGuard": {"allow": [1, None], "routes": "x"}}))
+    assert _edit(repo, "prisma/schema.prisma", "active").returncode == 2
+    (repo / "sdlc.json").write_text(json.dumps({"changesDir": "changes", "scopeGuard": {"allow": 5}}))
+    assert _edit(repo, "src/auth/x.ts", "active").returncode == 2
+
+
+def test_an_unreadable_lock_refuses(repo: Path) -> None:
+    _visual(repo)
+    (repo / "changes" / ID / "lock.json").write_text("{not json")
+    r = _edit(repo, "src/components/button.tsx", "active")
+    assert r.returncode == 2 and "lock.json cannot be read" in r.stderr
+
+
+def test_allowed_folders_come_from_the_lock_not_the_plan(repo: Path) -> None:
+    _visual(repo)
+    (repo / "changes" / ID / "plan.md").write_text(PLAN + "\n## Where things go\n\n- `src/evil/`: x\n")
+    assert _edit(repo, "src/evil/page.tsx", "active").returncode == 2
+    assert _edit(repo, "src/screens/page.tsx", "active").returncode == 0
+
+
+def test_a_dotdot_folder_in_the_lock_allows_nothing(repo: Path) -> None:
+    _visual(repo)
+    (repo / "changes" / ID / "lock.json").write_text('{"screens": "required", "scopeFolders": ["../x", ""]}')
+    assert _edit(repo, "src/screens/page.tsx", "active").returncode == 2
+
+
+@pytest.mark.parametrize("file", ["src/app/layout.mjs", "src/app/route.cjs", "src/app/page.mts"])
+def test_more_route_names_and_extensions_count(repo: Path, file: str) -> None:
+    _visual(repo)
+    assert _edit(repo, file, "active").returncode == 2
+
+
+def test_routes_are_configurable_and_untracked_means_new(repo: Path) -> None:
+    _visual(repo)
+    (repo / "sdlc.json").write_text(json.dumps({"changesDir": "changes", "scopeGuard": {"routes": ["**/view.vue"]}}))
+    assert _edit(repo, "src/a/view.vue", "active").returncode == 2
+    assert _edit(repo, "src/app/page.tsx", "active").returncode == 0  # not a configured route
+    (repo / "sdlc.json").write_text(json.dumps({"changesDir": "changes"}))
+    (repo / "src/app").mkdir(parents=True)
+    (repo / "src/app/page.tsx").write_text("x")  # on disk but never committed: still new
+    assert _edit(repo, "src/app/page.tsx", "active").returncode == 2
+    env = {k: v for k, v in os.environ.items() if not k.startswith("GIT_")}
+    subprocess.run(["git", "-C", str(repo), "add", "src/app/page.tsx"], check=True, env=env)
+    assert _edit(repo, "src/app/page.tsx", "active").returncode == 0
