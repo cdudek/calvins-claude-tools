@@ -1049,6 +1049,17 @@ def run(
                 "dialog `Change <id>, finding visual-skip: ...` answered Skip visual evidence)",
             )
         )
+    if visual_check and (
+        Path(visual_check).name != "visual-check.py"
+        or any(not (Path(r) / "visual.json").is_file() for r in visual_runs or [])
+    ):  # the shipped checker over a real run folder, not any command that exits 0
+        evidence.append(
+            refusal(
+                "ux-visual-binding",
+                "--visual-check must be the shipped visual-check.py and every --visual-run a run folder "
+                "that holds the visual.json it checks",
+            )
+        )
     for k, visual_run in enumerate(visual_runs or [], 1):  # not `number`: finish() reads the milestone number
         evidence.append(
             {

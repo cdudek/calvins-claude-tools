@@ -291,11 +291,35 @@ def test_a_visual_run_does_not_touch_the_milestone_number(tmp_path: Path) -> Non
     """The visual loop used the same variable as the milestone number: M2 was recorded as M1."""
     repo = _milestone_repo(tmp_path)
     _git(repo, "checkout", "-q", "-b", "milestone/trial-2")
-    checker = tmp_path / "checker.py"
+    checker = tmp_path / "visual-check.py"
     checker.write_text("import sys\nsys.exit(0)\n")
+    (tmp_path / "run1").mkdir()
+    (tmp_path / "run1" / "visual.json").write_text("{}")
     _commit_files(repo, validation_md="| F1 | x | y | z | met |\n")
-    r = _gate(repo, "milestone", ID, "--visual-check", str(checker), "--visual-run", "run1")
+    r = _gate(repo, "milestone", ID, "--visual-check", str(checker), "--visual-run", str(tmp_path / "run1"))
     assert _last(r).startswith(f"VERIFY PASS milestone {ID}"), r.stdout
     verify = repo / "changes" / ID / "verify"
     assert json.loads((verify / "report.json").read_text())["milestone"] == 2
     assert (verify / "milestone-2.json").exists() and not (verify / "milestone-1.json").exists()
+
+
+def test_a_visual_checker_that_is_not_the_shipped_one_is_refused(tmp_path: Path) -> None:
+    repo = _milestone_repo(tmp_path)
+    _commit_files(repo, validation_md="| F1 | x | y | z | met |\n")
+    run = tmp_path / "run1"
+    run.mkdir()
+    (run / "visual.json").write_text("{}")
+    fake = tmp_path / "anything.py"
+    fake.write_text("import sys\nsys.exit(0)\n")
+    r = _gate(repo, "milestone", ID, "--visual-check", str(fake), "--visual-run", str(run))
+    assert _last(r) == f"VERIFY FAIL milestone {ID} check=ux-visual-binding", r.stdout
+
+
+def test_a_visual_run_folder_without_its_visual_json_is_refused(tmp_path: Path) -> None:
+    repo = _milestone_repo(tmp_path)
+    _commit_files(repo, validation_md="| F1 | x | y | z | met |\n")
+    checker = tmp_path / "visual-check.py"
+    checker.write_text("import sys\nsys.exit(0)\n")
+    (tmp_path / "empty").mkdir()
+    r = _gate(repo, "milestone", ID, "--visual-check", str(checker), "--visual-run", str(tmp_path / "empty"))
+    assert _last(r) == f"VERIFY FAIL milestone {ID} check=ux-visual-binding", r.stdout
