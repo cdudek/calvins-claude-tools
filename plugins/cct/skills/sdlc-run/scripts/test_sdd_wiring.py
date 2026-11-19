@@ -180,3 +180,34 @@ def test_layout_4_locks_each_approved_rule_by_id_and_content(tmp_path: Path) -> 
     commit(repo, "edit")
     r = gate(repo, "feature", ID)
     assert last(r) == "VERIFY BLOCKED reason=protected-path" and "rules/R1.md" in r.stdout
+
+
+# ------------------------------------------------------------------ state/ behind one reader
+
+
+def test_state_path_reads_the_new_place_first_and_the_old_second(tmp_path: Path) -> None:
+    import spec
+
+    (tmp_path / "decisions.json").write_text("{}")
+    assert spec.state_path(tmp_path, "decisions.json") == tmp_path / "decisions.json"
+    (tmp_path / "state").mkdir()
+    (tmp_path / "state" / "intake.json").write_text('{"layout": 4}')  # decisions.json is intake.json there
+    assert spec.state_path(tmp_path, "decisions.json") == tmp_path / "state" / "intake.json"
+    assert spec.applies(tmp_path)
+    assert spec.state_path(tmp_path, "lock.json") == tmp_path / "lock.json"  # neither exists: the old place
+    (tmp_path / "state" / "lock.json").write_text("{}")
+    assert spec.state_path(tmp_path, "lock.json") == tmp_path / "state" / "lock.json"
+
+
+def test_the_gate_and_status_read_machine_files_from_state(tmp_path: Path) -> None:
+    repo, c = locked(tmp_path)
+    (c / "state").mkdir()
+    for old, new in (("decisions.json", "intake.json"), ("lock.json", "lock.json"), ("done.json", "done.json")):
+        sh(repo, "git", "mv", f"changes/{ID}/{old}", f"changes/{ID}/state/{new}")
+    commit(repo, "state")
+    assert last(gate(repo, "feature", ID)).startswith("VERIFY PASS")
+    (c / "state" / "intake.json").write_text('{"layout": 4, "size": "L"}')
+    commit(repo, "routing moved")
+    assert last(gate(repo, "feature", ID)) == "VERIFY BLOCKED reason=protected-path"
+    out = status(repo, "map", ID).stdout
+    assert "stage  5/7" in out  # the lock is found under state/

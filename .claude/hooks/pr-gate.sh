@@ -182,9 +182,12 @@ class Repo:
         if (ask := (refs, live)) in self.seen:
             return self.seen[ask]
         found = {}
-        for path in self.in_changes("decisions.json") if live else []:
+        # the old place first, then state/intake.json (the new place of decisions.json) over it
+        for path in [*self.in_changes("decisions.json"), *self.in_changes("state/intake.json")] if live else []:
             try:
-                found[path.parent.name] = json.loads(path.read_text(encoding="utf-8"))
+                found[path.parent.parent.name if path.parent.name == "state" else path.parent.name] = json.loads(
+                    path.read_text(encoding="utf-8")
+                )
             except (OSError, ValueError):
                 continue
         rel = self.changes.relative_to(self.top).as_posix()
@@ -194,9 +197,10 @@ class Repo:
             listing = git(self.dir, "ls-tree", "-r", "--name-only", ref, "--", rel + "/")
             for name in listing.splitlines():
                 depth = len(Path(name).relative_to(rel).parts)
-                if name.endswith("/decisions.json") and depth in (2, 3, 5):
+                moved = name.endswith("/state/intake.json")
+                if (name.endswith("/decisions.json") and depth in (2, 3, 5)) or (moved and depth - 1 in (2, 3, 5)):
                     try:
-                        found[Path(name).parent.name] = json.loads(git(self.dir, "show", f"{ref}:{name}"))
+                        found[Path(name).parents[1 if moved else 0].name] = json.loads(git(self.dir, "show", f"{ref}:{name}"))
                     except ValueError:
                         continue
         self.seen[ask] = [(i, d) for i, d in found.items() if isinstance(d, dict)]
@@ -272,7 +276,8 @@ class Repo:
     def excepted(self, branch: str) -> bool:
         # the pushed repo's own exceptions, and the session's: the engineer speaks in the session
         start = root / cfg.get("changesDir", "changes")
-        for path in [*self.changes.glob("*/decisions.json"), *start.glob("*/decisions.json")]:
+        for path in [*self.changes.glob("*/decisions.json"), *start.glob("*/decisions.json"),
+                     *self.changes.glob("*/state/intake.json"), *start.glob("*/state/intake.json")]:
             try:
                 rows = json.loads(path.read_text(encoding="utf-8")).get("prExceptions") or []
             except (OSError, ValueError, AttributeError):

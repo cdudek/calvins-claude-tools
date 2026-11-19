@@ -176,3 +176,21 @@ def test_readers_do_not_fail_when_a_change_folder_was_removed_after_merge(tmp_pa
         capture_output=True, text=True, env={**os.environ, "CLAUDE_PROJECT_DIR": str(tmp_path)},
     )  # fmt: skip
     assert r.returncode == 0 and ID in r.stdout, r.stderr
+
+
+# ------------------------------------------------------------------ state/ behind one reader
+
+
+def test_the_hook_reads_state_and_protects_it_like_the_old_place(tmp_path: Path) -> None:
+    repo = make(tmp_path)
+    c = repo / "changes" / ID
+    (c / "state").mkdir()
+    (c / "decisions.json").rename(c / "state" / "intake.json")
+    (c / "lock.json").rename(c / "state" / "lock.json")
+    assert edit(repo, "src/app.py").returncode == 0  # decisions and lock found under state/
+    for f in ("state/lock.json", "state/done.json", "lock.json", "spec.md"):
+        r = edit(repo, f"changes/{ID}/{f}")
+        assert r.returncode == 2 and "protectedEdit" in r.stderr, f
+    cur = json.loads((c / "state" / "intake.json").read_text())
+    r = edit(repo, f"changes/{ID}/state/intake.json", content=json.dumps({k: v for k, v in cur.items() if k != "layout"}))
+    assert r.returncode == 2 and "layout" in r.stderr

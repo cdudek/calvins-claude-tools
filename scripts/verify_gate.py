@@ -158,9 +158,9 @@ def criteria_hash(change: Path, checks: object, plan: bool = True) -> dict[str, 
     reads an older lock, which lacks that key."""
     v4 = spec.applies(change)
     hashes = {
-        name: hashlib.sha256((change / name).read_bytes()).hexdigest()
+        name: hashlib.sha256(spec.state_path(change, name).read_bytes()).hexdigest()
         for name in (("done.json",) if v4 else LOCKED)
-        if (change / name).exists()
+        if spec.state_path(change, name).exists()
     }
     if v4:  # the spec, the design and the task rows replace facts.md and the plan's milestones
         hashes.update(
@@ -182,7 +182,7 @@ def criteria_hash(change: Path, checks: object, plan: bool = True) -> dict[str, 
 
 def routing(change: Path) -> dict:
     """The routing fields of decisions.json (an unreadable file locks as itself, so editing it moves the hash)."""
-    path = change / "decisions.json"
+    path = spec.state_path(change, "decisions.json")
     if not path.exists():
         return {"missing": True}
     try:
@@ -211,7 +211,7 @@ def has_bundle_inputs(change: Path) -> bool:
     if next((change / "asks").rglob("index.html"), None):
         return True
     try:
-        declared = json.loads((change / "decisions.json").read_text(encoding="utf-8"))
+        declared = json.loads(spec.state_path(change, "decisions.json").read_text(encoding="utf-8"))
         path = (change / declared["visualSource"]["path"]).resolve()
         return path.is_dir() and path.is_relative_to((change / "asks").resolve())
     except (OSError, ValueError, KeyError, TypeError, AttributeError):
@@ -223,7 +223,7 @@ def milestone_number(change: Path, cfg: dict, branch: str) -> int | None:
     rule of hooks/pass_proof.py `milestone_of`, kept equal by test_contract."""
     prefix = (cfg.get("milestones") or {}).get("branchPrefix", "milestone/")
     try:
-        slug = (json.loads((change / "decisions.json").read_text(encoding="utf-8")).get("milestone") or {}).get("slug")
+        slug = (json.loads(spec.state_path(change, "decisions.json").read_text(encoding="utf-8")).get("milestone") or {}).get("slug")
     except (OSError, ValueError, AttributeError):
         slug = None
     slug = slug or re.sub(r"^[A-Z][A-Z0-9]+-\d+-", "", re.sub(r"^\d{4}-\d{2}-\d{2}-", "", change.name))
@@ -241,7 +241,7 @@ def project_branch(change: Path, cfg: dict) -> str:
     `branch: true` is planning only (3.7.0), but one written before 3.7.0 has no `branch` key
     and keeps its branch."""
     try:
-        project = json.loads((change / "decisions.json").read_text(encoding="utf-8")).get("project")
+        project = json.loads(spec.state_path(change, "decisions.json").read_text(encoding="utf-8")).get("project")
     except (OSError, ValueError, AttributeError):
         project = None
     if isinstance(project, dict) and project.get("slug") and project.get("branch", True):
@@ -411,10 +411,10 @@ NO_EVIDENCE = {"", "-", "--", "n/a", "na", "none", "tbd", "todo", "?"}
 def lock_format(change: Path) -> int:
     """The format version `approve` wrote into lock.json: 0 for a lock from before it existed or no
     lock. An unreadable lock reads as the newest format (fail closed)."""
-    if not (change / "lock.json").exists():
+    if not spec.state_path(change, "lock.json").exists():
         return 0
     try:
-        return int(json.loads(read(change / "lock.json")).get("format", 0))
+        return int(json.loads(read(spec.state_path(change, "lock.json"))).get("format", 0))
     except (ValueError, AttributeError, TypeError):
         return LOCK_FORMAT
 
@@ -430,10 +430,10 @@ def approved_facts(change: Path) -> tuple[list[str], list[str]]:
     """(fact ids of the approved `done.json`, problems). A missing or unparsable file is a problem
     on a current-format change; a legacy change without one has no facts to derive."""
     problem = "validation.md: done.json is missing or unreadable, so the approved facts are unknown"
-    if not (change / "done.json").exists():
+    if not spec.state_path(change, "done.json").exists():
         return [], [problem] if current_format(change) else []
     try:
-        listed = json.loads(read(change / "done.json")).get("facts")
+        listed = json.loads(read(spec.state_path(change, "done.json"))).get("facts")
         if not isinstance(listed, list):
             raise ValueError("facts is not a list")
         return [str(f["id"] if isinstance(f, dict) else f) for f in listed if f], []
@@ -519,7 +519,7 @@ def validation_gaps(change: Path, number: int | None = None) -> list[str]:
 
 def read_decisions(change: Path) -> dict | None:
     """decisions.json as a dict ({} when unparsable or not an object), None when the file is missing."""
-    path = change / "decisions.json"
+    path = spec.state_path(change, "decisions.json")
     if not path.exists():
         return None
     try:
@@ -727,7 +727,7 @@ def approve(change: Path, cfg: dict) -> int:
     problems += branch_mode_problems(change, cfg)
     if gap := full_e2e_gap((cfg.get("checks") or {}).get("milestone") or [], root()):
         problems.append(gap)
-    if not v4 and not (change / "done.json").exists():  # approval requires its artifacts
+    if not v4 and not spec.state_path(change, "done.json").exists():  # approval requires its artifacts
         problems.append("done.json is missing: the approved facts cannot be locked without it")
     elif not v4 and approved_facts(change)[1]:
         problems.append("done.json is unreadable or has no `facts` list")
@@ -735,7 +735,7 @@ def approve(change: Path, cfg: dict) -> int:
         print("\n".join(problems[:TAIL]))
         return end(f"APPROVE FAIL {change.name} problems={len(problems)}", 1)
     if v4:
-        (change / "done.json").write_text(json.dumps(v4_done(change), indent=2) + "\n", encoding="utf-8")
+        spec.state_path(change, "done.json").write_text(json.dumps(v4_done(change), indent=2) + "\n", encoding="utf-8")
     lock = {
         "approved_at": dt.datetime.now(dt.timezone.utc).isoformat(timespec="seconds"),  # noqa: UP017 -- runs on macOS python3 3.9
         "sha": sh("git", "rev-parse", "HEAD"),
@@ -745,7 +745,7 @@ def approve(change: Path, cfg: dict) -> int:
         "format": LOCK_FORMAT,  # strict validation rows and records apply to this lock and later ones
         "layout": 4 if v4 else 3,  # the hooks read the layout here, not from files an edit can change
     }
-    (change / "lock.json").write_text(json.dumps(lock, indent=2) + "\n", encoding="utf-8")
+    spec.state_path(change, "lock.json").write_text(json.dumps(lock, indent=2) + "\n", encoding="utf-8")
     print(f"locked {', '.join(lock['criteria'])} in {change.name}/lock.json -- commit it")
     return 0
 
@@ -1056,7 +1056,7 @@ def run(
             print(f"check out {branch} (the project head) and run the gate there.")
             return finish("VERIFY BLOCKED reason=env", 3)
     else:
-        lock_path = change / "lock.json"
+        lock_path = spec.state_path(change, "lock.json")
         if not lock_path.exists():
             print(f"{change.name}/lock.json is missing: run `verify_gate.py approve {change.name}`")
             print("at the plan gate, when the engineer approves.")

@@ -44,6 +44,10 @@ import subprocess
 import sys
 from pathlib import Path
 
+sys.dont_write_bytecode = True  # the spec import must not leave __pycache__ in a clean checkout
+sys.path.insert(0, str(Path(__file__).resolve().parent))  # spec.py sits beside this file
+import spec  # noqa: E402  (state_path: the one reader of the state/ move)
+
 SECTION = re.compile(r"^## (\d{3}) · \d{2}:\d{2}[ \t]*$", re.M)
 NOTE = re.compile(r"^(\d+)\. ([^\n]*(?:\n(?!\d+\. ).*)*)", re.M)
 IMAGE = re.compile(r"!\[[^\]]*\]\(([^)]+)\)")
@@ -262,7 +266,7 @@ def bundles(change: Path) -> dict[Path, str]:
     the folder decisions.json names as visualSource.path (a React export has no index.html)."""
     folders = {index.parent for index in (change / "asks").rglob("index.html")}
     try:
-        declared = json.loads((change / "decisions.json").read_text(encoding="utf-8"))
+        declared = json.loads(spec.state_path(change, "decisions.json").read_text(encoding="utf-8"))
         path = (change / declared["visualSource"]["path"]).resolve()
         if path.is_dir() and path.is_relative_to((change / "asks").resolve()):
             folders.add(path)
@@ -500,7 +504,7 @@ def manifest_required(change: Path) -> bool:
     the behaviour in which an absent manifest is fine. Fails closed: a lock.json that exists but
     cannot be read as an object is treated as strict, never as legacy. (Editing a lock after
     approval is refused by chain-gate.sh, and the gate compares its hashes.)"""
-    path = change / "lock.json"
+    path = spec.state_path(change, "lock.json")
     if not path.exists():
         return False
     try:

@@ -930,13 +930,25 @@ def evaluate(root: Path, fixture: list[dict], k: int = 10) -> dict:
 CHANGE_ID = re.compile(r"^\d{4}-\d{2}-\d{2}")
 
 
+# The state/ move: machine files may sit in <change>/state/ (decisions.json is intake.json there).
+# Every reader goes through state_path, new place first and old place second; a writer may still
+# write the old place, so both layouts of one change read the same.
+STATE_NAMES = {"decisions.json": "intake.json"}
+
+
+def state_path(change: Path, name: str) -> Path:
+    change = Path(change)
+    new = change / "state" / STATE_NAMES.get(name, name)
+    return new if new.exists() else change / name
+
+
 def layout(change: Path) -> str:
     """'v4' for a change pinned to the three-document layout, 'legacy' for intent/facts/plan,
     'none' for an empty folder. The pin is `layout: 4` in decisions.json; a folder that has a
     spec.md and no facts.md counts too."""
     change = Path(change)
     try:
-        if json.loads((change / "decisions.json").read_text()).get("layout") == 4:
+        if json.loads(state_path(change, "decisions.json").read_text()).get("layout") == 4:
             return "v4"
     except (OSError, ValueError, AttributeError):
         pass

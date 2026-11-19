@@ -893,3 +893,14 @@ def test_a_joining_change_without_a_project_is_not_a_second_owner(repo: Path) ->
     _pass(repo)
     _git(repo, "checkout", "-q", "project/trial")
     assert _run(repo, "git merge --no-ff milestone/trial-1").returncode == 0
+
+
+def test_the_change_record_is_found_when_it_sits_in_state(repo: Path) -> None:
+    c = repo / "changes" / ID
+    (c / "state").mkdir()
+    (c / "decisions.json").rename(c / "state" / "intake.json")  # the new place of decisions.json
+    _commit(repo, f"changes/{ID}/milestone.md", "moved\n")
+    cmd = "gh pr create --base project/trial --title 'Milestone 1' --body x"
+    assert _run(repo, cmd).returncode == 2
+    _pass(repo, owner="")
+    assert _run(repo, cmd).returncode == 0

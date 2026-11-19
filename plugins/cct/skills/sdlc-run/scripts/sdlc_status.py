@@ -164,7 +164,7 @@ def features(change: Path, root: Path, cfg: dict, decisions: dict) -> list[dict]
 def stage_of(change: Path, rows: list[dict]) -> int:
     if "archive" in change.parts:
         return 7
-    if (change / "lock.json").exists():
+    if spec.state_path(change, "lock.json").exists():
         return 6 if rows and all(r["state"].startswith(("merged", "done")) for r in rows) else 5
     if (change / "plan.md").exists() or (change / "tasks.md").exists():
         return 4
@@ -176,7 +176,7 @@ def stage_of(change: Path, rows: list[dict]) -> int:
 
 
 def state(change: Path, root: Path, cfg: dict) -> dict:
-    decisions = read_json(change / "decisions.json")
+    decisions = read_json(spec.state_path(change, "decisions.json"))
     name, pos, total = initiative(change, root, decisions)
     rows = features(change, root, cfg, decisions)
     return {
@@ -264,7 +264,7 @@ def parent_of(change: Path, cfg: dict, scope: str, head: str = "") -> str:
         return project_branch(change, cfg) or default
     if head.startswith("hotfix/") and cfg.get("hotfix", True):
         return default
-    slug = read_json(change / "decisions.json").get("milestone", {}).get("slug") or slug_of(change.name)
+    slug = read_json(spec.state_path(change, "decisions.json")).get("milestone", {}).get("slug") or slug_of(change.name)
     return f"{(cfg.get('milestones') or {}).get('branchPrefix', 'milestone/')}{slug}"
 
 
@@ -334,7 +334,7 @@ def goal(
     subject = change.name
     folder = change
     if scope == "project":
-        subject = (read_json(change / "decisions.json").get("project") or {}).get("slug", "")
+        subject = (read_json(spec.state_path(change, "decisions.json")).get("project") or {}).get("slug", "")
         folder = project_record(subject, root) if project else change
     report = read_json(folder / "verify" / "report.json")
     result = str(report.get("result", "")) if report.get("scope") == scope else ""
@@ -370,7 +370,7 @@ def goal(
             return next((p for p in merged_in if contains(root, gated, p)), "")
 
         if planned(change):
-            for b in branches(change, read_json(change / "decisions.json"), scope, n, cfg):
+            for b in branches(change, read_json(spec.state_path(change, "decisions.json")), scope, n, cfg):
                 i = b.rsplit("-", 1)[1]
                 receipt = read_json(change / "verify" / f"milestone-{i}.json")
                 tip = git(root, "rev-parse", "--verify", "--quiet", f"{b}^{{commit}}")
@@ -397,7 +397,7 @@ def goal(
         if not names:
             missing.append("no-project-branch")
     else:
-        names = branches(change, read_json(change / "decisions.json"), scope, n, cfg)
+        names = branches(change, read_json(spec.state_path(change, "decisions.json")), scope, n, cfg)
     if not names and not local and scope != "project":
         missing.append(f"no-branch-for-{scope}-{n}")
     prs = []
@@ -693,12 +693,12 @@ def blocker(subject: str, line: str, scope: str = "milestone", base: str = "") -
 
 def security_base(change: Path) -> str:
     """The commit the goal started from: the `sha` approval recorded in lock.json ("" if none)."""
-    return str(read_json(change / "lock.json").get("sha") or "")
+    return str(read_json(spec.state_path(change, "lock.json")).get("sha") or "")
 
 
 def subject_of(change: Path, scope: str) -> str:
     """What the goal's recovery step names: the change id, or for a project the project slug."""
-    slug = (read_json(change / "decisions.json").get("project") or {}).get("slug") if scope == "project" else ""
+    slug = (read_json(spec.state_path(change, "decisions.json")).get("project") or {}).get("slug") if scope == "project" else ""
     return slug or change.name
 
 
@@ -731,7 +731,7 @@ def goal_main(args: list[str]) -> int:
     head = re.search(r"no-pr:([^,\s]+)", line)
     # a feature's base depends on its branch (a hotfix goes to the default branch): the no-pr one,
     # or else the plan's row
-    row = branches(change, read_json(change / "decisions.json"), scope, int(value) if flag else None)
+    row = branches(change, read_json(spec.state_path(change, "decisions.json")), scope, int(value) if flag else None)
     base = parent_of(change, config(root), scope, head[1] if head else row[0] if scope == "feature" and row else "")
     if code and (sentence := blocker(subject_of(change, scope), line, scope, base)):
         print(sentence)

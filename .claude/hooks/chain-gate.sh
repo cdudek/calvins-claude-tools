@@ -151,8 +151,15 @@ def section(path: Path, heading: str) -> str:
     return "\n".join(line for line in body if line.strip())
 
 
+def state_file(change_dir: Path, name: str) -> Path:
+    """A machine file of a change: <change>/state/ first (decisions.json is intake.json there), then
+    the old place. The same reader as spec.py `state_path`, which a hook cannot import."""
+    new = change_dir / "state" / {"decisions.json": "intake.json"}.get(name, name)
+    return new if new.exists() else change_dir / name
+
+
 def load_decisions(change_dir: Path) -> dict:
-    path = change_dir / "decisions.json"
+    path = state_file(change_dir, "decisions.json")
     if not path.exists():
         return {}
     return json.loads(path.read_text(encoding="utf-8"))
@@ -170,7 +177,7 @@ def lock_layout(change_dir: Path) -> int | None:
     """The layout `approve` recorded in lock.json: None for a lock without one (an older lock) or
     an unreadable one. Once a lock exists it, not an editable file, says which layout applies."""
     try:
-        value = json.loads((change_dir / "lock.json").read_text(encoding="utf-8")).get("layout")
+        value = json.loads((state_file(change_dir, "lock.json")).read_text(encoding="utf-8")).get("layout")
     except (OSError, ValueError, AttributeError):
         return None
     return value if isinstance(value, int) else None
@@ -180,7 +187,7 @@ def is_v4(change_dir: Path, decisions: dict) -> bool:
     """Layout 4 (spec.py `applies`, which a hook cannot import): pinned in decisions.json, or a
     spec.md with no facts.md. It has three documents and a living spec, not intent/facts/plan.
     After approval the lock decides, and a lock with no layout is an older, three-file one."""
-    if (change_dir / "lock.json").exists():
+    if (state_file(change_dir, "lock.json")).exists():
         return lock_layout(change_dir) == 4
     return decisions.get("layout") == 4 or (
         (change_dir / "spec.md").exists() and not (change_dir / "facts.md").exists()
@@ -189,7 +196,7 @@ def is_v4(change_dir: Path, decisions: dict) -> bool:
 
 def protected_files(change_dir: Path, decisions: dict) -> tuple[str, ...]:
     """What a locked change protects: its layout's files, or both layouts' when the lock names none."""
-    if lock_layout(change_dir) is None and (change_dir / "lock.json").exists():
+    if lock_layout(change_dir) is None and (state_file(change_dir, "lock.json")).exists():
         return tuple(dict.fromkeys(PROTECTED_FILES + V4_PROTECTED_FILES))
     return V4_PROTECTED_FILES if is_v4(change_dir, decisions) else PROTECTED_FILES
 
@@ -291,13 +298,16 @@ if len(parts) >= 3 and parts[0] == changes:
     change_dir = root / changes / change_id
     base = parts[-1]
     inside = "/".join(parts[2:])
+    if inside.startswith("state/"):  # state/lock.json is lock.json, state/intake.json is decisions.json
+        inside = {"intake.json": "decisions.json"}.get(inside[6:], inside[6:])
+        base = inside.rsplit("/", 1)[-1]
 
     if base == "decisions.json":
-        lock = change_dir / "lock.json"
-        if lock.exists() and (change_dir / "decisions.json").exists():
+        lock = state_file(change_dir, "lock.json")
+        if lock.exists() and (state_file(change_dir, "decisions.json")).exists():
             # `layout` decides which files the lock protects: changing it after approval is a protected edit
             tool = payload.get("tool_input") or {}
-            now = (change_dir / "decisions.json").read_text(encoding="utf-8")
+            now = (state_file(change_dir, "decisions.json")).read_text(encoding="utf-8")
             new = tool["content"] if "content" in tool else now.replace(
                 str(tool.get("old_string", "")), str(tool.get("new_string", "")), 1 if tool.get("old_string") else 0
             )
@@ -314,7 +324,7 @@ if len(parts) >= 3 and parts[0] == changes:
                     action="stop and ask the engineer; their words go in decisions.json as protectedEdit",
                 )
         sys.exit(0)
-    if not (change_dir / "decisions.json").exists():
+    if not (state_file(change_dir, "decisions.json")).exists():
         deny(
             f"the Stage 1.1 dialog has not run for {change_id}. AskUserQuestion must ask ticket "
             f"(search Linear first), intent, design file, size and kind; then write "
@@ -327,7 +337,7 @@ if len(parts) >= 3 and parts[0] == changes:
     v4 = is_v4(change_dir, decisions)
 
     if is_milestone(decisions) or v4:
-        if inside in protected_files(change_dir, decisions) and (change_dir / "lock.json").exists():
+        if inside in protected_files(change_dir, decisions) and (state_file(change_dir, "lock.json")).exists():
             if decisions.get("protectedEdit"):
                 sys.exit(0)
             deny(
@@ -422,7 +432,7 @@ if re.fullmatch(rf"{re.escape(str(cfg.get('livingSpecs') or 'specs'))}/[^/]+/rul
     # the living spec: rule files and the id floor change by script or git, not by a direct edit,
     # once a layout-4 change is approved. Flipping a rule's `status:` line is the one open edit.
     found = branch_change()
-    if found and is_v4(found[1], found[2]) and (found[1] / "lock.json").exists() and not found[2].get("protectedEdit"):
+    if found and is_v4(found[1], found[2]) and (state_file(found[1], "lock.json")).exists() and not found[2].get("protectedEdit"):
         tool = payload.get("tool_input") or {}
         flip = all(re.fullmatch(r"\s*status:\s*\w+\s*", str(tool.get(k, "\n"))) for k in ("old_string", "new_string"))
         if not flip:
@@ -463,7 +473,7 @@ if v3 and not skipped(decisions, "prototype"):
             sys.exit(0)
 
 if is_milestone(decisions) or is_v4(change_dir, decisions):
-    locked = (change_dir / "lock.json").exists()
+    locked = (state_file(change_dir, "lock.json")).exists()
     v4 = is_v4(change_dir, decisions)
     if locked and match_any(rel, cfg.get("protected", PROTECTED_GLOBS)) and not decisions.get("protectedEdit"):
         deny(
