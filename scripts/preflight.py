@@ -1,6 +1,7 @@
 """One preflight of what this change will need: tools, auth, Docker and two config conflicts.
 
     python3 scripts/preflight.py            # prints one `FAIL <what>: <fix>` line per failure, exit 1
+    python3 scripts/preflight.py --config   # only the config conflicts (CI: no tool or auth to find yet)
 
 Run it once at plan approval and once at the start of CI, so a missing capability fails in seconds, not
 after an hour of building. It checks only what the repo declares, so it never fails on a tool nobody
@@ -35,25 +36,8 @@ def ok(argv: list[str]) -> bool:
         return False
 
 
-def failures(cfg: dict) -> list[str]:
+def config_conflicts(cfg: dict) -> list[str]:
     out: list[str] = []
-    pre = cfg.get("preflight") if isinstance(cfg.get("preflight"), dict) else {}
-    tools = ["git"] + list(pre.get("tools", []))
-    words = shlex.split(cfg["verify"]) if isinstance(cfg.get("verify"), str) else []
-    tools += words[:1]
-    for tool in dict.fromkeys(tools):
-        if not shutil.which(tool):
-            out.append(f"FAIL tool {tool}: install `{tool}` and put it on PATH")
-    for a in pre.get("auth", []):
-        if isinstance(a, dict) and a.get("check") and not ok(shlex.split(a["check"])):
-            out.append(
-                f"FAIL auth {a.get('name', a['check'])}: {a.get('fix') or 'sign in, then rerun preflight'}"
-            )
-    if (isinstance(cfg.get("db"), dict) and "test" in cfg["db"]) or pre.get("docker"):
-        if not (shutil.which("docker") and ok(["docker", "info"])):
-            out.append(
-                "FAIL docker: start Docker (Docker Desktop or `colima start`), then rerun preflight"
-            )
     merge = (
         (cfg.get("milestones") or {}).get("merge")
         if isinstance(cfg.get("milestones"), dict)
@@ -74,6 +58,30 @@ def failures(cfg: dict) -> list[str]:
     return out
 
 
+def failures(cfg: dict, config_only: bool = False) -> list[str]:
+    out = config_conflicts(cfg)
+    if config_only:
+        return out
+    pre = cfg.get("preflight") if isinstance(cfg.get("preflight"), dict) else {}
+    tools = ["git"] + list(pre.get("tools", []))
+    words = shlex.split(cfg["verify"]) if isinstance(cfg.get("verify"), str) else []
+    tools += words[:1]
+    for tool in dict.fromkeys(tools):
+        if not shutil.which(tool):
+            out.append(f"FAIL tool {tool}: install `{tool}` and put it on PATH")
+    for a in pre.get("auth", []):
+        if isinstance(a, dict) and a.get("check") and not ok(shlex.split(a["check"])):
+            out.append(
+                f"FAIL auth {a.get('name', a['check'])}: {a.get('fix') or 'sign in, then rerun preflight'}"
+            )
+    if (isinstance(cfg.get("db"), dict) and "test" in cfg["db"]) or pre.get("docker"):
+        if not (shutil.which("docker") and ok(["docker", "info"])):
+            out.append(
+                "FAIL docker: start Docker (Docker Desktop or `colima start`), then rerun preflight"
+            )
+    return out
+
+
 def main(argv: list[str]) -> int:
     if argv[:1] in (["-h"], ["--help"]):
         print(__doc__)
@@ -84,7 +92,7 @@ def main(argv: list[str]) -> int:
         print("FAIL config sdlc.json: run from the repo root; the file must be valid JSON")
         print("PREFLIGHT FAIL 1")
         return 1
-    found = failures(cfg if isinstance(cfg, dict) else {})
+    found = failures(cfg if isinstance(cfg, dict) else {}, "--config" in argv)
     print("\n".join(found + [f"PREFLIGHT FAIL {len(found)}"] if found else ["PREFLIGHT OK"]))
     return 1 if found else 0
 

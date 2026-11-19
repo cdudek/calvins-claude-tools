@@ -80,3 +80,16 @@ def test_S4_a_blocked_rule_without_a_message_has_no_route(tmp_path: Path) -> Non
     res = _run(tmp_path, cfg)
     assert "FAIL config blocked[0]" in res.stdout and "FAIL config blocked[1]" in res.stdout
     assert "blocked[2]" not in res.stdout
+
+
+def test_config_flag_checks_only_the_conflicts(tmp_path: Path) -> None:
+    repo = tmp_path / "repo"
+    repo.mkdir()
+    (repo / "sdlc.json").write_text(
+        json.dumps({"verify": "zznothing run", "blocked": [{"match": "x"}]})
+    )
+    env = {"PATH": "/usr/bin:/bin"}
+    res = subprocess.run(
+        [sys.executable, str(PRE), "--config"], capture_output=True, text=True, cwd=repo, env=env
+    )
+    assert "FAIL config blocked[0]" in res.stdout and "FAIL tool" not in res.stdout
