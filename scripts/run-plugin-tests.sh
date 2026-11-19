@@ -18,8 +18,9 @@ run_one() { # <test file> <log folder>
 }
 export -f run_one
 files="$(find "$root/hooks" "$root/skills" -type f \( -name 'test_*.py' -o -name 'test_*.sh' \) -not -path '*/templates/*' | sort)"
-printf '%s\n' "$files" | xargs -P "${TEST_JOBS:-4}" -I{} bash -c 'run_one "$1" "$2"' _ {} "$logs"
+[ -n "$files" ] && printf '%s\n' "$files" | xargs -P "${TEST_JOBS:-4}" -I{} bash -c 'run_one "$1" "$2"' _ {} "$logs"
 while IFS= read -r f; do
+  [ -n "$f" ] || continue
   log="$logs/$(printf '%s' "$f" | tr '/' '_')"
   if [ "$(cat "$log.rc" 2>/dev/null)" = 0 ]; then echo "ok   ${f#"$root"/}"; else echo "FAIL ${f#"$root"/}"; cat "$log.out"; fail=1; fi
 done <<<"$files"
