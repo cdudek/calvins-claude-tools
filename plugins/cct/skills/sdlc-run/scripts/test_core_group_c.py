@@ -97,28 +97,6 @@ def test_a_removed_folder_whose_pr_merged_reads_done(repo: Path) -> None:  # noq
     assert (code, line) == (0, f"GOAL {ID} DONE pr=7 state=merged folder=removed")
 
 
-def _open(head: str, armed: bool = True, number: int = 7, base: str = "main") -> dict:
-    return {
-        "number": number, "headRefName": head, "baseRefName": base, "state": "OPEN",
-        "autoMergeRequest": {"mergeMethod": "MERGE"} if armed else None, "labels": [],
-    }  # fmt: skip
-
-
-def test_a_folder_removed_in_the_milestone_pr_reads_done_once_that_pr_is_armed(repo: Path) -> None:  # noqa: F811
-    got = sdlc_status.goal_removed(repo, ID, "milestone", None, gh=lambda root, *a: [_open(BRANCH)])
-    assert got == (0, f"GOAL {ID} DONE pr=7 state=armed folder=removed")
-
-
-def test_a_folder_removed_in_an_unarmed_pr_is_open_until_it_is_armed(repo: Path) -> None:  # noqa: F811
-    got = sdlc_status.goal_removed(repo, ID, "milestone", None, gh=lambda root, *a: [_open(BRANCH, armed=False)])
-    assert got == (1, f"GOAL {ID} OPEN pr-7-not-merged-or-armed")
-
-
-def test_a_closed_pr_never_proves_a_removed_folder(repo: Path) -> None:  # noqa: F811
-    closed = {**_open(BRANCH), "state": "CLOSED", "autoMergeRequest": None}
-    assert sdlc_status.goal_removed(repo, ID, "milestone", None, gh=lambda root, *a: [closed]) is None
-
-
 def test_a_removed_folder_with_no_merged_pr_is_still_no_change_folder(repo: Path) -> None:  # noqa: F811
     assert sdlc_status.goal_removed(repo, ID, "milestone", None, gh=lambda root, *a: [_merged("feat/other")]) is None
     assert sdlc_status.goal_removed(repo, ID, "milestone", None, gh=lambda root, *a: []) is None

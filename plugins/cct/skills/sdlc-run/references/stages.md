@@ -18,8 +18,8 @@ every stage:
   Features are commits; **run touched tests and required pre-commit checks**. The full
   suite runs once on the final head before every push; GitHub's required checks are the merge
   gate (see [local-first](local-first.md)). One PR and one release
-  per milestone, and the change needs one PR, not two: Stage 7 removes the change folder in the
-  last milestone PR's last commit.
+  per milestone, and the change needs one PR, not two: its folder stays in that PR and the next
+  change's first commit removes it (Stage 7, `sdlc_status.py sweep-merged`).
 - **Questions never block.** When the build meets a question only the engineer can answer, it
   writes it to `changes/<id>/questions.md` (`Q<n>`, the question, the default it took, the
   milestone it affects), tells the engineer in one line, and keeps building on the default. An
@@ -83,8 +83,8 @@ here blocks it.
 - **6 milestone.** Before the gate: `spec.py check --base <parent>`; a changed rule needs a changed
   test, and a tagged test that is skipped does not count. Only the rules of the milestone's tasks
   move from `planned` to `live`.
-- **7 outcome, no archive.** In the last milestone: `spec.py outcome write <folder>`, then remove the
-  folder in that milestone PR's last commit (history stays in git and the PR; no second PR). The measure is read from `.sdlc/outcomes/<id>.json` (`spec.py outcome due`) and
+- **7 outcome, no archive.** `spec.py outcome write <folder>` once the change merged, then remove the
+  folder in the next change's first commit once this one merged (`sdlc_status.py sweep-merged`; history stays in git and the PR; no second PR). The measure is read from `.sdlc/outcomes/<id>.json` (`spec.py outcome due`) and
   recorded there, and in the tracker when there is one: a final change with no tracker and no next
   PR still has its route (S3). A miss starts the next change with the measurement as its first ask.
 
@@ -160,6 +160,10 @@ Worktree lifecycle commands follow the [shared worktree policy](../../../referen
      marks `needs: M<k>`, the local predecessor branch). Hotfix: `origin/<defaultBranch>`. `<branch>` contains the slug.
      Never `EnterWorktree name=<slug>@<branch>`: the tool allows only letters, digits, `.`,
      `_`, `-` and `/` in a name, and the WorktreeCreate hook always cuts from the default branch.
+  6. **Sweep the changes that merged** (Stage 7), inside that worktree: `python3 <STATUS> sweep-merged
+     --apply`, then commit what it staged as this branch's first commit (`chore: remove merged change
+     folders`). It ships in this change's one PR. Nothing to sweep prints so; a `BLOCKED` line names
+     the file to promote first, and the change stays until then.
 - **Failure modes:** a duplicate ticket, a worktree outside `.worktrees/`, a branch name without
   the slug (the hooks then cannot find the change), a feature branch cut from the default branch
   instead of the milestone branch (a milestone of one hides it: both are the same commit).
@@ -392,7 +396,7 @@ while a dependency PR's CI ran. Four rules, for every stack.
   `VERIFY PASS milestone` on it (a records-only commit after the PASS is fine), and inside
   `/goal` any other PR or push. Another repository follows the same rule with its own milestone
   branch. The only exception is the engineer's words in `decisions.json` `prExceptions`. The
-  folder removal (Stage 7) is the last commit of the last milestone, in the same PR.
+  folder removal (Stage 7) is the next change's first commit, never a commit of this PR.
 - **A cross-repo dependency builds against a local copy.** When this repo needs another repo's
   unreleased code (a kit fix found by the app), link or pack it locally (`npm pack`, a
   workspace `file:` path that is not committed) and build on. The published version arrives with
@@ -722,23 +726,23 @@ head and a feature pass is pushed in a one-go goal and read as a feature gate pl
 When a turn, fix-round or retry cap is hit, `sdlc_status.py handoff <id> --cap turns|fix-rounds|retries --what <words> --next <command>`
 writes one `state/handoff.json` (the retry cap of the gate writes it itself) and `goal` prints
 `GOAL <id> HANDOFF cap=<cap>` while the work is open. A passing gate or `handoff <id> --resume` clears it.
-A change folder removed in the milestone PR reads `GOAL <id> DONE pr=<n> state=<merged|armed> folder=removed` once that PR is merged or armed.
+A change folder the next change swept away reads `GOAL <id> DONE pr=<n> state=merged folder=removed` once its PR merged.
 
 ## Stage 7 — Outcome and removal
 
-1. There is no archive and no second PR. In the **last** milestone of the change, after `VERIFY PASS
-   milestone` and once the PR body is written and linted (it reads the folder), `spec.py outcome write
-   changes/<id>` copies the success measure to `.sdlc/outcomes/<id>.json`, then `git rm -r changes/<id>`
-   goes in as the milestone branch's last commit, before the one push and one PR (Stage 6 step 7). It is a
-   records-only commit: the gate's pass still holds on it (`pass_proof.proves`), `pr-gate.sh` lets it
-   through, and the goal reads a removed folder as DONE once that PR is merged or armed. An earlier milestone
-   keeps the folder. A change still on the old layout may carry the old `changes/archive/` move; the readers
-   accept both, and a folder that is gone is not an error.
-   **Guard, before the removal:** run
-   `git grep -l -F "changes/<id>/" -- . ':!changes'`. A test, script or doc that reads or writes
-   inside the folder breaks the day it moves. Promote what it reads to `docs/` (product truth, not
-   a change record) or write outputs under `test-results/`, repoint the reference, and remove only
-   when the grep is empty. After the PR merges: comment the merge
+1. There is no archive and no records-only PR. The change's own PR keeps its folder, so the goal reads
+   DONE as in any milestone (folder present, PR merged or armed). The **first commit of the next
+   change's branch** removes the folders of changes whose PR into the default branch has merged:
+   `python3 <STATUS> sweep-merged` prints, per change, `spec.py outcome write changes/<id>` (the
+   success measure goes to `.sdlc/outcomes/<id>.json`) and `git rm -r changes/<id>`; `--apply` runs
+   them and stages the result, and Stage 1.2 commits it as that change's first commit, so it ships in
+   that change's one PR. A change still on the old layout may carry the old `changes/archive/` move;
+   the readers accept both, and a folder that is gone is not an error.
+   **Guard, before the removal:** `sweep-merged` runs
+   `git grep -l -F "changes/<id>/" -- . ':!changes'` and prints `BLOCKED` for a change a test, script
+   or doc still reads or writes inside (it breaks the day the folder goes). Promote what it reads to
+   `docs/` (product truth, not a change record) or write outputs under `test-results/`, repoint the
+   reference, and the next run removes it. After the PR merges: comment the merge
    SHA in the tracker, `ExitWorktree keep`, then remove the owned path using the shared policy’s `wt remove`
    command (Git fallback; a worktree entered by path is never removed by `ExitWorktree`). Move the tracker forward only, never backwards.
 2. After release: read the success measure from PostHog (`cct:posthog-manage` or the insight

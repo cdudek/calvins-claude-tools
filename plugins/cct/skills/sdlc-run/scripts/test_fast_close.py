@@ -287,12 +287,12 @@ def test_convergence_documents_the_strict_manifest_and_its_version_boundary() ->
     assert "`sources`" in VISUAL_WORK and "`shared`" in VISUAL_WORK and "`Build: <sha>`" in VISUAL_WORK
 
 
-# The per-feature PR mode is gone (3.24.0): one delivery, one milestone PR, no second records PR
-def test_stages_describe_one_delivery_and_no_records_only_second_pr() -> None:
+# The per-feature PR mode is gone (3.24.0): one delivery, one milestone PR; the next change removes the folder
+def test_stages_describe_one_delivery_and_the_next_change_sweeping_the_folder() -> None:
     assert "### Feature PRs" not in STAGES and 'delivery: "feature-prs"' not in STAGES
     stage7 = STAGES.split("## Stage 7", 1)[1].split("2. After release", 1)[0]
-    assert "no second PR" in stage7 and "last commit" in stage7 and "records-only PR" not in stage7
-    assert "in its own records-only PR" not in STAGES
+    assert "sweep-merged" in stage7 and "first commit of the next" in stage7 and "keeps its folder" in stage7
+    assert "sweep-merged --apply" in STAGES.split("## Stage 2", 1)[0]  # Stage 1.2 calls it
 
 
 def test_stage_6_numbers_its_steps_once_and_audits_before_the_gate() -> None:

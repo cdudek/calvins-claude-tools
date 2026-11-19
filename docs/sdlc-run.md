@@ -80,7 +80,7 @@ The two touchpoints are the intent and the plan. After the plan is approved, `lo
 
 ### 7 Outcome
 
-- **You get:** in the last milestone PR's last commit the folder is removed (there is no archive, and no second PR), a short `reflection.md` written before it goes and, after release, the success measure read where `intent.md` says. What happens to the folder is in [Closing the change](#closing-the-change).
+- **You get:** the next change's first commit removes the folder once this one merged (there is no archive, and no records-only PR), a short `reflection.md` written before it goes and, after release, the success measure read where `intent.md` says. What happens to the folder is in [Closing the change](#closing-the-change).
 - **Who acts:** the agent removes the folder and records the outcome; **you read** the measure.
 - **Typical time:** a minute to remove the folder; the measure is read days or weeks later.
 - **Example:** "support questions about finding invoices: down 55 percent in 30 days, target met". A miss starts the next change.
@@ -198,11 +198,11 @@ python3 scripts/spec.py consistency changes/<id> --phase approve # script checks
 
 ## Closing the change
 
-There is no archive and no second PR. In the change's last milestone, after the gate passed:
+There is no archive and no records-only PR. After the change's PR merged, the next change's first commit runs `sdlc_status.py sweep-merged --apply`:
 
 1. `spec.py outcome write changes/<id>` copies the success measure to `.sdlc/outcomes/<id>.json`. It is the one place the result is recorded, so a change with no tracker and no later PR still has a home for it.
-2. `git rm -r changes/<id>` is the last commit of the milestone PR, before the one push. After a red CI check, `git revert` it, fix, run the gate again and remove the folder again.
-3. Before it removes anything, the agent runs `git grep -l -F "changes/<id>/"`. A test, script or doc that reads inside the folder would break, so it is repointed first.
+2. `git rm -r changes/<id>` goes in with it, as that next change's first commit, so it ships in that change's one PR. The change's own PR keeps its folder, and a goal reads DONE as before.
+3. Before it removes anything, the sweep runs `git grep -l -F "changes/<id>/"` and prints BLOCKED for a hit. A test, script or doc that reads inside the folder would break, so it is repointed first.
 4. After release the measure is read and recorded with `spec.py outcome record`. `spec.py outcome due` lists the ones still waiting.
 
 History stays in git and in the merged PR. Folders archived by older versions stay readable. The status and gate code accept a folder that is gone.
@@ -268,4 +268,4 @@ Each version's headline and migration steps are in the skill's [changelog](../pl
 - **The living spec (3.21, opt-in):** three documents per change, one file per rule, no archive. See [The living spec](#the-living-spec-optional).
 - **One close job, one queue per machine (3.22):** the milestone close takes one heavy slot, builds once and uses one test database copy; heavy commands are recognised by program and script; one queue serves every repo on the machine; the test template is kept per migration version and works with Docker or Podman; preflight checks free disk and merged builder worktrees are removed. See [Heavy work](#heavy-work-builds-browsers-and-databases).
 - **Screens mode (3.23):** one record per screen with its frozen defect list and round count, checked by `marks.py`; capture once; status in screens; one owner sheet per screen group; the design-system version frozen at approval; a visual change refuses migrations, auth and new pages.
-- **A lighter front (3.24):** the three-document layout by default for new adoptions, size S skips the UX stage and the checklist, analyze and challenge passes, one PR per change (the folder goes in its last commit), and one delivery mode.
+- **A lighter front (3.24):** the three-document layout by default for new adoptions, size S skips the UX stage and the checklist, analyze and challenge passes, one PR per change (the next change's first commit removes the merged folder), and one delivery mode.

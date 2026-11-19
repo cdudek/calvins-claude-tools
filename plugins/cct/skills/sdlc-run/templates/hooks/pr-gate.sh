@@ -193,9 +193,6 @@ class Repo:
             if not ref or not self.sha(ref):
                 continue
             listing = git(self.dir, "ls-tree", "-r", "--name-only", ref, "--", rel + "/")
-            if not listing and (gone := git(self.dir, "rev-list", "-n1", ref, "--", rel + "/")):
-                ref = f"{gone}^"  # Stage 7 removed the folder in the last commit: read it from just before
-                listing = git(self.dir, "ls-tree", "-r", "--name-only", ref, "--", rel + "/")
             for name in listing.splitlines():
                 depth = len(Path(name).relative_to(rel).parts)
                 moved = name.endswith("/state/intake.json")

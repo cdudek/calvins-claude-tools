@@ -195,19 +195,6 @@ def test_a_repo_that_still_says_feature_prs_gets_no_feature_pr_lane(repo: Path) 
     assert _run(repo, cmd, goal=True).returncode == 2
 
 
-def test_a_pass_still_counts_after_the_change_folder_is_removed(repo: Path) -> None:
-    # Stage 7 removes the folder in the milestone's last commit, so one PR carries it all.
-    for name in ("facts.md", "plan.md", "lock.json"):
-        _commit(repo, f"changes/{ID}/{name}", "x\n")
-    _pass(repo)
-    _git(repo, "rm", "-rq", f"changes/{ID}")
-    _git(repo, "commit", "-qm", "remove the change folder")
-    assert _run(repo, "git push -u origin milestone/trial-1").returncode == 0
-    assert _run(repo, "gh pr create --base master --title t --body b").returncode == 0
-    _commit(repo, "src/app.ts", "3\n")  # code after the pass is still refused
-    assert _run(repo, "git push -u origin milestone/trial-1").returncode == 2
-
-
 def test_a_repo_without_sdlc_json_gets_no_opinion(repo: Path) -> None:
     (repo / "sdlc.json").unlink()
     assert _run(repo, "gh pr create --base project/trial --head records/x").returncode == 0

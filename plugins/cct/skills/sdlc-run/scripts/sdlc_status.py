@@ -6,6 +6,7 @@
     python3 ${CLAUDE_SKILL_DIR}/scripts/sdlc_status.py readme [<id>]
     python3 ${CLAUDE_SKILL_DIR}/scripts/sdlc_status.py record <id> project --sha <sha> [--accepted]
     python3 ${CLAUDE_SKILL_DIR}/scripts/sdlc_status.py worktrees [--remove PATH --into BRANCH]
+    python3 ${CLAUDE_SKILL_DIR}/scripts/sdlc_status.py sweep-merged [--apply]
 
 Runs from the plugin and is never copied into a repo: run it with the working directory inside the
 adopted repo, which it finds from the cwd. It loads `verify_gate` from the plugin's own
@@ -24,9 +25,7 @@ n from plan.md `## Milestones`) merged or open with auto-merge armed, the last
 `VERIFY PASS milestone <id> <sha>` in verify/report.json equal to the head sha of the last PR
 (`gh`, never local HEAD: records written after a merge move HEAD), and no open record
 (validation.md, findings.md; `verify_gate.milestone_blockers`). `--feature <n>` (the hotfix lane) reads the plan's
-`## Feature PRs` row n and a `feature` gate; `--milestone <n>` narrows to one milestone. Stage 7 removes
-the change folder in the last milestone PR's last commit, so a goal with no folder is DONE once that PR is
-merged or armed (`folder=removed`). A `gh`
+`## Feature PRs` row n and a `feature` gate; `--milestone <n>` narrows to one milestone. A `gh`
 that is missing or fails is `OPEN gh-unavailable`, never DONE. When the goal is not DONE a second
 line `Blocking: <what>, because <why>; <who> runs `<step>`.` says the one thing in the way.
 
@@ -57,6 +56,7 @@ from __future__ import annotations
 import json
 import os
 import re
+import shutil
 import subprocess
 import sys
 from pathlib import Path
@@ -68,7 +68,16 @@ for _sub in ("scripts", "hooks"):
     sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "templates" / _sub))
 
 import spec  # noqa: E402
-from pass_proof import _read, bound, change_paths, milestone_of, newest, pass_key, proves, shared  # noqa: E402
+from pass_proof import (  # noqa: E402
+    _read,
+    bound,
+    change_paths,
+    milestone_of,
+    newest,
+    pass_key,
+    proves,
+    shared,
+)
 
 STAGES = ("Intent", "UX plan", "Facts", "Tech plan", "Build", "Milestone", "Outcome")
 
@@ -615,55 +624,42 @@ def planned_in_history(root: Path, cfg: dict, change_id: str) -> int:
     return 0
 
 
-def goal_removed(root: Path, change_id: str, scope: str, n: int | None, gh=gh_json) -> tuple[int, str] | None:
-    """The folder is gone: Stage 7 removes it in the milestone PR's last commit, so that is the normal
-    end state. PRs from the change's milestone branches, merged or open with auto-merge armed, are the
-    proof; None when they do not prove it, and OPEN when the PR waits on something (not armed, held).
+def goal_removed(
+    root: Path, change_id: str, scope: str, n: int | None, gh=gh_json, total: int = 0
+) -> tuple[int, str] | None:
+    """The folder is gone: the owner's rule removes it after merge, so that is the normal end state.
+    Merged PRs from the change's milestone branches are the proof; None when they do not prove it.
     `--milestone n` needs milestone n merged. The whole goal needs every planned milestone merged
     (the plan is read from history), or, with no plan left, a merged PR into the default branch: a
-    milestone merged into a project branch counts only with the project's own PR merged there."""
+    milestone merged into a project branch counts only with the project's own PR merged there.
+    `total` is the planned milestone count when the folder is still there to read it from."""
     cfg = config(root) if (root / "sdlc.json").exists() else {}
     if scope != "milestone" or Path(change_id).name != change_id or change_id in ("", "..", "archive"):
         return None
     prefix, slug = (cfg.get("milestones") or {}).get("branchPrefix", "milestone/"), slug_of(change_id)
     default = cfg.get("defaultBranch") or "main"
-    fields = "number,headRefName,baseRefName,state,mergedAt,autoMergeRequest,labels,statusCheckRollup"
-    found = gh(root, "pr", "list", "--state", "all", "--limit", "200", "--json", fields)
-    if not found:  # gh failed or no PR: no proof, so the id is still unknown
+    found = gh(root, "pr", "list", "--state", "merged", "--limit", "200", "--json", "number,headRefName,baseRefName,state")
+    if not found:  # gh failed or nothing merged: no proof, so the id is still unknown
         return None
-    mine = [  # the one rule of the gate and the hook: <prefix><slug>-<n> is n, <prefix><slug> is 1
+    merged = [  # the one rule of the gate and the hook: <prefix><slug>-<n> is n, <prefix><slug> is 1
         (num, p) for p in found
         if (num := milestone_of(str(p.get("headRefName", "")), prefix, slug)) and (n is None or num == n)
     ]
-    merged, waiting = [], []
-    for num, p in mine:
-        if p.get("state") == "MERGED" or p.get("mergedAt"):
-            merged.append((num, p))
-        elif p.get("state") == "OPEN":
-            from marks import owner_decisions
-
-            answer = owner_decisions(root, change_id).get(f"PR{p['number']}", ("",))[0]
-            phase, flag = pr_flag(root, cfg, p, answer)
-            if phase == "awaiting-ci":
-                merged.append((num, p))
-            else:
-                waiting.append((p["number"], flag or "not-merged-or-armed"))
     if not merged:
-        return (1, f"GOAL {change_id} OPEN pr-{waiting[-1][0]}-{waiting[-1][1]}") if waiting else None
+        return None
     last = merged[-1][1]
     if n is None:
         parents = {str(p.get("baseRefName", "")) for _, p in merged}
         project = next((p for p in found if p.get("headRefName") in parents and p.get("baseRefName") == default), None)
-        total = planned_in_history(root, cfg, change_id)
+        total = total or planned_in_history(root, cfg, change_id)
         if project:
             last = project
         elif total:
-            if not set(range(1, total + 1)) <= {num for num, _ in merged}:
+            if not set(range(1, total + 1)) <= {num for num, _ in merged} or parents != {default}:
                 return None
         elif not any(p.get("baseRefName") == default for _, p in merged):
             return None
-    state = "merged" if last.get("state") == "MERGED" or last.get("mergedAt") else "armed"
-    return 0, f"GOAL {change_id} DONE pr={last['number']} state={state} folder=removed"
+    return 0, f"GOAL {change_id} DONE pr={last['number']} state=merged folder=removed"
 
 
 # what is in the way, by the first missing item: (what, why, who acts, the exact step)
@@ -1136,10 +1132,47 @@ def worktrees_main(argv: list[str]) -> int:
     return 0
 
 
+def sweep_merged(root: Path, apply: bool = False, gh=gh_json) -> list[str]:
+    """The next change's first commit removes the folders of changes whose PR into the default branch
+    has merged (Stage 7). Returns the commands, or `BLOCKED <folder>: <why>` for a change a file outside
+    the folder still reads (promote it first: `git grep -l -F "<folder>/"`). With `apply` it runs them:
+    the outcome record is written, the folder is removed, both staged; the caller commits. The change
+    this branch builds is never swept."""
+    cfg = config(root)
+    rel = str(cfg.get("changesDir", "changes")).rstrip("/")
+    branch = git(root, "symbolic-ref", "--short", "-q", "HEAD")
+    out: list[str] = []
+    for folder in sorted((root / rel).iterdir()) if (root / rel).is_dir() else []:
+        if not folder.is_dir() or folder.name == "archive" or (branch and slug_of(folder.name) in branch):
+            continue
+        if not goal_removed(root, folder.name, "milestone", None, gh, total=max(planned(folder), 1)):
+            continue
+        readers = git(root, "grep", "-l", "-F", f"{rel}/{folder.name}/", "--", ".", f":!{rel}").splitlines()
+        if readers:
+            out.append(f"BLOCKED {rel}/{folder.name}: read by {', '.join(readers)}; promote what it reads first")
+            continue
+        out += [f"python3 scripts/spec.py outcome write {rel}/{folder.name}", f"git rm -r {rel}/{folder.name}"]
+        if apply:
+            record = spec.outcome_write(root, folder).relative_to(root)
+            subprocess.run(["git", "-C", str(root), "add", "--", str(record)], check=True)
+            subprocess.run(["git", "-C", str(root), "rm", "-rq", "--", f"{rel}/{folder.name}"], check=True)
+            shutil.rmtree(folder, ignore_errors=True)  # ignored output (verify/) that git rm leaves behind
+    return out
+
+
 def main(argv: list[str]) -> int:
-    if len(argv) < 2 or argv[1] not in ("map", "goal", "ids", "readme", "base", "record", "handoff", "worktrees"):
+    cmds = ("map", "goal", "ids", "readme", "base", "record", "handoff", "worktrees", "sweep-merged")
+    if len(argv) < 2 or argv[1] not in cmds:
         print(__doc__)
         return 2
+    if argv[1] == "sweep-merged":
+        root = repo_root(Path.cwd())
+        if not root:
+            print("no sdlc.json in this repo: run `sdlc-run adopt`")
+            return 2
+        lines = sweep_merged(root, apply="--apply" in argv[2:])
+        print("\n".join(lines) or "nothing to sweep")
+        return int(any(line.startswith("BLOCKED") for line in lines))
     if argv[1] == "worktrees":
         return worktrees_main(argv[2:])
     if argv[1] == "goal":
