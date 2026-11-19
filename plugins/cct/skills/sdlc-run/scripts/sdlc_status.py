@@ -446,6 +446,13 @@ def handoff_sentence(change: Path) -> str:
     )
 
 
+def screens_line(change: Path) -> str:
+    """`screens: 62 of 271 done · ...` when the change keeps per-screen records, else ''."""
+    from evidence import status_line
+
+    return status_line(change)
+
+
 def goal(
     root: Path, change: Path, scope: str = "milestone", n: int | None = None, gh=gh_json
 ) -> tuple[int, str]:
@@ -954,6 +961,8 @@ def goal_main(args: list[str]) -> int:
         return 1
     code, line = goal(root, change, scope, int(value) if flag else None)
     print(line)
+    if shown := screens_line(change):  # its own line, so a /goal match on the GOAL line is untouched
+        print(shown)
     if code == 4:
         print(handoff_sentence(change))
         return code
@@ -1104,7 +1113,7 @@ def main(argv: list[str]) -> int:
         stage = f"{s['stage']}/7 {STAGES[s['stage'] - 1]}"
         return write_readme(change, readme(change, stage))
     else:
-        print("\n".join([milestone_map(s), *side_notes(root)]))
+        print("\n".join([milestone_map(s), *([shown] if (shown := screens_line(change)) else []), *side_notes(root)]))
     return 0
 
 

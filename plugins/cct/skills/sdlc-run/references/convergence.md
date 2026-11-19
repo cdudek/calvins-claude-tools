@@ -113,5 +113,34 @@ change to a shared file invalidates every cell; and `<spec>/qa.md` must exist an
 Capture all visual evidence from one build per milestone version, from a worktree pinned to one
 commit. Never capture from the live milestone branch: merges moved the branch in the middle of a
 capture and ruined a batch. Builders change code; the capture happens once, after they are done.
-Capture each screen in one batch, twice, to prove it is stable. A screen whose two captures differ
-is unstable and is fixed or ruled before it is judged.
+**Capture once; capture again only a screen marked unstable or whose first judgement fails.** A
+screen is not captured twice up front. If two captures of a screen exist they must agree: a screen
+whose two captures differ is unstable and is fixed or ruled before it is judged.
+
+## One record per screen (changes approved from 3.23.0)
+
+A change whose `lock.json` has `"screens": "required"` keeps one file per screen,
+`<change>/verify/screens/<screen-id>.json`, so parallel helpers never write the same file. It holds
+the status (`match`, `fixed`, `open`, `waits-on-design-system`, `ruled-out`, `accepted-by-owner`),
+the frozen defect list (id, severity, layer, text, the build of the first review), `rounds` (fix
+rounds used in the current design-system release), `designSystem` (the release it is judged
+against), and the latest capture: the build sha and the sha256 of each capture file. The files are
+written with `scripts/evidence.py` (`screen`, `review`, `round`, `status`, `sheet`), never by hand.
+`marks.json` and the shared manifest stay for older changes; for these the per-screen files are the
+source of truth and any combined ledger is generated from them.
+
+`marks.py check` fails: a defect added after the first review that is not High and not marked as a
+regression; more than two rounds in one design-system release (send the side-by-side list to the
+owner); a screen whose two captures differ; a capture whose bytes no longer match its recorded
+sha256. A new design-system release resets `rounds`.
+
+`sdlc_status.py` prints `screens: 62 of 271 done · 40 wait on you · 50 wait on the design system ·
+119 open` (done is match, fixed, ruled-out and accepted-by-owner; each screen counts in one state).
+
+## One owner sheet, answered once per group
+
+Screens still open after their two rounds go to the owner as one sheet, not one dialog per
+finding: `evidence.py sheet <change>` writes `<change>/verify/owner-sheet.md`, one row per screen
+(reference image, build capture, open defects, a blank "accept / send back" column), grouped by the
+screen's `group`. The owner answers it once per group; the answers become `accepted-by-owner` or
+send the screen back for a new round.
