@@ -134,26 +134,47 @@ class Repo:
     def sha(self, ref: str) -> str:
         return git(self.dir, "rev-parse", "--verify", "--quiet", f"{ref}^{{commit}}")
 
-    def reports(self, scope: str, slug: str) -> list[Path]:
-        if scope == "project":  # verify_gate.py project: one record in the common git dir
-            common = git(self.dir, "rev-parse", "--path-format=absolute", "--git-common-dir")
-            return [Path(common) / "sdlc" / "projects" / slug / "verify" / "report.json"] if common else []
+    def change_dirs(self) -> list[Path]:
+        """The changes folders a gate may have run in: ours, and in local mode every worktree's."""
         dirs = [self.changes]
         if self.local:  # the gate ran in the milestone's worktree, the merge runs in another
             rel = self.changes.relative_to(self.top)
             listing = git(self.dir, "worktree", "list", "--porcelain")
             dirs = [Path(t) / rel for t in re.findall(r"^worktree (.+)$", listing, re.M)] or dirs
-        found: list[Path] = []
-        for changes in dirs:
-            # archive/ too: the Stage 7 archive move is the last commit before the push (3.7.0)
-            found += [*changes.glob("*/verify/report.json"), *changes.glob("archive/**/verify/report.json")]
-        return found
+        return dirs
 
-    def passed(self, sha: str, scope: str = "milestone", slug: str = "") -> bool:
-        """A PASS of this scope on this commit, or on an ancestor that only records followed:
-        writing the gate line into milestone.md must not need a second full gate."""
+    def in_changes(self, name: str) -> list[Path]:
+        """`name` under every supported layout: live, archive/<id> and archive/<year>/<month>/<id>
+        (the Stage 7 archive move is the last commit before the push). Nothing deeper is read."""
+        patterns = (f"*/{name}", f"archive/*/{name}", f"archive/*/*/*/{name}")
+        return [f for changes in self.change_dirs() for pat in patterns for f in changes.glob(pat)]
+
+    def reports(self, scope: str, slug: str) -> list[Path]:
+        if scope == "project":  # verify_gate.py project: one record in the common git dir
+            common = git(self.dir, "rev-parse", "--path-format=absolute", "--git-common-dir")
+            return [Path(common) / "sdlc" / "projects" / slug / "verify" / "report.json"] if common else []
+        return self.in_changes("verify/report.json")
+
+    def change_ids(self, milestone: str) -> set[str]:
+        """The change(s) a milestone branch (milestone/<slug> or milestone/<slug>-<n>) belongs to."""
+        name = milestone.removeprefix(self.m)
+        ids = set()
+        for path in self.in_changes("decisions.json"):
+            try:
+                slug = (json.loads(path.read_text(encoding="utf-8")).get("milestone") or {}).get("slug")
+            except (OSError, ValueError, AttributeError):
+                continue
+            if slug and re.fullmatch(re.escape(slug) + r"(-\d+)?", name):
+                ids.add(path.parent.name)
+        return ids
+
+    def passed(self, sha: str, scope: str = "milestone", slug: str = "", branch: str = "") -> bool:
+        """A PASS of this scope for the change that owns `branch` (the project `slug`), on this
+        commit or on an ancestor that only records followed: writing the gate line into
+        milestone.md must not need a second full gate. Another change's pass never counts."""
         if not sha:
             return False
+        subjects = {slug} if scope == "project" else self.change_ids(branch)
         rel = self.changes.relative_to(self.top).as_posix() + "/"
         for report in self.reports(scope, slug):
             try:
@@ -161,12 +182,16 @@ class Repo:
             except (OSError, ValueError):
                 continue
             gated = data.get("sha") or ""
-            if not gated or not str(data.get("result", "")).startswith(f"VERIFY PASS {scope}"):
+            result = str(data.get("result", ""))
+            if not gated or data.get("scope", scope) != scope:
+                continue
+            if not any(result.startswith(f"VERIFY PASS {scope} {s} ") for s in subjects if s):
                 continue
             if gated == sha:
                 return True
             ancestor = subprocess.run(
-                ["git", "-C", str(self.dir), "merge-base", "--is-ancestor", gated, sha]
+                ["git", "-C", str(self.dir), "merge-base", "--is-ancestor", gated, sha],
+                capture_output=True,
             ).returncode == 0
             changed = git(self.dir, "diff", "--name-only", gated, sha).splitlines()
             if ancestor and all(p.startswith(rel) for p in changed):
@@ -264,7 +289,7 @@ def check_push(repo: Repo, args: list[str]) -> None:
         if dst.startswith(repo.m):
             if repo.local and (project := repo.project_of(dst)):
                 block(f"a push of {dst} in local milestones mode.", local_merge_route(project, dst))
-            if not repo.feature_prs and not repo.passed(sha):
+            if not repo.feature_prs and not repo.passed(sha, branch=dst):
                 block(f"a push of {dst} at {sha[:12] or src} without a passing milestone gate.", CLOSE, "verify/report.json")
             continue
         if dst.startswith(repo.p):
@@ -309,7 +334,7 @@ def check_pr(repo: Repo, args: list[str]) -> None:
         if not (base.startswith(repo.p) or base == repo.default):
             block(f"a PR from {head} into {base}.", "A milestone PR goes into its parent: project/* or the default branch.")
         sha = repo.sha(head) if "repo" not in opts else ""
-        if sha and not repo.passed(sha):
+        if sha and not repo.passed(sha, branch=head):
             block(f"a PR from {head} at {sha[:12]} without a passing milestone gate.", CLOSE, "verify/report.json")
         return
     if head.startswith(repo.p):
@@ -359,14 +384,21 @@ def check_merge(repo: Repo, args: list[str], current: str = "") -> None:
         ref = a.removeprefix("refs/heads/")
         if not a.startswith("-") and ref.startswith(repo.m):
             sha = repo.sha(ref)
-            if not repo.passed(sha):
+            if not repo.passed(sha, branch=ref):
                 block(f"a merge of {ref} into {current} without a passing milestone gate.", CLOSE, "verify/report.json")
             into = current if current.startswith(repo.p) else real
             parent = repo.project_of(ref)
             if parent and parent != into:
                 block(f"a merge of {ref} into {into}: it belongs to {parent}.", local_merge_route(parent, ref))
             tip = repo.sha(into)
-            if tip and subprocess.run(["git", "-C", str(repo.dir), "merge-base", "--is-ancestor", tip, sha]).returncode:
+            if not tip:
+                block(
+                    f"a merge of {ref} into {into}: the project branch {into} cannot be resolved.",
+                    f"Create or check out {into} first (`git switch {into}`), then merge.",
+                )
+            if subprocess.run(
+                ["git", "-C", str(repo.dir), "merge-base", "--is-ancestor", tip, sha], capture_output=True
+            ).returncode:
                 block(
                     f"a merge of {ref} into {into} on a gate that ran against an older {into}.",
                     f"`git merge {into}` on {ref}, then run `python3 scripts/verify_gate.py milestone <id>` again.",

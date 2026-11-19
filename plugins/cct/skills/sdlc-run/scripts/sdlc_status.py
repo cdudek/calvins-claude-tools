@@ -275,13 +275,24 @@ def goal(
             for b in branches(change, read_json(change / "decisions.json"), scope, n):
                 i = b.rsplit("-", 1)[1]
                 receipt = read_json(change / "verify" / f"milestone-{i}.json")
+                tip = git(root, "rev-parse", "--verify", "--quiet", f"{b}^{{commit}}")
                 if receipt:
-                    ok = str(receipt.get("result", "")).startswith("VERIFY PASS milestone ")
+                    # a receipt counts only for its own milestone and change, never a copy
+                    ok = (
+                        receipt.get("scope") == "milestone"
+                        and str(receipt.get("milestone")) == i
+                        and receipt.get("change") == change.name
+                        and re.fullmatch(
+                            rf"VERIFY PASS milestone {re.escape(change.name)} \w+",
+                            str(receipt.get("result", "")),
+                        )
+                    )
                     if not (ok and contains(root, str(receipt.get("sha", "")), into)):
                         missing.append(f"receipt-not-merged:{i}")
-                    continue
-                tip = git(root, "rev-parse", "--verify", "--quiet", f"{b}^{{commit}}")
-                if not contains(root, tip, into):
+                        continue
+                    if not tip:  # the branch is gone: the receipt stands in for it
+                        continue
+                if not contains(root, tip, into):  # no receipt, or the branch is still there
                     missing.append(f"merge-missing:{b}")
     elif scope == "project":
         names = [project] if project else []
