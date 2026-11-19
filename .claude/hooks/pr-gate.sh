@@ -105,16 +105,15 @@ def goal_active() -> bool:
     return bool(read(transcript))
 
 
-def proves(repo_dir: Path, changes_rel: str, gated: str, head: str) -> bool:
-    """What a pass proves about a later head is pass_proof.py's, shared with sdlc_status.py."""
+def proof(name: str):
+    """What pass_proof.py defines (`proves`, `bound`, `milestone_of`), shared with sdlc_status.py."""
     try:
-        check = helper("pass_proof").proves
+        return getattr(helper("pass_proof"), name)
     except Exception:  # a gate that cannot read the rule blocks
         block(
             "pass_proof.py is missing or broken beside pr-gate.sh.", "Run `sdlc-run adopt` to restore it.",
             source="pass_proof.py beside pr-gate.sh",
         )
-    return check(repo_dir, changes_rel, gated, head)
 
 
 class Repo:
@@ -133,6 +132,13 @@ class Repo:
         self.local = (self.cfg.get("milestones") or {}).get("merge") == "local"
         self.hotfix = bool(self.cfg.get("hotfix", True))
         self.changes = self.top / self.cfg.get("changesDir", "changes")
+        self.seen: dict[tuple, list[tuple[str, dict]]] = {}  # records() per question: one scan per command
+
+    def is_this(self, named: str) -> bool:
+        """`--repo` is empty or names this repo (any remote's OWNER/REPO, URL or HOST/OWNER/REPO)."""
+        slug = lambda url: "/".join(re.split(r"[/:]", url.strip().removesuffix(".git").rstrip("/"))[-2:]).lower()  # noqa: E731
+        remotes = git(self.dir, "remote", "-v").splitlines()
+        return not named or slug(named) in {slug(line.split()[1]) for line in remotes if len(line.split()) > 1}
 
     def in_session(self) -> bool:
         """The goal binds the session's start repo, and any worktree of it; another repo is its own."""
@@ -166,17 +172,17 @@ class Repo:
         if scope == "project":  # verify_gate.py project: one record in the common git dir
             common = git(self.dir, "rev-parse", "--path-format=absolute", "--git-common-dir")
             return [Path(common) / "sdlc" / "projects" / slug / "verify" / "report.json"] if common else []
-        common = git(self.dir, "rev-parse", "--path-format=absolute", "--git-common-dir")
-        receipts = sorted((Path(common) / "sdlc" / "receipts").glob("*/milestone-*.json")) if common else []
-        return [*self.in_changes("verify/report.json"), *receipts]  # a receipt outlives its worktree
+        return self.in_changes("verify/report.json")
 
-    def records(self, *refs: str) -> list[tuple[str, dict]]:
+    def records(self, *refs: str, live: bool = True) -> list[tuple[str, dict]]:
         """(change id, decisions.json) of every change record we can see: the worktrees' folders
-        and the records committed on each of `refs` (the gated ref carries its own change, which
-        the checkout receiving a merge does not hold yet). A ref's record wins over another
-        worktree's copy of the same change."""
+        (unless `live` is off) and the records committed on each of `refs` (the gated ref carries
+        its own change, which the checkout receiving a merge does not hold yet). A ref's record
+        wins over another worktree's copy of the same change."""
+        if (ask := (refs, live)) in self.seen:
+            return self.seen[ask]
         found = {}
-        for path in self.in_changes("decisions.json"):
+        for path in self.in_changes("decisions.json") if live else []:
             try:
                 found[path.parent.name] = json.loads(path.read_text(encoding="utf-8"))
             except (OSError, ValueError):
@@ -193,13 +199,15 @@ class Repo:
                         found[Path(name).parent.name] = json.loads(git(self.dir, "show", f"{ref}:{name}"))
                     except ValueError:
                         continue
-        return [(i, d) for i, d in found.items() if isinstance(d, dict)]
+        self.seen[ask] = [(i, d) for i, d in found.items() if isinstance(d, dict)]
+        return self.seen[ask]
 
-    def matching(self, milestone: str, *refs: str) -> list[tuple[str, dict]]:
-        """The records whose milestone slug names this branch (milestone/<slug> or <slug>-<n>)."""
+    def matching(self, milestone: str, *refs: str, live: bool = True) -> list[tuple[str, dict]]:
+        """The records whose milestone slug names this branch (milestone/<slug> or <slug>-<n>).
+        Without `live` only the records committed on `refs` count, not the branch tip."""
         name = milestone.removeprefix(self.m)
         return [
-            (i, d) for i, d in self.records(milestone, *refs)
+            (i, d) for i, d in self.records(*([milestone] if live else []), *refs, live=live)
             if (slug := (d.get("milestone") or {}).get("slug")) and re.fullmatch(re.escape(slug) + r"(-\d+)?", name)
         ]
 
@@ -207,35 +215,48 @@ class Repo:
         """The change(s) a milestone branch belongs to."""
         return {i for i, _ in self.matching(milestone, *refs)}
 
-    def passed(self, sha: str, scope: str = "milestone", slug: str = "", branch: str = "") -> bool:
-        """A PASS of this scope for the change that owns `branch` (the project `slug`), on this
-        commit or on an ancestor that only records followed: writing the gate line into
-        milestone.md must not need a second full gate. Another change's pass never counts."""
+    def pass_sha(
+        self, sha: str, scope: str = "milestone", slug: str = "", branch: str = "", owner: str | None = None
+    ) -> str:
+        """The gated commit of a PASS of this scope for the change that owns `branch` (the project
+        `slug`) that still holds at `sha`, or "". A pass holds on its own commit or on a descendant
+        that only records followed (pass_proof.proves). Another change's pass never counts; a
+        milestone's report counts only for the number the branch is (`milestones.branchPrefix`, an
+        unnumbered branch is 1: M1's pass never admits M2), and only for the `owner` (the project
+        branch) it was gated for when the caller names one (pass_proof.bound)."""
         if not sha:
-            return False
-        subjects = {slug} if scope == "project" else self.change_ids(branch, sha)
+            return ""
+        if scope == "project":
+            subjects = [(slug, None)]
+        else:
+            subjects = [
+                (i, proof("milestone_of")(branch, self.m, (d.get("milestone") or {}).get("slug", "")))
+                for i, d in self.matching(branch, sha)
+            ]
         rel = self.changes.relative_to(self.top).as_posix()
         for report in self.reports(scope, slug):
             try:
                 data = json.loads(report.read_text(encoding="utf-8"))
             except (OSError, ValueError):
                 continue
-            gated = data.get("sha") or ""
-            result = str(data.get("result", ""))
-            if not gated or data.get("scope", scope) != scope:
-                continue
-            if not any(result.startswith(f"VERIFY PASS {scope} {s} ") for s in subjects if s):
-                continue
-            if proves(self.dir, rel, gated, sha):
-                return True
-        return False
+            for subject, number in subjects:
+                if subject and proof("bound")(data, scope, subject, number, owner):
+                    if proof("proves")(self.dir, rel, data["sha"], sha):
+                        return str(data["sha"])
+        return ""
 
-    def owners(self, milestone: str, *refs: str) -> set[str]:
+    def passed(
+        self, sha: str, scope: str = "milestone", slug: str = "", branch: str = "", owner: str | None = None
+    ) -> bool:
+        return bool(self.pass_sha(sha, scope, slug, branch, owner))
+
+    def owners(self, milestone: str, *refs: str, live: bool = True) -> set[str]:
         """The project branch each matching change record names for this milestone branch: "" for
-        a change without a project branch. Read from the records of the gated ref, so a checkout
-        that does not hold the milestone's change yet still knows who owns it."""
+        a change without a project branch. Read from the records of the gated ref (with `live` off,
+        only those), so a checkout that does not hold the milestone's change yet still knows who
+        owns it, and an edit made after the gate does not change whom the pass was for."""
         out = set()
-        for _, found in self.matching(milestone, *refs):
+        for _, found in self.matching(milestone, *refs, live=live):
             project = found.get("project")
             ok = isinstance(project, dict) and project.get("slug") and project.get("branch", True)
             out.add(f"{self.p}{project['slug']}" if ok else "")
@@ -323,7 +344,7 @@ def check_push(repo: Repo, args: list[str]) -> None:
         if dst.startswith(repo.m):
             if repo.local and (project := repo.project_of(dst)):
                 block(f"a push of {dst} in local milestones mode.", local_merge_route(project, dst))
-            if not repo.feature_prs and not repo.passed(sha, branch=dst):
+            if not repo.feature_prs and not repo.passed(sha, branch=dst, owner=repo.project_of(dst, sha)):
                 block(f"a push of {dst} at {sha[:12] or src} without a passing milestone gate.", CLOSE, "verify/report.json")
             continue
         if dst.startswith(repo.p):
@@ -367,11 +388,11 @@ def check_pr(repo: Repo, args: list[str]) -> None:
             block(f"a PR from {head} into {base} in local milestones mode.", local_merge_route(base, head))
         if not (base.startswith(repo.p) or base == repo.default):
             block(f"a PR from {head} into {base}.", "A milestone PR goes into its parent: project/* or the default branch.")
-        sha = repo.sha(head) if "repo" not in opts else ""
+        sha = repo.sha(head) if repo.is_this(opts.get("repo", "")) else ""
         parent = repo.project_of(head, sha) if sha else ""
         if parent and base != parent:  # GitHub picks the default branch when --base is left out
             block(f"a PR from {head} into {base}: its project is {parent}.", f"Pass `--base {parent}`.")
-        if sha and not repo.passed(sha, branch=head):
+        if sha and not repo.passed(sha, branch=head, owner=parent):
             block(f"a PR from {head} at {sha[:12]} without a passing milestone gate.", CLOSE, "verify/report.json")
         return
     if head.startswith(repo.p):
@@ -421,16 +442,17 @@ def check_merge(repo: Repo, args: list[str], current: str = "") -> None:
         ref = a.removeprefix("refs/heads/")
         if not a.startswith("-") and ref.startswith(repo.m):
             sha = repo.sha(ref)
-            if not repo.passed(sha, branch=ref):
-                block(f"a merge of {ref} into {current} without a passing milestone gate.", CLOSE, "verify/report.json")
             into = current if current.startswith(repo.p) else real
+            gated = repo.pass_sha(sha, branch=ref)
+            if not gated:
+                block(f"a merge of {ref} into {current} without a passing milestone gate.", CLOSE, "verify/report.json")
             tip = repo.sha(into)
             if not tip:
                 block(
                     f"a merge of {ref} into {into}: the project branch {into} cannot be resolved.",
                     f"Create or check out {into} first (`git switch {into}`), then merge.",
                 )
-            owners = repo.owners(ref, sha)  # read from the gated ref's own change record
+            owners = repo.owners(ref, gated, live=False)  # the change record as the gate saw it
             if len(owners) != 1:
                 block(
                     f"a merge of {ref} into {into}: its change record names no single owner.",
@@ -445,6 +467,8 @@ def check_merge(repo: Repo, args: list[str], current: str = "") -> None:
                     local_merge_route(parent, ref)
                     if parent else "A milestone with no project goes in its own PR into the default branch.",
                 )
+            if not repo.passed(sha, branch=ref, owner=into):  # the report names the project it was gated for
+                block(f"a merge of {ref} into {into}: its pass was gated for another project.", CLOSE, "verify/report.json")
             if subprocess.run(
                 ["git", "-C", str(repo.dir), "merge-base", "--is-ancestor", tip, sha], capture_output=True
             ).returncode:

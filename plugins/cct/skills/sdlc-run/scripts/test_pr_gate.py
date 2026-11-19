@@ -6,6 +6,7 @@ from __future__ import annotations
 
 import json
 import os
+import re
 import shutil
 import subprocess
 import sys
@@ -62,12 +63,26 @@ def repo(tmp_path: Path) -> Path:
     return repo
 
 
-def _pass(repo: Path, sha: str | None = None) -> None:
+def _pass(
+    repo: Path, sha: str | None = None, milestone: int | None = None, owner: str | None = None, change: str = ID
+) -> None:
+    """The report the gate writes: it names the change, the milestone number and the owning project."""
     verify = repo / "changes" / ID / "verify"
     verify.mkdir(exist_ok=True)
     sha = sha or _git(repo, "rev-parse", "HEAD")
+    if milestone is None:  # the number the current branch is
+        found = re.search(r"-(\d+)$", _git(repo, "rev-parse", "--abbrev-ref", "HEAD"))
+        milestone = int(found[1]) if found else 1
+    if owner is None:  # the owner the change record names now, as the gate reads it
+        project = json.loads((repo / "changes" / ID / "decisions.json").read_text()).get("project") or {}
+        owner = f"project/{project['slug']}" if project.get("slug") and project.get("branch", True) else ""
     (verify / "report.json").write_text(
-        json.dumps({"sha": sha, "result": f"VERIFY PASS milestone {ID} {sha}"})
+        json.dumps(
+            {
+                "scope": "milestone", "sha": sha, "result": f"VERIFY PASS milestone {change} {sha}",
+                "change": change, "milestone": milestone, "owner": owner,
+            }  # fmt: skip
+        )
     )
 
 
@@ -611,17 +626,62 @@ def test_a_locked_input_or_evidence_edited_after_the_gate_voids_the_pass_F6(
     assert _push(repo) == 2
 
 
+def _archive(repo: Path, edit: str = "") -> Path:
+    """The Stage 7 archive commit: move the change, and `edit` rewrites facts.md while moving."""
+    (repo / "changes" / "archive" / "2026" / "2026-11").mkdir(parents=True)
+    _git(repo, "mv", f"changes/{ID}", f"changes/archive/2026/2026-11/{ID}")
+    facts = repo / "changes" / "archive" / "2026" / "2026-11" / ID / "facts.md"
+    if edit:
+        facts.write_text(edit)
+    _git(repo, "add", ".")
+    _git(repo, "commit", "-qm", "archive")
+    return facts
+
+
 def test_an_archive_move_keeps_the_pass_only_while_the_locked_files_keep_their_content_F6(
     repo: Path,
 ) -> None:
     _commit(repo, f"changes/{ID}/facts.md", "F1 the first\n")
     _pass(repo)
-    (repo / "changes" / "archive" / "2026" / "2026-11").mkdir(parents=True)
-    _git(repo, "mv", f"changes/{ID}", f"changes/archive/2026/2026-11/{ID}")
-    _git(repo, "commit", "-qm", "archive")
+    _archive(repo)
     assert _push(repo) == 0
     (repo / "changes" / "archive" / "2026" / "2026-11" / ID / "facts.md").write_text("F1 easier\n")
     _git(repo, "commit", "-qam", "edit while archiving")
+    assert _push(repo) == 2
+
+
+FACTS = "---\nstatus: approved\n---\nF1 the first\n"
+
+
+def test_the_archive_commit_may_add_archived_at_to_facts_and_nothing_else_H1(repo: Path) -> None:
+    _commit(repo, f"changes/{ID}/facts.md", FACTS)
+    _pass(repo)
+    _archive(repo, FACTS.replace("status: approved\n", "status: approved\narchived_at: 2026-11-19\n"))
+    assert _push(repo) == 0
+
+
+@pytest.mark.parametrize(
+    "edited",
+    [
+        "---\nstatus: approved\narchived_at: 2026-11-19\n---\nF1 easier\n",  # a fact moved too
+        "---\nstatus: draft\narchived_at: 2026-11-19\n---\nF1 the first\n",  # frontmatter moved too
+        "---\nstatus: approved\narchived_at: a\narchived_at: b\n---\nF1 the first\n",  # twice
+        "---\nstatus: approved\n---\nF1 the first\narchived_at: 2026-11-19\n",  # in the body
+    ],
+)
+def test_the_archive_commit_may_not_edit_facts_beyond_archived_at_H1(
+    repo: Path, edited: str
+) -> None:
+    _commit(repo, f"changes/{ID}/facts.md", FACTS)
+    _pass(repo)
+    _archive(repo, edited)
+    assert _push(repo) == 2
+
+
+def test_archived_at_added_to_a_live_facts_file_voids_the_pass_H1(repo: Path) -> None:
+    _commit(repo, f"changes/{ID}/facts.md", FACTS)
+    _pass(repo)
+    _commit(repo, f"changes/{ID}/facts.md", FACTS.replace("---\nF1", "archived_at: 1\n---\nF1"))
     assert _push(repo) == 2
 
 
@@ -671,23 +731,6 @@ def test_local_merge_refuses_a_milestone_without_one_owner_F7(repo: Path) -> Non
     assert r.returncode == 2 and "no single owner" in r.stderr
 
 
-def test_local_merge_sees_the_receipt_after_the_milestone_worktree_is_gone_F5(
-    repo: Path, tmp_path: Path
-) -> None:
-    _local(repo)
-    sha = _git(repo, "rev-parse", "HEAD")
-    common = Path(_git(repo, "rev-parse", "--path-format=absolute", "--git-common-dir"))
-    out = common / "sdlc" / "receipts" / ID
-    out.mkdir(parents=True)
-    result = f"VERIFY PASS milestone {ID} {sha}"
-    receipt = {"scope": "milestone", "milestone": 1, "change": ID, "result": result, "sha": sha}
-    (out / "milestone-1.json").write_text(json.dumps(receipt))
-    other = tmp_path / "project-wt"
-    _git(repo, "worktree", "add", "-q", str(other), "project/trial")
-    assert not (repo / "changes" / ID / "verify").exists()  # no report.json anywhere
-    assert _run_in(other, repo, "git merge --no-ff milestone/trial-1").returncode == 0
-
-
 def test_a_milestone_pr_names_its_project_as_the_base_F1(repo: Path) -> None:
     _local(repo, None)  # PR mode, the change belongs to project/trial
     _pass(repo)
@@ -713,3 +756,127 @@ def test_a_hook_run_leaves_a_clean_checkout_clean_F13(repo: Path) -> None:
     )  # fmt: skip
     assert r.returncode == 2
     assert _git(repo, "status", "--porcelain") == ""
+
+
+def test_local_merge_reads_the_owner_at_the_gated_sha_not_the_tip_F7(repo: Path) -> None:
+    _local(repo)
+    _pass(repo)  # gated while the change belonged to project/trial
+    decisions = repo / "changes" / ID / "decisions.json"
+    data = json.loads(decisions.read_text())
+    decisions.write_text(json.dumps({**data, "project": {"slug": "other", "branch": True}}))
+    _git(repo, "commit", "-qam", "the change moves to another project")  # a record: the pass holds
+    _git(repo, "branch", "project/other", "project/trial")
+    _git(repo, "checkout", "-q", "project/other")
+    r = _run(repo, "git merge --no-ff milestone/trial-1")
+    assert r.returncode == 2 and "belongs to project/trial" in r.stderr
+
+
+def test_a_pr_create_naming_the_same_repo_is_still_gated_F1(repo: Path) -> None:
+    _local(repo, None)
+    _git(repo, "remote", "add", "gh", "git@github.com:acme/trial.git")
+    cmd = "gh pr create --repo {} --base project/trial --title t --body x"
+    for name in ("acme/trial", "github.com/acme/trial", "https://github.com/acme/trial.git"):
+        r = _run(repo, cmd.format(name))
+        assert r.returncode == 2 and "without a passing milestone gate" in r.stderr, name
+    assert _run(repo, cmd.format("acme/elsewhere")).returncode == 0  # another repo: not ours to read
+    _pass(repo)
+    assert _run(repo, cmd.format("acme/trial")).returncode == 0
+    wrong = "gh pr create --repo acme/trial --base master --title t --body x"
+    assert _run(repo, wrong).returncode == 2
+
+
+@pytest.mark.parametrize("value", ["not-a-date", "2026-13-45", "'2026-11-19'", "2026-1-9", "2026-11-19T10:00:00"])
+def test_the_archive_commit_voids_the_pass_unless_archived_at_is_a_real_date_C8(
+    repo: Path, value: str
+) -> None:
+    _commit(repo, f"changes/{ID}/facts.md", FACTS)
+    _pass(repo)
+    _archive(repo, FACTS.replace("status: approved\n", f"status: approved\narchived_at: {value}\n"))
+    assert _push(repo) == 2
+
+
+def test_the_hook_reads_each_change_record_once_per_command_M1(repo: Path, tmp_path: Path) -> None:
+    log = tmp_path / "git.log"
+    bin_dir = tmp_path / "bin"
+    bin_dir.mkdir()
+    real = shutil.which("git")
+    (bin_dir / "git").write_text(f'#!/bin/sh\necho "$@" >> {log}\nexec {real} "$@"\n')
+    (bin_dir / "git").chmod(0o755)
+    _pass(repo)
+    transcript = repo.parent / "t.jsonl"
+    transcript.write_text("")
+    payload = {"tool_input": {"command": "git push -u origin milestone/trial-1"}, "cwd": str(repo), "transcript_path": str(transcript)}
+    r = subprocess.run(
+        ["bash", str(repo / ".claude" / "hooks" / "pr-gate.sh")], input=json.dumps(payload), capture_output=True, text=True,
+        env={**_env(), "CLAUDE_PROJECT_DIR": str(repo), "PATH": f"{bin_dir}{os.pathsep}{os.environ['PATH']}"},
+    )  # fmt: skip
+    assert r.returncode == 0, r.stderr
+    shows = [line for line in log.read_text().splitlines() if " show " in line and "decisions.json" in line]
+    assert len(shows) == len(set(shows)), shows  # no record read twice
+
+
+def test_a_receipt_file_in_the_git_dir_admits_nothing_3_20_5(repo: Path) -> None:
+    """Pass records were withdrawn: the hook reads the gate's report in the checkout only."""
+    sha = _git(repo, "rev-parse", "HEAD")
+    common = Path(_git(repo, "rev-parse", "--path-format=absolute", "--git-common-dir"))
+    out = common / "sdlc" / "receipts" / ID
+    out.mkdir(parents=True)
+    record = {"scope": "milestone", "milestone": 1, "change": ID, "sha": sha, "verdict": "pass", "owner": ""}
+    (out / "milestone-1.json").write_text(json.dumps({**record, "result": f"VERIFY PASS milestone {ID} {sha}"}))
+    (out / "garbage.json").write_text("not json")
+    assert _push(repo) == 2
+    _pass(repo)
+    assert _push(repo) == 0
+
+
+# 3.20.5: the report binds a pass to its change, milestone number and owning project.
+def test_m1s_pass_does_not_admit_milestone_2_push(repo: Path) -> None:
+    _git(repo, "checkout", "-q", "-b", "milestone/trial-2")
+    _pass(repo, milestone=1)  # gated as M1
+    r = _run(repo, "git push -u origin milestone/trial-2")
+    assert r.returncode == 2 and "without a passing milestone gate" in r.stderr
+    _pass(repo)  # gated as M2
+    assert _run(repo, "git push -u origin milestone/trial-2").returncode == 0
+
+
+def test_a_report_without_change_and_milestone_is_no_pass_for_a_numbered_milestone(repo: Path) -> None:
+    _pass(repo)
+    path = repo / "changes" / ID / "verify" / "report.json"
+    full = json.loads(path.read_text())
+    assert _push(repo) == 0
+    for dropped in ("milestone", "change"):
+        path.write_text(json.dumps({k: v for k, v in full.items() if k != dropped}))
+        assert _push(repo) == 2, dropped
+
+
+def test_the_unnumbered_branch_is_milestone_1_and_the_prefix_is_the_configured_one(repo: Path) -> None:
+    cfg = json.loads((repo / "sdlc.json").read_text())
+    (repo / "sdlc.json").write_text(json.dumps({**cfg, "milestones": {"branchPrefix": "ms/"}}))
+    _git(repo, "commit", "-qam", "prefix")
+    _git(repo, "checkout", "-q", "-b", "ms/trial")
+    _pass(repo, milestone=1)
+    assert _run(repo, "git push -u origin ms/trial").returncode == 0
+    _git(repo, "checkout", "-q", "-b", "ms/trial-2")
+    assert _run(repo, "git push -u origin ms/trial-2").returncode == 2  # the report says M1
+
+
+def test_a_pass_gated_for_another_project_is_refused_on_push_pr_and_merge(repo: Path) -> None:
+    _local(repo, None)  # PR mode; the change belongs to project/trial
+    _pass(repo, owner="project/elsewhere")
+    assert _push(repo) == 2
+    r = _run(repo, "gh pr create --base project/trial --title t --body x")
+    assert r.returncode == 2 and "without a passing milestone gate" in r.stderr
+    _pass(repo)
+    assert _push(repo) == 0
+
+
+def test_a_local_merge_refuses_a_pass_whose_report_names_another_project(repo: Path) -> None:
+    _local(repo)
+    _pass(repo, owner="project/elsewhere")
+    _git(repo, "checkout", "-q", "project/trial")
+    r = _run(repo, "git merge --no-ff milestone/trial-1")
+    assert r.returncode == 2 and "gated for another project" in r.stderr
+    _git(repo, "checkout", "-q", "milestone/trial-1")
+    _pass(repo)
+    _git(repo, "checkout", "-q", "project/trial")
+    assert _run(repo, "git merge --no-ff milestone/trial-1").returncode == 0

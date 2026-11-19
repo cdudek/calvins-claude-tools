@@ -837,6 +837,77 @@ def apply_tiers_answer(cfg: dict) -> None:
         wrote.append(f"sdlc.json: tiers {str(cfg['tiers']).lower()} (Ship/Show/Ask: {answer})")
 
 
+# sha256[:16] of every copy of these files a kit ever shipped (every blob in the git history of the
+# template, merges and side branches included): a copy that matches one is unedited. A new version
+# of either file adds its hash here; test_adopt.py walks the history and fails on a missing one.
+KIT_MARKS = {
+    "0b01636d6dc4e428",
+    "1d7b567db399b3f8",
+    "6c0c9f03e4eb5e80",
+    "71e01d1d701f6c28",
+    "9b9eb7671a9fee71",
+    "c31c115f84e2d0cb",
+    "d0b8c44c65ff9ef6",
+    "da489951ced4b597",
+}
+KIT_GATE = {
+    "07797d2ae191453e",
+    "1c17e460c91d2d3d",
+    "25ea5841fdd27c8c",
+    "3606423109411bd8",
+    "36b65017727d487e",
+    "440df872f222401d",
+    "49c96180a9059469",
+    "4cf1a016840c1594",
+    "5152ca52e4e6ae8b",
+    "573aee9b45171a4c",
+    "642ef78693995803",
+    "96ef7a0baac1edad",
+    "a0b381c0b945ecdb",
+    "a7481173126f7752",
+    "a872c162585a3302",
+    "b4724f2bc5e40f08",
+    "bff25d03c74642b8",
+    "c53ff6ee7a8eb8d9",
+    "dfbfa38f6cd4fec6",
+    "f74bcd2c928e6244",
+}  # same, for scripts/verify_gate.py
+KIT_PR_GATE = {
+    "0a76b3d09e108c32",
+    "23f7c564f4bd72c8",
+    "27fac77913e73fb0",
+    "30b25985ad8654f5",
+    "32c64c35d3cbc40e",
+    "4fe0e4f49faa16aa",
+    "547e89c143f3b75d",
+    "5a07659427f3871f",
+    "7a4751e7cea3d974",
+    "8170d3b4f4ccc09d",
+    "a7c80708a8719115",
+    "ab23e9a14b74d511",
+    "dcfc6bfc90098077",
+    "dea1af067e0edd92",
+    "e68483445418d666",
+    "e75851f8eacc7ec7",
+    "f9f78cded1337388",
+}  # same, for .claude/hooks/pr-gate.sh
+KIT_PASS_PROOF = {
+    "08655b8b92ba1cf3",
+    "66d1b0004ebe5a4f",
+    "6b49e80785b08cd1",
+    "9bf7560ec9b627d8",
+    "ca615d048d30845c",
+    "dfd42c691cbeaf20",
+    "faa52678825431ca",
+}  # same, for .claude/hooks/pass_proof.py
+KIT_PARTS = {
+    "scripts/marks.py": KIT_MARKS,
+    "scripts/verify_gate.py": KIT_GATE,
+    ".claude/hooks/pr-gate.sh": KIT_PR_GATE,
+    ".claude/hooks/pass_proof.py": KIT_PASS_PROOF,
+}
+
+
 def finish_upgrade() -> str:
     """After the dry-run flow: everything it would have written or moved becomes a review line,
     and `--replace <file>` shows (or, with --apply, writes) the kit's copy of one file."""
@@ -857,10 +928,34 @@ def finish_upgrade() -> str:
                 f"review: `{w}` is a layout migration or removal that --upgrade does not apply; run `adopt` to apply it"
             )
     out = []
-    # verify_gate.py and marks.py are one pair: either one alone from another kit version breaks
-    # the gate's imports, so replacing one replaces the other when it differs too
-    pair = {"scripts/verify_gate.py": "scripts/marks.py", "scripts/marks.py": "scripts/verify_gate.py"}
-    wanted = list(dict.fromkeys(r for rel in REPLACE for r in (rel, pair.get(rel, rel))))
+    # A file whose partners the replaced one needs: the gate blocks a milestone with design bundles
+    # unless marks.py has `bundles`, and verify_gate.py, pr-gate.sh and pass_proof.py are one
+    # version: a hook beside a different helper or gate judges a pass another way. Replacing one of
+    # the three takes the others along, and the gate takes marks.py, only when the partner is a kit
+    # version nobody edited (a customised copy stays, and a MANUAL line names it).
+    trio = ["scripts/verify_gate.py", ".claude/hooks/pr-gate.sh", ".claude/hooks/pass_proof.py"]
+    partner = {f: [t for t in trio if t != f] for f in trio}
+    partner["scripts/verify_gate.py"].append("scripts/marks.py")
+    PARTNER_NEEDS = {  # noqa: N806 -- what the replaced file cannot work without
+        "scripts/marks.py": "`bundles(change)`: the new gate blocks milestone gates with design bundles until it has it",
+        "scripts/verify_gate.py": "the same kit version (it and the hook read a pass the same way)",
+        ".claude/hooks/pr-gate.sh": "the same kit version (it and the gate read a pass the same way)",
+        ".claude/hooks/pass_proof.py": "the same kit version (`proves(...)`, the one rule for what a pass covers)",
+    }
+    wanted = list(dict.fromkeys(REPLACE))
+    for rel in wanted:  # the list grows: a partner's own partners follow
+        for other in partner.get(rel, []):
+            if other not in pending or other in wanted:
+                continue  # it is the kit's copy already, or already on the list
+            mine = ROOT / other
+            if mine.exists() and hashlib.sha256(mine.read_bytes()).hexdigest()[:16] not in KIT_PARTS[other]:
+                manual.append(
+                    f"--replace {rel}: {other} is customised (it matches no kit version), so it was not "
+                    f"replaced with it. {rel} needs {PARTNER_NEEDS[other]}: merge your changes into the "
+                    f"kit's copy, then `adopt --upgrade --replace {other} --apply`"
+                )
+                continue
+            wanted.append(other)
     for rel in wanted:
         if rel not in pending and rel not in REPLACE:
             continue  # the partner is already the kit's copy

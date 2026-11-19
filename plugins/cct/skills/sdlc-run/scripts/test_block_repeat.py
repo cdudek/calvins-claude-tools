@@ -56,7 +56,7 @@ def repo(tmp_path: Path) -> Path:
     hooks.mkdir(parents=True)
     for name in ("pr-gate.sh", "chain-gate.sh", "gate-bash.sh", "sdlc-config.sh"):
         shutil.copy(HOOKS / name, hooks / name)
-    for name in ("goal_active.py", "block_state.py"):
+    for name in ("goal_active.py", "block_state.py", "pass_proof.py"):
         if (HOOKS / name).exists():  # today's tree has neither yet
             shutil.copy(HOOKS / name, hooks / name)
     (repo / "sdlc.json").write_text(

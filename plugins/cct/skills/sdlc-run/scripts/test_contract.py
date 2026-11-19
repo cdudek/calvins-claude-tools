@@ -294,3 +294,63 @@ def test_build_qa_resolves_size_and_skips_before_it_asks_for_readiness_F10() -> 
     assert steps.index("size and skips") < steps.index("approved `readiness.md`")
     assert "authorises this QA" in steps and "never loop back" in steps
     assert "authorises the run" in _read("ux-build-validate", "references", "build.md")
+
+
+# 3.20.2: round-2 review (finding 4, M6).
+SKILLS = SKILL.parent
+
+
+def test_the_readiness_writer_keeps_an_older_hooks_validation_md_current_F4() -> None:
+    """adopt --upgrade leaves an old chain-gate.sh in place; it reads only spec/validation.md, so
+    the writer mirrors its verdict there (no stale accept, no rejected fresh approval)."""
+    text = (SKILLS / "ux-spec-validate/references/spec.md").read_text(encoding="utf-8")
+    mirror = text.split("## Output Template", 1)[1].split("```markdown", 1)[0]
+    assert "<spec>/validation.md" in mirror and "same content" in mirror
+    assert "readiness.md" in mirror and "every write" in mirror
+
+
+def test_build_qa_waives_only_the_files_the_size_preset_skips_M6_C10() -> None:
+    """chain.md: S skips brief, ia and interaction; M skips ia; L skips none. Build QA waives a
+    file only for a size that skips it: for size L a missing interaction.md fails the QA, and no
+    check is made conditional on the file existing."""
+    chain = (SKILL / "references/chain.md").read_text(encoding="utf-8")
+    assert re.search(r"\| `S` \|[^\n]*`brief`, `ia`, `interaction`", chain)
+    assert re.search(r"\| `M` \|[^\n]*`ia`, reason", chain) and "| `L` | a new screen, flow or feature | none |" in chain
+    build = (SKILLS / "ux-build-validate/references/build.md").read_text(encoding="utf-8")
+    inputs = build.split("## Steps", 1)[0]
+    # the owner's record (`skips`) decides; the size is only the default for a record without it
+    assert "`decisions.json` `skips`" in inputs and "exactly when `skips` lists it" in inputs
+    assert "size S skips all three, size M skips `ia`, size L skips none" in inputs
+    assert "A file missing for an activity" in inputs and "`verdict: fail`" in inputs
+    for line in build.splitlines():
+        if re.search(r"ia\.md|interaction\.md", line) and not line.startswith("- `<spec>/screens.md`"):
+            assert not re.search(r"\bexists?\b", line, re.I), f"a check conditional on the file existing: {line}"
+
+
+# 3.20.5: pass records were withdrawn; a pass is the gate's report in the checkout.
+def test_no_shipped_script_or_hook_reads_or_writes_receipts() -> None:
+    shipped = [
+        p
+        for root in (SKILL / "scripts", SKILL / "templates", SKILL.parents[1] / "blueprint")
+        for p in root.rglob("*")
+        if p.is_file() and p.suffix in {".py", ".sh"} and "__pycache__" not in p.parts and not p.name.startswith("test_")
+    ]
+    assert len(shipped) > 10
+    assert not [str(p) for p in shipped if "receipts/" in p.read_text(encoding="utf-8")]
+
+
+def test_the_gate_and_the_hook_number_a_milestone_branch_the_same_way_3_20_5(tmp_path: Path) -> None:
+    sys.path[:0] = [str(SKILL / "templates" / "scripts"), str(SKILL / "templates" / "hooks")]
+    import pass_proof
+    import verify_gate
+
+    change = tmp_path / "2026-01-01-ABC-1-big-thing"
+    change.mkdir()
+    (change / "decisions.json").write_text('{"milestone": {"slug": "big-thing"}}')
+    for prefix in ("milestone/", "ms/"):
+        cfg = {"milestones": {"branchPrefix": prefix}}
+        for branch in (f"{prefix}big-thing", f"{prefix}big-thing-2", f"{prefix}big-thing-x", f"{prefix}other-3", "main", ""):
+            assert verify_gate.milestone_number(change, cfg, branch) == pass_proof.milestone_of(branch, prefix, "big-thing"), branch
+    assert pass_proof.milestone_of("milestone/big-thing", "milestone/", "big-thing") == 1
+    assert pass_proof.milestone_of("milestone/big-thing-7", "milestone/", "big-thing") == 7
+    assert pass_proof.milestone_of("ms/big-thing-7", "milestone/", "big-thing") is None
