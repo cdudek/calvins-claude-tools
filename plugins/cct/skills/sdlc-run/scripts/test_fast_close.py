@@ -273,3 +273,8 @@ def test_stages_say_how_the_visual_skip_is_attested_and_what_current_format_requ
 def test_stage_6_merges_the_close_findings_before_the_triager() -> None:
     assert "scripts/close_findings.py <state directory> changes/<id>/findings.md" in STEP4
     assert STEP4.index("close_findings.py") < STEP4.index("cct:review-fixset-triager")
+
+
+def test_convergence_documents_the_strict_manifest_and_its_version_boundary() -> None:
+    assert '"manifest": "required"' in CONVERGENCE and "full 40-character commit sha" in CONVERGENCE
+    assert "`sources`" in CONVERGENCE and "`shared`" in CONVERGENCE and "`Build: <sha>`" in CONVERGENCE

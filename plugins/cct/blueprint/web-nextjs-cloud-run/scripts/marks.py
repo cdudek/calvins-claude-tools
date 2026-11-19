@@ -343,11 +343,22 @@ def init(change: Path, sources: list[dict]) -> int:
     return 0
 
 
-def stale_build(repo: Path, change: Path, build: object) -> str:
+def stale_build(
+    repo: Path, change: Path, build: object, paths: list[str] | None = None, strict: bool = False
+) -> str:
     """Why a capture of commit `build` no longer describes HEAD, or "" when it still does: only
-    records under the changes folder may differ."""
+    records under the changes folder may differ. With `paths` (the cell's own sources plus the
+    shared dependencies) only a change to one of those files, or under one of those folders,
+    makes it stale. `strict` also demands a full commit sha, never a moving ref."""
     if not filled(build):
         return "no build commit recorded"
+    if strict and not re.fullmatch(r"[0-9a-f]{40}", str(build)):
+        return f"build must be a full commit sha, not {build!r}"
+    known = subprocess.run(
+        ["git", "-C", str(repo), "cat-file", "-t", f"{build}^{{commit}}"], capture_output=True, text=True
+    )
+    if known.returncode or known.stdout.strip() != "commit":
+        return f"build {str(build)[:12]} is not a commit here"
     records = change.parent.relative_to(repo.resolve()).as_posix()
     done = subprocess.run(
         ["git", "-C", str(repo), "diff", "--name-only", build, "HEAD", "--", ".", f":!{records}"],
@@ -355,16 +366,50 @@ def stale_build(repo: Path, change: Path, build: object) -> str:
         text=True,
     )
     if done.returncode:
-        return f"build {build[:12]} is not a commit here"
+        return f"build {str(build)[:12]} is not a commit here"
     files = done.stdout.split()
-    return f"{files[0]} changed since build {build[:12]}" if files else ""
+    if paths is not None:
+        roots = [p.rstrip("/") for p in paths]
+        files = [f for f in files if any(f == r or f.startswith(r + "/") for r in roots)]
+    return f"{files[0]} changed since build {str(build)[:12]}" if files else ""
+
+
+def manifest_required(change: Path) -> bool:
+    """A change approved from 3.21.0 has `"manifest": "required"` in its lock; older ones keep the
+    behaviour in which an absent manifest is fine."""
+    try:
+        return json.loads((change / "lock.json").read_text(encoding="utf-8")).get("manifest") == "required"
+    except (OSError, ValueError, AttributeError):
+        return False
+
+
+def qa_problems(change: Path, repo: Path) -> list[str]:
+    """`<spec>/qa.md` verified by its own recorded `Build: <sha>`, never by manifest metadata."""
+    spec = change / "spec"
+    if not spec.is_dir():
+        return []
+    qa = spec / "qa.md"
+    if not qa.is_file():
+        return ["qa.md is missing: build QA has not been recorded for this change"]
+    m = re.search(r"^Build:\s*`?(\S+?)`?\s*$", qa.read_text(encoding="utf-8"), re.M | re.I)
+    if not m:
+        return ["qa.md records no `Build: <sha>` line, so its inputs cannot be checked"]
+    if why := stale_build(repo, change, m[1], strict=True):
+        return [f"qa.md is stale: {why}"]
+    return []
 
 
 def manifest_problems(change: Path, rows: list[dict], repo: Path) -> list[str]:
-    """Problems with verify/shots/manifest.json against the rows; none when the file is absent."""
+    """Problems with verify/shots/manifest.json against the rows. An absent file is a problem only
+    when the lock requires one (3.21.0) and rows hold visual work; the strict rules (commit sha,
+    reference digest, per-cell sources, a real qa.md) apply to those changes only."""
     path = change / "verify/shots/manifest.json"
+    strict = manifest_required(change)
     if not path.exists():
-        return []
+        visual = any(filled(r.get("shot")) for r in rows) or any(
+            r.get("kind") in ("reference", "bundle") for r in rows
+        )
+        return ["capture manifest is required (verify/shots/manifest.json): no capture is recorded"] if strict and visual else []
     try:
         data = json.loads(path.read_text(encoding="utf-8"))
         entries = [e for e in data["entries"] if isinstance(e, dict)]
@@ -374,12 +419,26 @@ def manifest_problems(change: Path, rows: list[dict], repo: Path) -> list[str]:
     cells = [(e.get("screen"), e.get("state"), e.get("width"), e.get("zoom")) for e in entries]
     problems += [f"capture manifest: cell {c} captured twice" for c in sorted(set(
         c for c in cells if cells.count(c) > 1), key=str)]  # fmt: skip
+    shared = data.get("shared") if isinstance(data.get("shared"), list) else []
     for entry in entries:
-        if why := stale_build(repo, change, entry.get("build")):
+        mine = entry.get("sources")
+        paths = None
+        if strict:
+            if not (isinstance(mine, list) and mine and all(filled(x) for x in mine)):
+                problems.append(f"capture {entry.get('shot')}: must list the source files of its screen")
+            else:
+                paths = [*mine, *[x for x in shared if filled(x)]]
+            ref = entry.get("reference")
+            if not (isinstance(ref, str) and re.fullmatch(r"[0-9a-f]{64}", ref)):
+                problems.append(f"capture {entry.get('shot')}: reference digest is required (sha256)")
+        if why := stale_build(repo, change, entry.get("build"), paths, strict):
             problems.append(f"capture {entry.get('shot')}: stale: {why}")
-    qa = data.get("qa")
-    if isinstance(qa, dict) and (why := stale_build(repo, change, qa.get("build"))):
-        problems.append(f"qa.md is stale: {why}")
+    if strict:
+        problems += qa_problems(change, repo)
+    else:
+        qa = data.get("qa")
+        if isinstance(qa, dict) and (why := stale_build(repo, change, qa.get("build"))):
+            problems.append(f"qa.md is stale: {why}")
     for row in rows:
         shot = row.get("shot")
         if not filled(shot):

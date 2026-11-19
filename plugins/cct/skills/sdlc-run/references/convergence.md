@@ -102,6 +102,14 @@ because the file exists. `marks.py check` enforces it: a capture or `qa.md` whos
 from HEAD in any file outside the changes folder, a changed reference, a shot missing from the
 manifest, or one cell captured twice is a problem.
 
+For a change approved from 3.21.0 (its `lock.json` has `"manifest": "required"`; older changes keep
+the lenient behaviour) the rules are strict: the manifest must exist when the change holds visual
+work; each `build` is a full 40-character commit sha, never `HEAD` or a branch; each entry carries
+the sha256 `reference` digest; each entry lists the `sources` (repo files or folders) of its screen
+and the manifest lists `shared` dependencies, so a fix to screen A leaves screen B's cell valid and a
+change to a shared file invalidates every cell; and `<spec>/qa.md` must exist and record its own
+`Build: <sha>` line, which is checked against HEAD (the manifest's `qa` metadata is ignored).
+
 Capture all visual evidence from one build per milestone version, from a worktree pinned to one
 commit. Never capture from the live milestone branch: merges moved the branch in the middle of a
 capture and ruined a batch. Builders change code; the capture happens once, after they are done.

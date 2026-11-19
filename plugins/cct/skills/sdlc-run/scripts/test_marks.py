@@ -596,3 +596,125 @@ def test_a_qa_verdict_is_stale_when_its_build_is(repo: Path) -> None:
 def test_no_manifest_means_the_old_behaviour(repo: Path) -> None:
     resolved(repo)
     assert run(repo, "check").returncode == 0
+
+
+# Review findings 12 and 13: a strict manifest (changes approved from 3.21.0) cannot be skipped,
+# faked with a moving ref or kept alive by a metadata flag, and goes stale per cell.
+SHA = r"[0-9a-f]{40}"
+
+
+def strict(repo: Path, **tweak: object) -> dict:
+    """with_manifest, then the 3.21.0 form: a lock that requires the manifest, per-cell sources, a
+    shared list and a real qa.md in the spec folder recording its build."""
+    manifest = with_manifest(repo)
+    write(repo / "src/a.ts", "a1")
+    write(repo / "src/b.ts", "b1")
+    write(repo / "src/shared.ts", "s1")
+    for i, entry in enumerate(manifest["entries"]):
+        entry["sources"] = ["src/a.ts"] if i % 2 == 0 else ["src/b.ts"]
+    manifest["shared"] = ["src/shared.ts"]
+    git(repo, "add", ".")
+    git(repo, "commit", "-qm", "sources")
+    sha = git(repo, "rev-parse", "HEAD")
+    for entry in manifest["entries"]:
+        entry["build"] = sha
+    manifest.pop("qa", None)
+    manifest |= tweak
+    write(change(repo) / "verify/shots/manifest.json", json.dumps(manifest))
+    write(change(repo) / "lock.json", json.dumps({"criteria": {}, "manifest": "required"}))
+    write(change(repo) / "spec/qa.md", f"# QA\n\nBuild: {sha}\n")
+    git(repo, "add", ".")
+    git(repo, "commit", "-qm", "records")
+    return manifest
+
+
+def rewrite(repo: Path, manifest: dict) -> None:
+    write(change(repo) / "verify/shots/manifest.json", json.dumps(manifest))
+
+
+def test_a_strict_manifest_in_good_order_passes(repo: Path) -> None:
+    strict(repo)
+    assert run(repo, "check").returncode == 0, run(repo, "check").stdout
+
+
+def test_a_missing_manifest_fails_a_visual_close_that_requires_it(repo: Path) -> None:
+    resolved(repo)
+    write(change(repo) / "lock.json", json.dumps({"criteria": {}, "manifest": "required"}))
+    result = run(repo, "check")
+    assert result.returncode == 1 and "capture manifest is required" in result.stdout
+
+
+@pytest.mark.parametrize("build", ["HEAD", "main", "abc1234", "HEAD~1"])
+def test_a_build_must_be_an_immutable_commit_sha(repo: Path, build: str) -> None:
+    manifest = strict(repo)
+    manifest["entries"][0]["build"] = build
+    rewrite(repo, manifest)
+    result = run(repo, "check")
+    assert result.returncode == 1 and "build must be a full commit sha" in result.stdout
+
+
+@pytest.mark.parametrize("digest", [None, "", "short", "g" * 64])
+def test_the_reference_digest_is_required(repo: Path, digest: object) -> None:
+    manifest = strict(repo)
+    manifest["entries"][0]["reference"] = digest
+    rewrite(repo, manifest)
+    assert "reference digest is required" in run(repo, "check").stdout
+
+
+def test_a_cell_must_name_its_source_files(repo: Path) -> None:
+    manifest = strict(repo)
+    manifest["entries"][0]["sources"] = []
+    rewrite(repo, manifest)
+    assert "must list the source files" in run(repo, "check").stdout
+
+
+def test_manifest_qa_metadata_cannot_stand_in_for_the_qa_file(repo: Path) -> None:
+    manifest = strict(repo)
+    (change(repo) / "spec/qa.md").unlink()
+    manifest["qa"] = {"build": manifest["entries"][0]["build"]}
+    rewrite(repo, manifest)
+    assert "qa.md is missing" in run(repo, "check").stdout
+
+
+def test_qa_md_is_verified_by_its_own_recorded_build(repo: Path) -> None:
+    strict(repo)
+    write(change(repo) / "spec/qa.md", "# QA\n\nno build line\n")
+    assert "qa.md records no `Build: <sha>`" in run(repo, "check").stdout
+    write(change(repo) / "spec/qa.md", f"# QA\n\nBuild: {'1' * 40}\n")
+    assert "qa.md is stale" in run(repo, "check").stdout
+
+
+def commit_all(repo: Path, message: str) -> str:
+    git(repo, "add", ".")
+    git(repo, "commit", "-qm", message)
+    return git(repo, "rev-parse", "HEAD")
+
+
+def test_fixing_one_screen_and_recapturing_it_leaves_the_other_cells_valid(repo: Path) -> None:
+    manifest = strict(repo)
+    write(repo / "src/a.ts", "a2")  # screen A is fixed
+    new = commit_all(repo, "fix a")
+    write(change(repo) / "spec/qa.md", f"# QA\n\nBuild: {new}\n")
+    commit_all(repo, "qa")
+    result = run(repo, "check")
+    assert result.returncode == 1 and "src/a.ts changed since build" in result.stdout
+    assert "src/b.ts" not in result.stdout  # B's inputs did not move
+    for entry in manifest["entries"][::2]:  # recapture only the A cells, from the new build
+        entry["build"] = new
+    rewrite(repo, manifest)
+    assert run(repo, "check").returncode == 0, run(repo, "check").stdout
+
+
+def test_a_shared_dependency_change_invalidates_every_cell(repo: Path) -> None:
+    strict(repo)
+    write(repo / "src/shared.ts", "s2")
+    commit_all(repo, "shared")
+    out = run(repo, "check").stdout
+    assert out.count("src/shared.ts changed since build") >= 2
+
+
+def test_a_well_formed_sha_that_is_no_commit_is_stale(repo: Path) -> None:
+    manifest = strict(repo)
+    manifest["entries"][0]["build"] = "0" * 40
+    rewrite(repo, manifest)
+    assert "is not a commit here" in run(repo, "check").stdout

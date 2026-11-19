@@ -479,6 +479,7 @@ def approve(change: Path, cfg: dict) -> int:
         "sha": sh("git", "rev-parse", "HEAD"),
         "criteria": criteria_hash(change, cfg.get("checks", {})),
         "order": "cost",  # a lock without this key keeps the declared order (before 3.18.0)
+        "manifest": "required",  # from 3.21.0 visual work needs verify/shots/manifest.json
     }
     (change / "lock.json").write_text(json.dumps(lock, indent=2) + "\n", encoding="utf-8")
     print(f"locked {', '.join(lock['criteria'])} in {change.name}/lock.json -- commit it")

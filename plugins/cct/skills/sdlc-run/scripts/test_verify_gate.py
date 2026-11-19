@@ -475,6 +475,10 @@ def test_owner_marks_is_automatic_at_milestone_only(tmp_path: Path, trigger: str
     else:
         (change / "marks.json").write_text("{")
     _approve(repo)
+    legacy = json.loads((change / "lock.json").read_text())
+    del legacy["manifest"]  # an approval before 3.21.0: no capture manifest is required of it
+    (change / "lock.json").write_text(json.dumps(legacy))
+    _git(repo, "commit", "-qam", "an older lock")
     lock = (change / "lock.json").read_bytes()
     assert _gate(repo, "feature", ID).returncode == 0
     result = _gate(repo, "milestone", ID)
@@ -1803,3 +1807,10 @@ def test_an_old_lock_without_the_plan_hash_reports_an_upgrade_gap_and_still_runs
     r = _gate(repo, "milestone", ID)
     assert "upgrade gap" in r.stdout and "plan.milestones" in r.stdout
     assert _last(r).startswith(f"VERIFY PASS milestone {ID}")
+
+
+def test_a_new_approval_requires_the_capture_manifest_for_visual_work(tmp_path: Path) -> None:
+    """Review finding 12: the version boundary lives in the lock; an older lock lacks the key."""
+    repo = _repo(tmp_path, ["true"])
+    _approve(repo)
+    assert json.loads((repo / "changes" / ID / "lock.json").read_text())["manifest"] == "required"
