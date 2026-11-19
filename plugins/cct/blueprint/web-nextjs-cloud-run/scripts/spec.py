@@ -790,6 +790,16 @@ def rank(rows: list[dict], manifests: dict, query: str, paths: list[str] | None 
                 score += 2
         if score:
             scored.append((score, row, list(dict.fromkeys(hit))))
+    # related capabilities: the rules next door to the best hits, below every direct hit
+    direct = {r["id"] for _, r, _ in scored}
+    best = sorted(
+        {row["cap"]: s for s, row, _ in sorted(scored, key=lambda x: x[0])}.items(),
+        key=lambda kv: -kv[1],
+    )[:3]
+    near = {rel: cap for cap, _ in best for rel in _as_list(manifests.get(cap, {}).get("related"))}
+    for row in rows:
+        if row["id"] not in direct and row["cap"] in near:
+            scored.append((0.5, row, [f"via {near[row['cap']]}"]))
     return scored
 
 
@@ -1268,6 +1278,7 @@ def main(argv: list[str] | None = None) -> int:
     e.add_argument("fixture")
     e.add_argument("--k", type=int, default=10)
     e.add_argument("--fail-under", type=float, default=0.0)
+    e.add_argument("--root", help="evaluate against this repo root instead of the current one")
     sub.add_parser("qa").add_argument("change")
     s = sub.add_parser("consistency")
     s.add_argument("change")
@@ -1336,7 +1347,9 @@ def main(argv: list[str] | None = None) -> int:
                 print("SPEC PASS" if not rep["problems"] else f"SPEC FAIL ({len(rep['problems'])})")
             return 1 if rep["problems"] else 0
         elif a.cmd == "eval":
-            res = evaluate(root, json.loads(Path(a.fixture).read_text()), a.k)
+            res = evaluate(
+                Path(a.root) if a.root else root, json.loads(Path(a.fixture).read_text()), a.k
+            )
             print(json.dumps(res, indent=2))
             return 1 if res["find"] < a.fail_under else 0
         elif a.cmd == "qa":

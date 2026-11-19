@@ -641,3 +641,61 @@ def test_a_live_test_next_to_a_skipped_class_still_counts(repo: Path) -> None:
     )  # fmt: skip
     problems = " ".join(spec.check(repo))
     assert "R1 is tagged only in skipped" in problems and "R2" not in problems
+
+
+# ------------------------------------------------------------------ second wave
+
+
+def test_find_pulls_in_the_rules_of_related_capabilities_after_the_direct_hits(repo: Path) -> None:
+    _billing(repo)
+    (repo / "specs/billing/manifest.yaml").write_text(
+        "purpose: charging customers\naliases: [payment]\ncode: [src/billing]\nrelated: [reporting]\n"
+    )
+    out = spec.find(repo, "payment retry")
+    assert out[0].startswith("R1  billing") and any(
+        ln.startswith("R2  reporting") and "via billing" in ln for ln in out
+    )
+    (repo / "specs/billing/manifest.yaml").write_text(
+        "purpose: charging customers\naliases: [payment]\n"
+    )
+    assert not any(ln.startswith("R2  reporting") for ln in spec.find(repo, "payment retry"))
+
+
+CORPUS = SKILL / "references/eval"
+
+
+def test_the_committed_recall_fixture_beats_a_grep_on_the_repos_own_changes() -> None:
+    fixture = json.loads((CORPUS / "fixture.json").read_text())
+    rules, _, problems = spec.load_rules(CORPUS / "corpus")
+    assert problems == [] and len(rules) > 200 and len(fixture) >= 50
+    res = spec.evaluate(CORPUS / "corpus", fixture, 10)
+    assert res["cases"] >= 50 and res["find"] >= res["grep"], res
+
+
+def test_eval_takes_a_root_and_a_fail_under(repo: Path, monkeypatch, capsys) -> None:
+    monkeypatch.chdir(repo)
+    args = ["eval", str(CORPUS / "fixture.json"), "--root", str(CORPUS / "corpus")]
+    assert spec.main(args) == 0
+    assert spec.main(args + ["--fail-under", "0.99"]) == 1
+
+
+def test_the_corpus_builder_labels_each_ask_with_the_facts_that_cite_it(tmp_path: Path) -> None:
+    sys.path.insert(0, str(SKILL / "scripts"))
+    import eval_corpus
+
+    ch = tmp_path / "changes" / "2026-11-01-retry-charges"
+    ch.mkdir(parents=True)
+    (ch / "intent.md").write_text(
+        "# Intent: Retry charges\n\n| # | Date | Source | Words | Screen | Resources |\n|---|---|---|---|---|---|\n"
+        '| A1 | d | owner | "please retry failed charges again. Also tell me when it happens." | none | none |\n'
+    )
+    (ch / "facts.md").write_text(
+        "- [ ] **F1** (A1) When a charge fails, the system shall retry it once.\n"
+        "- [ ] **F2** (A2) The system shall log it.\n"
+    )
+    out = tmp_path / "out"
+    assert eval_corpus.build(tmp_path, out) == {"rules": 2, "cases": 3}
+    fx = json.loads((out / "fixture.json").read_text())
+    assert {c["id"] for c in fx} == {"retry-charges/A1", "retry-charges/A1.1", "retry-charges/A1.2"}
+    assert all(c["relevant"] == ["R1"] for c in fx)
+    assert spec.load_rules(out / "corpus")[2] == []
