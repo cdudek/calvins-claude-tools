@@ -292,7 +292,7 @@ package), `tracking-apply` (the success-measure events). Each result lands in th
 3. `python3 scripts/verify_gate.py approve <id>` writes `lock.json` (facts, done.json, checks). It runs the lint first and refuses (`APPROVE FAIL`) on any line the lint names, an unchecked `checklist.md` item, an open CRITICAL
    in `analyze.md` or `challenge.md`, and a row of **Justified violations** with an empty cell.
    From 3.23.0 it also locks what a visual change must not drift from: `"screens": "required"` when the
-   change has visual work, and `designSystem` (name, version, each consumer's pin, from `sdlc.json`
+   change has visual work, and `designSystem` (name, version, each consumer's pin and installed version, from `sdlc.json`
    `designSystem`: `{"package", "consumers", "auditAbove"}`). A change with more than `auditAbove`
    (default 20) screens is refused until `design-system-audit.md` lists the design-system parts each
    screen group needs (`have` or `gap`) and no `gap` is left: ship one design-system release that
@@ -360,8 +360,9 @@ a change small enough for one milestone has one.
    check, never the test loop.
    Scope the owner adds mid-run re-locks (`verify_gate.py approve <id>`) and gets one more close,
    logged under `## Revisions`.
-   A visual change restyles what exists. The gate refuses edits to migrations, auth and permissions
-   paths and to new route files outside the plan's folders: data, auth and new pages start a
+   A visual change restyles what exists. The gate refuses edits to migrations (at any depth), auth and
+   permissions paths (matched as whole words) and to route files that did not exist at the approval
+   commit, outside the plan's folders: data, auth and new pages start a
    linked change (`sdlc-run` new change). A repo opts a path out with `sdlc.json` `scopeGuard.allow`
    globs. If the design system's pin moves, the milestone gate blocks: re-approve with the new
    release (every screen is re-judged against it) or pin it back.
