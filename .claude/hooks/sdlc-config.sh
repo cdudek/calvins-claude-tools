@@ -15,6 +15,7 @@
 # /usr/bin/python3, and on macOS only when the Command Line Tools or Xcode stand behind it (the
 # bare stub opens an install dialog). The hooks use the standard library and syntax from Python
 # 3.7; `SDLC_PYTHON=<path>` picks another interpreter, and anything else falls back to python3.
+export PYTHONDONTWRITEBYTECODE=1 # hooks and the gate scripts they start must not leave __pycache__
 SDLC_ROOT="${CLAUDE_PROJECT_DIR:-$(pwd)}"
 SDLC_JSON="$SDLC_ROOT/sdlc.json"
 SDLC_PY="${SDLC_PYTHON:-python3}"

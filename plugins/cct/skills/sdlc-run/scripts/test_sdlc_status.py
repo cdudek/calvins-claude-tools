@@ -113,11 +113,19 @@ MOVED = "b" * 40
 PASS = f"VERIFY PASS milestone {ID} {GATE}"
 
 
-def _pr(state: str = "MERGED", head: str = GATE, armed: bool = False, number: int = 7) -> list:
+def _pr(
+    state: str = "MERGED",
+    head: str = GATE,
+    armed: bool = False,
+    number: int = 7,
+    base: str = "main",
+    labels: tuple[str, ...] = (),
+) -> list:
     return [
         {
             "number": number,
-            "baseRefName": "main",
+            "baseRefName": base,
+            "labels": [{"name": name} for name in labels],
             "headRefOid": head,
             "state": state,
             "mergedAt": "2026-11-11T10:00:00Z" if state == "MERGED" else None,
@@ -242,7 +250,8 @@ def test_goal_feature_reads_the_feature_prs_row_and_a_feature_gate(repo: Path) -
         "| 1 | cart | F1 | `redesign-r2/1-cart` | todo |\n"
     )
     _gate(repo, f"VERIFY PASS feature {ID} {GATE}", scope="feature")
-    code, line = _goal(repo, {"redesign-r2/1-cart": _pr("OPEN", armed=True)}, "feature", 1)
+    pr = _pr("OPEN", armed=True, base="milestone/redesign-r2")  # a feature goes into its milestone
+    code, line = _goal(repo, {"redesign-r2/1-cart": pr}, "feature", 1)
     assert (code, line) == (0, f"GOAL {ID} DONE pr=7 state=armed gate={GATE}")
     assert _goal(repo, {}, "feature", 2) == (1, f"GOAL {ID} OPEN no-branch-for-feature-2")
 
@@ -492,7 +501,7 @@ def test_goal_without_local_mode_still_wants_the_milestone_pr(
     subprocess.run(["git", "branch", "project/big"], cwd=repo, check=True, env=_env())
     _gate(repo, f"VERIFY PASS milestone {ID} {gate}")
     assert _goal(repo, {}) == (1, f"GOAL {ID} OPEN no-pr:{BRANCH}")
-    assert _goal(repo, {BRANCH: _pr(head=gate)})[0] == 0
+    assert _goal(repo, {BRANCH: _pr(head=gate, base="project/big")})[0] == 0
 
 
 def test_goal_local_mode_without_a_project_uses_the_milestone_pr(repo: Path) -> None:
@@ -794,3 +803,134 @@ def test_readme_points_at_the_latest_handover(repo: Path, names: list[str], late
 def test_the_milestone_report_template_links_the_glossary() -> None:
     template = SCRIPT.parent.parent / "templates" / "change" / "milestone.md"
     assert "sdlc_status.py ids" in template.read_text()
+
+
+# 3.20.1 (review findings 1, 2, 5, 6).
+def test_goal_wants_the_exact_parent_as_the_base_of_every_scope_F1(repo: Path) -> None:
+    _local_project(repo, "pr")  # the milestone belongs to project/big
+    gate = _commit(repo, "m1.txt")
+    _sh(repo, "branch", "project/big")
+    _gate(repo, f"VERIFY PASS milestone {ID} {gate}")
+    got = _goal(repo, {BRANCH: _pr(head=gate)})  # GitHub chose the default branch
+    assert got == (1, f"GOAL {ID} OPEN pr-7-wrong-base")
+    assert "gh pr edit 7 --base project/big" in sdlc_status.blocker(ID, got[1], "milestone", "project/big")
+    assert _goal(repo, {BRANCH: _pr(head=gate, base="project/big")})[0] == 0
+
+
+def test_the_missing_pr_instruction_carries_the_exact_base_F1(repo: Path) -> None:
+    _local_project(repo, "pr")
+    sentence = sdlc_status.blocker(ID, f"GOAL {ID} OPEN no-pr:{BRANCH}", "milestone", "project/big")
+    assert f"gh pr create --head {BRANCH} --base project/big --fill" in sentence
+    assert sdlc_status.parent_of(repo / "changes" / ID, {"defaultBranch": "main"}, "project") == "main"
+    feature = sdlc_status.parent_of(repo / "changes" / ID, {}, "feature", "redesign-r2/1-cart")
+    assert feature == "milestone/redesign-r2"
+    assert sdlc_status.parent_of(repo / "changes" / ID, {}, "feature", "hotfix/x") == "main"
+
+
+def _open_pr_goal(repo: Path, cfg: dict, labels: tuple[str, ...], base: str = "main") -> str:
+    (repo / "sdlc.json").write_text(json.dumps(cfg))
+    _gate(repo, PASS)
+    prs = {BRANCH: _pr("OPEN", labels=labels, base=base)}
+    return _goal(repo, prs)[1].rsplit(" ", 1)[1]
+
+
+def test_an_unarmed_ask_pr_waits_for_a_person_not_for_an_arm_command_F2(repo: Path) -> None:
+    code = _open_pr_goal(repo, {}, ("ask",))  # askGatesMerge defaults to on
+    assert code == "pr-7-awaits-owner"
+    sentence = sdlc_status.blocker(ID, f"GOAL {ID} OPEN {code}")
+    assert "gh pr merge" not in sentence and "you read it and decide" in sentence
+
+
+def test_ask_that_does_not_gate_the_merge_is_left_to_the_workflow_F2(repo: Path) -> None:
+    flow = repo / ".github" / "workflows"
+    flow.mkdir(parents=True)
+    (flow / "ship-show-ask.yml").write_text("name: tier\n")
+    assert _open_pr_goal(repo, {"askGatesMerge": False}, ("ask",)) == "pr-7-awaits-workflow"
+    sentence = sdlc_status.blocker(ID, f"GOAL {ID} OPEN pr-7-awaits-workflow")
+    assert "gh pr merge" not in sentence
+
+
+def test_an_unarmed_pr_in_a_repo_without_the_workflow_is_armed_with_merge_F2(repo: Path) -> None:
+    assert _open_pr_goal(repo, {}, ()) == "pr-7-not-merged-or-armed"
+    for scope, flag in (("milestone", "--merge"), ("project", "--merge"), ("feature", "--squash")):
+        sentence = sdlc_status.blocker(ID, f"GOAL {ID} OPEN pr-7-not-merged-or-armed", scope)
+        assert f"gh pr merge 7 {flag} --auto" in sentence
+
+
+def _shared_receipt(repo: Path, n: int, sha: str) -> None:
+    from verify_gate import receipt_path
+
+    path = receipt_path(ID, n, repo)
+    path.parent.mkdir(parents=True, exist_ok=True)
+    result = f"VERIFY PASS milestone {ID} {sha}"
+    path.write_text(
+        json.dumps({"scope": "milestone", "milestone": n, "change": ID, "result": result, "sha": sha})
+    )
+
+
+def test_goal_milestone_n_reads_its_receipt_not_the_last_report_F5(repo: Path) -> None:
+    """Two linked worktrees, a merge, the milestone worktree removed, a later gate run for M2."""
+    m1, m2 = _two_milestones(repo)
+    wt = repo.parent / "m1-wt"
+    _sh(repo, "worktree", "add", "-q", str(wt), "milestone/redesign-r2-1")
+    _shared_receipt(wt, 1, m1)  # written from the milestone's own worktree
+    _sh(repo, "worktree", "remove", "--force", str(wt))
+    _sh(repo, "checkout", "-q", "milestone/redesign-r2-2")
+    _gate(repo, f"VERIFY PASS milestone {ID} {m2}")  # the shared last report is M2's
+    folder = repo / "changes" / ID
+    got = sdlc_status.goal(repo, folder, "milestone", 1, gh=_no_gh)
+    assert got == (0, f"GOAL {ID} DONE merged=project/big gate={m1}")
+    _sh(repo, "branch", "-D", "milestone/redesign-r2-1")  # cleanup removed the branch too
+    assert sdlc_status.goal(repo, folder, "milestone", 1, gh=_no_gh)[0] == 0
+
+
+def test_goal_still_reads_a_receipt_in_the_old_location_F5(repo: Path) -> None:
+    m1, m2 = _two_milestones(repo)
+    _receipt(repo, 1, m1)  # changes/<id>/verify/milestone-1.json, as before 3.20.1
+    _gate(repo, f"VERIFY PASS milestone {ID} {m2}")
+    got = sdlc_status.goal(repo, repo / "changes" / ID, "milestone", 1, gh=_no_gh)
+    assert got == (0, f"GOAL {ID} DONE merged=project/big gate={m1}")
+
+
+def test_goal_honours_the_milestone_branch_prefix_F5(repo: Path) -> None:
+    _local_project(repo)
+    cfg = json.loads((repo / "sdlc.json").read_text())
+    cfg["milestones"]["branchPrefix"] = "ms/"
+    (repo / "sdlc.json").write_text(json.dumps(cfg))
+    (repo / "changes" / ID / "plan.md").write_text(
+        "# Plan: R\n\n## Milestones\n\n| # | what |\n|---|---|\n| M1 | a |\n"
+    )
+    _commit(repo, "base.txt")
+    _sh(repo, "branch", "project/big")
+    _sh(repo, "checkout", "-qb", "ms/redesign-r2-1")
+    m1 = _commit(repo, "m1.txt")
+    _sh(repo, "branch", "-f", "project/big", m1)
+    _gate(repo, f"VERIFY PASS milestone {ID} {m1}")
+    got = sdlc_status.goal(repo, repo / "changes" / ID, "milestone", None, gh=_no_gh)
+    assert got == (0, f"GOAL {ID} DONE merged=project/big gate={m1}")
+
+
+def test_goal_refuses_a_locked_input_edited_after_the_gate_F6(repo: Path) -> None:
+    (repo / "changes" / ID / "facts.md").write_text("F1 the first\n")
+    gated = _commit(repo, "code.txt")
+    _gate(repo, f"VERIFY PASS milestone {ID} {gated}")
+    (repo / "changes" / ID / "facts.md").write_text("F1 something easier\n")
+    head = _commit(repo, f"changes/{ID}/handover.md")
+    assert _goal(repo, {BRANCH: _pr(head=head)}) == (1, f"GOAL {ID} OPEN gate-sha-not-pr-7-head")
+
+
+def test_a_live_file_and_its_archive_copy_void_the_pass(repo: Path) -> None:
+    # changes/<id>/facts.md and changes/archive/<id>/facts.md fold onto one key. Before the fix the
+    # unchanged archive copy overwrote the live one, so an edit to the locked live file went unseen.
+    sys.path.insert(0, str(SCRIPT.parent.parent / "templates" / "hooks"))
+    import pass_proof
+
+    archived = repo / "changes" / "archive" / ID / "facts.md"
+    archived.parent.mkdir(parents=True)
+    for f in (repo / "changes" / ID / "facts.md", archived):
+        f.write_text("F1 the first\n")
+    _commit(repo, f"changes/archive/{ID}/facts.md")
+    gated = _commit(repo, "code.txt")
+    (repo / "changes" / ID / "facts.md").write_text("F1 something easier\n")
+    head = _commit(repo, f"changes/{ID}/facts.md")
+    assert pass_proof.proves(repo, "changes", gated, head) is False

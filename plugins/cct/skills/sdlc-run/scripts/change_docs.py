@@ -196,7 +196,12 @@ FOR_AGENTS = (
 )
 
 
+LEGACY = {"spec/readiness.md": "spec/validation.md"}  # written before the rename
+
+
 def _name(change: Path, rel: str) -> str:
+    if not (change / rel).exists() and (change / LEGACY.get(rel, rel)).exists():
+        rel = LEGACY[rel]
     return f"[{rel}]({rel})" if (change / rel).exists() else f"{rel} (not written yet)"
 
 
@@ -219,7 +224,7 @@ KNOWN_DIRS = ("verify", "asks", "spec/prototype")
 
 def others(change: Path) -> list[str]:
     """Files in the folder (two levels deep) that neither table names."""
-    known = {f for f, *_ in DOCS} | {f for f, *_ in FOR_AGENTS} | {"README.md"}
+    known = {f for f, *_ in DOCS} | {f for f, *_ in FOR_AGENTS} | {"README.md", *LEGACY.values()}
     out = []
     for p in sorted(change.rglob("*")):
         rel = p.relative_to(change).as_posix()

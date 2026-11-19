@@ -8,6 +8,7 @@ import json
 import os
 import shutil
 import subprocess
+import sys
 from pathlib import Path
 
 import pytest
@@ -42,7 +43,7 @@ def repo(tmp_path: Path) -> Path:
     _git(tmp_path, "init", "-q", "--bare", "-b", "master", str(origin))
     repo = tmp_path / "repo"
     (repo / ".claude" / "hooks").mkdir(parents=True)
-    for name in ("pr-gate.sh", "sdlc-config.sh", "goal_active.py", "block_state.py"):
+    for name in ("pr-gate.sh", "sdlc-config.sh", "goal_active.py", "block_state.py", "pass_proof.py"):
         if (HOOKS / name).exists():  # the helpers sit beside the hook; absent in older trees
             shutil.copy(HOOKS / name, repo / ".claude" / "hooks" / name)
     (repo / "sdlc.json").write_text(
@@ -589,3 +590,126 @@ def test_local_merge_into_an_unresolvable_project_branch_is_refused(repo: Path) 
     _pass(repo)
     r = _run(repo, "git switch -c project/nowhere && git merge --no-ff milestone/trial-1")
     assert r.returncode == 2 and "project branch" in r.stderr and "project/nowhere" in r.stderr
+
+
+# 3.20.1: what a pass proves, the merge owner and the PR base (review findings 1, 6, 7, 5, 13).
+def _push(repo: Path) -> int:
+    return _run(repo, "git push -u origin milestone/trial-1").returncode
+
+
+@pytest.mark.parametrize(
+    "name", ["facts.md", "done.json", "lock.json", "marks.json", "asks/shot.png"]
+)
+def test_a_locked_input_or_evidence_edited_after_the_gate_voids_the_pass_F6(
+    repo: Path, name: str
+) -> None:
+    _commit(repo, f"changes/{ID}/{name}", "first\n")
+    _pass(repo)
+    _commit(repo, f"changes/{ID}/milestone.md", "gate line\n")  # a close record rides along
+    assert _push(repo) == 0
+    _commit(repo, f"changes/{ID}/{name}", "easier\n")
+    assert _push(repo) == 2
+
+
+def test_an_archive_move_keeps_the_pass_only_while_the_locked_files_keep_their_content_F6(
+    repo: Path,
+) -> None:
+    _commit(repo, f"changes/{ID}/facts.md", "F1 the first\n")
+    _pass(repo)
+    (repo / "changes" / "archive" / "2026" / "2026-11").mkdir(parents=True)
+    _git(repo, "mv", f"changes/{ID}", f"changes/archive/2026/2026-11/{ID}")
+    _git(repo, "commit", "-qm", "archive")
+    assert _push(repo) == 0
+    (repo / "changes" / "archive" / "2026" / "2026-11" / ID / "facts.md").write_text("F1 easier\n")
+    _git(repo, "commit", "-qam", "edit while archiving")
+    assert _push(repo) == 2
+
+
+def test_the_goal_check_and_the_hook_read_the_same_proof_F6(repo: Path) -> None:
+    sys.path.insert(0, str(HOOKS))
+    from pass_proof import proves
+
+    _commit(repo, f"changes/{ID}/facts.md", "F1\n")
+    gated = _git(repo, "rev-parse", "HEAD")
+    records = _commit(repo, f"changes/{ID}/milestone.md", "line\n")
+    edited = _commit(repo, f"changes/{ID}/facts.md", "F1 easier\n")
+    assert proves(repo, "changes", gated, records) and not proves(repo, "changes", gated, edited)
+
+
+def test_local_merge_knows_the_owner_from_the_gated_ref_not_the_receiving_checkout_F7(
+    repo: Path, tmp_path: Path
+) -> None:
+    _git(repo, "checkout", "-q", "master")
+    cfg = json.loads((repo / "sdlc.json").read_text())
+    (repo / "sdlc.json").write_text(json.dumps({**cfg, "milestones": {"merge": "local"}}))
+    _git(repo, "commit", "-qam", "local milestones")
+    _git(repo, "branch", "project/other")  # cut before any record named a project
+    _git(repo, "checkout", "-q", "milestone/trial-1")
+    _git(repo, "merge", "-q", "master")
+    decisions = repo / "changes" / ID / "decisions.json"
+    decisions.write_text(json.dumps({"milestone": {"slug": "trial"}, "project": {"slug": "trial", "branch": True}}))
+    _git(repo, "commit", "-qam", "the milestone names its project")
+    _pass(repo)
+    other = tmp_path / "other-wt"
+    _git(repo, "worktree", "add", "-q", str(other), "project/other")
+    r = _run_in(other, repo, "git merge --no-ff milestone/trial-1")
+    assert r.returncode == 2 and "belongs to project/trial" in r.stderr
+
+
+def test_local_merge_refuses_a_milestone_without_one_owner_F7(repo: Path) -> None:
+    _local(repo)
+    twin = repo / "changes" / "2026-11-02-twin"
+    twin.mkdir()
+    (twin / "decisions.json").write_text(
+        json.dumps({"milestone": {"slug": "trial"}, "project": {"slug": "other", "branch": True}})
+    )
+    _git(repo, "add", ".")
+    _git(repo, "commit", "-qm", "a second change with the same milestone slug")
+    _pass(repo)
+    _git(repo, "checkout", "-q", "project/trial")
+    r = _run(repo, "git merge --no-ff milestone/trial-1")
+    assert r.returncode == 2 and "no single owner" in r.stderr
+
+
+def test_local_merge_sees_the_receipt_after_the_milestone_worktree_is_gone_F5(
+    repo: Path, tmp_path: Path
+) -> None:
+    _local(repo)
+    sha = _git(repo, "rev-parse", "HEAD")
+    common = Path(_git(repo, "rev-parse", "--path-format=absolute", "--git-common-dir"))
+    out = common / "sdlc" / "receipts" / ID
+    out.mkdir(parents=True)
+    result = f"VERIFY PASS milestone {ID} {sha}"
+    receipt = {"scope": "milestone", "milestone": 1, "change": ID, "result": result, "sha": sha}
+    (out / "milestone-1.json").write_text(json.dumps(receipt))
+    other = tmp_path / "project-wt"
+    _git(repo, "worktree", "add", "-q", str(other), "project/trial")
+    assert not (repo / "changes" / ID / "verify").exists()  # no report.json anywhere
+    assert _run_in(other, repo, "git merge --no-ff milestone/trial-1").returncode == 0
+
+
+def test_a_milestone_pr_names_its_project_as_the_base_F1(repo: Path) -> None:
+    _local(repo, None)  # PR mode, the change belongs to project/trial
+    _pass(repo)
+    assert _run(repo, "gh pr create --title t --body x").returncode == 2
+    assert _run(repo, "gh pr create --base master --title t --body x").returncode == 2
+    assert _run(repo, "gh pr create --base project/trial --title t --body x").returncode == 0
+
+
+def test_a_hook_run_leaves_a_clean_checkout_clean_F13(repo: Path) -> None:
+    _git(repo, "checkout", "-qb", "fix/thing")  # refused inside a goal: loads goal_active + block_state
+    transcript = repo.parent / "t.jsonl"
+    transcript.write_text("".join(json.dumps(e) + "\n" for e in ACTIVE))
+    payload = {
+        "tool_input": {"command": "git push -u origin fix/thing"},
+        "cwd": str(repo),
+        "transcript_path": str(transcript),
+    }
+    env = {k: v for k, v in _env().items() if k != "PYTHONDONTWRITEBYTECODE"}
+    r = subprocess.run(
+        ["bash", str(repo / ".claude" / "hooks" / "pr-gate.sh")],
+        input=json.dumps(payload), capture_output=True, text=True,
+        env={**env, "CLAUDE_PROJECT_DIR": str(repo)},
+    )  # fmt: skip
+    assert r.returncode == 2
+    assert _git(repo, "status", "--porcelain") == ""

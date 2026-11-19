@@ -56,7 +56,8 @@ file; its reason is already recorded.
 6. **Validate the spec, as a loop.** Run `cct:ux-spec-validate spec <spec>` as a `/goal` loop:
    review, fix the spec, re-check, until `<spec>/readiness.md` says `verdict: ready`. The loop
    is in `../ux-spec-validate/references/spec.md`.
-7. **Prototype, only from a validated spec.** Start only when `<spec>/readiness.md` says
+7. **Prototype, only from a validated spec.** Start only when `<spec>/readiness.md` (or the
+   legacy `<spec>/validation.md` of a folder written before the rename) says
    `verdict: ready`, or validation is skipped. Use `references/prototype.md`. Write
    `<spec>/prototype/index.md` and the images under `<spec>/prototype/`. Run the shared
    `references/visual-pass.md` on every image, including its `visual-check.py` command, before

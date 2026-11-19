@@ -80,8 +80,8 @@ import sys
 import time
 from pathlib import Path
 
-from marks import bundles, sessions
-from sdlc_version import kit_version, message
+sys.dont_write_bytecode = True  # imports of marks and sdlc_version must not leave __pycache__
+from sdlc_version import kit_version, message  # noqa: E402
 
 REASONS = {
     "not-approved",  # no lock.json: the plan gate has not run
@@ -147,12 +147,23 @@ def merges_locally(cfg: dict) -> bool:
     return (cfg.get("milestones") or {}).get("merge") == "local"
 
 
-def project_record(slug: str, repo: Path | None = None) -> Path:
-    """Where `project <slug>` writes its report: the common git dir, shared by all worktrees."""
+def common_dir(repo: Path | None = None) -> Path:
+    """The git dir every worktree of the repo shares."""
     common = sh(
         "git", "-C", str(repo or "."), "rev-parse", "--path-format=absolute", "--git-common-dir"
     )
-    return Path(common or ".git") / "sdlc" / "projects" / slug
+    return Path(common or ".git")
+
+
+def project_record(slug: str, repo: Path | None = None) -> Path:
+    """Where `project <slug>` writes its report: the common git dir, shared by all worktrees."""
+    return common_dir(repo) / "sdlc" / "projects" / slug
+
+
+def receipt_path(change: str, n: int | str, repo: Path | None = None) -> Path:
+    """A milestone's receipt: in the common git dir, so every worktree sees it and removing the
+    milestone's worktree does not remove it."""
+    return common_dir(repo) / "sdlc" / "receipts" / change / f"milestone-{n}.json"
 
 
 def project_branch(change: Path, cfg: dict) -> str:
@@ -238,6 +249,18 @@ def milestone_blockers(change: Path) -> tuple[str, list[str]] | None:
     if section(findings, "Converge") and "Converged:" not in findings:
         return "not-converged", ["findings.md: ## Converge has no `Converged: round <n>` line"]
     return None
+
+
+def has_owner_marks(change: Path) -> bool:
+    """Owner notes or a design bundle to check. marks.py is imported here and nowhere else, so an
+    older copy of it beside a newer gate never breaks approve, audit or lint."""
+    import marks
+
+    return bool(
+        (change / "marks.json").exists()
+        or marks.sessions(change)
+        or getattr(marks, "bundles", lambda _: {})(change)  # absent before design bundles
+    )
 
 
 def end(line: str, code: int) -> int:
@@ -355,7 +378,8 @@ def lint_problems(change: Path, body: str | None = None) -> list[str]:
         for s in prose(text):
             if len(s.split()) > SENTENCE_WORDS:
                 problems.append(f"{name}: {len(s.split())} words: {s[:90]}...")
-        if "[NEEDS CLARIFICATION" in text:
+        # an open question is a marker in running text; the same words in code explain the syntax
+        if "[NEEDS CLARIFICATION" in re.sub(r"```.*?```|`[^`\n]*`|<!--.*?-->", "", text, flags=re.S):
             problems.append(f"{name}: an open [NEEDS CLARIFICATION] remains")
     return problems
 
@@ -502,12 +526,13 @@ def run(
         (out_dir / "report.json").write_text(text, encoding="utf-8")
         # report.json holds the last scope run only: a milestone also keeps its own receipt, which
         # `sdlc_status.py goal` reads, so a deleted merged branch does not undo a finished milestone
-        on = re.fullmatch(r"milestone/.+-(\d+)", sh("git", "rev-parse", "--abbrev-ref", "HEAD"))
+        prefix = (cfg.get("milestones") or {}).get("branchPrefix", "milestone/")
+        on = re.fullmatch(re.escape(prefix) + r".+-(\d+)", sh("git", "rev-parse", "--abbrev-ref", "HEAD"))
         if scope == "milestone" and on:
             bound = {**report, "milestone": int(on[1]), "change": change.name}  # bound to its subject
-            (out_dir / f"milestone-{on[1]}.json").write_text(
-                json.dumps(bound, indent=2) + "\n", encoding="utf-8"
-            )
+            path = receipt_path(change.name, on[1], repo)
+            path.parent.mkdir(parents=True, exist_ok=True)
+            path.write_text(json.dumps(bound, indent=2) + "\n", encoding="utf-8")
         rows = "\n".join(
             f"| {c['name']} | {c['status']} | {c['seconds']} |" for c in report["checks"]
         )
@@ -598,9 +623,7 @@ def run(
         durations = {}
     if not declared:
         checks = order_checks(checks, durations, change.name)
-    if scope == "milestone" and (
-        (change / "marks.json").exists() or sessions(change) or bundles(change)
-    ):
+    if scope == "milestone" and has_owner_marks(change):
         checks.append(
             {
                 "name": "owner-marks",

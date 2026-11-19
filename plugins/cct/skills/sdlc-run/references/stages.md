@@ -546,7 +546,10 @@ person's own browser session. Never use Claude in Chrome or any tool driving tha
    Validate the proposed body locally before pushing, then the actual body before the gate
    publishes its successful status. Before `gh pr create` or `gh pr edit`, run
    `python3 scripts/verify_gate.py lint <id>` (questions and milestone report) and
-   `... lint <id> --pr-body <file>` on the body you publish.
+   `... lint <id> --pr-body <file>` on the body you publish (a repo copy of `verify_gate.py` without
+   `--pr-body` is older: run the plugin's `templates/scripts/verify_gate.py` for that lint).
+   Create the PR with `--base <parent>` always: `project/<slug>` when the project has a branch,
+   else the default branch. `goal` is not DONE on any other base.
    One push and one PR `milestone/<slug>` → **its parent** (`project/<slug>` when the project
    has a branch, else the default branch) with the report, `validation.md` and `Closes <KEY>`
    for the change's issue, only once the gate passed on that exact head; it merges with a merge

@@ -246,3 +246,51 @@ def test_blueprint_copies_match_their_templates_F19() -> None:
     assert {p.name for p, _ in copies} >= {"verify_gate.py", "marks.py", "design_index.py"}
     stale = [str(p) for p, template in copies if p.read_bytes() != template.read_bytes()]
     assert not stale, f"refresh from templates/ with cp: {stale}"
+
+
+# 3.20.1: the readiness rename (finding 4) and build QA without a loop (finding 10).
+PLUGIN = SKILL.parents[1] / "skills"
+
+
+def _read(*parts: str) -> str:
+    return PLUGIN.joinpath(*parts).read_text(encoding="utf-8")
+
+
+def test_every_reader_of_the_spec_verdict_takes_either_name_F4() -> None:
+    for parts in (
+        ("design-mockups-create", "SKILL.md"),
+        ("ux-design-run", "references", "prototype.md"),
+        ("ux-design-run", "SKILL.md"),
+        ("ux-build-validate", "SKILL.md"),
+        ("ux-build-validate", "references", "build.md"),
+    ):
+        text = _read(*parts)
+        assert "readiness.md" in text and "validation.md" in text, parts
+
+
+def test_the_writer_writes_readiness_with_its_own_type_and_the_changelog_never_asks_for_git_mv_F4() -> None:
+    spec = _read("ux-spec-validate", "references", "spec.md")
+    assert "Write `<spec>/readiness.md`." in spec and "type: readiness" in spec
+    assert "type: validation" not in spec
+    changelog = (SKILL / "references" / "changelog.md").read_text(encoding="utf-8")
+    assert "git mv" not in changelog and "renaming it is optional" in changelog
+
+
+def test_the_reading_map_names_a_legacy_verdict_file_as_written_F4(tmp_path: Path) -> None:
+    sys.path.insert(0, str(Path(__file__).resolve().parent))
+    import change_docs
+
+    (tmp_path / "spec").mkdir()
+    (tmp_path / "spec" / "validation.md").write_text("verdict: ready\n")
+    assert "[spec/validation.md](spec/validation.md)" in change_docs.readme(tmp_path, "2/7 UX plan")
+    assert "spec/validation.md" not in change_docs.others(tmp_path)
+    (tmp_path / "spec" / "readiness.md").write_text("verdict: ready\n")  # a new one wins
+    assert "[spec/readiness.md](spec/readiness.md)" in change_docs.readme(tmp_path, "2/7 UX plan")
+
+
+def test_build_qa_resolves_size_and_skips_before_it_asks_for_readiness_F10() -> None:
+    body = _read("ux-build-validate", "SKILL.md")
+    steps = body.split("## Read first", 1)[1].split("## Ask once", 1)[0]
+    assert steps.index("size and skips") < steps.index("approved `readiness.md`")
+    assert "authorises this QA" in steps and "never loop back" in steps
+    assert "authorises the run" in _read("ux-build-validate", "references", "build.md")

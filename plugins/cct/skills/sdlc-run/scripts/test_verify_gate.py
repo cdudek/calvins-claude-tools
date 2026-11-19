@@ -686,15 +686,73 @@ def test_local_mode_milestone_must_contain_the_local_project_branch(tmp_path: Pa
     assert _last(_gate(repo, "milestone", ID)).startswith(f"VERIFY PASS milestone {ID}")
 
 
-def test_milestone_gate_keeps_its_own_receipt_beside_report_json(tmp_path: Path) -> None:
+def _common(repo: Path) -> Path:
+    out = subprocess.run(
+        ["git", "rev-parse", "--path-format=absolute", "--git-common-dir"],
+        cwd=repo, capture_output=True, text=True, env=_env(),
+    )  # fmt: skip
+    return Path(out.stdout.strip())
+
+
+def test_milestone_gate_keeps_its_receipt_in_the_common_git_dir_F5(tmp_path: Path) -> None:
     repo = _local_repo(tmp_path)
     _merge_milestone_one_locally(repo)
     _git(repo, "merge", "-q", "--no-edit", "project/big")
     assert _last(_gate(repo, "milestone", ID)).startswith(f"VERIFY PASS milestone {ID}")
     verify = repo / "changes" / ID / "verify"
-    receipt = json.loads((verify / "milestone-2.json").read_text())
+    shared = _common(repo) / "sdlc" / "receipts" / ID / "milestone-2.json"
+    receipt = json.loads(shared.read_text())
     assert receipt == {**json.loads((verify / "report.json").read_text()), "milestone": 2, "change": ID}
     assert receipt["result"].startswith("VERIFY PASS milestone") and receipt["sha"]
+    assert not (verify / "milestone-2.json").exists()
+    # a linked worktree has no copy of changes/<id>/verify, and still resolves the same receipt
+    _git(repo, "worktree", "add", "-q", str(tmp_path / "wt"), "-b", "other", "project/big")
+    assert _common(tmp_path / "wt") == _common(repo)
+    _git(repo, "worktree", "remove", "--force", str(tmp_path / "wt"))
+    assert shared.exists()
+
+
+def test_milestone_receipt_honours_the_branch_prefix_F5(tmp_path: Path) -> None:
+    repo = _local_repo(tmp_path)
+    _merge_milestone_one_locally(repo)
+    _git(repo, "merge", "-q", "--no-edit", "project/big")
+    cfg = json.loads((repo / "sdlc.json").read_text())
+    cfg["milestones"]["branchPrefix"] = "ms/"
+    (repo / "sdlc.json").write_text(json.dumps(cfg))
+    _git(repo, "commit", "-qam", "own prefix")
+    _git(repo, "branch", "-m", "milestone/big-2", "ms/big-2")
+    assert _last(_gate(repo, "milestone", ID)).startswith(f"VERIFY PASS milestone {ID}")
+    assert (_common(repo) / "sdlc" / "receipts" / ID / "milestone-2.json").exists()
+
+
+def test_a_newer_gate_beside_an_older_marks_py_still_approves_audits_and_lints_F3(
+    tmp_path: Path,
+) -> None:
+    """A one-file upgrade: verify_gate.py replaced, marks.py not (it has no `bundles` yet)."""
+    old = tmp_path / "scripts"
+    old.mkdir()
+    for f in GATE.parent.glob("*.py"):
+        (old / f.name).write_text(f.read_text())
+    (old / "marks.py").write_text("def sessions(change):\n    return []\n")
+    repo = _repo(tmp_path, ["true"])
+    cfg = json.loads((repo / "sdlc.json").read_text())
+    (repo / "sdlc.json").write_text(json.dumps({**cfg, "checks": {"milestone": ["true"]}}))
+    _git(repo, "commit", "-qam", "milestone checks")
+    for args in (("approve", ID), ("lint", ID), ("audit", "--no-evidence")):
+        r = subprocess.run(
+            [sys.executable, str(old / "verify_gate.py"), *args],
+            cwd=repo, capture_output=True, text=True, env=_env(),
+        )  # fmt: skip
+        assert "Error" not in r.stderr and "Traceback" not in r.stderr, (args, r.stderr)
+        if args[0] != "audit":
+            assert r.returncode == 0, (args, r.stdout)
+    _git(repo, "add", ".")
+    _git(repo, "commit", "-qm", "approved")
+    r = subprocess.run(
+        [sys.executable, str(old / "verify_gate.py"), "milestone", ID],
+        cwd=repo, capture_output=True, text=True, env=_env(),
+    )  # fmt: skip
+    assert _last(r).startswith(f"VERIFY PASS milestone {ID}"), r.stdout + r.stderr
 
 
 @pytest.mark.parametrize("merge", [None, "pr"])
@@ -1154,3 +1212,60 @@ def test_keep_going_reports_a_first_blocked_verdict_after_running_the_rest_F23(
     r = _gate(repo, "feature", ID, "--keep-going")
     assert _last(r) == "VERIFY BLOCKED reason=env" and r.returncode == 3
     assert _order(repo) == ["lint", "unit", "e2e"]
+
+
+def test_a_filled_copy_of_the_real_templates_is_approved_F9(tmp_path: Path) -> None:
+    """The shipped instructions stay in a filled copy, so they must pass the gate they ship with:
+    placeholders are filled and the one open-question marker is answered, nothing else is touched."""
+    import re
+
+    repo = _repo(tmp_path, ["true"])
+    change = repo / "changes" / ID
+    values = {"AUTHOR": "me", "CHANGE": ID, "DATE": "2026-11-19", "DESIGN": "none", "LINEAR": "none"}
+    values |= {"TITLE": "Trial", "VERIFY": "make test"}
+    for name in ("intent.md", "facts.md", "plan.md", "done.json"):
+        text = (SKILL / "templates" / "change" / name).read_text()
+        text = re.sub(r"\{\{(\w+)\}\}", lambda m: values.get(m.group(1), m.group(0)), text)
+        text = re.sub(r"<(?!/?details|/?summary|!--)[^<>\n]*>", "filled", text)  # the writer's words
+        text = text.replace("- [ ] [NEEDS CLARIFICATION: filled]\n", "none\n")  # answered
+        (change / name).write_text(text)
+    r = _gate(repo, "approve", ID)
+    assert r.returncode == 0, r.stdout
+
+
+def test_an_open_question_in_running_text_still_blocks_but_one_in_code_does_not_F9(
+    tmp_path: Path,
+) -> None:
+    repo = _repo(tmp_path, ["true"])
+    plan = repo / "changes" / ID / "plan.md"
+    plan.write_text("Use `[NEEDS CLARIFICATION: x]` to mark one.\n")
+    assert _gate(repo, "lint", ID).returncode == 0
+    plan.write_text("Short.\n- [ ] [NEEDS CLARIFICATION: who?]\n")
+    assert "an open [NEEDS CLARIFICATION]" in _gate(repo, "lint", ID).stdout
+
+
+def test_the_gate_and_every_hook_keep_a_clean_tree_clean_F13(tmp_path: Path) -> None:
+    """Imports of sibling helpers must not leave __pycache__ in the repo the gate runs in."""
+    repo = _local_repo(tmp_path)
+    scripts = repo / "scripts"
+    scripts.mkdir()
+    for name in ("verify_gate.py", "marks.py", "sdlc_version.py"):
+        (scripts / name).write_text((GATE.parent / name).read_text())
+    (repo / ".gitignore").write_text("/changes/*/verify/\n")
+    _git(repo, "add", ".")
+    _git(repo, "commit", "-qm", "installed")
+    r = subprocess.run(
+        [sys.executable, "scripts/verify_gate.py", "lint", ID],
+        cwd=repo, capture_output=True, text=True,
+        env={k: v for k, v in _env().items() if k != "PYTHONDONTWRITEBYTECODE"},
+    )  # fmt: skip
+    assert r.returncode == 0, r.stdout
+    status = subprocess.run(
+        ["git", "status", "--porcelain"], cwd=repo, capture_output=True, text=True
+    ).stdout
+    assert status == ""
+    hooks = GATE.parents[1] / "hooks"
+    for hook in sorted(hooks.glob("*.sh")):
+        if hook.name not in ("sdlc-config.sh", "plan-gate.sh"):
+            assert "PYTHONDONTWRITEBYTECODE=1" in hook.read_text(), hook.name
+    assert "PYTHONDONTWRITEBYTECODE=1" in (hooks / "sdlc-config.sh").read_text()

@@ -1699,3 +1699,13 @@ def test_adopt_removes_a_generated_decision4_workflow_only(tmp_path: Path) -> No
     wf.write_text("name: Decision4\njobs:\n  mine:\n    runs-on: ubuntu-latest\n")
     assert _adopt(repo).returncode == 0
     assert wf.exists(), "a repo's own workflow is not ours to delete"
+
+
+def test_replacing_the_gate_replaces_its_marks_partner_too_F3(tmp_path: Path) -> None:
+    repo = _upgrade_fixture(tmp_path)
+    (repo / "scripts/marks.py").write_text("def sessions(change):\n    return []\n")
+    res = _adopt(repo, "--upgrade", "--apply", "--replace", "scripts/verify_gate.py")
+    assert res.returncode == 0, res.stderr
+    for name in ("verify_gate.py", "marks.py"):
+        kit = (ADOPT.parents[1] / "templates/scripts" / name).read_bytes()
+        assert (repo / "scripts" / name).read_bytes() == kit, name
