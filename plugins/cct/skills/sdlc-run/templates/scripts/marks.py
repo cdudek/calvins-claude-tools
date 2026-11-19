@@ -361,6 +361,20 @@ def inside_file(base: Path, value: object, boundary: Path) -> bool:
     return path.is_relative_to(boundary.resolve()) and path.is_file()
 
 
+def in_capability_decisions(repo: Path, value: object) -> bool:
+    """`<livingSpecs>/<capability>/decisions/<file>`: the decision home of a living spec."""
+    try:
+        name = json.loads((repo / "sdlc.json").read_text(encoding="utf-8")).get("livingSpecs") or "specs"
+    except (OSError, ValueError, AttributeError):
+        name = "specs"
+    if not isinstance(name, str) or not re.fullmatch(r"[A-Za-z0-9._-]+", name) or name in (".", ".."):
+        return False
+    if not inside_file(repo, value, repo / name):
+        return False
+    parts = (repo / str(value)).resolve().relative_to((repo / name).resolve()).parts
+    return len(parts) >= 3 and parts[1] == "decisions"
+
+
 def inside_dir(boundary: Path, path: Path) -> bool:
     return path.resolve().is_relative_to(boundary.resolve())
 
@@ -722,8 +736,8 @@ def check(change: Path, sources: list[dict], repo: Path, designs: Path, globs: l
                 problem("shot must be an existing file inside the change folder")
         decision = row.get("decision")
         if status == "ruled-out" or decision is not None:
-            if not inside_file(repo, decision, designs):
-                problem("decision must be an existing file under designsDir")
+            if not (inside_file(repo, decision, designs) or in_capability_decisions(repo, decision)):
+                problem("decision must be an existing file under designsDir or a capability's decisions/ folder")
         if status == "fixed":
             tag = row.get("test")
             if not filled(tag) or not tag.startswith("@"):

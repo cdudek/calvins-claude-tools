@@ -981,3 +981,16 @@ def test_a_screen_with_a_double_dash_name_is_satisfied_by_its_rendered_shot_C4(r
     for viewport in ("mobile", "zoom150"):  # the other two viewports are the same screen
         shot = shot.rename(render / f"shots/home--compact--{viewport}@2x.png")
         assert "no image for screen" not in run(repo, "check").stdout
+
+
+def test_decision_evidence_may_live_in_a_capability_decisions_folder(repo: Path) -> None:
+    data = resolved(repo)
+    write(repo / "specs/billing/decisions/choice.md", "# ADR\n")
+    write(repo / "specs/billing/rules/R1.md", "# a rule, not a decision\n")
+    data[0].update(decision="specs/billing/decisions/choice.md", status="ruled-out", expected="", shot="")
+    save(repo, data)
+    assert run(repo, "check").returncode == 0
+    data[0]["decision"] = "specs/billing/rules/R1.md"
+    save(repo, data)
+    result = run(repo, "check")
+    assert result.returncode == 1 and "decision must be" in result.stdout

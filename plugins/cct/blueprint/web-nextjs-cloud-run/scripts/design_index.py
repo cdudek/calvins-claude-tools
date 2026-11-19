@@ -17,6 +17,7 @@ listed last, with what replaced it, so nobody builds on it by accident.
 from __future__ import annotations
 
 import json
+import os
 import re
 import sys
 from pathlib import Path
@@ -69,9 +70,14 @@ def as_list(value: str | list[str] | None) -> list[str]:
     return value if isinstance(value, list) else [value]
 
 
-def entries(designs: Path) -> list[dict[str, object]]:
+def entries(designs: Path, specs: Path | None = None) -> list[dict[str, object]]:
+    """The designs tree, and `<specs>/<capability>/decisions/` of the living specs (links stay
+    relative to the index, which sits in `designs`)."""
     rows = []
-    for path in sorted(designs.rglob("*.md")):
+    found = list(designs.rglob("*.md"))
+    if specs is not None and specs.is_dir():
+        found += specs.glob("*/decisions/**/*.md")
+    for path in sorted(found):
         if path.name in ("INDEX.md", "README.md") or path.name.startswith("_"):
             continue
         text = path.read_text(encoding="utf-8")
@@ -80,7 +86,7 @@ def entries(designs: Path) -> list[dict[str, object]]:
         heading = re.search(r"^# (.+)$", text, re.MULTILINE)
         rows.append(
             {
-                "path": path.relative_to(designs).as_posix(),
+                "path": Path(os.path.relpath(path, designs)).as_posix(),
                 "id": fm.get("id") or path.stem,
                 "title": fm.get("title") or (heading.group(1).strip() if heading else path.stem),
                 "type": str(fm.get("type") or (name and name.group("type")) or "design"),
@@ -94,8 +100,8 @@ def entries(designs: Path) -> list[dict[str, object]]:
     return rows
 
 
-def render(designs: Path) -> str:
-    rows = entries(designs)
+def render(designs: Path, specs: Path | None = None) -> str:
+    rows = entries(designs, specs)
     current = [r for r in rows if r["status"] not in GONE]
     gone = [r for r in rows if r["status"] in GONE]
     out = [
@@ -132,6 +138,13 @@ def render(designs: Path) -> str:
     return "\n".join(out) + "\n"
 
 
+def specs_dir(root: Path) -> Path:
+    cfg_path = root / "sdlc.json"
+    cfg = json.loads(cfg_path.read_text(encoding="utf-8")) if cfg_path.exists() else {}
+    name = cfg.get("livingSpecs") or "specs"
+    return root / (name if isinstance(name, str) and re.fullmatch(r"[A-Za-z0-9._-]+", name) else "specs")
+
+
 def designs_dir(root: Path) -> Path:
     cfg_path = root / "sdlc.json"
     cfg = json.loads(cfg_path.read_text(encoding="utf-8")) if cfg_path.exists() else {}
@@ -145,7 +158,7 @@ def main(argv: list[str]) -> int:
         return 2
     designs = designs_dir(Path.cwd())
     index = designs / "INDEX.md"
-    want = render(designs) if designs.is_dir() else ""
+    want = render(designs, specs_dir(Path.cwd())) if designs.is_dir() else ""
     if mode == "write":
         if want:
             index.write_text(want, encoding="utf-8")
