@@ -120,3 +120,11 @@ def test_the_config_only_run_never_looks_at_the_disk(tmp_path: Path) -> None:
         [sys.executable, str(PRE), "--config"], capture_output=True, text=True, cwd=repo, env=env
     )
     assert out.stdout.strip() == "PREFLIGHT OK", "CI's --config run never looks at the disk"
+
+
+def test_the_selected_engine_is_the_one_probed(tmp_path: Path) -> None:
+    cfg = {"db": {"test": {"engine": "podman"}}}
+    ok = _run(tmp_path, cfg, fakes={"podman": 0, "docker": 1})
+    assert ok.returncode == 0, "podman works; a broken docker is not asked"
+    bad = _run(tmp_path, cfg, fakes={"podman": 1})
+    assert "FAIL podman" in bad.stdout and "docker" not in bad.stdout.lower().replace("podman", "")

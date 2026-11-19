@@ -1,12 +1,17 @@
 """Two database helpers: a fast local one for tests, a personal cloud one for working data.
 
     python3 scripts/db.py test prepare                 # one local Postgres container + a migrated template
-    python3 scripts/db.py test create [NAME]           # a private copy in under a second; prints "NAME URL"
+    python3 scripts/db.py test create [NAME] [--owner-pid PID]   # a private copy in under a second; prints "NAME URL"
     python3 scripts/db.py test drop NAME
-    python3 scripts/db.py test sweep                   # drop copies of dead jobs and old templates
+    python3 scripts/db.py test sweep [--all-unowned]   # drop copies of dead owners and old templates
     python3 scripts/db.py test run -- CMD...           # create, run CMD with DATABASE_URL set, drop
     python3 scripts/db.py dev ensure                   # proxy up, your own database created once, migrated
     add --print to any verb: show the commands, run nothing
+
+A copy belongs to the process named by `--owner-pid` (the milestone gate passes its own; `test run` uses
+its own): its name embeds that pid, and a sweep drops it only once that pid is dead and an hour has
+passed. A copy with no owner (a 3.21 name, or `create` without `--owner-pid`) is never swept on its own;
+`test sweep --all-unowned` drops those on request.
 
 Why tests stay local: the database was never the slow part (builds, browsers and memory were); screen
 checks reset their data before every screen and every query would pay a network round trip; tests drop
@@ -113,8 +118,9 @@ class Runner:
 
 # --- test-db ----------------------------------------------------------------------------------
 
-JOB = re.compile(r"^sdlc_job_(\d+)_(?:(\d{10})_)?\d+$")  # sdlc_job_<pid>_<epoch seconds>_<n>
-JOB_GRACE = 3600  # a standalone `test create` exits at once; its copy outlives its pid by design
+OWNED = re.compile(r"^sdlc_own_(\d+)_(\d{10})_\d+$")  # sdlc_own_<owner pid>_<epoch seconds>_<n>
+UNOWNED = re.compile(r"^sdlc_job_")  # 3.21 names and `create` without an owner: nobody to ask
+JOB_GRACE = 3600  # a dead owner's copy stays an hour, so a late reader is never cut off
 TEMPLATE_TTL = 7 * 86400
 
 
@@ -136,6 +142,14 @@ def alive(pid: int) -> bool:
     return True
 
 
+def pick_engine(cfg: dict) -> str:
+    """docker or podman: db.test.engine, then SDLC_DB_ENGINE, then whichever is installed (preflight
+    probes the same one)."""
+    return cfg.get("engine") or os.environ.get("SDLC_DB_ENGINE") or (
+        "podman" if shutil.which("podman") and not shutil.which("docker") else "docker"
+    )
+
+
 class TestDb:
     __test__ = False  # not a pytest class
 
@@ -145,15 +159,20 @@ class TestDb:
         self.port = int(cfg["port"])
         self.template = valid(cfg["template"])  # the prefix; the template itself is <prefix>_<hash>
         self.user = cfg.get("user", "postgres")
-        # docker or podman: db.test.engine, then SDLC_DB_ENGINE, then whichever is installed
-        self.cli = cfg.get("engine") or os.environ.get("SDLC_DB_ENGINE") or (
-            "podman" if shutil.which("podman") and not shutil.which("docker") else "docker"
-        )
+        self.cli = pick_engine(cfg)
         self.key = re.sub(r"[^A-Za-z0-9_.-]", "_", self.container)
 
     @property
+    def stem(self) -> str:
+        """The configured prefix, or (when `<prefix>_<hash>` would pass 63 characters) a truncated
+        prefix plus a short hash of the whole prefix, so two long prefixes never collide."""
+        if len(self.template) + 17 <= 63:
+            return self.template
+        return f"{self.template[:37]}_{hashlib.sha256(self.template.encode()).hexdigest()[:8]}"
+
+    @property
     def tmpl(self) -> str:
-        return valid(f"{self.template}_{self.migrations_hash()}")
+        return valid(f"{self.stem}_{self.migrations_hash()}")
 
     def url(self, name: str) -> str:
         return f"postgresql://{self.user}@127.0.0.1:{self.port}/{name}"
@@ -214,26 +233,44 @@ class TestDb:
         if self.wait_ready(3):  # one failed probe never condemns a container
             return
         state = self.r.run(
-            [self.cli, "inspect", "-f", "{{.State.Running}}", self.container], check=False
-        )
-        exists, running = state.returncode == 0, state.stdout.strip() == "true"
-        if exists and running:  # up but still starting, or busy: wait, never remove
-            if self.wait_ready(60) or self.r.dry:
+            [self.cli, "inspect", "-f",
+             "{{.State.Running}}|{{.Config.Image}}|{{json .HostConfig.PortBindings}}", self.container],
+            check=False,
+        )  # fmt: skip
+        exists = state.returncode == 0 and not self.r.dry
+        running, _, rest = state.stdout.strip().partition("|")
+        image, _, ports = rest.partition("|")
+        if exists and running == "true":  # up but still starting, or busy: wait, never remove
+            if self.wait_ready(60):
                 return
             raise ConfigError(
                 f"container {self.container} is running but not ready; "
-                f"run `docker logs {self.container}`"
+                f"run `{self.cli} logs {self.container}`"
             )
-        if exists:
-            self.r.run([self.cli, "rm", "-f", self.container], check=False)
-        self.r.run(
-            [self.cli, "run", "-d", "--name", self.container,
-             "-e", "POSTGRES_HOST_AUTH_METHOD=trust", "-p", f"127.0.0.1:{self.port}:5432",
-             self.c.get("image", "postgres:17")]
-        )  # fmt: skip
+        if exists:  # stopped: start it again, never replace it (its volume holds someone's data)
+            want = self.c.get("image", "postgres:17")
+            same_image = image.rsplit("/", 1)[-1] == want.rsplit("/", 1)[-1]
+            if not same_image or f'"HostPort":"{self.port}"' not in ports.replace(" ", ""):
+                raise ConfigError(
+                    f"container {self.container} exists, stopped, with image {image or '?'} and ports "
+                    f"{ports or '?'}, not {want} on port {self.port}: it belongs to something else. "
+                    f"Rename db.test.container or remove it yourself (`{self.cli} rm {self.container}`)"
+                )
+            started = self.r.run([self.cli, "start", self.container], check=False)
+            if started.returncode:
+                raise ConfigError(
+                    f"container {self.container} is stopped and `{self.cli} start` failed: "
+                    f"{(started.stderr or started.stdout).strip()}"
+                )
+        else:
+            self.r.run(
+                [self.cli, "run", "-d", "--name", self.container,
+                 "-e", "POSTGRES_HOST_AUTH_METHOD=trust", "-p", f"127.0.0.1:{self.port}:5432",
+                 self.c.get("image", "postgres:17")]
+            )  # fmt: skip
         if not self.wait_ready(60) and not self.r.dry:
             raise ConfigError(
-                f"container {self.container} never became ready; run `docker logs {self.container}`"
+                f"container {self.container} never became ready; run `{self.cli} logs {self.container}`"
             )
 
     def disconnect(self, db: str) -> None:
@@ -272,8 +309,10 @@ class TestDb:
         with self.locked():
             self._prepare()
 
-    def create(self, name: str | None = None) -> str:
-        name = valid(name or f"sdlc_job_{os.getpid()}_{int(time.time())}_{time.time_ns() % 10**6}")
+    def create(self, name: str | None = None, owner: int | None = None) -> str:
+        """`owner` is the pid whose lifetime the copy follows (it is in the name); none: never swept."""
+        stamp = f"{int(time.time())}_{time.time_ns() % 10**6}"
+        name = valid(name or (f"sdlc_own_{owner}_{stamp}" if owner else f"sdlc_job_{stamp}"))
         with self.locked():
             tmpl = self._prepare()
             self.disconnect(tmpl)
@@ -284,13 +323,18 @@ class TestDb:
         self.disconnect(valid(name))
         self.psql(f"DROP DATABASE IF EXISTS {name}")
 
-    def _sweep(self) -> list[str]:
-        """Drop copies whose process is gone and templates of old migration sets. Lock held."""
+    def _sweep(self, all_unowned: bool = False) -> list[str]:
+        """Drop copies whose owner is dead (past the grace), unowned copies on request, and templates
+        of old migration sets. Lock held."""
         now, keep, used, gone = time.time(), self.tmpl, self.used(), []
-        old = re.compile(rf"^{re.escape(self.template)}(_[0-9a-f]{{16}})?$")
+        old = re.compile(rf"^{re.escape(self.stem)}(_[0-9a-f]{{16}})?$")
         for n in self.psql("SELECT datname FROM pg_database").stdout.split():
-            if m := JOB.match(n):
-                if not alive(int(m[1])) and now - int(m[2] or 0) > JOB_GRACE:
+            if m := OWNED.match(n):
+                if not alive(int(m[1])) and now - int(m[2]) > JOB_GRACE:
+                    self.drop(n)
+                    gone.append(n)
+            elif UNOWNED.match(n):
+                if all_unowned:
                     self.drop(n)
                     gone.append(n)
             elif n != keep and old.match(n):
@@ -301,9 +345,9 @@ class TestDb:
         self.used(used)
         return gone
 
-    def sweep(self) -> list[str]:
+    def sweep(self, all_unowned: bool = False) -> list[str]:
         with self.locked():
-            return self._sweep() if self.ready() else []
+            return self._sweep(all_unowned) if self.ready() else []
 
 
 def cmd_test(args, runner: Runner) -> int:
@@ -311,17 +355,17 @@ def cmd_test(args, runner: Runner) -> int:
     if args.verb == "prepare":
         db.prepare()
     elif args.verb == "sweep":
-        for n in db.sweep():
+        for n in db.sweep(args.all_unowned):
             print(f"dropped {n}")
     elif args.verb == "create":
-        name = db.create(args.name)
+        name = db.create(args.name, args.owner_pid)
         print(f"{name} {db.url(name)}")
     elif args.verb == "drop":
         db.drop(args.name)
     else:  # run: one job, one copy
         if not args.cmd:
             raise ConfigError("test run needs a command after `--`")
-        name = db.create()
+        name = db.create(owner=os.getpid())  # alive for the whole run
         try:
             return runner.stream(args.cmd, env={"DATABASE_URL": db.url(name)}, cwd=args.cwd)
         finally:
@@ -384,6 +428,8 @@ def main(argv: list[str]) -> int:
     t = top.add_parser("test")
     t.add_argument("verb", choices=["prepare", "create", "drop", "run", "sweep"])
     t.add_argument("name", nargs="?")
+    t.add_argument("--owner-pid", type=int, dest="owner_pid")
+    t.add_argument("--all-unowned", action="store_true", dest="all_unowned")
     d = top.add_parser("dev")
     d.add_argument("verb", choices=["ensure"])
     for p in (t, d):

@@ -7,7 +7,7 @@ slot; everything else runs without one.
     python3 scripts/heavy.py status                            # who holds a slot, who waits
     python3 scripts/heavy.py classify -- CMD...                # heavy or light
     python3 scripts/heavy.py prune                             # drop job logs older than 7 days and orphaned jobs
-    python3 scripts/heavy.py guard-main [--hook]               # main folder refusal; as a hook: a helper's unqueued heavy call
+    python3 scripts/heavy.py guard-main [--hook]               # main folder refusal; as a hook: a helper's unqueued heavy call or write in the main folder
 
 One heavy job at a time per machine by default (`sdlc.json` `heavy.slots`, env SDLC_HEAVY_SLOTS or
 `--slots`). Tickets live in one per-user machine folder, `${SDLC_HEAVY_DIR:-${XDG_STATE_HOME:-
@@ -60,6 +60,9 @@ HEAVY_PROGRAMS = {"playwright", "cypress", "storybook", "vite", "webpack"}
 NEXT_HEAVY = {"build", "dev", "start"}
 PACKAGE_MANAGERS = {"npm", "pnpm", "yarn", "bun"}
 OPTION_ARGS = {"--filter", "-F", "--prefix", "--dir", "-C", "--cwd", "--workspace", "-w", "-p", "--package"}
+MAVEN_GRADLE_HEAVY = {
+    "build", "test", "package", "verify", "install", "assemble", "check", "integration-test", "bootRun",
+}  # fmt: skip
 ENV_ASSIGN = re.compile(r"\w+=\S*")
 
 
@@ -90,13 +93,22 @@ def program_heavy(argv: list[str]) -> bool:
     stem = os.path.splitext(prog)[0]
     w = words(rest)
     if prog in PACKAGE_MANAGERS:
+        if w[:1] == ["workspace"]:  # yarn workspace NAME run build
+            w = w[2:]
         if w[:1] in (["exec"], ["dlx"], ["x"]):
             return program_heavy(w[1:])
         if w[:1] in (["run"], ["run-script"]):
             return len(w) > 1 and heavy_name(w[1])
-        if w[:1] == ["workspace"]:
-            w = w[2:]
         return bool(w) and heavy_name(w[0])
+    if prog == "cargo":
+        sub = [a for a in w if not a.startswith("+")][:1]  # `cargo +nightly build`
+        return bool(sub) and sub[0] in ("build", "test", "bench", "nextest")
+    if prog == "go":
+        return w[:1] in (["build"], ["test"])
+    if prog in ("mvn", "mvnw", "gradle", "gradlew"):
+        return bool(set(w) & MAVEN_GRADLE_HEAVY)
+    if prog == "uv" and w[:1] == ["build"]:
+        return True
     if prog in ("npx", "bunx", "pnpx"):
         return program_heavy(w)
     if prog in ("uv", "poetry", "pipenv") and w[:1] == ["run"]:
@@ -128,7 +140,10 @@ def program_heavy(argv: list[str]) -> bool:
 
 
 def git_out(*args: str, cwd: str | None = None) -> str:
-    res = subprocess.run(["git", *args], capture_output=True, text=True, cwd=cwd)
+    try:
+        res = subprocess.run(["git", *args], capture_output=True, text=True, cwd=cwd)
+    except OSError:  # no such folder (a `cd` to a place that does not exist yet)
+        return ""
     return res.stdout.strip() if res.returncode == 0 else ""
 
 
@@ -173,6 +188,16 @@ def alive(pid: int) -> bool:
     return True
 
 
+def proc_start(pid: int) -> str:
+    """When the process began, as `ps` prints it ("" when there is no such process): with the id it
+    names one process, so a recycled id is never taken for the one that died."""
+    try:
+        res = subprocess.run(["ps", "-o", "lstart=", "-p", str(pid)], capture_output=True, text=True)
+    except OSError:
+        return ""
+    return res.stdout.strip() if res.returncode == 0 else ""
+
+
 class Queue:
     def __init__(self, root: Path, slots: int) -> None:
         self.root, self.slots = root, max(1, slots)
@@ -195,20 +220,22 @@ class Queue:
                 out.append((path, data))
             else:
                 if isinstance(data, dict):
-                    kill_pgid(data.get("pgid"))  # the wrapper died; its job must not outlive the slot
+                    kill_ticket_groups(data)  # the wrapper died; its jobs must not outlive the slot
                 path.unlink(missing_ok=True)
         return out
 
     def enter(self, cmd: list[str], kind: str, cap: float = 0) -> Path:
         """`cap` is the holder's own run deadline in seconds (0: none); a waiter reads it to tell a
-        job that is merely long from one that outlived its own deadline."""
-        path = self.root / "tickets" / f"{time.time_ns():020d}-{os.getpid()}.json"
+        job that is merely long from one that outlived its own deadline. Arrival order is the file name,
+        made under the lock that publishes the ticket, so a slow entrant never sorts ahead of one that
+        already holds a slot."""
         data = {
             "pid": os.getpid(), "cmd": cmd, "kind": kind, "since": time.time(), "cap": cap,
             "repo": repo_identity(), "worktree": git_out("rev-parse", "--show-toplevel") or os.getcwd(),
-            "slot": None, "pgid": None,
+            "slot": None, "pgid": None, "pstart": "", "groups": {},
         }  # fmt: skip
         with self._locked():  # a scan holds the lock; it never sees a ticket half written
+            path = self.root / "tickets" / f"{time.time_ns():020d}-{os.getpid()}.json"
             self._write(path, data)
         return path
 
@@ -228,32 +255,70 @@ class Queue:
             ahead = names.index(ticket)
             if ahead < self.slots:
                 used = {d["slot"] for p, d in live if p != ticket and d.get("slot") is not None}
-                slot = next(i for i in range(self.slots) if i not in used)
-                data = dict(live[ahead][1], slot=slot, started=time.time())
-                self._write(ticket, data)
-                return slot, []
-            return None, [d for _, d in live[: self.slots]]
+                slot = next((i for i in range(self.slots) if i not in used), None)
+                if slot is not None:  # none free: an entrant that published late is still waiting
+                    self._write(ticket, dict(live[ahead][1], slot=slot, started=time.time()))
+                    return slot, []
+            return None, [d for _, d in live if d.get("slot") is not None] or [d for _, d in live[: self.slots]]
 
-    def record_pgid(self, ticket: Path, pgid: int) -> None:
-        """Name the job's process group on the ticket, so a dead wrapper's job can be killed."""
+    def update(self, ticket: Path, mutate) -> None:
+        """Rewrite one ticket under the lock: `mutate(data)` changes the dict in place."""
         with self._locked():
             try:
                 data = json.loads(ticket.read_text(encoding="utf-8"))
             except (OSError, ValueError):
                 return
-            self._write(ticket, dict(data, pgid=pgid))
+            mutate(data)
+            self._write(ticket, data)
+
+    def record_pgid(self, ticket: Path, pgid: int) -> None:
+        """Name the job's process group on the ticket (with its leader's start time), so a dead
+        wrapper's job can be killed."""
+        self.update(ticket, lambda d: d.update(pgid=pgid, pstart=proc_start(pgid)))
+
+    def track_group(self, ticket: Path, pgid: int, on: bool = True) -> None:
+        """Every check the close starts is a session of its own; the ticket lists the live ones, so the
+        reaper and `leave` can stop them before the slot is reused."""
+        start = proc_start(pgid) if on else ""
+
+        def mutate(d: dict) -> None:
+            groups = d.setdefault("groups", {})
+            if on:
+                groups[str(pgid)] = start
+            else:
+                groups.pop(str(pgid), None)
+
+        self.update(ticket, mutate)
 
     def leave(self, ticket: Path) -> None:
+        """Stop whatever the ticket still lists, then free the slot."""
+        try:
+            kill_ticket_groups(json.loads(ticket.read_text(encoding="utf-8")))
+        except (OSError, ValueError):
+            pass
         ticket.unlink(missing_ok=True)
 
 
-def kill_pgid(pgid: object) -> None:
-    # shortcut: a recycled group id could name an unrelated group; the guard below only spares our own.
+def kill_pgid(pgid: object, start: object = None) -> None:
+    """SIGKILL a group, unless its leader id now belongs to another process (a recycled id): when a
+    process with that id exists and began at another time than recorded, leave it alone. A group whose
+    leader is gone but has members cannot have had its id recycled, so it is still ours."""
     if isinstance(pgid, int) and pgid > 1 and pgid != os.getpgrp():
+        now = proc_start(pgid)
+        if isinstance(start, str) and start and now and now != start:
+            return
         try:
             os.killpg(pgid, signal.SIGKILL)
         except (ProcessLookupError, PermissionError):
             pass
+
+
+def kill_ticket_groups(data: dict) -> None:
+    kill_pgid(data.get("pgid"), data.get("pstart"))
+    groups = data.get("groups")
+    for g, start in (groups.items() if isinstance(groups, dict) else []):
+        if str(g).isdigit():
+            kill_pgid(int(g), start)
 
 
 class SlotTimeout(Exception):
@@ -367,11 +432,12 @@ def cmd_run(args, cmd: list[str]) -> int:
     env.update(
         SDLC_HEAVY_HOLDER=str(os.getpid()), SDLC_HEAVY_SLOT=str(slot),
         SDLC_APP_PORT=str(port), SDLC_STUB_PORT=str(port + 1),
+        SDLC_HEAVY_TICKET=str(ticket),  # a close inside the slot lists its checks' groups here
     )  # fmt: skip
     try:
         return run_command(cmd, env, run, lambda pgid: q.record_pgid(ticket, pgid))
     finally:
-        q.leave(ticket)
+        q.leave(ticket)  # also stops every group the job listed on it
 
 
 def write_atomic(path: Path, text: str) -> None:
@@ -483,8 +549,14 @@ def prune_jobs() -> int:
         except (OSError, ValueError):
             info = {}
         pid = info.get("pid")
-        age = now - job.stat().st_mtime
-        orphan = not (job / "result.json").exists() and not (isinstance(pid, int) and alive(pid))
+        try:
+            age = now - job.stat().st_mtime
+        except OSError:  # another prune removed it first
+            continue
+        finished = (job / "result.json").exists()
+        if not finished and isinstance(pid, int) and alive(pid):
+            continue  # still running: its result has yet to be written, however old
+        orphan = not finished
         if age > JOB_KEEP_DAYS * 86400 or (orphan and age > 60):  # a job just submitted has no pid yet
             shutil.rmtree(job, ignore_errors=True)
             gone += 1
@@ -570,28 +642,128 @@ def is_queued(argv: list[str]) -> bool:
     return len(argv) > at + 1 and os.path.basename(argv[at]) == "heavy.py" and argv[at + 1] in ("run", "submit")
 
 
+def is_self_queued(argv: list[str]) -> bool:
+    """The kit's own close takes its slot itself: `verify_gate.py milestone|project`, bare, through an
+    interpreter or by path. Wrapping it in `heavy.py run` would put the wait ahead of preflight."""
+    at = 1 if os.path.basename(argv[0]).startswith("python") else 0
+    return (
+        len(argv) > at
+        and os.path.splitext(os.path.basename(argv[at]))[0] == "verify_gate"
+        and bool({"milestone", "project"} & set(words(argv[at + 1 :])))
+    )
+
+
 def unqueued_heavy(command: str, cfg: dict) -> bool:
     """A heavy command in the line that does not go through the queue. Reading and version-control tools
     are never heavy (a commit message may say "build")."""
     for segment in shell_segments(command):
         for argv in inner_argv(segment):
-            if os.path.basename(argv[0]) in READ_ONLY or is_queued(argv):
+            if os.path.basename(argv[0]) in READ_ONLY or is_queued(argv) or is_self_queued(argv):
                 continue
             if is_heavy(argv, cfg):
                 return True
     return False
 
 
-def writes_in_main(command: str, payload_cwd: str) -> bool:
-    """A helper's command that could change the main working folder: it runs there and is not a read-only
-    tool. A `cd` anywhere in the line means it moves to its own worktree first (the shell starts in the
-    main folder every call), so it is allowed."""
-    if not in_main_folder(payload_cwd):
+GIT_MUTATING = {
+    "commit", "add", "merge", "checkout", "switch", "reset", "stash", "push", "rebase", "rm", "mv",
+    "restore", "clean", "cherry-pick", "pull", "apply", "am", "revert",
+}  # fmt: skip
+FILE_WRITERS = {"tee", "cp", "mv", "rm", "mkdir", "rmdir", "touch", "truncate", "dd", "install", "ln", "chmod", "rsync", "patch"}
+INSTALLS = {
+    "npm": {"install", "i", "add", "ci", "remove", "uninstall", "update", "link"},
+    "pnpm": {"install", "i", "add", "remove", "update", "link"},
+    "yarn": {"install", "add", "remove", "upgrade", "link"},
+    "bun": {"install", "i", "add", "remove", "update"},
+    "pip": {"install", "uninstall"}, "pip3": {"install", "uninstall"},
+    "uv": {"add", "sync", "remove", "lock"}, "poetry": {"install", "add", "remove", "update"},
+    "bundle": {"install", "add", "update"}, "cargo": {"add", "install", "update"},
+}  # fmt: skip
+TEST_RUNNERS = {"pytest", "vitest", "jest", "rspec"}
+REDIRECTS = {">", ">>", ">|", "&>", "&>>"}
+
+
+def git_parts(args: list[str]) -> tuple[str, list[str], str]:
+    """(subcommand, its arguments, the -C directory) of a git command line."""
+    where, i = "", 0
+    while i < len(args) and args[i].startswith("-"):
+        if args[i] == "-C" and i + 1 < len(args):
+            where = args[i + 1]
+        i += 2 if args[i] in ("-C", "-c", "--git-dir", "--work-tree", "--namespace") else 1
+    return (args[i], args[i + 1 :], where) if i < len(args) else ("", [], where)
+
+
+def mutates(argv: list[str], cfg: dict) -> bool:
+    """A command that changes files, history, installed packages or build output. Reading is never one."""
+    while argv and ENV_ASSIGN.fullmatch(argv[0]):
+        argv = argv[1:]
+    if not argv:
         return False
-    argvs = [argv for seg in shell_segments(command) for argv in inner_argv(seg)]
-    if any(os.path.basename(a[0]) in ("cd", "pushd") for a in argvs):
-        return False
-    return any(os.path.basename(a[0]) not in READ_ONLY and not is_queued(a) for a in argvs)
+    prog, rest = os.path.basename(argv[0]), argv[1:]
+    if prog == "git":
+        sub, args, _ = git_parts(rest)
+        if sub == "worktree":
+            return args[:1] in (["add"], ["remove"], ["move"], ["prune"])
+        if sub == "branch":
+            flags = {a for a in args if a.startswith("-")}
+            return bool(flags & {"-D", "-d", "-m", "-M", "-c", "-C", "-f", "--delete", "--move", "--copy", "--force"}) or (
+                bool(words(args)) and not flags & {"--list", "-l"}
+            )
+        return sub in GIT_MUTATING
+    if prog == "sed":
+        return any(a == "--in-place" or a.startswith("--in-place=") or re.fullmatch(r"-[a-zA-Z]*i\S*", a) for a in rest)
+    if prog in FILE_WRITERS:
+        return True
+    w = words(rest)
+    if w[:1] and w[0] in INSTALLS.get(prog, ()):
+        return True
+    if prog == "uv" and w[:2] == ["pip", "install"]:
+        return True
+    return prog in TEST_RUNNERS or (not is_queued(argv) and not is_self_queued(argv) and is_heavy(argv, cfg))
+
+
+def redirect_target(argv: list[str]) -> str | None:
+    """The file a `>` writes, or None (no redirect, /dev/null, or a descriptor copy such as 2>&1)."""
+    for i, a in enumerate(argv[:-1]):
+        if a in REDIRECTS and argv[i + 1] != "/dev/null" and not argv[i + 1].startswith("&"):
+            return argv[i + 1]
+    return None
+
+
+def writes_in_main(command: str, payload_cwd: str, cfg: dict | None = None) -> bool:
+    """A helper's command that changes the main working folder: file writes, redirects, mutating git,
+    package installs, builds and tests that run there. Reading is fine. The shell starts in the main
+    folder on every call, so a `cd` moves the check with it: only a command whose folder (after the
+    `cd`, resolved) is the main folder counts. A destination the line computes (`$VAR`) is not followed."""
+    cfg, cwd = cfg or {}, payload_cwd
+    cache: dict[str, bool] = {}
+
+    def in_main(path: str | None) -> bool:
+        return bool(path) and cache.setdefault(path, in_main_folder(path))
+
+    for seg in shell_segments(command):
+        for argv in inner_argv(seg):
+            prog = os.path.basename(argv[0])
+            if prog in ("cd", "pushd"):
+                target = argv[1] if len(argv) > 1 else "~"
+                unknown = any(c in target for c in "$`") or target == "-"
+                cwd = None if unknown or cwd is None else os.path.realpath(os.path.join(cwd, os.path.expanduser(target)))
+                continue
+            where = cwd
+            if prog == "git":
+                dash_c = git_parts(argv[1:])[2]
+                where = os.path.realpath(os.path.join(cwd, os.path.expanduser(dash_c))) if dash_c and cwd else cwd
+            if not in_main(where):
+                continue
+            if mutates(argv, cfg):
+                return True
+        # a redirect writes even from a read-only tool; its folder is the target's, not the line's
+        for argv in inner_argv(seg):
+            target = redirect_target(argv)
+            if target and cwd:
+                if in_main(os.path.dirname(os.path.realpath(os.path.join(cwd, os.path.expanduser(target))))):
+                    return True
+    return False
 
 
 def in_main_folder(cwd: str) -> bool:
@@ -610,8 +782,8 @@ def cmd_guard(args) -> int:
     """Without --hook: helper commands never run in the main working folder (exit 3). With --hook, a
     PreToolUse payload on stdin, for a subagent's call only (it carries `agent_id`; every field is read
     defensively, since the owner's own session may omit it, and anything unreadable is allowed): refuse
-    (exit 2) a heavy command that does not go through the queue, and (exit 3) any command that is not a
-    read-only tool while the helper stands in the main working folder."""
+    with exit 2, the code Claude Code treats as a block, a heavy command that does not go through the
+    queue, and any command that writes to the main working folder (see `writes_in_main`)."""
     if not args.hook:
         cwd = os.getcwd()
         if in_main_folder(cwd):
@@ -627,7 +799,8 @@ def cmd_guard(args) -> int:
         return 0
     if not agent or not isinstance(command, str):
         return 0
-    if unqueued_heavy(command, config()):
+    cfg = config()
+    if unqueued_heavy(command, cfg):
         print(
             "heavy: a helper's heavy command goes through the queue, one at a time per machine. "
             f"Run it as `python3 scripts/heavy.py run -- {command.strip()}` (or `submit`, then `wait`).",
@@ -635,9 +808,9 @@ def cmd_guard(args) -> int:
         )
         return 2
     cwd = cwd if isinstance(cwd, str) and cwd else os.getcwd()
-    if writes_in_main(command, cwd):
+    if writes_in_main(command, cwd, cfg):
         print(MAIN_REFUSED.format(cwd=cwd), file=sys.stderr)
-        return GUARD_REFUSED
+        return 2
     return 0
 
 

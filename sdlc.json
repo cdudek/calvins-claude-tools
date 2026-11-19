@@ -84,7 +84,7 @@
     ]
   },
   "product": "",
-  "kitTemplates": "29a5447baf6d",
+  "kitTemplates": "c5c4773d8b11",
   "tiers": false,
   "ciPaths": {
     "docs": [
@@ -212,5 +212,11 @@
   "sdlcVersion": "3.22.0",
   "tracker": {
     "kind": "beads"
+  },
+  "heavy": {
+    "patterns": [
+      "unittest discover",
+      "run-plugin-tests\\.sh"
+    ]
   }
 }
