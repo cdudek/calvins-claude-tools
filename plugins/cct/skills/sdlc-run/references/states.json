@@ -334,6 +334,14 @@
         "done"
       ]
     },
+    "handoff": {
+      "kind": "blocked",
+      "actor": "owner",
+      "command": "python3 ${CLAUDE_SKILL_DIR}/scripts/sdlc_status.py handoff {id} --resume",
+      "to": [
+        "gate-pass"
+      ]
+    },
     "done": {
       "kind": "terminal",
       "actor": "",

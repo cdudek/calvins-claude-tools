@@ -31,6 +31,12 @@ line `Blocking: <what>, because <why>; <who> runs `<step>`.` says the one thing 
 commit that holds every milestone and the owner's acceptance (state/heads.json); `goal <id> --project`
 is DONE only with both. The gates persist each milestone's head and base there, and a hotfix head.
 
+`handoff <id> --cap turns|fix-rounds|retries [--what <words>] [--next <command>]` writes the one HANDOFF
+record of a hit cap (state/handoff.json: what, why, the exact next command) and prints it; the retry
+cap of the gate writes it itself. While the goal is still open it prints `GOAL <id> HANDOFF cap=<cap>`
+(exit 4) and a `Blocking:` line with the next command. A passing gate or `handoff <id> --resume`
+clears it.
+
 `ids` prints every id the change defines with its one-line meaning and the file that decides it.
 `readme` writes `<change>/README.md`, the reading map (`references/readability.md`).
 
@@ -414,7 +420,30 @@ def record_project(root: Path, change: Path, cfg: dict, sha: str, accepted: bool
     return 0, f"recorded project sha={sha} accepted={'yes' if accepted else 'no'}"
 
 
+def handoff_of(change: Path) -> dict:
+    """state/handoff.json: the record a hit cap left (verify_gate.write_handoff)."""
+    data = read_json(spec.state_path(change, "handoff.json"))
+    return data if isinstance(data, dict) and data.get("cap") else {}
+
+
+def handoff_sentence(change: Path) -> str:
+    rec = handoff_of(change)
+    return (
+        f"Blocking: {rec.get('what', 'a cap was reached')}, because {rec.get('why', 'the cap was reached')}; "
+        f"you run `{rec.get('next', '')}`."
+    )
+
+
 def goal(
+    root: Path, change: Path, scope: str = "milestone", n: int | None = None, gh=gh_json
+) -> tuple[int, str]:
+    """`goal_state` plus the handoff: a goal still OPEN when a cap stopped the run reads HANDOFF."""
+    code, line = goal_state(root, change, scope, n, gh)
+    cap = handoff_of(change).get("cap")
+    return (4, f"GOAL {change.name} HANDOFF cap={cap}") if code == 1 and cap else (code, line)
+
+
+def goal_state(
     root: Path, change: Path, scope: str = "milestone", n: int | None = None, gh=gh_json
 ) -> tuple[int, str]:
     """(exit code, the one line) for the change's goal; `gh(root, *args)` is injectable. The gate's
@@ -869,6 +898,9 @@ def goal_main(args: list[str]) -> int:
         return 1
     code, line = goal(root, change, scope, int(value) if flag else None)
     print(line)
+    if code == 4:
+        print(handoff_sentence(change))
+        return code
     head = re.search(r"no-pr:([^,\s]+)", line)
     # a feature's base depends on its branch (a hotfix goes to the default branch): the no-pr one,
     # or else the plan's row
@@ -896,7 +928,7 @@ def write_readme(change: Path, text: str) -> int:
 
 
 def main(argv: list[str]) -> int:
-    if len(argv) < 2 or argv[1] not in ("map", "goal", "ids", "readme", "base", "record"):
+    if len(argv) < 2 or argv[1] not in ("map", "goal", "ids", "readme", "base", "record", "handoff"):
         print(__doc__)
         return 2
     if argv[1] == "goal":
@@ -919,6 +951,26 @@ def main(argv: list[str]) -> int:
         code, said = record_project(root, change, cfg, sha, "--accepted" in rest)
         print(said)
         return code
+    if argv[1] == "handoff":  # handoff <id> --cap turns|fix-rounds|retries [--what W] [--next C] | --resume
+        from verify_gate import CAPS, write_handoff
+
+        rest, path = argv[3:], change / "state" / "handoff.json"
+        opt = lambda flag: rest[rest.index(flag) + 1] if flag in rest and rest.index(flag) + 1 < len(rest) else ""  # noqa: E731
+        if "--resume" in rest:
+            path.unlink(missing_ok=True)
+            print(f"resumed {change.name}: the handoff is cleared")
+            return 0
+        if opt("--cap") not in CAPS:
+            print(__doc__)
+            return 2
+        resume = f"python3 ${{CLAUDE_SKILL_DIR}}/scripts/sdlc_status.py handoff {change.name} --resume"
+        nxt = opt("--next") or resume
+        write_handoff(
+            change, opt("--cap"), "milestone", opt("--what") or "the run stopped with the goal still open",
+            f"the {opt('--cap')} cap was reached", nxt,
+        )
+        print(f"HANDOFF {change.name} cap={opt('--cap')} next={nxt}")
+        return 0
     if argv[1] == "base":
         sha = security_base(change)
         print(sha or "no recorded start: approve the plan first")

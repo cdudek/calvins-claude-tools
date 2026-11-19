@@ -626,6 +626,7 @@ def delivery_values(cfg: dict) -> dict[str, str]:
         "RUN_TURNS": str(goal.get("runTurns", 150)),
         "FEATURE_TURNS": str(goal.get("featureTurns", 40)),
         "MILESTONE_TURNS": str(goal.get("milestoneTurns", 30)),
+        "PROJECT_TURNS": str(goal.get("projectTurns", goal.get("milestoneTurns", 30))),  # a project close is a milestone-sized run
     }
 
 
@@ -957,6 +958,7 @@ KIT_GATE = {
     "c7bf44c073864753",
     "ca433e00cafb69b8",
     "d1fecbcc9667465a",
+    "d9a7bdcc49c1e14a",
     "dbe9a6d4a1e59972",
     "dfbfa38f6cd4fec6",
     "ea65197b82c3a545",

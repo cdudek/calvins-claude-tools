@@ -249,3 +249,82 @@ def test_a_recorded_project_sha_that_left_the_default_branch_is_not_integrated(r
     _main_branch(repo)
     _heads(repo, {"project": {"sha": "f" * 40, "accepted": True}})
     assert "project-not-integrated" in _goal(repo, {}, scope="project")[1]
+
+
+# --- HANDOFF on a cap (S10) -----------------------------------------------------------------------
+
+
+def _handoff_file(repo: Path) -> Path:
+    return repo / "changes" / ID / "state" / "handoff.json"
+
+
+def test_the_retry_cap_writes_one_handoff_record(tmp_path: Path) -> None:
+    repo = tvg._repo(tmp_path, ["false"])
+    tvg._approve(repo)
+    for _ in range(3):
+        r = tvg._gate(repo, "feature", tvg.ID)
+    assert tvg._last(r).startswith("VERIFY BLOCKED reason=")
+    saved = json.loads((repo / "changes" / tvg.ID / "state" / "handoff.json").read_text())
+    assert saved["cap"] == "retries" and saved["scope"] == "feature"
+    assert "verify/state.json" in saved["next"] and f"verify_gate.py feature {tvg.ID}" in saved["next"]
+    assert saved["what"] and saved["why"]
+
+
+def test_a_pass_clears_the_handoff(tmp_path: Path) -> None:
+    repo = tvg._repo(tmp_path, ["test -f ok"])
+    tvg._approve(repo)
+    for _ in range(3):
+        tvg._gate(repo, "feature", tvg.ID)
+    assert (repo / "changes" / tvg.ID / "state" / "handoff.json").exists()
+    (repo / "ok").write_text("")
+    tvg._git(repo, "add", "ok")
+    tvg._git(repo, "commit", "-qm", "the check can pass")
+    (repo / "changes" / tvg.ID / "verify" / "state.json").unlink()
+    assert tvg._last(tvg._gate(repo, "feature", tvg.ID)).startswith("VERIFY PASS")
+    assert not (repo / "changes" / tvg.ID / "state" / "handoff.json").exists()
+
+
+def test_the_turn_cap_command_writes_the_record_and_prints_it(repo: Path) -> None:  # noqa: F811
+    r = _run(repo, "handoff", ID, "--cap", "turns", "--what", "milestone 2 is built, not gated", "--next", "python3 scripts/verify_gate.py milestone " + ID)
+    assert r.returncode == 0
+    assert r.stdout.strip() == f"HANDOFF {ID} cap=turns next=python3 scripts/verify_gate.py milestone {ID}"
+    saved = json.loads(_handoff_file(repo).read_text())
+    assert saved["cap"] == "turns" and saved["what"] == "milestone 2 is built, not gated" and saved["why"]
+
+
+def test_a_cap_needs_a_known_name(repo: Path) -> None:  # noqa: F811
+    assert _run(repo, "handoff", ID, "--cap", "mood").returncode == 2
+    assert not _handoff_file(repo).exists()
+
+
+def test_an_open_goal_with_a_handoff_says_handoff_and_a_done_goal_does_not(repo: Path) -> None:  # noqa: F811
+    _run(repo, "handoff", ID, "--cap", "fix-rounds", "--what", "two findings stay open", "--next", "fix F2 then gate")
+    assert _goal(repo, {BRANCH: _pr()}) == (4, f"GOAL {ID} HANDOFF cap=fix-rounds")
+    _gate(repo, PASS)
+    assert _goal(repo, {BRANCH: _pr()})[0] == 0  # the work is done: a stale record never hides it
+
+
+def test_the_cli_names_the_next_command_and_resume_clears_it(repo: Path) -> None:  # noqa: F811
+    _run(repo, "handoff", ID, "--cap", "turns", "--what", "stopped at the cap", "--next", "run the gate")
+    out = _run(repo, "goal", ID).stdout.splitlines()
+    assert out[0] == f"GOAL {ID} HANDOFF cap=turns"
+    assert "stopped at the cap" in out[1] and "run the gate" in out[1]
+    assert _run(repo, "handoff", ID, "--resume").returncode == 0
+    assert not _handoff_file(repo).exists()
+    assert "HANDOFF" not in _run(repo, "goal", ID).stdout
+
+
+def test_the_goal_templates_stop_on_a_handoff_and_the_plan_hands_off_at_the_cap() -> None:
+    for name in ("run", "feature", "milestone", "project"):
+        text = (SKILL / "templates" / "goal" / f"{name}.txt").read_text()
+        assert "HANDOFF" in text and len(text) < 600
+    plan = (SKILL / "templates" / "change" / "plan.md").read_text()
+    assert "handoff <ID> --cap turns" in plan or "handoff {{CHANGE}} --cap turns" in plan
+
+
+def test_the_project_goal_has_a_turn_cap_of_its_own() -> None:
+    import adopt
+
+    assert adopt.delivery_values({})["PROJECT_TURNS"] == "30"
+    assert adopt.delivery_values({"goal": {"milestoneTurns": 12}})["PROJECT_TURNS"] == "12"
+    assert adopt.delivery_values({"goal": {"projectTurns": 50}})["PROJECT_TURNS"] == "50"

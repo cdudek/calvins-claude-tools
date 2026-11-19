@@ -265,6 +265,25 @@ def record_head(change: Path, key: str, name: str | None, value: dict) -> None:
     path.write_text(json.dumps(data, indent=2) + "\n", encoding="utf-8")
 
 
+CAPS = ("turns", "fix-rounds", "retries")
+
+
+def dirty_lines(change: Path) -> list[str]:
+    """`git status --porcelain` minus what the gate itself writes: verify/, and the head and handoff
+    records, which ride along in the next commit (they are records, never criteria)."""
+    own = (f"{change.name}/verify/", f"{change.name}/state/heads.json", f"{change.name}/state/handoff.json")
+    return [line for line in sh("git", "status", "--porcelain", "--untracked-files=all").splitlines() if not any(o in line for o in own)]
+
+
+def write_handoff(change: Path, cap: str, scope: str, what: str, why: str, next_step: str) -> None:
+    """The one HANDOFF record of a hit cap (state/handoff.json): what stopped, why, and the exact next
+    command, so the run ends cleanly and a new session or the owner resumes from the file."""
+    path = change / "state" / "handoff.json"
+    path.parent.mkdir(exist_ok=True)
+    record = {"cap": cap, "scope": scope, "what": what, "why": why, "next": next_step, "at": time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime())}
+    path.write_text(json.dumps(record, indent=2) + "\n", encoding="utf-8")
+
+
 def parent_tips(change: Path, cfg: dict) -> list[tuple[str, str]]:
     """(branch, sha) on origin of every branch a milestone must contain: the default branch,
     and project/<slug> too when the change's project has a branch. A branch origin lacks
@@ -1088,6 +1107,8 @@ def run(
         # `sdlc_status.py goal` reads, so a deleted merged branch does not undo a finished milestone
         if scope == "milestone" and number:
             (out_dir / f"milestone-{number}.json").write_text(text, encoding="utf-8")
+        if line.startswith("VERIFY PASS") and scope != "project":  # the work moved on: a cap's handoff is spent
+            (change / "state" / "handoff.json").unlink(missing_ok=True)
         if line.startswith("VERIFY PASS") and scope in ("milestone", "feature"):
             branch, default = sh("git", "symbolic-ref", "--short", "-q", "HEAD"), cfg.get("defaultBranch") or "main"
             if scope == "milestone" and number:
@@ -1146,11 +1167,7 @@ def run(
             report["moved"] = moved
             return finish("VERIFY BLOCKED reason=protected-path", 3)
 
-    dirty = [
-        line
-        for line in sh("git", "status", "--porcelain").splitlines()
-        if f"{change.name}/verify/" not in line
-    ]
+    dirty = dirty_lines(change)
     if dirty:
         print("uncommitted changes: a PASS must name a commit. Commit, then run again.")
         print("\n".join(dirty[:TAIL]))
@@ -1311,6 +1328,14 @@ def run(
         state_path.write_text(
             json.dumps({"signature": sig, "count": count, "attempts": attempts}) + "\n"
         )
+        capped = count >= BREAKER or attempts[scope] >= ATTEMPTS
+        if capped and scope != "project":  # the retry cap: leave a durable handoff, not a silent stop
+            write_handoff(
+                change, "retries", scope,
+                f"the {scope} gate of {change.name} stopped at check {name}",
+                f"{attempts[scope]} failed runs, or the same failure {count} times: the breaker stops the loop",
+                f"read {change.name}/verify/report.md, fix the cause, delete {change.name}/verify/state.json, then run python3 scripts/verify_gate.py {scope} {change.name}",
+            )  # fmt: skip
         if count >= BREAKER:
             print(f"the same failure {count} runs in a row: the loop is not making progress.")
             return finish("VERIFY BLOCKED reason=no-progress", 3)
@@ -1358,9 +1383,7 @@ def run(
         print(f"{'ok  ' if status == 'pass' else 'FAIL'} {name}: {cmd}")
         if status == "pass":
             # staged: a check that ran while the tree moved proves nothing about the starting tree
-            if key and sh("git", "rev-parse", "HEAD^{tree}") == tree and not [
-                line for line in sh("git", "status", "--porcelain").splitlines() if f"{change.name}/verify/" not in line
-            ]:
+            if key and sh("git", "rev-parse", "HEAD^{tree}") == tree and not dirty_lines(change):
                 cache[key] = name
                 cache_path.write_text(json.dumps(cache, indent=2) + "\n", encoding="utf-8")
             durations[cmd] = report["checks"][-1]["seconds"]
@@ -1393,11 +1416,7 @@ def run(
 
     # A PASS names one frozen head: a merge or an edit during the checks means they tested
     # something other than the commit the line would name.
-    still_dirty = [
-        line
-        for line in sh("git", "status", "--porcelain").splitlines()
-        if f"{change.name}/verify/" not in line
-    ]
+    still_dirty = dirty_lines(change)
     if sh("git", "rev-parse", "HEAD") != head or still_dirty:
         print(
             "HEAD or the tree changed while the checks ran: nothing may merge or edit during a gate."

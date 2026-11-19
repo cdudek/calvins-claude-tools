@@ -62,7 +62,7 @@ none.
 | `checks.feature[]`, `checks.milestone[]` | what `scripts/verify_gate.py` runs, cheapest first by recorded seconds (`"after": ["<check name>"]` keeps a check behind the one it needs, such as codegen before the typecheck; `"serial": true` pins a check in place; an approval made before 3.18.0 keeps the declared order; `--keep-going` runs past a failure) |
 | `milestones`, `hotfix` | milestone branch prefix and rebase rule; the hotfix lane |
 | `delivery` | `one-go` (default) or `feature-prs` |
-| `goal` | turn caps: `runTurns` for the one-go goal, `featureTurns` and `milestoneTurns` for feature PRs |
+| `goal` | turn caps: `runTurns` for the one-go goal, `featureTurns` and `milestoneTurns` for feature PRs, `projectTurns` for a project close (default: the milestone cap) |
 | `builders` | `claude` (default) or `codex`: who builds feature rows and fix parts. With `codex`, the kit's `codex-build.sh` runs the Codex CLI in the feature worktree with the network off and rejects a run that touched a protected path; Claude still supervises, closes the milestone and runs the gates |
 | `builderModel`, `builderEffort` | which model builds and how hard (default `sonnet`, `high`): the `model` and `effort` of every builder agent, or the Codex model and reasoning when `builders` is `codex`. Set `opus` for a repo whose changes are hard; a plan's Approach may override both for one change |
 | `languages`, `responsiveTier`, `ux` | what the product ships, the device matrix tier, UX on or off |

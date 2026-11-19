@@ -120,10 +120,10 @@ so every line here is proven by a check, not by a claim.
 - Nothing outside `## Files that change` is edited.
 - Stop and report as soon as a step cannot proceed. Never work around a blocker.
 {{#ONE_GO}}
-- Stop after {{RUN_TURNS}} turns if not met. Report what is missing.
+- Stop after {{RUN_TURNS}} turns if not met. First run `python3 <STATUS> handoff {{CHANGE}} --cap turns --what <what is missing> --next <the exact next command>`. It writes the one HANDOFF record.
 {{/ONE_GO}}
 {{#FEATURE_PRS}}
-- Stop after {{FEATURE_TURNS}} turns per feature and {{MILESTONE_TURNS}} for the milestone close if not met. Report what is missing.
+- Stop after {{FEATURE_TURNS}} turns per feature and {{MILESTONE_TURNS}} for the milestone close if not met. First run `python3 <STATUS> handoff {{CHANGE}} --cap turns --what <what is missing> --next <the exact next command>`. It writes the one HANDOFF record. The fix-round and retry caps do the same (`--cap fix-rounds`, `--cap retries`).
 {{/FEATURE_PRS}}
 
 ## How to run
@@ -219,7 +219,7 @@ before any check or push: it owns local iteration, failures and the final full c
 
 Two blocks, filled when the gate returns approved and committed verbatim, so the handover is not
 one chat message. The kickoff prompt tells the run what to do. The `/goal` line holds only the end
-state: the status command prints `GOAL <ID> DONE` or `GOAL <ID> BLOCKED`, and the run stops after
+state: the status command prints `GOAL <ID> DONE`, `GOAL <ID> BLOCKED` or `GOAL <ID> HANDOFF`, and the run stops after
 `<TURNS>` turns.
 {{#ONE_GO}}
 `<TURNS>` is `goal.runTurns`, {{RUN_TURNS}} here.
@@ -228,6 +228,7 @@ state: the status command prints `GOAL <ID> DONE` or `GOAL <ID> BLOCKED`, and th
 One `/goal` per feature from `templates/goal/feature.txt`: `<TURNS>` is `goal.featureTurns`, {{FEATURE_TURNS}}
 here; the milestone close uses `goal.milestoneTurns`, {{MILESTONE_TURNS}}.
 {{/FEATURE_PRS}}
+The project close (`goal --project`) uses `goal.projectTurns`, {{PROJECT_TURNS}} here.
 
 The guardrail test fails an approved plan whose section is empty. Write `none —
 <why>` rather than leaving it blank: an empty section is a skip, a section that
@@ -244,7 +245,7 @@ print `python3 <STATUS> goal {{CHANGE}}`.
 The goal:
 
 ```
-/goal `python3 <STATUS> goal {{CHANGE}}` printed `GOAL {{CHANGE}} DONE` or `GOAL {{CHANGE}} BLOCKED` as its last run in this conversation, or stop after <TURNS> turns.
+/goal `python3 <STATUS> goal {{CHANGE}}` printed `GOAL {{CHANGE}} DONE`, `GOAL {{CHANGE}} BLOCKED` or `GOAL {{CHANGE}} HANDOFF` as its last run in this conversation, or stop after <TURNS> turns.
 ```
 
 ## Revisions

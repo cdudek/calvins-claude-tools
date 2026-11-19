@@ -401,11 +401,11 @@ def _done(text: str) -> str:
 
 
 def test_done_and_turn_caps_follow_the_delivery_mode() -> None:
-    one = _render(ONE_GO="1", RUN_TURNS="150", FEATURE_TURNS="40", MILESTONE_TURNS="30")
+    one = _render(ONE_GO="1", RUN_TURNS="150", FEATURE_TURNS="40", MILESTONE_TURNS="30", PROJECT_TURNS="30")
     assert "verify_gate.py milestone 2026-11-19-x` ends `VERIFY PASS` once" in _done(one)
     assert "verify_gate.py feature" not in _done(one)  # a feature is a commit, not a gate
     assert "Stop after 150 turns" in _done(one) and "40 turns" not in _done(one)
-    feature = _render(FEATURE_PRS="1", RUN_TURNS="150", FEATURE_TURNS="40", MILESTONE_TURNS="30")
+    feature = _render(FEATURE_PRS="1", RUN_TURNS="150", FEATURE_TURNS="40", MILESTONE_TURNS="30", PROJECT_TURNS="30")
     assert "verify_gate.py feature 2026-11-19-x` ends `VERIFY PASS` for every feature" in _done(feature)
     assert "Stop after 40 turns per feature and 30 for the milestone close" in _done(feature)
     assert "150" not in _done(feature)
