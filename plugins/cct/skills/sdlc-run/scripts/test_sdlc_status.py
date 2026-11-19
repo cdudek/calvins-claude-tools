@@ -180,7 +180,8 @@ def test_goal_open_without_a_pr(repo: Path) -> None:
 
 def test_goal_open_when_the_pr_is_neither_merged_nor_armed(repo: Path) -> None:
     _gate(repo, PASS)
-    assert _goal(repo, {BRANCH: _pr("OPEN")}) == (1, f"GOAL {ID} OPEN pr-7-not-merged-or-armed")
+    pr = _pr("OPEN", labels=("ship",))  # tiered, labelled: arming is now the next step
+    assert _goal(repo, {BRANCH: pr}) == (1, f"GOAL {ID} OPEN pr-7-not-merged-or-armed")
 
 
 def test_goal_open_without_a_passing_gate(repo: Path) -> None:
@@ -326,6 +327,10 @@ EMITTED = [
     "no-branch-for-feature-2",
     f"no-pr:{BRANCH}",
     "pr-7-not-merged-or-armed",
+    "pr-7-held",
+    "pr-7-awaits-owner",
+    "pr-7-awaits-tier",
+    "pr-7-closed",
     "gate-sha-not-pr-7-head",
     "gh-unavailable",
     "no-change-folder",
@@ -548,7 +553,7 @@ def test_goal_project_open_states(repo: Path) -> None:
         f"GOAL {ID} OPEN project-gate-pass,no-pr:{PROJECT_BRANCH}",
     )
     _project_gate(repo, f"VERIFY PASS project big {GATE}")
-    assert _goal(repo, {PROJECT_BRANCH: _pr("OPEN")}, "project") == (
+    assert _goal(repo, {PROJECT_BRANCH: _pr("OPEN", labels=("ship",))}, "project") == (
         1,
         f"GOAL {ID} OPEN pr-7-not-merged-or-armed",
     )
@@ -814,3 +819,64 @@ def test_readme_points_at_the_latest_handover(repo: Path, names: list[str], late
 def test_the_milestone_report_template_links_the_glossary() -> None:
     template = SCRIPT.parent.parent / "templates" / "change" / "milestone.md"
     assert "sdlc_status.py ids" in template.read_text()
+
+
+# --- Review finding 8: an Ask PR is never DONE before the owner's acceptance; Hold blocks ------
+
+
+def _owner(repo: Path, tmp_path: Path, key: str, label: str, monkeypatch, n: int = 1) -> None:
+    """The owner's answer to `Change <id>, finding <key>: ...` in the transcript Claude Code keeps."""
+    import datetime as dt
+    import re
+
+    home = tmp_path / "home"
+    monkeypatch.setenv("HOME", str(home))
+    folder = home / ".claude/projects" / re.sub(r"[^A-Za-z0-9]", "-", str(repo.resolve()))
+    folder.mkdir(parents=True, exist_ok=True)
+    q = f"Change {ID}, finding {key}: accept the milestone?"
+    stamp = (dt.datetime.now(dt.timezone.utc) + dt.timedelta(seconds=n)).isoformat()
+    rows = [
+        {"type": "assistant", "timestamp": stamp, "message": {"content": [{
+            "type": "tool_use", "id": f"t{n}", "name": "AskUserQuestion",
+            "input": {"questions": [{"question": q, "options": [{"label": "Accept milestone"}, {"label": "Hold"}]}]}}]}},
+        {"type": "user", "timestamp": stamp, "toolUseResult": {"answers": {q: label}},
+         "message": {"content": [{"type": "tool_result", "tool_use_id": f"t{n}", "content": "ok"}]}},
+    ]  # fmt: skip
+    with (folder / "session.jsonl").open("a") as out:
+        out.write("".join(json.dumps(r) + "\n" for r in rows))
+
+
+@pytest.mark.parametrize("armed", [False, True])
+def test_an_ask_pr_armed_or_not_is_never_done_without_the_owners_acceptance(
+    repo: Path, tmp_path: Path, monkeypatch, armed: bool
+) -> None:
+    monkeypatch.setenv("HOME", str(tmp_path / "home"))
+    _gate(repo, PASS)
+    pr = _pr("OPEN", armed=armed, labels=("ask",))
+    assert _goal(repo, {BRANCH: pr}) == (1, f"GOAL {ID} OPEN pr-7-awaits-owner")
+    _owner(repo, tmp_path, "PR7", "Accept milestone", monkeypatch)
+    assert _goal(repo, {BRANCH: _pr("OPEN", armed=True, labels=("ask",))})[0] == 0
+
+
+def test_a_recorded_hold_blocks_done_and_arming(repo: Path, tmp_path: Path, monkeypatch) -> None:
+    _gate(repo, PASS)
+    _owner(repo, tmp_path, "PR7", "Hold", monkeypatch)
+    for pr in (_pr("OPEN", armed=True, labels=("ship",)), _pr("OPEN", labels=("ask",)), _pr("OPEN", labels=("ship",))):
+        assert _goal(repo, {BRANCH: pr}) == (1, f"GOAL {ID} OPEN pr-7-held")
+    assert "nothing arms it" in sdlc_status.blocker(ID, f"GOAL {ID} OPEN pr-7-held")
+    assert "gh pr merge" not in sdlc_status.blocker(ID, f"GOAL {ID} OPEN pr-7-held")
+
+
+def test_status_never_recommends_arming_before_the_tier_label_exists(
+    repo: Path, tmp_path: Path, monkeypatch
+) -> None:
+    monkeypatch.setenv("HOME", str(tmp_path / "home"))
+    _gate(repo, PASS)
+    assert _goal(repo, {BRANCH: _pr("OPEN")}) == (1, f"GOAL {ID} OPEN pr-7-awaits-tier")
+    out = sdlc_status.blocker(ID, f"GOAL {ID} OPEN pr-7-awaits-tier")
+    assert "gh pr merge" not in out and "tier label" in out
+    assert _goal(repo, {BRANCH: _pr("OPEN", labels=("ship",))}) == (
+        1, f"GOAL {ID} OPEN pr-7-not-merged-or-armed"
+    )  # fmt: skip
+    (repo / "sdlc.json").write_text(json.dumps({"tiers": False}))
+    assert _goal(repo, {BRANCH: _pr("OPEN")}) == (1, f"GOAL {ID} OPEN pr-7-not-merged-or-armed")

@@ -247,3 +247,18 @@ def test_stages_say_the_milestone_checks_name_the_full_e2e_and_old_locks_get_a_g
 
 def test_stages_say_the_gate_derives_the_required_visual_runs() -> None:
     assert "fails `check=ux-visual-required` before the suites" in STAGES
+
+
+# Review fix 8: the workflow arms nothing while the owner's acceptance is pending or on Hold
+WORKFLOW = (SKILL / "templates/workflows/ship-show-ask.yml").read_text(encoding="utf-8")
+
+
+def test_the_workflow_does_not_arm_a_pr_awaiting_the_owner_or_on_hold() -> None:
+    assert "awaiting-owner|hold" in WORKFLOW
+    assert WORKFLOW.count('[ "$held" != "true" ]') == 2  # both the ask-gates and the merge-on-green form
+    assert "unlabeled" in WORKFLOW  # removing the label re-evaluates the arm decision
+
+
+def test_stages_name_the_acceptance_dialog_and_the_hold_rule() -> None:
+    assert "finding PR<n>: " in STAGES and "`Accept milestone`" in STAGES and "`Hold`" in STAGES
+    assert "never DONE, armed or not" in STAGES

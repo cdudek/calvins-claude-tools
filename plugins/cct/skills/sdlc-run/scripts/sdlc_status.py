@@ -317,12 +317,31 @@ def goal(
         pr = found[0]
         merged = pr.get("state") == "MERGED" or bool(pr.get("mergedAt"))
         armed = pr.get("state") == "OPEN" and bool(pr.get("autoMergeRequest"))
-        if not (merged or armed):
-            # arming comes after the owner's disposition: a closed PR and an Ask-tier PR are never
-            # recommended for `gh pr merge --auto`
-            asks = any(str(x.get("name", "")).lower() == "ask" for x in pr.get("labels") or [])
-            kind = "closed" if pr.get("state") == "CLOSED" else "awaits-owner" if asks else ""
-            missing.append(f"pr-{pr['number']}-{kind or 'not-merged-or-armed'}")
+        names_on = {str(x.get("name", "")).lower() for x in pr.get("labels") or []}
+        flag = ""
+        if not merged and pr.get("state") == "OPEN":
+            # the owner's answer to `Change <id>, finding PR<n>: ...` (Accept milestone | Hold)
+            from marks import owner_decisions
+
+            answer = owner_decisions(root, change.name).get(f"PR{pr['number']}", ("",))[0]
+            if answer == "hold":
+                flag = "held"
+            elif "ask" in names_on and answer != "accepted":
+                flag = "awaits-owner"  # armed or not: auto-merge must not win the race
+        if not flag and not (merged or armed):
+            # arming comes after the owner's disposition and after the tier label: a closed PR and
+            # a tiered PR still without its label are never recommended for `gh pr merge --auto`
+            tiered = pr.get("baseRefName") == (cfg.get("defaultBranch") or "main") and cfg.get(
+                "tiers"
+            ) is not False
+            if pr.get("state") == "CLOSED":
+                flag = "closed"
+            elif tiered and not names_on & {"ask", "show", "ship"}:
+                flag = "awaits-tier"
+            else:
+                flag = "not-merged-or-armed"
+        if flag:
+            missing.append(f"pr-{pr['number']}-{flag}")
         if scope == "project" and pr.get("baseRefName") != (cfg.get("defaultBranch") or "main"):
             missing.append(f"pr-{pr['number']}-wrong-base")
         prs.append((pr, "merged" if merged else "armed"))
@@ -524,15 +543,14 @@ def blocker(subject: str, line: str, scope: str = "milestone") -> str:
             )
             fill = {"scope": scope, "id": subject, "n": n}
             return f"Blocking: {what.format(**fill)}, because {why}; {who} runs `{step.format(**fill)}`."
-    waits = re.fullmatch(r"pr-(\d+)-(closed|awaits-owner)", first)
+    waits = re.fullmatch(r"pr-(\d+)-(closed|awaits-owner|held|awaits-tier)", first)
     if waits:
-        what = (
-            "closed without merging, so there is nothing to arm"
-            if waits[2] == "closed"
-            else "waiting for its owner's disposition, so nothing arms it"
-        )
-        step = "opens a new PR for the gated head" if waits[2] == "closed" else "decides it"
-        who = "the agent" if waits[2] == "closed" else "you"
+        what, step, who = {
+            "closed": ("closed without merging, so there is nothing to arm", "opens a new PR for the gated head", "the agent"),
+            "awaits-owner": ("waiting for its owner's acceptance, so nothing arms it", "decides it", "you"),
+            "held": ("on Hold, so nothing arms it", "decides what is left", "you"),
+            "awaits-tier": ("waiting for its tier label, so nothing arms it", "waits for the workflow to set it", "the agent"),
+        }[waits[2]]
         return f"Blocking: PR {waits[1]} is {what}; {who} {step}."
     pr = re.fullmatch(r"pr-(\d+)-not-merged-or-armed", first)
     if pr:

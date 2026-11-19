@@ -600,10 +600,15 @@ person's own browser session. Never use Claude in Chrome or any tool driving tha
    (the owner's answer to the finding dialog). Status never recommends arming a PR that is waiting on one: never arm an
    `ask`-labelled or a closed PR. Into a project it is an interior PR:
    no tier, auto-merge armed on green once those are recorded. Into the default branch the tier
-   decides. **The engineer accepts the milestone** in one `AskUserQuestion`: "Accept
-   (Recommended)" with the one-line reason, or "Hold" with what is left. One go: no dialog;
-   auto-merge is armed on green and the engineer reads `validation.md` in the PR. The dialog
-   comes only when a Critical or High would be deferred.
+   decides. **The engineer accepts the milestone** in one `AskUserQuestion` whose question starts
+   `Change <change id>, finding PR<n>: ` and whose options are `Accept milestone` (recommended, with
+   the one-line reason in its description) and `Hold` (with what is left). An `ask`-tier PR is never
+   DONE, armed or not, until that `Accept milestone` answer exists; a recorded `Hold` blocks DONE
+   and arming for any tier, and status never recommends arming before the tier label exists. One go
+   for ship and show: no dialog; auto-merge is armed on green and the engineer reads
+   `validation.md` in the PR. The dialog comes when a Critical or High would be deferred; then open
+   the PR with the label `awaiting-owner` (the workflow arms nothing while it is set, or while
+   `hold` is set) and remove it after the answer.
    In local mode: with a project branch, skip the push, the PR and auto-merge: after `VERIFY PASS milestone`, run `git switch project/<slug> && git merge --no-ff milestone/<slug>` ([Local milestones](local-first.md#local-milestones)). A milestone without a project still opens this one PR.
 
 ### Enforcement audit
