@@ -5,6 +5,21 @@ version warning, the **Mechanical** lines are what `adopt` does for you (it adds
 with the stack's defaults and never overwrites a value), the **Manual** lines are printed for
 the engineer. A version with no migration lines needs nothing but a re-run of `adopt`.
 
+## 3.20.2 — Second review round: archive keeps its pass, no wrong merges, no silent skips
+
+- **The archive commit keeps its pass.** Stage 7 adds `archived_at` to `facts.md`. That one added line, in a commit that moves the change into the archive, no longer voids the milestone pass. Any other edit to `facts.md`, `done.json` or the evidence still does.
+- **A failed or blocked gate can no longer read as done.** The newest receipt of a milestone wins, so a later failed run is not hidden by an older pass. `goal <id>` without a number reads every milestone's own receipt, so it still works after the builder worktree is gone.
+- **Local milestones follow the same pass rule as PR mode.** A criteria or evidence edit after the gate voids the pass there too.
+- **A wrong base is fixed first.** Status prints the retarget command before anything about arming auto-merge, and a wrong-base hotfix PR is told to go to the default branch.
+- **One milestone's receipt never admits another.** The PR hook matches the receipt's milestone number to the branch. It also reads the owning project from the change record at the gated commit, and still checks the parent and the pass when `gh pr create --repo` names this same repo.
+- **An old `marks.py` blocks loudly.** A milestone gate with a `marks.py` that cannot list design bundles stops with `VERIFY BLOCKED reason=env` and names the upgrade, instead of passing an unrendered bundle.
+- **`--replace` is careful.** Replacing `verify_gate.py` replaces `marks.py` only when it is an unedited kit version, and otherwise lists it for you. Replacing `pr-gate.sh` also installs `pass_proof.py`.
+- **Rendered screens match by path.** `settings/index` and `index` are two screens. A legacy image row folds into its bundle only when the image still exists.
+- **An open question inside a Gherkin step blocks approval.** Only the template's own placeholder is skipped there.
+- **Size S build QA asks only for what size S makes.** `ia.md` and `interaction.md` are checked only when they exist. The readiness verdict is also written to `spec/validation.md` while an older hook may be reading it.
+- Mechanical: re-running `adopt` refreshes `pr-gate.sh`, `pass_proof.py`, `verify_gate.py` and `marks.py`.
+- Manual: a repo that keeps its own `marks.py` must give it a `bundles(change)` function (or take the kit's copy) before its next milestone gate.
+
 ## 3.20.1 — Review fixes: PR bases, receipts that survive, upgrades in either order
 
 - **A PR opens against its real parent.** A feature goes into its milestone branch, a milestone into its project branch (or the default branch when there is none), a project into the default branch. The missing-PR hint now says `--base`, the hook refuses a milestone PR whose base is not its project, and `goal` is not DONE on any other base.

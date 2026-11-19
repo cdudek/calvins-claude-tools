@@ -294,3 +294,29 @@ def test_build_qa_resolves_size_and_skips_before_it_asks_for_readiness_F10() -> 
     assert steps.index("size and skips") < steps.index("approved `readiness.md`")
     assert "authorises this QA" in steps and "never loop back" in steps
     assert "authorises the run" in _read("ux-build-validate", "references", "build.md")
+
+
+# 3.20.2: round-2 review (finding 4, M6).
+SKILLS = SKILL.parent
+
+
+def test_the_readiness_writer_keeps_an_older_hooks_validation_md_current_F4() -> None:
+    """adopt --upgrade leaves an old chain-gate.sh in place; it reads only spec/validation.md, so
+    the writer mirrors its verdict there (no stale accept, no rejected fresh approval)."""
+    text = (SKILLS / "ux-spec-validate/references/spec.md").read_text(encoding="utf-8")
+    mirror = text.split("## Output Template", 1)[1].split("```markdown", 1)[0]
+    assert "<spec>/validation.md" in mirror and "same content" in mirror
+    assert "readiness.md" in mirror and "every write" in mirror
+
+
+def test_size_s_build_qa_needs_neither_ia_nor_interaction_M6() -> None:
+    """Size S skips brief, ia and interaction (chain.md presets): build QA names those files only
+    under a `when ... exists / ran` condition and never requires them."""
+    chain = (SKILL / "references/chain.md").read_text(encoding="utf-8")
+    assert re.search(r"\| `S` \|[^\n]*`brief`, `ia`, `interaction`", chain)
+    build = (SKILLS / "ux-build-validate/references/build.md").read_text(encoding="utf-8")
+    for line in build.splitlines():
+        if re.search(r"ia\.md|interaction\.md", line) and not line.startswith("- `<spec>/screens.md`"):
+            assert re.search(r"\b(when|Size S)\b", line, re.I), line
+    assert "size S skips" in build.split("## Steps", 1)[0]
+    assert "Size S has neither" in build

@@ -106,7 +106,9 @@ table, which is what makes `F1` traceable from `facts.md` through the test to th
    folder. Every file that differs from the kit's copy (hooks, workflows, `scripts/*.py`,
    `docs/sdlc.md`, the guardrail test) is listed as `review diff`, with the changelog's manual
    migrations since the stamp. `adopt --upgrade --replace <file>` shows one file's diff;
-   `--apply --replace <file>` replaces it. A plain `adopt` refreshes all the copies at once.
+   `--apply --replace <file>` replaces it; replacing `verify_gate.py` also replaces `marks.py` only when
+   that is an unedited kit version (an edited one is left and listed), and replacing `pr-gate.sh`
+   also installs `pass_proof.py`. A plain `adopt` refreshes all the copies at once.
 
 ## A repo that already ran the old `goals/` skill
 
