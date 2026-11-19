@@ -1,0 +1,444 @@
+"""Usage: pytest scripts/test_spec.py
+
+spec.py: one file per rule, the drift check, renumbering, the local index, recall eval, the
+three-document consistency check, and the exits for deadlocks D1, S1 and S3.
+"""
+
+from __future__ import annotations
+
+import json
+import subprocess
+import sys
+from pathlib import Path
+
+import pytest
+
+SKILL = Path(__file__).resolve().parents[1]
+sys.path.insert(0, str(SKILL / "templates" / "scripts"))
+import spec  # noqa: E402
+
+
+def sh(root: Path, *args: str) -> str:
+    return subprocess.run(args, cwd=root, capture_output=True, text=True, check=True).stdout
+
+
+def commit(root: Path, msg: str = "c") -> None:
+    sh(root, "git", "add", "-A")
+    sh(root, "git", "commit", "-q", "-m", msg)
+
+
+def rule(root: Path, cap: str, n: int, text: str = "When x, the system shall y.", **meta) -> Path:
+    d = root / "specs" / cap / "rules"
+    d.mkdir(parents=True, exist_ok=True)
+    fm = {"id": f"R{n}", "summary": text.split(".")[0], "status": "live", "proof": "test", **meta}
+    p = d / f"R{n}.md"
+    p.write_text("---\n" + "".join(f"{k}: {v}\n" for k, v in fm.items()) + f"---\n{text}\n")
+    m = root / "specs" / cap / "manifest.yaml"
+    if not m.exists():
+        m.write_text(f"purpose: the {cap} area\naliases: []\ncode: [src/{cap}]\ntests: [tests]\n")
+    return p
+
+
+def tfile(root: Path, name: str, *lines: str) -> Path:
+    p = root / "tests" / name
+    p.parent.mkdir(exist_ok=True)
+    p.write_text("\n".join(lines) + "\n")
+    return p
+
+
+@pytest.fixture
+def repo(tmp_path: Path) -> Path:
+    sh(tmp_path, "git", "init", "-q", "-b", "main")
+    sh(tmp_path, "git", "config", "user.email", "t@example.com")
+    sh(tmp_path, "git", "config", "user.name", "t")
+    (tmp_path / "README.md").write_text("x\n")
+    commit(tmp_path, "init")
+    return tmp_path
+
+
+# ------------------------------------------------------------------ parsing, ids, tags
+
+
+def test_flat_yaml_reads_scalars_lists_and_refuses_anything_else() -> None:
+    got = spec.parse_flat("purpose: a b\naliases: [x, y]\ncode:\n  - src/a\n  - src/b\nowner: ")
+    assert got == {"purpose": "a b", "aliases": ["x", "y"], "code": ["src/a", "src/b"], "owner": []}
+    with pytest.raises(spec.SpecError):
+        spec.parse_flat("a:\n  b: nested")
+
+
+def test_tag_never_matches_a_longer_number_and_ids_sort_numerically(repo: Path) -> None:
+    assert [int(m.group(1)) for m in spec.TAG.finditer("@R12 @R123 x@R9 @R1000")] == [12, 123, 1000]
+    for n in (9, 10, 100):
+        rule(repo, "a", n)
+    assert [r.num for r in spec.load_rules(repo)[0]] == [9, 10, 100]
+
+
+def test_next_id_is_the_highest_ever_used_plus_one_even_after_removal(repo: Path) -> None:
+    rule(repo, "a", 7)
+    rule(repo, "a", 8)
+    commit(repo)
+    (repo / "specs/a/rules/R8.md").unlink()
+    commit(repo)
+    assert spec.next_id(repo) == 9
+    (repo / ".sdlc").mkdir()
+    (repo / ".sdlc/last-rule-id").write_text("40\n")
+    assert spec.next_id(repo) == 41
+
+
+def test_a_moved_rule_keeps_its_history_for_the_next_id(repo: Path) -> None:
+    rule(repo, "a", 5)
+    commit(repo)
+    (repo / "specs/b/rules").mkdir(parents=True)
+    sh(repo, "git", "mv", "specs/a/rules/R5.md", "specs/b/rules/R5.md")
+    commit(repo)
+    assert spec.next_id(repo) == 6
+
+
+# ------------------------------------------------------------------ check
+
+
+def test_no_specs_dir_is_nothing_to_check(repo: Path) -> None:
+    assert spec.check(repo) == []
+
+
+def test_a_live_rule_needs_a_tagged_test_that_runs(repo: Path) -> None:
+    rule(repo, "billing", 1)
+    assert any("no test tagged @R1" in p for p in spec.check(repo))
+    tfile(repo, "test_a.py", "# @R1", "def test_retry(): pass")
+    assert spec.check(repo) == []
+    tfile(repo, "test_a.py", "@pytest.mark.skip", "def test_retry():  # @R1", "    pass")
+    assert any("only in skipped tests" in p for p in spec.check(repo))
+
+
+def test_a_tag_without_a_rule_and_two_rules_with_one_number_fail(repo: Path) -> None:
+    rule(repo, "a", 1)
+    rule(repo, "b", 1)
+    tfile(repo, "test_a.py", "# @R1 @R99")
+    problems = " ".join(spec.check(repo))
+    assert "R1 is in two places" in problems and "@R99" in problems
+
+
+def test_manual_proof_needs_evidence_and_no_tag(repo: Path) -> None:
+    rule(repo, "a", 1, proof="manual")
+    assert any("needs `evidence:`" in p for p in spec.check(repo))
+    rule(repo, "a", 1, proof="manual", evidence="support lead reads the report weekly")
+    assert spec.check(repo) == []
+
+
+def test_a_capability_needs_a_manifest_with_a_purpose(repo: Path) -> None:
+    rule(repo, "a", 1)
+    tfile(repo, "test_a.py", "# @R1")
+    (repo / "specs/a/manifest.yaml").write_text("aliases: []\n")
+    assert any("no purpose" in p for p in spec.check(repo))
+    (repo / "specs/a/manifest.yaml").unlink()
+    assert any("manifest.yaml is missing" in p for p in spec.check(repo))
+
+
+def test_a_changed_rule_needs_a_changed_test_but_a_pure_move_does_not(repo: Path) -> None:
+    rule(repo, "a", 1)
+    rule(repo, "a", 2, text="When q, the system shall r.")
+    tfile(repo, "test_a.py", "# @R1", "# @R2")
+    commit(repo)
+    sh(repo, "git", "checkout", "-q", "-b", "work")
+    rule(repo, "a", 1, text="When x, the system shall z.")
+    problems = spec.check(repo, "main")
+    assert any("R1 changed but no test" in p for p in problems)
+    tfile(repo, "test_a.py", "# @R1 now asserts z", "# @R2")
+    assert spec.check(repo, "main") == []
+    (repo / "specs/b/rules").mkdir(parents=True)
+    (repo / "specs/b/manifest.yaml").write_text("purpose: b\n")
+    sh(repo, "git", "mv", "specs/a/rules/R2.md", "specs/b/rules/R2.md")
+    assert spec.changed_rules(repo, "main")["moved"] == [2]
+    assert spec.check(repo, "main") == []
+
+
+def test_a_removed_id_is_never_reused_and_a_taken_id_is_refused(repo: Path) -> None:
+    rule(repo, "a", 1)
+    rule(repo, "a", 2)
+    tfile(repo, "test_a.py", "# @R1", "# @R2")
+    commit(repo)
+    (repo / "specs/a/rules/R2.md").unlink()
+    tfile(repo, "test_a.py", "# @R1")
+    commit(repo, "remove R2")
+    sh(repo, "git", "checkout", "-q", "-b", "work")
+    rule(repo, "a", 2)
+    tfile(repo, "test_a.py", "# @R1", "# @R2")
+    assert any("never reused" in p for p in spec.check(repo, "main"))
+
+
+# ------------------------------------------------------------------ renumber
+
+
+def test_renumber_moves_only_the_branchs_own_rule_and_its_own_tag_lines(repo: Path) -> None:
+    rule(repo, "a", 42)
+    tfile(repo, "test_x.py", "def test_old():  # @R42", "    pass")
+    commit(repo)
+    sh(repo, "git", "checkout", "-q", "-b", "work")
+    sh(repo, "git", "checkout", "-q", "main")
+    rule(repo, "c", 43)  # another PR merged R43 and R42 is already there; ours collides on 42
+    tfile(
+        repo,
+        "test_x.py",
+        "def test_old():  # @R42",
+        "    pass",
+        "def test_other():  # @R43",
+        "    pass",
+    )
+    commit(repo, "other pr")
+    sh(repo, "git", "checkout", "-q", "work")
+    rule(repo, "b", 42, text="When n, the system shall m.")
+    p = repo / "tests/test_x.py"
+    p.write_text(p.read_text() + "def test_new():  # @R42\n    pass\n")
+    (repo / "changes").mkdir()
+    (repo / "changes/spec.md").write_text("R42 new\n")
+    commit(repo, "ours")
+    assert spec.renumber(repo, "main", dry_run=True) == {"R42": "R44"}
+    assert spec.renumber(repo, "main") == {"R42": "R44"}
+    text = p.read_text()
+    assert "test_old():  # @R42" in text and "test_new():  # @R44" in text
+    assert (repo / "specs/b/rules/R44.md").read_text().startswith("---\nid: R44")
+    assert not (repo / "specs/b/rules/R42.md").exists()
+    assert "R44 new" in (repo / "changes/spec.md").read_text()
+    assert spec.renumber(repo, "main") == {}
+
+
+# ------------------------------------------------------------------ find, index, capabilities, eval
+
+
+def _billing(repo: Path) -> None:
+    rule(repo, "billing", 1, text="When a charge fails, the system shall retry it once.")
+    rule(repo, "reporting", 2, text="The system shall show invoice totals in euros.")
+    (repo / "specs/billing/manifest.yaml").write_text(
+        "purpose: charging customers\naliases: [invoice, payment]\ncode: [src/billing]\ntests: [tests]\n"
+    )
+    commit(repo)
+
+
+def test_find_uses_aliases_and_stems_and_never_leaves_a_committed_index(repo: Path) -> None:
+    _billing(repo)
+    out = spec.find(repo, "invoice retries", limit=1)
+    assert out[0].startswith("R1  billing  live")
+    assert sh(repo, "git", "status", "--porcelain") == ""
+    assert (repo / ".git" / "spec-index.json").exists()
+    rows = json.loads((repo / ".git/spec-index.json").read_text())["rules"]
+    assert set(rows[0]) == {"id", "cap", "summary", "status"}
+
+
+def test_find_rebuilds_when_a_rule_changes_and_finds_an_exact_id(repo: Path) -> None:
+    _billing(repo)
+    spec.find(repo, "invoice")
+    rule(repo, "billing", 3, text="The system shall email a receipt.")
+    assert spec.find(repo, "receipt")[0].startswith("R3  billing")
+    assert spec.find(repo, "R2")[0].startswith("R2  reporting")
+
+
+def test_a_miss_names_the_capability_code_and_tests_and_warns_about_partial_coverage(
+    repo: Path,
+) -> None:
+    _billing(repo)
+    (repo / "specs/billing/manifest.yaml").write_text(
+        "purpose: charging customers\naliases: [refund]\ncode: [src/billing]\ntests: [tests/billing]\ncoverage: partial\n"
+    )
+    out = spec.find(repo, "settlements")
+    assert "no rule matched" in out[0] and "src/billing" in out[1] and "partly catalogued" in out[1]
+
+
+def test_find_flags_open_prs_and_stale_rules_only_when_asked(repo: Path, monkeypatch) -> None:
+    _billing(repo)
+    monkeypatch.setattr(spec, "open_pr_files", lambda root: [(7, ["specs/billing/rules/R1.md"])])
+    assert "open PR #7" in spec.find(repo, "retry", prs=True)[0]
+    assert "open PR" not in spec.find(repo, "retry")[0]
+
+
+def test_open_prs_stay_quiet_when_gh_is_missing(repo: Path, monkeypatch) -> None:
+    monkeypatch.setattr(spec.subprocess, "run", lambda *a, **k: (_ for _ in ()).throw(OSError()))
+    assert spec.open_pr_files(repo) == []
+
+
+def test_capabilities_file_is_one_line_each_and_checkable(repo: Path, monkeypatch) -> None:
+    _billing(repo)
+    text = spec.render_capabilities(repo)
+    assert "- **billing**: charging customers (also: invoice, payment)" in text
+    assert "1 rule" not in text
+    monkeypatch.chdir(repo)
+    assert spec.main(["capabilities", "--check"]) == 1
+    assert spec.main(["capabilities", "--write"]) == 0
+    assert spec.main(["capabilities", "--check"]) == 0
+
+
+def test_eval_scores_find_against_a_grep_and_counts_new_features_apart(repo: Path) -> None:
+    _billing(repo)
+    fixture = [
+        {"id": "c1", "query": "invoice retries", "relevant": ["R1"]},
+        {"id": "c2", "query": "a brand new thing", "relevant": []},
+    ]
+    res = spec.evaluate(repo, fixture, k=1)
+    assert (res["cases"], res["no_prior"], res["find"], res["grep"]) == (1, 1, 1.0, 0.0)
+    res = spec.evaluate(repo, [{**fixture[0], "rev": "HEAD"}], k=1)
+    assert res["find"] == 1.0
+
+
+# ------------------------------------------------------------------ the three documents
+
+SPEC = """---
+type: spec
+change: 2026-11-20-retry
+status: draft
+scope: {scope}
+ux: none
+capabilities: [billing]
+---
+
+# Spec: retry
+
+## Asks
+
+| # | Date | Source | Words | Screen | Resources | Answered by |
+|---|---|---|---|---|---|---|
+| A1 | 2026-11-20 | owner | "retry failed charges" | none | none | {a1} |
+| A2 | 2026-11-20 | owner | "no emails" | none | none | out of scope |
+
+## Requirements
+
+| Rule | Change | Capability | Plain words | Asks |
+|---|---|---|---|---|
+| R1 | new | billing | Retry a failed charge once | A1 |
+
+## Success measure
+
+Failed charges recovered, read in the billing report, target 20 percent.
+"""
+TASKS = """## Tasks
+
+| # | Rules | Test | Needs | Milestone | State |
+|---|---|---|---|---|---|
+| T1 | R1 | test_retry | none | M1 | todo |
+| T2 | R1 | test_email | T1 | M1 | todo |
+"""
+DESIGN = """## Test strategy
+
+| Rule | Level | Real or faked | Data |
+|---|---|---|---|
+| R1 | integration | real db | one failed charge |
+
+## Risks
+
+| Risk | What we do | Proof before build | Lands |
+|---|---|---|---|
+| gateway rate limit | check | `curl -s ...` | T1 |
+"""
+
+
+def _change(
+    repo: Path, scope: str = "S", a1: str = "R1", tasks: str = "", design: str = ""
+) -> Path:
+    c = repo / "changes" / "2026-11-20-retry"
+    c.mkdir(parents=True, exist_ok=True)
+    (c / "decisions.json").write_text('{"layout": 4}')
+    (c / "spec.md").write_text(SPEC.format(scope=scope, a1=a1))
+    if tasks:
+        (c / "tasks.md").write_text(tasks)
+    if design:
+        (c / "design.md").write_text(design)
+    rule(repo, "billing", 1)
+    return c
+
+
+def test_layout_is_pinned_per_change_and_the_old_layout_is_never_checked(repo: Path) -> None:
+    old = repo / "changes" / "old"
+    old.mkdir(parents=True)
+    (old / "facts.md").write_text("x")
+    assert spec.layout(old) == "legacy" and not spec.applies(old)
+    assert spec.documents(old) == ["facts.md"]
+    c = _change(repo)
+    assert spec.applies(c) and spec.documents(c) == ["spec.md"]
+
+
+def test_d1_the_draft_phase_takes_a_pending_ask_and_the_gate_does_not(repo: Path) -> None:
+    c = _change(repo, a1="pending")
+    assert spec.consistency(c, "draft") == []
+    errs = spec.consistency(c, "approve")
+    assert any("ask A1 is still pending" in e for e in errs)
+
+
+def test_an_ask_answered_by_a_rule_that_is_not_listed_is_named(repo: Path) -> None:
+    errs = spec.consistency(_change(repo, a1="R9"), "draft")
+    assert any("A1 is answered by R9" in e for e in errs)
+
+
+def test_s_needs_only_the_spec_and_m_needs_a_task_per_rule_with_a_test(repo: Path) -> None:
+    c = _change(repo, "S")
+    assert spec.consistency(c, "approve") == []
+    c = _change(repo, "M")
+    assert any("no tasks" in e for e in spec.consistency(c, "approve"))
+    c = _change(repo, "M", tasks=TASKS)
+    assert spec.consistency(c, "approve") == []
+    (c / "tasks.md").write_text(
+        TASKS.replace("| T2 | R1 |", "| T2 | R7 |").replace(
+            "T1 | M1 | todo |\n", "T1 | M1 | todo |\n", 1
+        )
+    )
+    errs = spec.consistency(c, "approve")
+    assert any("cites R7" in e for e in errs)
+    (c / "tasks.md").write_text(TASKS.replace("| none |", "| T2 |", 1))
+    assert any("cycle" in e for e in spec.consistency(c, "approve"))
+
+
+def test_l_needs_a_test_strategy_line_per_rule_and_a_proof_per_risk(repo: Path) -> None:
+    c = _change(repo, "L", tasks=TASKS, design=DESIGN)
+    assert spec.consistency(c, "approve") == []
+    (c / "design.md").write_text(DESIGN.replace("`curl -s ...`", "-").replace("| R1 |", "| R5 |"))
+    errs = " ".join(spec.consistency(c, "approve"))
+    assert "R1 has no line" in errs and "Proof before build" in errs
+
+
+def test_the_requirements_table_must_match_the_git_diff_of_the_rules(repo: Path) -> None:
+    rule(repo, "billing", 1)
+    tfile(repo, "test_a.py", "# @R1")
+    commit(repo)
+    sh(repo, "git", "checkout", "-q", "-b", "work")
+    c = _change(repo)
+    rule(repo, "billing", 2)
+    errs = spec.consistency(c, "approve", repo, "main")
+    assert any("disagree on R1, R2" in e for e in errs)  # R1 unchanged in git, R2 not listed
+
+
+def test_s1_build_qa_is_decided_before_any_readiness_file_is_asked_for(repo: Path) -> None:
+    c = _change(repo)
+    s = (c / "spec.md").read_text()
+    assert spec.qa_applicability(c)[0] is False  # ux: none
+    (c / "spec.md").write_text(s.replace("ux: none", "ux: M\nprototype: none"))
+    assert spec.qa_applicability(c) == (False, "prototype: none, recorded at Stage 2")
+    (c / "spec.md").write_text(s.replace("ux: none", "ux: M\nprototype: required"))
+    assert spec.qa_applicability(c)[0] is True
+    (c / "spec.md").write_text(s.replace("ux: none", "ux: M"))
+    assert any("record `prototype" in e for e in spec.consistency(c, "draft"))
+
+
+def test_s3_the_outcome_outlives_the_folder_with_no_tracker_and_no_later_pr(repo: Path) -> None:
+    c = _change(repo)
+    p = spec.outcome_write(repo, c, due="2026-12-01")
+    rec = json.loads(p.read_text())
+    assert rec["rules"] == ["R1"] and "20 percent" in rec["measure"] and rec["observed"] is None
+    for f in c.iterdir():
+        f.unlink()
+    c.rmdir()
+    assert spec.outcome_due(repo, "2026-12-02") == ["2026-11-20-retry"]
+    assert spec.outcome_due(repo, "2026-11-30") == []
+    spec.outcome_record(repo, "2026-11-20-retry", "23 percent", True, "2026-12-02")
+    assert spec.outcome_due(repo, "2026-12-09") == []
+    assert json.loads(p.read_text())["met"] is True
+
+
+# ------------------------------------------------------------------ copies
+
+
+def test_installed_copies_match_the_template() -> None:
+    template = (SKILL / "templates/scripts/spec.py").read_bytes()
+    kit = SKILL.parents[2].parent
+    for copy in (
+        kit / "scripts/spec.py",
+        kit / "plugins/cct/blueprint/web-nextjs-cloud-run/scripts/spec.py",
+    ):
+        if copy.exists():
+            assert copy.read_bytes() == template, copy
