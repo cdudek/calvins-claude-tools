@@ -67,9 +67,45 @@ jobs:
         run: |
           if [ "$EVENT" = pull_request ]; then git diff --no-renames --name-only HEAD^1 HEAD; fi | bash scripts/ci-scope.sh | tee -a "$GITHUB_OUTPUT"
 
+  # Seconds, no install: sdlc.json config conflicts (scripts/preflight.py --config). Without the script (a repo that
+  # has not adopted it) the job prints a notice and passes.
+  preflight:
+    name: Preflight
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+          sparse-checkout: |
+            sdlc.json
+            scripts
+          sparse-checkout-cone-mode: false
+      - run: |
+          if [ ! -f scripts/preflight.py ]; then echo "::notice::no scripts/preflight.py: run sdlc-run adopt"; exit 0; fi
+          python3 scripts/preflight.py --config
+
+  # The living spec: every changed rule has a changed, tagged test, no rule id is reused, no tag names a missing
+  # rule. A repo with no specs folder (and no sdlc.json livingSpecs) passes at once. The base must resolve, so the
+  # clone is full: a shallow one has no origin/<base> and the strict check would always fail.
+  spec:
+    name: Living spec
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+          fetch-depth: 0
+      - env:
+          BASE: ${{ github.base_ref || github.event.repository.default_branch }}
+        run: |
+          if [ ! -f scripts/spec.py ]; then echo "::notice::no scripts/spec.py: run sdlc-run adopt"; exit 0; fi
+          python3 scripts/spec.py check --base "origin/$BASE"
+
   static:
     name: Format, lint, typecheck
-    needs: changes
+    needs: [changes, preflight]
     if: needs.changes.outputs.lint == 'true'
     runs-on: ubuntu-latest
     steps:
@@ -89,7 +125,7 @@ jobs:
 
   unit:
     name: Unit tests
-    needs: changes
+    needs: [changes, preflight]
     if: needs.changes.outputs.unit == 'true'
     runs-on: ubuntu-latest
     env:
@@ -124,7 +160,7 @@ jobs:
   # to the wall clock without making it shorter).
   e2e:
     name: E2E ${{ matrix.name }}
-    needs: changes
+    needs: [changes, preflight]
     if: needs.changes.outputs.matrix != '[]'
     runs-on: ubuntu-latest
     strategy:
@@ -288,19 +324,22 @@ jobs:
   check:
     name: check
     if: always()
-    needs: [changes, secrets-scan, static, unit, e2e, dependencies, docker]
+    needs: [changes, secrets-scan, preflight, spec, static, unit, e2e, dependencies, docker]
     runs-on: ubuntu-latest
     steps:
       # A job must succeed when its flag is on and must be skipped when it is off; `changes` and the secret scan always run.
       - env:
           CHANGES: ${{ needs.changes.result }}
           SECRETS: ${{ needs.secrets-scan.result }}
+          PREFLIGHT: ${{ needs.preflight.result }}
+          SPEC: ${{ needs.spec.result }}
           STATIC: ${{ needs.changes.outputs.lint }}:${{ needs.static.result }}
           UNIT: ${{ needs.changes.outputs.unit }}:${{ needs.unit.result }}
           IMAGE: ${{ needs.changes.outputs.image }}:${{ needs.dependencies.result }}:${{ needs.docker.result }}
           E2E: ${{ needs.changes.outputs.matrix != '[]' }}:${{ needs.e2e.result }}
         run: |
           [ "$CHANGES" = success ] && [ "$SECRETS" = success ] || { echo "::error::changes or the secret scan ended $CHANGES / $SECRETS"; exit 1; }
+          [ "$PREFLIGHT" = success ] && [ "$SPEC" = success ] || { echo "::error::preflight or the living spec ended $PREFLIGHT / $SPEC"; exit 1; }
           ok() { # flag:result... ; flag true needs every result success, false needs every result skipped
             local want=skipped flag=${1%%:*} r; [ "$flag" = true ] && want=success
             for r in $(echo "${1#*:}" | tr : ' '); do [ "$r" = "$want" ] || { echo "::error::expected $want, got $r (flag $flag)"; return 1; }; done

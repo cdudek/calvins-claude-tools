@@ -553,3 +553,11 @@ def test_status_never_runs_the_repos_checked_in_heavy_py(tmp_path: Path) -> None
     status_py = SCRIPTS.parents[1] / "scripts" / "sdlc_status.py"
     out = subprocess.run([sys.executable, str(status_py), "map", GAID], cwd=repo, capture_output=True, text=True, env=_env()).stdout
     assert not marker.exists() and "forged" not in out, out
+
+
+def test_the_blueprint_ci_has_the_templates_preflight_and_spec_jobs() -> None:
+    template = (SCRIPTS.parent / "ci" / "github-actions.yml").read_text()
+    blueprint = (SCRIPTS.parents[3] / "blueprint/web-nextjs-cloud-run/.github/workflows/ci.yml").read_text()
+    block = template[template.index("  # Seconds, no install: sdlc.json config conflicts") : template.index("  lint:\n")]
+    assert block in blueprint
+    assert "preflight, spec," in blueprint and "PREFLIGHT" in blueprint  # `check` waits for both
