@@ -33,7 +33,14 @@ Shared files are in `references/`, two levels up from this skill's base director
    reference image, create `<change folder>/spec/` holding only `qa.md` (the gate requires it for
    any visual change, and the run compares the build with that source); otherwise stop and say
    `cct:ux-design-run` makes one.
-3. Read the size and skips first: `decisions.json` in sdlc mode, the frontmatter of
+3. **Decide first whether this QA applies, before any readiness file is asked for.** When the
+   change has a `spec.md` (sdlc-run layout 4), run `python3 scripts/spec.py qa <change>` and obey
+   its exit: `3` the QA is skipped, so say the printed reason in one line and stop, asking for no
+   readiness file and no second gate; `2` Stage 2 recorded no `ux` or `prototype` value, so stop
+   and say the spec must record it (never read a missing record as a skip); `0` continue, and the
+   joint gate's approval of the spec is the approval this run needs. Without a `spec.md`, use the
+   rule below.
+   Read the size and skips: `decisions.json` in sdlc mode, the frontmatter of
    `<spec>/brief.md` in standalone mode. The size is `none`, or the `prototype` skip is set and
    `decisions.json` names no `visualSource`: do not run; say the skip and its reason in one line.
    With a `visualSource`, compare the build against it (precedence in sdlc-run's

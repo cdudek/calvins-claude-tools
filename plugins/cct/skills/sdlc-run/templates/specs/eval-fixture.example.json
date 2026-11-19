@@ -1,0 +1,4 @@
+[
+  {"id": "case-1", "query": "retry a failed invoice charge", "paths": ["src/billing/charge.py"], "relevant": ["R12", "R40"], "rev": null},
+  {"id": "case-2", "query": "a brand new export format", "paths": [], "relevant": []}
+]
