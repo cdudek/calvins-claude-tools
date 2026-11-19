@@ -9,6 +9,8 @@ read_when: when you wire the gate, the hooks or the status code to the heavy-job
 
 # Heavy-job queue and fail-fast: what the core stream wires in
 
+**Status (3.21.0):** every item below is wired. Gate: `queued()` and the `preflight` evidence check in `verify_gate.py`; hooks: `pr-gate.sh`, `gate-bash.sh`, `chain-gate.sh`, `verify-on-stop.sh`, `helper-guard.sh`; status: `sdlc_status.py` and `status.sh`. The sections keep the reasoning.
+
 The queue, the database helpers, the evidence ledger and the preflight are new scripts
 (`templates/scripts/heavy.py`, `db.py`, `evidence.py`, `preflight.py`) with docs in
 `references/heavy-work.md`. This note lists what needs a change in a file the heavy stream did

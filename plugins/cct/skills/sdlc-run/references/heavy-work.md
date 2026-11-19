@@ -100,10 +100,13 @@ decision.
 
 ## Guards
 
-- **Helpers never work in the main working folder.** `heavy.py guard-main` exits 3 in the main
-  working folder. As a PreToolUse hook on Bash (`heavy.py guard-main --hook`) it refuses only a
-  subagent's call (the payload carries `agent_id`), so the owner's own session is not touched. Wiring and
-  the call site: `docs/designs/heavy-integration.md`.
+- **A helper's heavy command goes through the queue.** `heavy.py guard-main` exits 3 in the main
+  working folder. As the PreToolUse hook `helper-guard.sh` (`heavy.py guard-main --hook`) it refuses
+  only a subagent's heavy command that does not run as `heavy.py run|submit`: the payload carries
+  `agent_id` for a subagent, and an absent, empty or unreadable field is the owner's own session,
+  which is never refused. The command is split into real segments and wrappers (`env`, `timeout`,
+  `nice`, `xargs`, `sh -c`, `find -exec`) are read by their inner command. It stops a careless
+  agent; it is not a sandbox.
 - **Evidence is one file per screen.** `evidence.py record` writes `<dir>/<screen>.json` with the shot's
   hash and a hash of each text-catalogue key the screen shows. Parallel helpers never write the same
   file, and a ledger edit conflicts with nothing.

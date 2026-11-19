@@ -78,7 +78,7 @@ Two words used to collide, so they are fixed here: the playbook's `spec.md` is o
 | `milestone` | `{"kind": "new"\|"existing"\|"single"\|"hotfix", "slug"}`. Its presence marks a folder on the milestone process. |
 | `prExceptions` | `[{"branch", "words"}]`, or absent. A PR or push `pr-gate.sh` would refuse, allowed for that head branch only, with the engineer's own words. Never written without them. |
 | `project` | `{"kind": "new"\|"existing", "slug"}`, or **absent**. Absent is the normal case: the milestone is cut from the default branch and its PR goes there. Present means the milestone is cut from `project/<slug>` and its PR goes there instead, and the project branch is what later opens the one reviewed, tiered PR into the default branch. |
-| `protectedEdit` | the engineer's words that allow one edit of a protected path after approval. |
+| `protectedEdit` | the engineer's words that allow one edit of a protected path after approval: a string, or `{"path", "words", "sha"}` (or a list) that limits it to one file and to the lock it was given for. The hook spends it on the edit it allows (ledger in the git dir); a ledger it cannot read denies. |
 
 Three processes live side by side, chosen by the folder, never by the date:
 
