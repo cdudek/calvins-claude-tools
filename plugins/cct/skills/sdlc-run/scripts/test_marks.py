@@ -718,3 +718,67 @@ def test_a_well_formed_sha_that_is_no_commit_is_stale(repo: Path) -> None:
     manifest["entries"][0]["build"] = "0" * 40
     rewrite(repo, manifest)
     assert "is not a commit here" in run(repo, "check").stdout
+
+
+# Security review of the strict manifest: no fail-open edges.
+@pytest.mark.parametrize("content", ["{broken", "[]", "null", ""])
+def test_a_corrupt_lock_turns_the_strict_checks_on_never_off(repo: Path, content: str) -> None:
+    resolved(repo)
+    write(change(repo) / "lock.json", content)
+    result = run(repo, "check")
+    assert result.returncode == 1 and "capture manifest is required" in result.stdout
+
+
+def test_no_lock_at_all_keeps_the_legacy_behaviour(repo: Path) -> None:
+    resolved(repo)
+    assert not (change(repo) / "lock.json").exists()
+    assert run(repo, "check").returncode == 0
+
+
+def test_a_visual_change_without_any_qa_md_fails_even_without_a_spec_folder(repo: Path) -> None:
+    strict(repo)
+    import shutil
+
+    shutil.rmtree(change(repo) / "spec")
+    assert "qa.md is missing" in run(repo, "check").stdout
+
+
+def test_a_strict_change_without_visual_rows_needs_no_qa_md(repo: Path) -> None:
+    write(change(repo) / "marks.json", '{"rows": []}')
+    for path in (change(repo) / "asks").rglob("*"):
+        if path.is_file():
+            path.unlink()
+    write(change(repo) / "lock.json", json.dumps({"criteria": {}, "manifest": "required"}))
+    out = run(repo, "check").stdout
+    assert "qa.md" not in out and "capture manifest is required" not in out
+
+
+def test_the_strict_qa_check_runs_even_when_the_manifest_is_missing(repo: Path) -> None:
+    resolved(repo)
+    write(change(repo) / "lock.json", json.dumps({"criteria": {}, "manifest": "required"}))
+    out = run(repo, "check").stdout
+    assert "capture manifest is required" in out and "qa.md is missing" in out
+
+
+@pytest.mark.parametrize("source", ["/etc/passwd", "/", ".", "..", "../x", "src/../src/a.ts", "src/nothing.ts", "untracked.ts"])
+def test_a_declared_source_must_be_a_plain_path_tracked_at_head(repo: Path, source: str) -> None:
+    manifest = strict(repo)
+    write(repo / "untracked.ts", "x")
+    manifest["entries"][0]["sources"] = [source]
+    rewrite(repo, manifest)
+    out = run(repo, "check").stdout
+    assert "is not a plain repo path tracked at HEAD" in out, out
+
+
+def test_a_shared_dependency_must_be_tracked_too(repo: Path) -> None:
+    manifest = strict(repo)
+    manifest["shared"] = ["src/nowhere.ts"]
+    rewrite(repo, manifest)
+    assert "is not a plain repo path tracked at HEAD" in run(repo, "check").stdout
+
+
+def test_a_source_folder_tracked_at_head_is_accepted(repo: Path) -> None:
+    manifest = strict(repo)
+    manifest["entries"][0]["sources"] = ["src"]
+    rewrite(repo, manifest)
+    assert run(repo, "check").returncode == 0, run(repo, "check").stdout

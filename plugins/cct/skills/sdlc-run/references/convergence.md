@@ -108,7 +108,7 @@ work; each `build` is a full 40-character commit sha, never `HEAD` or a branch; 
 the sha256 `reference` digest; each entry lists the `sources` (repo files or folders) of its screen
 and the manifest lists `shared` dependencies, so a fix to screen A leaves screen B's cell valid and a
 change to a shared file invalidates every cell; and `<spec>/qa.md` must exist and record its own
-`Build: <sha>` line, which is checked against HEAD (the manifest's `qa` metadata is ignored).
+`Build: <sha>` line, which is checked against HEAD (the manifest's `qa` metadata is ignored). Fail closed: an unreadable `lock.json` counts as strict; a change with visual rows needs `qa.md` even without a spec folder or a manifest; every declared `sources` and `shared` path must be a plain repo path (no absolute path, `.` or `..`) tracked at HEAD. `lock.json` is protected after approval by `chain-gate.sh`.
 
 Capture all visual evidence from one build per milestone version, from a worktree pinned to one
 commit. Never capture from the live milestone branch: merges moved the branch in the middle of a

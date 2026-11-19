@@ -375,20 +375,26 @@ def stale_build(
 
 
 def manifest_required(change: Path) -> bool:
-    """A change approved from 3.21.0 has `"manifest": "required"` in its lock; older ones keep the
-    behaviour in which an absent manifest is fine."""
-    try:
-        return json.loads((change / "lock.json").read_text(encoding="utf-8")).get("manifest") == "required"
-    except (OSError, ValueError, AttributeError):
+    """A change approved from 3.21.0 has `"manifest": "required"` in its lock; older changes keep
+    the behaviour in which an absent manifest is fine. Fails closed: a lock.json that exists but
+    cannot be read as an object is treated as strict, never as legacy. (Editing a lock after
+    approval is refused by chain-gate.sh, and the gate compares its hashes.)"""
+    path = change / "lock.json"
+    if not path.exists():
         return False
+    try:
+        data = json.loads(path.read_text(encoding="utf-8"))
+    except (OSError, ValueError):
+        return True
+    return not isinstance(data, dict) or data.get("manifest") == "required"
 
 
-def qa_problems(change: Path, repo: Path) -> list[str]:
-    """`<spec>/qa.md` verified by its own recorded `Build: <sha>`, never by manifest metadata."""
-    spec = change / "spec"
-    if not spec.is_dir():
+def qa_problems(change: Path, repo: Path, visual: bool) -> list[str]:
+    """`<spec>/qa.md` verified by its own recorded `Build: <sha>`, never by manifest metadata. A
+    change with visual work needs one even without a spec folder; other changes are exempt."""
+    if not visual:
         return []
-    qa = spec / "qa.md"
+    qa = change / "spec" / "qa.md"
     if not qa.is_file():
         return ["qa.md is missing: build QA has not been recorded for this change"]
     m = re.search(r"^Build:\s*`?(\S+?)`?\s*$", qa.read_text(encoding="utf-8"), re.M | re.I)
@@ -399,27 +405,52 @@ def qa_problems(change: Path, repo: Path) -> list[str]:
     return []
 
 
+def tracked_source(repo: Path, source: object) -> bool:
+    """A declared source is a plain repo-relative path (no absolute path, `.`, `..` or empty
+    component) that names a file or folder tracked at HEAD, so a narrowed staleness check can
+    never be made to watch nothing."""
+    if not filled(source) or Path(str(source)).is_absolute():
+        return False
+    parts = str(source).strip().rstrip("/").split("/")
+    if any(p in ("", ".", "..") for p in parts):
+        return False
+    listed = subprocess.run(
+        ["git", "-C", str(repo), "ls-tree", "-r", "--name-only", "HEAD", "--", "/".join(parts)],
+        capture_output=True,
+        text=True,
+    )
+    return listed.returncode == 0 and bool(listed.stdout.strip())
+
+
 def manifest_problems(change: Path, rows: list[dict], repo: Path) -> list[str]:
     """Problems with verify/shots/manifest.json against the rows. An absent file is a problem only
     when the lock requires one (3.21.0) and rows hold visual work; the strict rules (commit sha,
     reference digest, per-cell sources, a real qa.md) apply to those changes only."""
     path = change / "verify/shots/manifest.json"
     strict = manifest_required(change)
+    visual = any(filled(r.get("shot")) for r in rows) or any(
+        r.get("kind") in ("reference", "bundle") for r in rows
+    )
+    problems = qa_problems(change, repo, visual) if strict else []  # whether or not a manifest exists
     if not path.exists():
-        visual = any(filled(r.get("shot")) for r in rows) or any(
-            r.get("kind") in ("reference", "bundle") for r in rows
-        )
-        return ["capture manifest is required (verify/shots/manifest.json): no capture is recorded"] if strict and visual else []
+        if strict and visual:
+            problems.append("capture manifest is required (verify/shots/manifest.json): no capture is recorded")
+        return problems
     try:
         data = json.loads(path.read_text(encoding="utf-8"))
         entries = [e for e in data["entries"] if isinstance(e, dict)]
     except (OSError, ValueError, KeyError, TypeError):
-        return ["capture manifest: unreadable; it needs an entries list"]
-    problems = []
+        return problems + ["capture manifest: unreadable; it needs an entries list"]
     cells = [(e.get("screen"), e.get("state"), e.get("width"), e.get("zoom")) for e in entries]
     problems += [f"capture manifest: cell {c} captured twice" for c in sorted(set(
         c for c in cells if cells.count(c) > 1), key=str)]  # fmt: skip
     shared = data.get("shared") if isinstance(data.get("shared"), list) else []
+    if strict:
+        problems += [
+            f"capture manifest: shared dependency {x!r} is not a plain repo path tracked at HEAD"
+            for x in shared
+            if not tracked_source(repo, x)
+        ]
     for entry in entries:
         mine = entry.get("sources")
         paths = None
@@ -427,15 +458,18 @@ def manifest_problems(change: Path, rows: list[dict], repo: Path) -> list[str]:
             if not (isinstance(mine, list) and mine and all(filled(x) for x in mine)):
                 problems.append(f"capture {entry.get('shot')}: must list the source files of its screen")
             else:
+                bad = [x for x in mine if not tracked_source(repo, x)]
+                problems += [
+                    f"capture {entry.get('shot')}: source {x!r} is not a plain repo path tracked at HEAD"
+                    for x in bad
+                ]
                 paths = [*mine, *[x for x in shared if filled(x)]]
             ref = entry.get("reference")
             if not (isinstance(ref, str) and re.fullmatch(r"[0-9a-f]{64}", ref)):
                 problems.append(f"capture {entry.get('shot')}: reference digest is required (sha256)")
         if why := stale_build(repo, change, entry.get("build"), paths, strict):
             problems.append(f"capture {entry.get('shot')}: stale: {why}")
-    if strict:
-        problems += qa_problems(change, repo)
-    else:
+    if not strict:
         qa = data.get("qa")
         if isinstance(qa, dict) and (why := stale_build(repo, change, qa.get("build"))):
             problems.append(f"qa.md is stale: {why}")
