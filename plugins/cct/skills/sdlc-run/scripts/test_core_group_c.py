@@ -364,3 +364,20 @@ def test_a_merged_unnumbered_branch_is_milestone_one_only(repo: Path) -> None:  
     assert sdlc_status.goal_removed(repo, ID, "milestone", 2, gh=gh) is None
     assert sdlc_status.goal_removed(repo, ID, "milestone", 1, gh=gh) == (0, f"GOAL {ID} DONE pr=5 state=merged folder=removed")
     assert sdlc_status.goal_removed(repo, ID, "milestone", None, gh=gh)[0] == 0
+
+
+def test_a_removed_layout_4_change_reads_its_milestones_from_tasks_md(repo: Path) -> None:  # noqa: F811
+    """One merged milestone out of two is never DONE, whichever file listed the milestones."""
+    folder = repo / "changes" / ID
+    (folder / "tasks.md").write_text(
+        "## Tasks\n\n| # | Milestone |\n|---|---|\n| T1 | M1 |\n| T2 | M2 |\n\n"
+        "## Milestones\n\n| Milestone | Tasks | needs |\n|---|---|---|\n| M1 a | T1 | none |\n| M2 b | T2 | M1 |\n"
+    )
+    env = {k: v for k, v in __import__("os").environ.items() if not k.startswith("GIT_")}
+    for cmd in (["add", "."], ["-c", "user.name=t", "-c", "user.email=t@t", "commit", "-qm", "c"], ["rm", "-rqf", "changes"]):
+        subprocess.run(["git", *cmd], cwd=repo, check=True, env=env, capture_output=True)
+    subprocess.run(["git", "-c", "user.name=t", "-c", "user.email=t@t", "commit", "-qm", "gone"], cwd=repo, check=True, env=env, capture_output=True)
+    gh = lambda root, *a: [_merged("milestone/redesign-r2-1", 5)]  # noqa: E731
+    assert sdlc_status.goal_removed(repo, ID, "milestone", None, gh=gh) is None
+    both = lambda root, *a: [_merged("milestone/redesign-r2-1", 5), _merged("milestone/redesign-r2-2", 6)]  # noqa: E731
+    assert sdlc_status.goal_removed(repo, ID, "milestone", None, gh=both)[0] == 0

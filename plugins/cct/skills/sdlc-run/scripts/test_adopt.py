@@ -755,6 +755,19 @@ def test_migrates_legacy_change_ids_and_drops_pending(tmp_path: Path) -> None:
     assert not list((repo / "changes").glob("*-adopt-sdlc"))
 
 
+def _adopt_knowing(repo: Path, texts: dict[str, str], *args: str) -> subprocess.CompletedProcess[str]:
+    """adopt with `texts` (workflow name -> content) added to its list of kit workflow versions."""
+    code = (
+        "import hashlib, sys\n"
+        f"sys.path.insert(0, {str(ADOPT.parent)!r}); sys.argv = ['adopt.py', *{[*args, '--tiers', 'yes']!r}]\n"
+        "import adopt\n"
+        f"for n, t in {texts!r}.items():\n"
+        "    adopt.KIT_WORKFLOWS[n].add(hashlib.sha256(adopt.workflow_shape(t).encode()).hexdigest()[:16])\n"
+        "sys.exit(adopt.main())\n"
+    )
+    return subprocess.run([sys.executable, "-c", code], cwd=repo, capture_output=True, text=True, env=_env())
+
+
 def test_adopt_removes_the_claude_workflows_and_the_claude_key(tmp_path: Path) -> None:
     """3.7.0: no Claude in CI. A repo adopted before keeps claude-review.yml, claude.yml,
     ci-triage.yml and `claude` in sdlc.json; adopt takes all of them out (git rm) and never asks
@@ -765,6 +778,7 @@ def test_adopt_removes_the_claude_workflows_and_the_claude_key(tmp_path: Path) -
     wf = repo / ".github" / "workflows"
     for name in ("claude-review.yml", "claude.yml", "ci-triage.yml"):
         (wf / name).write_text("name: old\n")
+    kit_texts = {n: "name: old\n" for n in ("claude-review.yml", "claude.yml", "ci-triage.yml")}
     cfg = json.loads((repo / "sdlc.json").read_text())
     cfg["claude"] = True
     (repo / "sdlc.json").write_text(json.dumps(cfg, indent=2) + "\n")
@@ -777,7 +791,7 @@ def test_adopt_removes_the_claude_workflows_and_the_claude_key(tmp_path: Path) -
     )
 
     for flag in ((), ("--upgrade",)):
-        res = _adopt(repo, *flag)
+        res = _adopt_knowing(repo, kit_texts, *flag)
         assert res.returncode == 0, res.stdout + res.stderr
         out = _sections(res.stdout)
         for name in ("claude-review.yml", "claude.yml", "ci-triage.yml"):
@@ -1888,15 +1902,24 @@ def test_a_plain_adopt_writes_a_new_kit_path_when_free_or_an_unedited_kit_copy_H
 
 
 # 3.21.0: `--migrate` is the one way across kit versions.
-def _fake_gh(tmp_path: Path, merged: str) -> dict[str, str]:
-    """A gh that reports a merged PR only for the change id `merged`."""
+def _fake_gh(tmp_path: Path, head: str) -> dict[str, str]:
+    """A gh whose merged PRs are the one from branch `head`."""
     bin_dir = tmp_path / "bin"
     bin_dir.mkdir()
-    (bin_dir / "gh").write_text(
-        f'#!/bin/sh\ncase "$*" in *{merged}*) echo \'[{{"number": 4}}]\' ;; *) echo "[]" ;; esac\n'
-    )
+    (bin_dir / "gh").write_text(f"#!/bin/sh\necho '[{{\"number\": 4, \"headRefName\": \"{head}\"}}]'\n")
     (bin_dir / "gh").chmod(0o755)
     return {**_env(), "PATH": f"{bin_dir}{os.pathsep}{os.environ['PATH']}"}
+
+
+def _oldest_blob(rel: str) -> bytes:
+    """The oldest kit version of an installed hook or script, from the history."""
+    sub = "hooks" if rel.startswith(".claude/hooks/") else "scripts"
+    top = subprocess.run(["git", "rev-parse", "--show-toplevel"], cwd=ADOPT.parent, capture_output=True, text=True, check=True).stdout.strip()
+    path = (ADOPT.parents[1] / "templates" / sub / Path(rel).name).relative_to(top).as_posix()
+    commits = subprocess.run(["git", "log", "--format=%H", "--", path], cwd=top, capture_output=True, text=True, check=True).stdout.split()
+    if not commits:
+        pytest.skip("no history to take an older kit version from")
+    return subprocess.run(["git", "show", f"{commits[-1]}:{path}"], cwd=top, capture_output=True, check=True).stdout
 
 
 def _stamped_3_18(tmp_path: Path) -> Path:
@@ -1910,7 +1933,7 @@ def _stamped_3_18(tmp_path: Path) -> Path:
     live = repo / "changes" / "2026-11-01-inflight"
     live.mkdir()
     (live / "lock.json").write_text("{}")
-    (repo / "scripts/verify_gate.py").write_text("# a 3.18 gate\n")
+    (repo / "scripts/verify_gate.py").write_bytes(_oldest_blob("scripts/verify_gate.py"))
     (repo / "scripts/db.py").write_text("# the repo's own database helper\n")
     cfg = json.loads((repo / "sdlc.json").read_text())
     cfg["sdlcVersion"] = "3.18.0"
@@ -1924,7 +1947,7 @@ def _stamped_3_18(tmp_path: Path) -> Path:
 
 def test_migrate_brings_a_3_18_repo_to_this_kit_in_one_run(tmp_path: Path) -> None:
     repo = _stamped_3_18(tmp_path)
-    env = _fake_gh(tmp_path, "2026-10-01-merged-one")
+    env = _fake_gh(tmp_path, "milestone/merged-one-1")
     res = subprocess.run([sys.executable, str(ADOPT), "--migrate", "--tiers", "yes"], cwd=repo, capture_output=True, text=True, env=env)
     assert res.returncode == 0, res.stderr
     kit = ADOPT.parents[1] / "templates"
@@ -1932,11 +1955,11 @@ def test_migrate_brings_a_3_18_repo_to_this_kit_in_one_run(tmp_path: Path) -> No
     assert (repo / "scripts/verify_gate.py").read_bytes() == (kit / "scripts/verify_gate.py").read_bytes()
     assert (repo / "scripts/spec.py").read_bytes() == (kit / "scripts/spec.py").read_bytes()
     assert (repo / ".claude/hooks/pr-gate.sh").read_bytes() == (kit / "hooks/pr-gate.sh").read_bytes()
-    # a file the kit did not ship stays; the kit helper is installed beside it, and the run says so
+    # a file the kit did not ship stays untouched and the run says so; no second copy is written
     assert (repo / "scripts/db.py").read_text() == "# the repo's own database helper\n"
-    assert (repo / "scripts/sdlc/db.py").read_bytes() == (kit / "scripts/db.py").read_bytes()
+    assert not (repo / "scripts/sdlc").exists()
     manual = "\n".join(_sections(res.stdout)["MANUAL"])
-    assert "scripts/db.py is a file of your own" in manual and "scripts/sdlc/db.py" in manual
+    assert "scripts/db.py: a file of your own" in manual
     # a `keep` file stays, with a line
     assert "the repo's own" in (repo / ".claude/hooks/lint-on-edit.sh").read_text()
     assert "lint-on-edit.sh is in sdlc.json `keep`" in manual
@@ -1944,9 +1967,9 @@ def test_migrate_brings_a_3_18_repo_to_this_kit_in_one_run(tmp_path: Path) -> No
     assert not (repo / "changes/archive/2026/2026-10/2026-10-01-merged-one").exists()
     assert (repo / "changes/archive/2026/2026-10/2026-10-02-unmerged-one").exists()
     assert "2026-10-02-unmerged-one: kept, gh could not confirm" in manual
-    # the version is stamped and the in-flight change gets its one gate run, with the command
+    # the version is stamped; a change with no unmerged branch is not in flight, so no gate run
     assert json.loads((repo / "sdlc.json").read_text())["sdlcVersion"] != "3.18.0"
-    assert "python3 scripts/verify_gate.py milestone 2026-11-01-inflight" in manual
+    assert "2026-11-01-inflight" not in manual
 
 
 def test_migrate_keeps_every_archive_when_gh_is_missing(tmp_path: Path) -> None:
@@ -1971,3 +1994,179 @@ def test_replacing_one_gate_file_says_use_migrate_and_writes_nothing(tmp_path: P
     res = _adopt(repo, "--upgrade", "--apply", "--replace", gate_file)
     assert res.returncode != 0 and "--migrate" in res.stderr
     assert _tree(repo) == before
+
+
+def _migrate(repo: Path, env: dict[str, str], *args: str) -> subprocess.CompletedProcess[str]:
+    return subprocess.run([sys.executable, str(ADOPT), "--migrate", "--tiers", "yes", *args], cwd=repo, capture_output=True, text=True, env=env)
+
+
+def test_migrate_dry_run_changes_nothing(tmp_path: Path) -> None:
+    repo = _stamped_3_18(tmp_path)
+    before = _tree(repo)
+    res = _migrate(repo, _fake_gh(tmp_path, "milestone/merged-one-1"), "--dry-run")
+    assert res.returncode == 0, res.stderr
+    assert _tree(repo) == before
+    status = subprocess.run(["git", "status", "--porcelain"], cwd=repo, capture_output=True, text=True).stdout
+    assert status == ""
+
+
+def test_migrate_keeps_an_archive_when_the_merged_pr_is_from_another_branch(tmp_path: Path) -> None:
+    repo = _stamped_3_18(tmp_path)
+    res = _migrate(repo, _fake_gh(tmp_path, "dependabot/npm/left-pad-2026-10-01-merged-one"))
+    assert res.returncode == 0, res.stderr
+    assert (repo / "changes/archive/2026/2026-10/2026-10-01-merged-one").exists()
+    assert "2026-10-01-merged-one: kept, gh could not confirm" in "\n".join(_sections(res.stdout)["MANUAL"])
+
+
+def test_migrate_removes_tracked_files_only_and_lists_a_folder_with_untracked_files(tmp_path: Path) -> None:
+    repo = _stamped_3_18(tmp_path)
+    folder = repo / "changes/archive/2026/2026-10/2026-10-01-merged-one"
+    (folder / "notes.txt").write_text("not tracked\n")
+    res = _migrate(repo, _fake_gh(tmp_path, "milestone/merged-one-1"))
+    assert res.returncode == 0, res.stderr
+    assert not (folder / "plan.md").exists() and (folder / "notes.txt").read_text() == "not tracked\n"
+    assert "2026-10-01-merged-one: kept, untracked files remain" in "\n".join(_sections(res.stdout)["MANUAL"])
+
+
+def test_migrate_takes_the_branch_from_the_changes_own_decisions(tmp_path: Path) -> None:
+    repo = _stamped_3_18(tmp_path)
+    folder = repo / "changes/archive/2026/2026-10/2026-10-02-unmerged-one"
+    (folder / "decisions.json").write_text('{"project": {"slug": "big-one"}}')
+    subprocess.run(["git", "add", "-A"], cwd=repo, check=True, env=_env())
+    subprocess.run(["git", "-c", "user.name=t", "-c", "user.email=t@t", "commit", "-qm", "d"], cwd=repo, check=True, env=_env())
+    res = _migrate(repo, _fake_gh(tmp_path, "project/big-one"))
+    assert res.returncode == 0, res.stderr
+    assert not folder.exists()
+
+
+def test_migrate_keeps_a_workflow_that_matches_no_kit_version(tmp_path: Path) -> None:
+    repo = _stamped_3_18(tmp_path)
+    mine = "name: Claude\non: [issue_comment]\njobs: {}\n"
+    (repo / ".github/workflows/claude.yml").write_text(mine)
+    res = _migrate(repo, _fake_gh(tmp_path, "milestone/merged-one-1"))
+    assert res.returncode == 0, res.stderr
+    assert (repo / ".github/workflows/claude.yml").read_text() == mine
+    assert any("claude.yml" in m and "matches no kit version" in m for m in _sections(res.stdout)["MANUAL"])
+
+
+def test_the_kit_workflow_hashes_are_the_shapes_older_kits_wrote(tmp_path: Path) -> None:
+    import hashlib
+
+    import adopt
+
+    text = "name: Claude\njobs:\n  c:\n    steps:\n      - uses: a/b@1\n        with:\n          fetch-depth: 1\n\n      - uses: x\n        with:\n          y: z\n      - name: Run Claude Code\n        with:\n          --allowedTools \"Edit,Read\"\n"
+    other = text.replace("uses: x", "uses: q").replace("Edit,Read", "Edit")
+    assert adopt.workflow_shape(text) == adopt.workflow_shape(other)
+    mine = tmp_path / "claude.yml"
+    mine.write_text(text)
+    assert not adopt.kit_workflow(mine)
+    adopt.KIT_WORKFLOWS["claude.yml"].add(hashlib.sha256(adopt.workflow_shape(text).encode()).hexdigest()[:16])
+    try:
+        assert adopt.kit_workflow(mine)
+    finally:
+        adopt.KIT_WORKFLOWS["claude.yml"].discard(hashlib.sha256(adopt.workflow_shape(text).encode()).hexdigest()[:16])
+
+
+def _commit_all(repo: Path) -> None:
+    subprocess.run(["git", "add", "-A"], cwd=repo, check=True, env=_env())
+    subprocess.run(["git", "-c", "user.name=t", "-c", "user.email=t@t", "commit", "-qm", "x"], cwd=repo, check=True, env=_env())
+
+
+def test_migrate_needs_no_preset_and_adds_no_ci_defaults_when_sdlc_json_exists(tmp_path: Path) -> None:
+    repo = _stamped_3_18(tmp_path)
+    cfg = json.loads((repo / "sdlc.json").read_text())
+    cfg.pop("ciPaths", None)
+    cfg.pop("ciCommands", None)
+    (repo / "sdlc.json").write_text(json.dumps(cfg, indent=2) + "\n")
+    (repo / "package.json").unlink()  # nothing says node or python
+    _commit_all(repo)
+    res = _migrate(repo, _fake_gh(tmp_path, "milestone/merged-one-1"))
+    assert res.returncode == 0, res.stderr
+    after = json.loads((repo / "sdlc.json").read_text())
+    assert "ciPaths" not in after and "ciCommands" not in after
+
+
+def test_migrate_keeps_a_kit_owned_file_that_matches_no_kit_version_and_force_kit_replaces_it(tmp_path: Path) -> None:
+    repo = _stamped_3_18(tmp_path)
+    rel = ".claude/hooks/gate-bash.sh"
+    (repo / rel).write_text("#!/usr/bin/env bash\n# hardened by the repo\nexit 0\n")
+    _commit_all(repo)
+    env = _fake_gh(tmp_path, "milestone/merged-one-1")
+    res = _migrate(repo, env)
+    assert res.returncode == 0, res.stderr
+    assert "hardened by the repo" in (repo / rel).read_text()
+    assert any(rel in m and "matches no shipped kit version" in m and f"--force-kit {rel}" in m for m in _sections(res.stdout)["MANUAL"])
+    res = _migrate(repo, env, "--force-kit", rel)
+    assert res.returncode == 0, res.stderr
+    assert (repo / rel).read_bytes() == (ADOPT.parents[1] / "templates/hooks/gate-bash.sh").read_bytes()
+
+
+def test_the_kit_hashes_cover_every_hook_and_script_the_kit_shipped() -> None:
+    import hashlib
+
+    data = json.loads((ADOPT.parent / "kit-hashes.json").read_text())
+    for sub, installed in (("hooks", ".claude/hooks"), ("scripts", "scripts")):
+        for f in (ADOPT.parents[1] / "templates" / sub).glob("*"):
+            if f.is_file():
+                assert hashlib.sha256(f.read_bytes()).hexdigest()[:16] in data[f"{installed}/{f.name}"], (
+                    f"{installed}/{f.name}: run `python3 kit_hashes.py --write <kit repos>`"
+                )
+    for rel in (".claude/hooks/pr-gate.sh", "scripts/verify_gate.py"):
+        assert _hashes_in_history(("hooks/" if "hooks" in rel else "scripts/") + Path(rel).name) <= set(data[rel])
+
+
+def test_migrate_names_a_makefile_or_package_script_that_still_runs_the_removed_status_script(tmp_path: Path) -> None:
+    repo = _stamped_3_18(tmp_path)
+    (repo / "scripts/sdlc_status.py").write_text("# old copy\n")
+    (repo / "Makefile").write_text("all:\nGENERATED = scripts/verify_gate.py scripts/sdlc_status.py\n")
+    (repo / "package.json").write_text('{\n  "scripts": {\n    "st": "python3 scripts/sdlc_status.py map"\n  }\n}\n')
+    _commit_all(repo)
+    before = (repo / "Makefile").read_text(), (repo / "package.json").read_text()
+    res = _migrate(repo, _fake_gh(tmp_path, "milestone/merged-one-1"))
+    assert res.returncode == 0, res.stderr
+    manual = "\n".join(_sections(res.stdout)["MANUAL"])
+    assert "Makefile:2" in manual and "package.json:3" in manual and "scripts/sdlc_status.py" in manual
+    assert not (repo / "scripts/sdlc_status.py").exists()
+    assert (repo / "Makefile").read_text() == before[0] and (repo / "package.json").read_text() == before[1]
+
+
+def test_migrate_lists_only_changes_with_an_unmerged_branch_or_open_pr_and_names_the_branch(tmp_path: Path) -> None:
+    repo = _stamped_3_18(tmp_path)  # changes/2026-11-01-inflight holds a lock.json
+    done = repo / "changes" / "2026-11-02-finished"
+    done.mkdir()
+    (done / "lock.json").write_text("{}")
+    _commit_all(repo)
+    subprocess.run(["git", "branch", "milestone/inflight-1"], cwd=repo, check=True, env=_env())
+    subprocess.run(["git", "checkout", "-q", "milestone/inflight-1"], cwd=repo, check=True, env=_env())
+    (repo / "work.txt").write_text("x")
+    _commit_all(repo)
+    subprocess.run(["git", "checkout", "-q", "master"], cwd=repo, check=True, env=_env())
+    res = _migrate(repo, _fake_gh(tmp_path, "milestone/merged-one-1"))
+    assert res.returncode == 0, res.stderr
+    manual = "\n".join(_sections(res.stdout)["MANUAL"])
+    assert "2026-11-01-inflight" in manual and "milestone/inflight-1" in manual
+    assert "python3 scripts/verify_gate.py milestone 2026-11-01-inflight" in manual
+    assert "2026-11-02-finished" not in manual
+
+
+def test_migrate_never_creates_a_change_folder(tmp_path: Path) -> None:
+    repo = _repo(tmp_path, "node")
+    assert _adopt(repo).returncode == 0
+    for folder in (repo / "changes").glob("*-adopt-sdlc"):
+        shutil.rmtree(folder)
+    _commit_all(repo)
+    res = _migrate(repo, _fake_gh(tmp_path, "milestone/x-1"))
+    assert res.returncode == 0, res.stderr
+    assert not list((repo / "changes").glob("*-adopt-sdlc"))
+
+
+def test_the_installed_guardrail_test_reads_the_docs_path_from_sdlc_json(tmp_path: Path) -> None:
+    repo = _repo(tmp_path, "python")
+    assert _adopt(repo).returncode == 0
+    cfg = json.loads((repo / "sdlc.json").read_text())
+    cfg["docs"] = "documentation/sdlc.md"
+    (repo / "sdlc.json").write_text(json.dumps(cfg, indent=2) + "\n")
+    assert _adopt(repo).returncode == 0
+    assert (repo / "documentation/sdlc.md").is_file()
+    test = (repo / "tests/test_sdlc.py").read_text()
+    assert 'CFG.get("docs"' in test and '(REPO_ROOT / "docs" / "sdlc.md")' not in test

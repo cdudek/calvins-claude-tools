@@ -2052,3 +2052,41 @@ def test_approve_records_the_layout_in_the_lock(tmp_path: Path) -> None:
     repo = _repo(tmp_path, ["true"])
     _approve(repo)
     assert json.loads((repo / "changes" / ID / "lock.json").read_text())["layout"] == 3
+
+
+def _installed_gate(tmp_path: Path, heavy: str | None) -> Path:
+    """A copy of the gate's scripts folder, as a repo installs it, with `heavy` as scripts/heavy.py."""
+    import shutil
+
+    dest = tmp_path / "installed"
+    shutil.copytree(GATE.parent, dest, ignore=shutil.ignore_patterns("__pycache__"))
+    if heavy is not None:
+        (dest / "heavy.py").write_text(heavy)
+    return dest / "verify_gate.py"
+
+
+def test_the_gate_refuses_a_heavy_py_that_is_not_a_kit_version(tmp_path: Path) -> None:
+    repo = _repo(tmp_path, ["true"])
+    _approve(repo)
+    own = _installed_gate(tmp_path, "import sys\nsys.exit(0)\n")  # exits zero without running the check
+    r = subprocess.run([sys.executable, str(own), "feature", ID], cwd=repo, capture_output=True, text=True, env=_env())
+    assert r.returncode == 3 and _last(r) == "VERIFY BLOCKED reason=env"
+    assert "heavy.py" in r.stdout and not (repo / "changes" / ID / "verify" / "report.json").exists()
+
+
+def test_the_gate_runs_with_the_kit_heavy_py_or_none(tmp_path: Path) -> None:
+    repo = _repo(tmp_path, ["true"])
+    _approve(repo)
+    for name, heavy in (("kit", None), ("none", "")):
+        gate = _installed_gate(tmp_path / name, heavy)
+        if heavy == "":
+            gate.with_name("heavy.py").unlink()
+        r = subprocess.run([sys.executable, str(gate), "feature", ID], cwd=repo, capture_output=True, text=True, env=_env())
+        assert r.returncode == 0, (name, r.stdout)
+
+
+def test_the_gates_heavy_hashes_are_adopts() -> None:
+    import adopt
+
+    gate = (GATE).read_text()
+    assert set(re.findall(r'"([0-9a-f]{16})"', re.search(r"^KIT_HEAVY = \{(.*?)\}", gate, re.M | re.S).group(1))) == adopt.KIT_HEAVY

@@ -597,12 +597,15 @@ def goal_state(
 
 
 def planned_in_history(root: Path, cfg: dict, change_id: str) -> int:
-    """How many milestones the removed change's plan.md listed, read from the last commit that
-    held it (any ref); 0 when no plan is left to read."""
-    rel = f"{cfg.get('changesDir', 'changes')}/{change_id}/plan.md"
-    commit = git(root, "log", "--all", "--diff-filter=AM", "-n1", "--format=%H", "--", rel)
-    text = git(root, "show", f"{commit}:{rel}") if commit else ""
-    return sum(1 for line in section(text, "Milestones") if re.match(r"\|\s*M\d+\b", line))
+    """How many milestones the removed change listed, read from the last commit that held its
+    plan.md or (layout 4) tasks.md, any ref; 0 when no file is left to read."""
+    for name in ("plan.md", "tasks.md"):
+        rel = f"{cfg.get('changesDir', 'changes')}/{change_id}/{name}"
+        commit = git(root, "log", "--all", "--diff-filter=AM", "-n1", "--format=%H", "--", rel)
+        text = git(root, "show", f"{commit}:{rel}") if commit else ""
+        if total := sum(1 for line in section(text, "Milestones") if re.match(r"\|\s*M\d+\b", line)):
+            return total
+    return 0
 
 
 def goal_removed(root: Path, change_id: str, scope: str, n: int | None, gh=gh_json) -> tuple[int, str] | None:

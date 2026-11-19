@@ -21,6 +21,7 @@ import pytest
 REPO_ROOT = Path(__file__).resolve().parents[{{ROOT_DEPTH}}]
 CFG = json.loads((REPO_ROOT / "sdlc.json").read_text(encoding="utf-8"))
 CHANGES = REPO_ROOT / CFG.get("changesDir", "changes")
+DOCS = CFG.get("docs", "docs/sdlc.md")
 ARCHIVE = CHANGES / "archive"
 HOOKS = REPO_ROOT / ".claude" / "hooks"
 SETTINGS = REPO_ROOT / ".claude" / "settings.json"
@@ -919,8 +920,8 @@ def test_classify_picks_the_riskiest_tier() -> None:
 
 
 def test_docs_and_workflows_exist_and_are_linked() -> None:
-    assert (REPO_ROOT / "docs" / "sdlc.md").is_file()
-    assert "docs/sdlc.md" in (REPO_ROOT / "CLAUDE.md").read_text(encoding="utf-8")
+    assert (REPO_ROOT / DOCS).is_file()
+    assert DOCS in (REPO_ROOT / "CLAUDE.md").read_text(encoding="utf-8")
     for wf in ("claude-review.yml", "claude.yml", "ci-triage.yml"):
         assert not (REPO_ROOT / ".github" / "workflows" / wf).is_file(), (
             f"{wf}: no Claude in CI since sdlc-run 3.7.0; run adopt --upgrade"

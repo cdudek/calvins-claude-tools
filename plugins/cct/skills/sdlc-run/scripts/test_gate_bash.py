@@ -146,3 +146,28 @@ def test_reading_the_session_transcripts_is_not_refused(repo: Path, command: str
 def test_the_transcript_guard_holds_without_any_blocked_rules(repo: Path) -> None:
     (repo / "sdlc.json").write_text("{}")
     assert _bash(repo, "echo x > ~/.claude/projects/p/s.jsonl").returncode == 2
+
+
+@pytest.mark.parametrize(
+    "command",
+    [
+        "gh pr merge 12 --ADMIN",
+        "gh pr edit 12 --add-label Ask-Approved",
+        "gh pr edit 12 \\\n  --add-label ask-approved",
+        "gh api -X PUT \\\n  repos/o/r/rulesets/1",
+    ],
+)
+def test_the_match_is_case_insensitive_and_joins_backslash_newlines(repo: Path, command: str) -> None:
+    (repo / "sdlc.json").write_text(
+        json.dumps(
+            {
+                "blocked": [
+                    {"match": r"gh pr merge.*--admin", "message": "no admin merges."},
+                    {"match": r"gh pr edit.*--add-label[[:space:]]+ask-approved", "message": "the owner labels."},
+                    {"match": r"gh api.*-X PUT.*rulesets", "message": "rulesets are the owner's."},
+                ]
+            }
+        )
+    )
+    r = _bash(repo, command)
+    assert r.returncode == 2 and r.stderr.startswith("BLOCKED: "), r.stderr

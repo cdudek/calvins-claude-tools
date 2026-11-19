@@ -29,6 +29,7 @@ vi.setConfig({ testTimeout: 120_000 });
 const ROOT = resolve(__dirname, "{{ROOT_REL}}");
 const cfg = JSON.parse(readFileSync(join(ROOT, "sdlc.json"), "utf8")) as {
   changesDir: string;
+  docs?: string;
   designsDir: string;
   verify: string;
   verifyDirty: string[];
@@ -906,8 +907,9 @@ describe.skipIf(!TIERS_ON)("tiers", () => {
 
 describe("docs and workflows", () => {
   it("exist and are linked from CLAUDE.md", () => {
-    expect(existsSync(join(ROOT, "docs", "sdlc.md"))).toBe(true);
-    expect(readFileSync(join(ROOT, "CLAUDE.md"), "utf8")).toContain("docs/sdlc.md");
+    const docs = cfg.docs ?? "docs/sdlc.md";
+    expect(existsSync(join(ROOT, docs))).toBe(true);
+    expect(readFileSync(join(ROOT, "CLAUDE.md"), "utf8")).toContain(docs);
     for (const wf of ["claude-review.yml", "claude.yml", "ci-triage.yml"])
       expect(existsSync(join(ROOT, ".github", "workflows", wf)), `${wf}: no Claude in CI since sdlc-run 3.7.0; run adopt --upgrade`).toBe(false);
     for (const wf of ["ship-show-ask.yml"])

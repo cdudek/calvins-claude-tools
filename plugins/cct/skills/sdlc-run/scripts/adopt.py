@@ -8,9 +8,10 @@ it adds the missing sdlc.json keys with the stack's defaults (never changing a v
 `sdlcVersion`, and lists every file that differs from the kit's copy as `review diff` in MANUAL.
 `--upgrade --replace FILE` shows the diff of one kit-owned file; add `--apply` to replace it.
 `--migrate` is the one way across kit versions: every kit-owned file replaced as one set (`keep` paths
-stay, with a MANUAL line), a file the repo owns at a kit path never overwritten (the kit's helper is
-installed under scripts/sdlc/), archive folders with a merged PR removed, `sdlcVersion` stamped, and the
-in-flight changes listed with the milestone gate run each needs. `--dry-run` writes nothing at all. A plain `adopt` stamps too and still refreshes the copies.
+stay, with a MANUAL line), a file the repo owns at a kit path never overwritten (MANUAL line), archive
+folders removed only for a merged PR from the change's own branch, Claude workflows removed only when
+they match a kit version, `sdlcVersion` stamped, and the in-flight changes listed with the milestone
+gate run each needs. `--dry-run` writes nothing at all. A plain `adopt` stamps too and still refreshes the copies.
 
 `--tiers` writes the engineer's answer to "Use Ship/Show/Ask?" into sdlc.json `tiers`; the
 skill asks it on every adopt. Without the flag, a set `tiers` stays and a missing one means
@@ -83,6 +84,9 @@ DRY = DRY_RUN or UPGRADE
 # hook file is never replaced alone: a gate beside another version's hook or helper reads a pass
 # another way, so `--upgrade --replace` of one of them says "use --migrate" and stops.
 MIGRATE = "--migrate" in sys.argv
+FORCE_KIT = {sys.argv[i + 1] for i, v in enumerate(sys.argv[:-1]) if v == "--force-kit"}
+if FORCE_KIT and not MIGRATE:
+    sys.exit("--force-kit belongs to --migrate")
 if MIGRATE and (UPGRADE or APPLY or REPLACE):
     sys.exit("--migrate takes no --upgrade, --apply or --replace: it replaces the whole kit set")
 if UPGRADE and any(r.startswith(("scripts/", ".claude/hooks/")) for r in REPLACE):
@@ -110,6 +114,9 @@ def detect_preset() -> str:
         return "node"
     if (ROOT / "pyproject.toml").exists():
         return "python"
+    cfg_path = ROOT / "sdlc.json"
+    if cfg_path.exists():  # an adopted repo says what it runs; only a fresh adopt needs a preset
+        return "python" if json.loads(cfg_path.read_text(encoding="utf-8")).get("tests") == "pytest" else "node"
     sys.exit(
         "cannot detect a preset (no package.json, no pyproject.toml); pass --preset node|python"
     )
@@ -557,6 +564,38 @@ GENERATED_DECISION4 = re.compile(
 )
 
 
+# The Claude workflows older kits wrote, by the hash of their shape: the repo-specific parts (the
+# setup steps, the allowed tools, the CI workflow's name) are masked, everything else must match.
+# A workflow of the repo's own, even one named claude.yml, matches no entry and stays.
+KIT_WORKFLOWS = {
+    "claude-review.yml": {
+        "2bec20cb4b2d2f99",
+        "441961f74ecdd754",
+        "6897e56dc566fe24",
+        "912abc195da2c7ca",
+        "a7c18f9925d59e49",
+    },
+    "claude.yml": {
+        "08fd464d30e21602",
+        "e276c4ad576f9493",
+    },
+    "ci-triage.yml": {
+        "6ef421d7bb6c5dca",
+    },
+}
+
+
+def workflow_shape(text: str) -> str:
+    text = re.sub(r'--allowedTools ".*"', '--allowedTools "X"', text)
+    text = re.sub(r"workflows: \[.*\]", "workflows: [X]", text)
+    return re.sub(r"(fetch-depth: 1\n\n).*?(      - name: Run Claude Code)", r"\1S\n\2", text, flags=re.S)
+
+
+def kit_workflow(path: Path) -> bool:
+    shape = workflow_shape(path.read_text(encoding="utf-8"))
+    return hashlib.sha256(shape.encode("utf-8")).hexdigest()[:16] in KIT_WORKFLOWS.get(path.name, set())
+
+
 def remove(path: Path, why: str) -> None:
     """Take a generated file out of the repo: `git rm`, then unlink whatever git did not track."""
     if not path.exists():
@@ -957,6 +996,22 @@ NEW_KIT_FILES = {
 }
 
 
+def kit_hashes() -> dict[str, set[str]]:
+    """Every hook and script version the kit shipped, by installed path (kit-hashes.json)."""
+    data = json.loads((Path(__file__).with_name("kit-hashes.json")).read_text(encoding="utf-8"))
+    return {rel: set(hs) for rel, hs in data.items()}
+
+
+def edited_kit_file(path: Path, text: str) -> bool:
+    """`--migrate` only: a kit-owned hook or script that matches no shipped kit version is the repo's
+    own edit, and stays unless `--force-kit <path>` names it."""
+    rel = path.relative_to(ROOT).as_posix()
+    if not MIGRATE or rel in FORCE_KIT or not path.is_file() or rel not in (known := kit_hashes()):
+        return False
+    mine = path.read_bytes()
+    return mine != text.encode("utf-8") and hashlib.sha256(mine).hexdigest()[:16] not in known[rel]
+
+
 def own_file(path: Path, text: str) -> bool:
     """True for a file adopt must not overwrite: one at a path the kit added later that is neither
     the kit's text nor a version the kit shipped."""
@@ -1014,41 +1069,109 @@ def finish_upgrade() -> str:
     return "\n".join(out)
 
 
-def merged_pr(root: Path, change_id: str) -> bool:
-    """gh confirms a merged PR that names the change; False when it cannot say."""
+def merged_heads(root: Path) -> list[str] | None:
+    """Head branches of the merged PRs gh lists; None when gh cannot say."""
     try:
         out = subprocess.run(
-            ["gh", "pr", "list", "--state", "merged", "--search", f"{change_id} in:body",
-             "--json", "number", "--limit", "1"],
+            ["gh", "pr", "list", "--state", "merged", "--limit", "200", "--json", "headRefName"],
             cwd=root, capture_output=True, text=True, timeout=60,
         )  # fmt: skip
-        return out.returncode == 0 and bool(json.loads(out.stdout or "[]"))
+        return [str(p.get("headRefName", "")) for p in json.loads(out.stdout or "[]")] if out.returncode == 0 else None
     except (OSError, ValueError, subprocess.TimeoutExpired):
+        return None
+
+
+def own_branch(folder: Path, cfg: dict, head: str) -> bool:
+    """`head` is a branch of this change: milestone/<slug>[-n], project/<slug> or a Feature PRs row,
+    named by the change's own decisions.json and plan.md (the folder name when they name no slug).
+    Nothing a PR body says counts."""
+    decisions: dict = {}
+    for path in (folder / "state" / "decisions.json", folder / "decisions.json"):
+        try:
+            decisions = json.loads(path.read_text(encoding="utf-8"))
+            break
+        except (OSError, ValueError):
+            continue
+    slug = (decisions.get("milestone") or {}).get("slug") or re.sub(
+        r"^([A-Z][A-Z0-9]+-\d+-)?", "", re.sub(r"^\d{4}-\d{2}-\d{2}-", "", folder.name)
+    )
+    prefix = (cfg.get("milestones") or {}).get("branchPrefix", "milestone/")
+    if re.fullmatch(re.escape(f"{prefix}{slug}") + r"(-\d+)?", head):
+        return True
+    project = decisions.get("project")
+    if isinstance(project, dict) and project.get("slug"):
+        if head == f"{(cfg.get('projects') or {}).get('branchPrefix', 'project/')}{project['slug']}":
+            return True
+    try:
+        plan = (folder / "plan.md").read_text(encoding="utf-8")
+    except OSError:
         return False
+    rows = re.search(r"^## Feature PRs\s*$(.*?)(?=^## |\Z)", plan, re.M | re.S)
+    for line in rows.group(1).splitlines() if rows else ():
+        cells = [c.strip().strip("`") for c in line.strip().strip("|").split("|")]
+        if len(cells) >= 4 and cells[3] == head:
+            return True
+    return False
 
 
 def migrate_report(cfg: dict) -> None:
-    """The rest of `--migrate`: archive folders whose PRs merged are removed (the owner's rule is no
-    archive), the others are listed, and every change still in flight gets the one gate run that
-    writes the new report."""
+    """The rest of `--migrate`: an archive folder is removed (the owner's rule is no archive) only
+    when a merged PR came from the change's own branch, and only its tracked files; the others are
+    listed. A dry run prints the same lines and deletes nothing. Every change still in flight gets the
+    one gate run that writes the new report."""
     changes = ROOT / cfg.get("changesDir", "changes")
-    for folder in archived_changes(changes / "archive"):
-        if merged_pr(ROOT, folder.name):
-            wrote.append(f"{folder.relative_to(ROOT)} (removed: its PR merged, no archive)")
-            subprocess.run(["git", "rm", "-rqf", "--ignore-unmatch", str(folder)], cwd=ROOT, check=True)
-            shutil.rmtree(folder, ignore_errors=True)  # whatever git did not track
+    folders = archived_changes(changes / "archive")
+    heads = merged_heads(ROOT) if folders else None
+    for folder in folders:
+        rel = folder.relative_to(ROOT)
+        if heads is None or not any(own_branch(folder, cfg, h) for h in heads):
+            manual.append(
+                f"{rel}: kept, gh could not confirm a merged PR from {folder.name}'s own branch"
+            )
+            continue
+        if DRY:
+            wrote.append(f"{rel} (would be removed: its PR merged, no archive)")
+            continue
+        tracked = subprocess.run(["git", "ls-files", "--", str(folder)], cwd=ROOT, capture_output=True, text=True)
+        gone = tracked.stdout.strip() and subprocess.run(
+            ["git", "rm", "-rq", "--", str(folder)], cwd=ROOT, capture_output=True
+        ).returncode == 0  # fmt: skip
+        if folder.exists() or not gone:
+            manual.append(f"{rel}: kept, untracked files remain (or git could not remove it): check it by hand")
         else:
-            manual.append(
-                f"{folder.relative_to(ROOT)}: kept, gh could not confirm a merged PR that names {folder.name}"
-            )
+            wrote.append(f"{rel} (removed: its PR merged, no archive)")
+    open_branches = unmerged_branches(ROOT, cfg.get("defaultBranch") or "main")
     for folder in sorted(changes.glob("*")) if changes.is_dir() else ():
-        if folder.is_dir() and folder.name != "archive" and (
+        if not (folder.is_dir() and folder.name != "archive" and (
             (folder / "lock.json").exists() or (folder / "state" / "lock.json").exists()
-        ):
+        )):
+            continue
+        for branch in (b for b in open_branches if own_branch(folder, cfg, b)):
             manual.append(
-                f"{folder.name} is in flight: run `python3 scripts/verify_gate.py milestone {folder.name}` "
-                f"once on its milestone branch (it writes the report the new gate reads)"
+                f"{folder.name} is in flight on {branch}: `git switch {branch}`, then run "
+                f"`python3 scripts/verify_gate.py milestone {folder.name}` once (it writes the report the new gate reads)"
             )
+
+
+def unmerged_branches(root: Path, default: str) -> list[str]:
+    """Branches not merged into the default branch (local and origin), plus the heads of open PRs."""
+    base = f"origin/{default}" if subprocess.run(
+        ["git", "rev-parse", "--verify", "-q", f"origin/{default}"], cwd=root, capture_output=True
+    ).returncode == 0 else default  # fmt: skip
+    out = subprocess.run(
+        ["git", "for-each-ref", "--no-merged", base, "--format=%(refname:short)", "refs/heads", "refs/remotes/origin"],
+        cwd=root, capture_output=True, text=True,
+    )  # fmt: skip
+    names = [n.removeprefix("origin/") for n in out.stdout.split()] if out.returncode == 0 else []
+    try:
+        pr = subprocess.run(
+            ["gh", "pr", "list", "--state", "open", "--json", "headRefName"],
+            cwd=root, capture_output=True, text=True, timeout=60,
+        )  # fmt: skip
+        names += [str(p.get("headRefName", "")) for p in json.loads(pr.stdout or "[]")] if pr.returncode == 0 else []
+    except (OSError, ValueError, subprocess.TimeoutExpired):
+        pass
+    return list(dict.fromkeys(n for n in names if n and n not in (default, "origin", "HEAD")))
 
 
 def main() -> int:
@@ -1102,14 +1225,15 @@ def main() -> int:
         cfg["changesDir"] = "changes"
         wrote.append("sdlc.json: changesDir .changes -> changes")
     if "sdlc.json" in kept:
-        add_ci_paths(cfg, preset)
-        add_ci_commands(cfg, preset)
+        if not MIGRATE:  # --migrate works with the repo's own settings, never the preset's defaults
+            add_ci_paths(cfg, preset)
+            add_ci_commands(cfg, preset)
         add_builders(cfg)
         check_rules(cfg)
         if "claude" in cfg:
             cfg.pop("claude")
             wrote.append("sdlc.json: claude removed (no Claude in CI since sdlc-run 3.7.0)")
-        if not UPGRADE:
+        if not UPGRADE and not MIGRATE:
             migrate_test_cost(cfg, preset)
         else:
             if "--repeat-each" in json.dumps(cfg.get("checks", {})):
@@ -1200,20 +1324,19 @@ def main() -> int:
                     f"belong to an older kit version; compare it with the kit's copy by hand"
                 )
             return
-        if own_file(path, text) and MIGRATE and path.parent.name == "scripts" and path.name != "spec.py":
-            # the kit's standalone helper goes beside the repo's own, under scripts/sdlc/
-            moved = path.parent / "sdlc" / path.name
-            manual.append(
-                f"{path.relative_to(ROOT)} is a file of your own, so it stays; the kit's helper was "
-                f"installed as {moved.relative_to(ROOT)} (kit docs name it scripts/{path.name})"
-            )
-            write(moved, text, **kw)  # type: ignore[arg-type]
-            return
         if own_file(path, text):  # a path the kit added after 3.18: the repo's own file stays
             manual.append(
                 f"{path.relative_to(ROOT)}: a file of your own (it matches no kit version), not "
                 f"overwritten. The kit ships a {path.name} too and its scripts import it: merge the "
                 f"two, or move yours and run `adopt` again"
+            )
+            return
+        if edited_kit_file(path, text):
+            rel = path.relative_to(ROOT).as_posix()
+            sub = "hooks" if rel.startswith(".claude/hooks/") else "scripts"
+            manual.append(
+                f"{rel} matches no shipped kit version, so it stays (compare: `diff {rel} "
+                f"{TPL / sub / path.name}`); `--migrate --force-kit {rel}` replaces it with the kit's copy"
             )
             return
         write(path, text, **kw)  # type: ignore[arg-type]
@@ -1374,6 +1497,13 @@ def main() -> int:
         _write(ROOT / "scripts" / script, (TPL / "scripts" / script).read_text(encoding="utf-8"))
     # sdlc_status.py runs from the plugin now and is never copied into a repo.
     remove(ROOT / "scripts" / "sdlc_status.py", "now runs from the plugin")
+    for name in ("Makefile", "package.json"):  # named, never edited: they are the repo's own
+        named = ROOT / name
+        for no, line in enumerate(named.read_text(encoding="utf-8").splitlines(), 1) if named.is_file() else ():
+            if "scripts/sdlc_status.py" in line:
+                manual.append(
+                    f"{name}:{no} names scripts/sdlc_status.py, which no longer exists (it runs from the plugin): edit that line"
+                )
     gi = ROOT / ".gitignore"
     gi_lines = gi.read_text(encoding="utf-8").splitlines() if gi.exists() else []
     verify_out = f"/{changes_dir}/*/verify/"
@@ -1441,7 +1571,16 @@ def main() -> int:
     # claude-review.yml (+ its merge-gate), claude.yml (@claude) and ci-triage.yml are taken out
     # of every repo that still has them, and no repo needs ANTHROPIC_API_KEY.
     for name in ("claude-review.yml", "claude.yml", "ci-triage.yml"):
-        remove(ROOT / ".github" / "workflows" / name, "no Claude in CI since sdlc-run 3.7.0")
+        old_wf = ROOT / ".github" / "workflows" / name
+        if not old_wf.exists():
+            continue
+        if kit_workflow(old_wf):
+            remove(old_wf, "no Claude in CI since sdlc-run 3.7.0")
+        else:
+            manual.append(
+                f".github/workflows/{name} matches no kit version, so it stays; remove it by hand if "
+                f"you no longer want Claude in CI"
+            )
     # Decision4 is advisory (no workflow) since 3.12.0. A repo adopted before keeps the workflow
     # adopt wrote then, which calls the shared checker and fails on every PR event. Only a file
     # that matches the generated one exactly goes, and not when sdlc.json `keep` lists it; a
@@ -1686,7 +1825,7 @@ def main() -> int:
     )
     has_archived = archive.exists() and any(p.is_dir() for p in archive.iterdir())
     # A repo that already ran the chain (migrated or not) adopted it back then; no new first change.
-    if not has_open and not has_archived:
+    if not has_open and not has_archived and not MIGRATE:
         cvals = {
             "LINEAR": ticket or "none",
             "CHANGE": first.name,
