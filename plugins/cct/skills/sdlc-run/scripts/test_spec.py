@@ -502,7 +502,7 @@ def test_the_shipped_templates_have_the_columns_consistency_reads(repo: Path) ->
 def test_a_tick_never_moves_the_lock_but_a_changed_task_does(repo: Path) -> None:
     c = _change(repo, "M", tasks=TASKS)
     before = spec.lock_inputs(c)
-    assert set(before) == {"spec.md", "tasks.md"}
+    assert set(before) == {"spec.md", "tasks.md", "rules/R1.md"}
     (c / "tasks.md").write_text(
         TASKS.replace("none | M1 | todo", "none | M1 | done abc1234")
         + "\n## Handover\n\nnew words\n"

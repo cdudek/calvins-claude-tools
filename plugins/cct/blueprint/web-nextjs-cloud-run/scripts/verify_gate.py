@@ -69,6 +69,7 @@ from __future__ import annotations
 
 import argparse
 import datetime as dt
+import functools
 import hashlib
 import json
 import os
@@ -81,6 +82,7 @@ import time
 from pathlib import Path
 
 sys.dont_write_bytecode = True  # imports of marks and sdlc_version must not leave __pycache__
+import spec  # noqa: E402  (layout 4: the three documents, the rules, the id families)
 from sdlc_version import kit_version, message  # noqa: E402
 
 REASONS = {
@@ -113,15 +115,30 @@ SENTENCE_WORDS = 25
 OWNER_FILES = ("intent.md", "plan.md", "milestone.md", "questions.md", "pr-body.md")
 # The id families the chain defines: asks, bugs, facts, challenge findings, job stories,
 # non-functional facts, questions, review findings, analyze findings (`references/readability.md`).
-ID_TOKEN = r"[ABFHJNQRX]\d+"
-BARE_ID = re.compile(rf"(?<![\w@/.#-]){ID_TOKEN}\b")
-# A definition label opens a line: `**F3**`, `**F3:**`, `**Q1 (date) the question?**`. The id then
-# stands alone; `**B19 blocks the build.**` is a sentence, not a label.
-LABEL = re.compile(
-    rf"^\s*(?:>\s*)?(?:(?:[-*]|\d+\.)\s+(?:\[[ x]\]\s+)?)?\*\*({ID_TOKEN})(?=\*\*|:|\s*\(|\s*$)"
-)
-TABLE_ID = re.compile(rf"^\s*\|\s*({ID_TOKEN})\s*\|")
-IDS_ONLY = re.compile(rf"[\s,;/&+-]*(?:{ID_TOKEN}[\s,;/&+-]*)*")
+LEGACY_LETTERS = "ABFHJNQRX"
+
+
+@functools.lru_cache(maxsize=None)
+def id_patterns(letters: str = LEGACY_LETTERS) -> tuple[re.Pattern, re.Pattern, re.Pattern, re.Pattern]:
+    """(bare id, definition label, table-row id, ids-only cell) for one set of family letters. The
+    letter R is a review finding before layout 4 and a rule in it, where a finding is V."""
+    token = rf"[{letters}]\d+"
+    return (
+        re.compile(rf"(?<![\w@/.#-]){token}\b"),
+        # A definition label opens a line: `**F3**`, `**F3:**`, `**Q1 (date) the question?**`. The id
+        # then stands alone; `**B19 blocks the build.**` is a sentence, not a label.
+        re.compile(
+            rf"^\s*(?:>\s*)?(?:(?:[-*]|\d+\.)\s+(?:\[[ x]\]\s+)?)?\*\*({token})(?=\*\*|:|\s*\(|\s*$)"
+        ),
+        re.compile(rf"^\s*\|\s*({token})\s*\|"),
+        re.compile(rf"[\s,;/&+-]*(?:{token}[\s,;/&+-]*)*"),
+    )
+
+
+def letters_of(change: Path) -> str:
+    return "".join(sorted(spec.id_families(change)))
+
+
 PLACEHOLDER = re.compile(r"\[NEEDS CLARIFICATION: (?:<question>|\.\.\.)\]")  # the template's own words, no other
 BRACKETS = re.compile(r"\([^()]*\)|\[[^\[\]]*\]")  # may span a line wrap, never a blank line
 
@@ -139,18 +156,24 @@ def criteria_hash(change: Path, checks: object, plan: bool = True) -> dict[str, 
     """Hashes of what approval locks: facts.md, done.json, the checks and (from 3.21.0) the plan's
     `## Milestones` section, which decides which facts each milestone must prove. `plan=False`
     reads an older lock, which lacks that key."""
+    v4 = spec.applies(change)
     hashes = {
         name: hashlib.sha256((change / name).read_bytes()).hexdigest()
-        for name in LOCKED
+        for name in (("done.json",) if v4 else LOCKED)
         if (change / name).exists()
     }
+    if v4:  # the spec, the design and the task rows replace facts.md and the plan's milestones
+        hashes.update(
+            {name: hashlib.sha256(text.encode("utf-8")).hexdigest() for name, text in spec.lock_inputs(change).items()}
+        )
     hashes["checks"] = hashlib.sha256(
         json.dumps(checks, sort_keys=True).encode("utf-8")
     ).hexdigest()
-    if plan:
+    if plan and not v4:
         hashes["plan.milestones"] = hashlib.sha256(
             section(read(change / "plan.md"), "Milestones").encode("utf-8")
         ).hexdigest()
+    if plan:  # every layout locks the routing fields
         hashes["decisions.routing"] = hashlib.sha256(
             json.dumps(routing(change), sort_keys=True).encode("utf-8")
         ).hexdigest()
@@ -447,6 +470,19 @@ def milestone_facts(change: Path, number: int | None = None) -> tuple[list[str],
     milestone `number`, the `## Milestones` row of `plan.md` selects them and a missing or empty row is
     a problem; an older lock uses every approved fact (its plan rows were never locked)."""
     facts, problems = approved_facts(change)
+    if number and facts and spec.applies(change):  # layout 4: the rules of this milestone's tasks
+        tasks = spec.table(read(change / "tasks.md"), "Tasks")
+        if not tasks:  # a scope S change has no task table: one milestone, every rule
+            return facts, problems
+        mine = {
+            f"R{n}"
+            for t in tasks
+            if re.match(rf"M?{number}\b", spec._cell(t, "milestone"))
+            for n in re.findall(r"R(\d+)", spec._cell(t, "rules", "satisf"))
+        }
+        if not mine & set(facts):
+            return [], problems + [f"validation.md: tasks.md has no task for M{number} that lists approved rules"]
+        return [f for f in facts if f in mine], problems
     if number and facts and current_format(change):
         mine = row_facts(read(change / "plan.md"), number, facts)
         if not mine:
@@ -659,19 +695,47 @@ def branch_mode_problems(change: Path, cfg: dict) -> list[str]:
     return []
 
 
+def v4_done(change: Path) -> dict:
+    """done.json of a layout-4 change, derived from the spec: one fact per rule the change adds or
+    changes (id R<n>, tag @R<n>), with the screens and states its UX table names."""
+    ux = spec.table(read(change / "spec.md"), "UX")
+    facts = []
+    for n, rule in sorted(spec.change_rules(change).items()):
+        if rule["change"] == "removed":
+            continue
+        rows = [r for r in ux if re.search(rf"\bR{n}\b", spec._cell(r, "rule"))]
+        facts.append(
+            {
+                "id": f"R{n}",
+                "tag": f"@R{n}",
+                "screens": sorted({spec._cell(r, "screen") for r in rows}),
+                "states": sorted({spec._cell(r, "state") for r in rows}),
+            }
+        )
+    return {"facts": facts}
+
+
 def approve(change: Path, cfg: dict) -> int:
+    v4 = spec.applies(change)
     problems = lint_problems(change) + approval_blockers(change)  # the cheap pure check first
-    problems += [f"{name} is missing: approval locks it" for name in ("facts.md", "plan.md") if not (change / name).is_file()]
-    problems += graph_problems(read(change / "plan.md")) + branch_mode_problems(change, cfg)
+    if v4:  # the spec, its rule files and the diff against the parent agree before anyone locks it
+        base = parent_ref(change, cfg, root())
+        problems += spec.consistency(change, "approve", root(), base) + spec.check(root(), base)
+    else:
+        problems += [f"{name} is missing: approval locks it" for name in ("facts.md", "plan.md") if not (change / name).is_file()]
+        problems += graph_problems(read(change / "plan.md"))
+    problems += branch_mode_problems(change, cfg)
     if gap := full_e2e_gap((cfg.get("checks") or {}).get("milestone") or [], root()):
         problems.append(gap)
-    if not (change / "done.json").exists():  # approval requires its artifacts
+    if not v4 and not (change / "done.json").exists():  # approval requires its artifacts
         problems.append("done.json is missing: the approved facts cannot be locked without it")
-    elif approved_facts(change)[1]:
+    elif not v4 and approved_facts(change)[1]:
         problems.append("done.json is unreadable or has no `facts` list")
     if problems:
         print("\n".join(problems[:TAIL]))
         return end(f"APPROVE FAIL {change.name} problems={len(problems)}", 1)
+    if v4:
+        (change / "done.json").write_text(json.dumps(v4_done(change), indent=2) + "\n", encoding="utf-8")
     lock = {
         "approved_at": dt.datetime.now(dt.timezone.utc).isoformat(timespec="seconds"),  # noqa: UP017 -- runs on macOS python3 3.9
         "sha": sh("git", "rev-parse", "HEAD"),
@@ -700,21 +764,23 @@ def prose(text: str) -> list[str]:
 def defined_ids(change: Path) -> set[str]:
     """The ids this change defines: a table row that opens with the id, or a definition label.
     An id defined nowhere ("Press F5", "before Q4") is ordinary text and never flagged."""
+    _, label, table_id, _ = id_patterns(letters_of(change))
     found = set()
     for path in change.rglob("*.md"):
         if path.name == "README.md" or {"asks", "verify"} & set(path.relative_to(change).parts):
             continue
         for line in path.read_text(encoding="utf-8").splitlines():
-            if m := TABLE_ID.match(line) or LABEL.match(line):
+            if m := table_id.match(line) or label.match(line):
                 found.add(m.group(1))
     return found
 
 
-def bare_ids(text: str, defined: set[str]) -> list[tuple[str, str]]:
+def bare_ids(text: str, defined: set[str], letters: str = LEGACY_LETTERS) -> list[tuple[str, str]]:
     """(id, context) for every defined id in running text that is not inside brackets: "plain words
     first, the id in brackets after". Headings, code, the first cell of a table row, a cell that
     holds only ids, a definition label and the verbatim Words column of the intent's Asks table are
     structure; every other table cell is prose."""
+    bare, label, _, ids_only = id_patterns(letters)
     text = re.sub(r"\A---\n.*?\n---\n", "", text, flags=re.S)
     text = re.sub(r"```.*?```|<!--.*?-->", "", text, flags=re.S)
     found: list[tuple[str, str]] = []
@@ -726,7 +792,7 @@ def bare_ids(text: str, defined: set[str]) -> list[tuple[str, str]]:
         para.clear()
         for _ in range(3):  # nested brackets: (A1; see [F2])
             body = BRACKETS.sub("", body)
-        for m in BARE_ID.finditer(body):
+        for m in bare.finditer(body):
             if m.group(0) in defined:
                 around = " ".join(body[max(0, m.start() - 30) : m.end() + 30].split())
                 found.append((m.group(0), around))
@@ -744,13 +810,13 @@ def bare_ids(text: str, defined: set[str]) -> list[tuple[str, str]]:
             header = header or [c.lower() for c in cells]
             for i, cell in enumerate(cells[1:], 1):
                 verbatim = heading == "asks" and header[i : i + 1] == ["words"]
-                if not verbatim and not IDS_ONLY.fullmatch(cell):
+                if not verbatim and not ids_only.fullmatch(cell):
                     para.append(cell)
                     flush()
         else:
             if re.match(r"(?:[-*]|\d+\.)\s", s):
                 flush()  # a new list item never shares a bracket with the one before
-            para.append(re.sub(r"`[^`]*`", "", LABEL.sub("", line)))
+            para.append(re.sub(r"`[^`]*`", "", label.sub("", line)))
     flush()
     return found
 
@@ -759,19 +825,21 @@ def lint_problems(change: Path, body: str | None = None) -> list[str]:
     """Plain language: no sentence over SENTENCE_WORDS words, no leftover template prompts, and
     in the files the owner reads no id outside brackets. With `body`, only that text (the PR body
     about to be published) is checked, for ids. Pure file reads."""
-    defined = defined_ids(change)
+    defined, letters = defined_ids(change), letters_of(change)
     if body is not None:
         return [
             f"pr-body: id {bare} outside brackets, words first: {ctx}"
-            for bare, ctx in bare_ids(body, defined)
+            for bare, ctx in bare_ids(body, defined, letters)
         ]
     problems = []
-    for name in OWNER_FILES:
+    v4 = spec.applies(change)
+    docs = spec.documents(change)  # the three documents in layout 4, intent/facts/plan before
+    for name in (*docs, "questions.md", "pr-body.md") if v4 else OWNER_FILES:
         path = change / name
         if path.exists():
-            for bare, ctx in bare_ids(path.read_text(encoding="utf-8"), defined):
+            for bare, ctx in bare_ids(path.read_text(encoding="utf-8"), defined, letters):
                 problems.append(f"{name}: id {bare} outside brackets, words first: {ctx}")
-    for name in ("intent.md", "facts.md", "plan.md"):
+    for name in docs if v4 else ("intent.md", "facts.md", "plan.md"):
         path = change / name
         if not path.exists():
             continue
@@ -995,7 +1063,7 @@ def run(
         lock = json.loads(lock_path.read_text(encoding="utf-8"))
         locked = lock["criteria"]
         declared = lock.get("order") != "cost"
-        old_plan = lock.get("format", 0) < LOCK_FORMAT or "plan.milestones" not in locked
+        old_plan = lock.get("format", 0) < LOCK_FORMAT or ("plan.milestones" not in locked and not spec.applies(change))
         now = criteria_hash(change, cfg.get("checks", {}))
         for key in ("plan.milestones", "decisions.routing"):
             if key not in locked:
@@ -1049,6 +1117,10 @@ def run(
             print("  git fetch origin && " + " && ".join(f"git merge {b}" for b in behind))
             return finish(f"VERIFY FAIL {scope} {change.name} check=parent-sync", 1)
 
+    if scope == "milestone" and spec.applies(change):  # the living spec: rules, tags and the diff
+        if drift := spec.check(repo, parent_ref(change, cfg, repo)):
+            print("\n".join(drift[:TAIL]))
+            return finish(f"VERIFY FAIL {scope} {change.name} check=spec", 1)
     if scope == "milestone" and (blocker := milestone_blockers(change, number)):
         print("\n".join(blocker[1][:TAIL]))
         return finish(f"VERIFY BLOCKED reason={blocker[0]}", 3)

@@ -173,6 +173,7 @@ def criteria_hash(change: Path, checks: object, plan: bool = True) -> dict[str, 
         hashes["plan.milestones"] = hashlib.sha256(
             section(read(change / "plan.md"), "Milestones").encode("utf-8")
         ).hexdigest()
+    if plan:  # every layout locks the routing fields
         hashes["decisions.routing"] = hashlib.sha256(
             json.dumps(routing(change), sort_keys=True).encode("utf-8")
         ).hexdigest()

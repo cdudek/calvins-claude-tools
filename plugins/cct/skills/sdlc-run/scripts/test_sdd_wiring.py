@@ -142,3 +142,40 @@ def test_status_reads_task_states_from_tasks_md_in_layout_4(tmp_path: Path) -> N
     out = status(repo, "map", ID).stdout
     assert "this milestone  1 of 2 merged" in out and "T1" in out and "T2" in out
     assert "stage  4/7" in out  # tasks.md is the plan
+
+
+# ------------------------------------------------------------------ the lock covers routing and rules
+
+
+def locked(tmp_path: Path) -> tuple[Path, Path]:
+    repo = base_repo(tmp_path)
+    c = v4(repo)
+    commit(repo)
+    assert gate(repo, "approve", ID).returncode == 0
+    commit(repo, "approved")
+    assert last(gate(repo, "feature", ID)).startswith("VERIFY PASS")
+    return repo, c
+
+
+def test_layout_4_locks_the_routing_fields_of_decisions_json(tmp_path: Path) -> None:
+    repo, c = locked(tmp_path)
+    assert "decisions.routing" in json.loads((c / "lock.json").read_text())["criteria"]
+    (c / "decisions.json").write_text('{"layout": 4, "size": "L"}')
+    commit(repo, "edit routing")
+    r = gate(repo, "feature", ID)
+    assert last(r) == "VERIFY BLOCKED reason=protected-path" and "decisions.routing" in r.stdout
+
+
+def test_layout_4_locks_each_approved_rule_by_id_and_content(tmp_path: Path) -> None:
+    repo, c = locked(tmp_path)
+    assert "rules/R1.md" in json.loads((c / "lock.json").read_text())["criteria"]
+    rule(repo, "billing", 1)  # status planned -> live: not a change of the rule
+    commit(repo, "live")
+    assert last(gate(repo, "feature", ID)).startswith("VERIFY PASS")
+    sh(repo, "git", "mv", "specs/billing", "specs/payments")  # same content, another capability
+    commit(repo, "move")
+    assert last(gate(repo, "feature", ID)).startswith("VERIFY PASS")
+    rule(repo, "payments", 1, "When x, the system shall do something else.")
+    commit(repo, "edit")
+    r = gate(repo, "feature", ID)
+    assert last(r) == "VERIFY BLOCKED reason=protected-path" and "rules/R1.md" in r.stdout

@@ -1056,8 +1056,9 @@ def task_states(change: Path) -> list[tuple[str, str, str]]:
 
 
 def lock_inputs(change: Path) -> dict[str, str]:
-    """What the approval lock hashes, by file: all of spec.md and design.md, and the task rows
-    of tasks.md without the State column. A tick or a handover edit never moves the hash."""
+    """What the approval lock hashes, by file: all of spec.md and design.md, the task rows of
+    tasks.md without the State column, and each approved rule file by id (`rules/R<n>.md`). A
+    tick or a handover edit never moves the hash."""
     change = Path(change)
     out = {}
     for name in ("spec.md", "design.md"):
@@ -1071,6 +1072,14 @@ def lock_inputs(change: Path) -> dict[str, str]:
             for r in table(text, sec):
                 keep.append("|".join(v for k, v in r.items() if k != "state"))
         out["tasks.md"] = "\n".join(keep)
+    root = change.parent.parent
+    by_num = {r.num: r.path for r in load_rules(root)[0]}
+    for n, r in sorted(change_rules(change).items()):
+        if r["change"] != "removed" and n in by_num:
+            # keyed by id, not path: a move to another capability keeps the hash. The `status:`
+            # line is left out: planned to live is the build's own step, not an edit of the rule.
+            text = (root / by_num[n]).read_text(encoding="utf-8")
+            out[f"rules/R{n}.md"] = re.sub(r"^status:.*\n", "", text, count=1, flags=re.M)
     return out
 
 
