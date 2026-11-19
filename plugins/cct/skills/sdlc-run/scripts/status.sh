@@ -27,6 +27,10 @@ else
 fi
 # -#-#- VERSION -#-#-  one line when sdlc.json sdlcVersion is missing, older or newer than the kit.
 python3 "$(dirname "$0")/../templates/scripts/sdlc_version.py" "$root" 2>/dev/null || true
+# -#-#- HEAVY -#-#-  who holds or waits for a heavy slot (the repo's own scripts/heavy.py); silent when idle.
+if [ -f "$root/scripts/heavy.py" ]; then
+  python3 "$root/scripts/heavy.py" status 2>/dev/null | grep -v 'idle' | sed 's/^/heavy=/' || true
+fi
 branch=$(git -C "$root" rev-parse --abbrev-ref HEAD 2>/dev/null || echo "")
 mode="${1:-}"
 

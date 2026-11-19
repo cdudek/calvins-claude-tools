@@ -201,6 +201,29 @@ def milestone_map(s: dict) -> str:
     return "\n".join(lines)
 
 
+def side_notes(root: Path) -> list[str]:
+    """What the map adds only when there is something to say: a stop whose verification failed (the
+    stop hook lets a session end on an unchanged failing tree, which is not a pass) and who holds or
+    waits for a heavy slot (the repo's own scripts/heavy.py, so a waiting helper is visible)."""
+    lines = []
+    gitdir = git(root, "rev-parse", "--absolute-git-dir")
+    try:
+        stop = json.loads((Path(gitdir) / "sdlc-stop-status.json").read_text(encoding="utf-8"))
+    except (OSError, ValueError):
+        stop = {}
+    if isinstance(stop, dict) and stop.get("status") == "failed":
+        lines.append(f"  last stop  verify FAILED (`{stop.get('verify', '')}`): a stop is not a pass; the uncommitted source was never verified")
+    heavy = root / "scripts" / "heavy.py"
+    if heavy.is_file():
+        try:
+            out = subprocess.run([sys.executable, str(heavy), "status"], capture_output=True, text=True, timeout=10, cwd=root).stdout
+        except (OSError, subprocess.TimeoutExpired):
+            out = ""
+        queue = [line for line in out.splitlines() if line.strip() and "idle" not in line]
+        lines += ["  heavy queue"] + [f"    {line}" for line in queue] if queue else []
+    return lines
+
+
 def gh_json(root: Path, *args: str) -> list | None:
     """Parsed `gh <args>` output; None when gh is missing, fails or prints something else."""
     try:
@@ -780,7 +803,7 @@ def main(argv: list[str]) -> int:
         stage = f"{s['stage']}/7 {STAGES[s['stage'] - 1]}"
         return write_readme(change, readme(change, stage))
     else:
-        print(milestone_map(s))
+        print("\n".join([milestone_map(s), *side_notes(root)]))
     return 0
 
 
