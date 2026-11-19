@@ -2090,3 +2090,104 @@ def test_the_gates_heavy_hashes_are_adopts() -> None:
 
     gate = (GATE).read_text()
     assert set(re.findall(r'"([0-9a-f]{16})"', re.search(r"^KIT_HEAVY = \{(.*?)\}", gate, re.M | re.S).group(1))) == adopt.KIT_HEAVY
+
+
+def _pkg(repo: Path, rel: str, version: str) -> None:
+    path = repo / rel
+    path.parent.mkdir(parents=True, exist_ok=True)
+    path.write_text(json.dumps({"dependencies": {"@acme/ds": version}}))
+
+
+def _ds_repo(tmp_path: Path, **ds: object) -> Path:
+    repo = _repo(tmp_path, ["true"])
+    cfg = json.loads((repo / "sdlc.json").read_text())
+    cfg["designSystem"] = {
+        "package": "@acme/ds",
+        "consumers": ["package.json", "apps/x/package.json"],
+        **ds,
+    }
+    (repo / "sdlc.json").write_text(json.dumps(cfg))
+    _pkg(repo, "package.json", "1.2.0")
+    _pkg(repo, "apps/x/package.json", "1.2.0")
+    _git(repo, "add", ".")
+    _git(repo, "commit", "-qm", "ds")
+    return repo
+
+
+def _lock(repo: Path) -> dict:
+    return json.loads((repo / "changes" / ID / "lock.json").read_text())
+
+
+def _screens(repo: Path, n: int) -> None:
+    bundle = repo / "changes" / ID / "asks" / "bundle"
+    bundle.mkdir(parents=True, exist_ok=True)
+    for i in range(n):
+        (bundle / f"s{i}.html").write_text("<html></html>")
+    decisions = repo / "changes" / ID / "decisions.json"
+    decisions.write_text(json.dumps({"size": "S", "visualSource": {"path": "asks/bundle"}}))
+    _git(repo, "add", ".")
+    _git(repo, "commit", "-qm", "screens")
+
+
+def test_approval_locks_the_design_system_pin_and_screens_flag(tmp_path: Path) -> None:
+    repo = _ds_repo(tmp_path)
+    _screens(repo, 2)
+    (repo / "changes" / ID / "plan.md").write_text(
+        (repo / "changes" / ID / "plan.md").read_text() + "\n## Where things go\n\n- `src/screens/`: x\n- `../out/`: y\n"
+    )
+    _approve(repo)
+    lock = _lock(repo)
+    assert lock["screens"] == "required"
+    assert lock["scopeFolders"] == ["src/screens"]
+    assert lock["designSystem"] == {
+        "name": "@acme/ds",
+        "version": "1.2.0",
+        "consumers": [
+            {"path": "package.json", "pin": "1.2.0"},
+            {"path": "apps/x/package.json", "pin": "1.2.0"},
+        ],
+    }
+
+
+def test_no_design_system_key_or_no_visual_work_records_nothing(tmp_path: Path) -> None:
+    repo = _repo(tmp_path, ["true"])
+    _approve(repo)
+    assert "designSystem" not in _lock(repo) and "screens" not in _lock(repo)
+
+
+def test_a_moved_pin_blocks_the_milestone_until_reapproved(tmp_path: Path) -> None:
+    repo = _ds_repo(tmp_path)
+    _screens(repo, 2)
+    _approve(repo)
+    _pkg(repo, "apps/x/package.json", "1.3.0")
+    _git(repo, "commit", "-qam", "bump")
+    r = _gate(repo, "milestone", ID)
+    assert _last(r) == "VERIFY BLOCKED reason=protected-path"
+    assert "the design system moved from 1.2.0 to 1.3.0 in apps/x/package.json" in r.stdout
+    assert "re-approve with the new release" in r.stdout
+    _pkg(repo, "package.json", "1.3.0")  # re-approval locks the new release
+    _git(repo, "commit", "-qam", "bump root")
+    assert _gate(repo, "approve", ID).returncode == 0
+    assert _lock(repo)["designSystem"]["version"] == "1.3.0"
+
+
+def test_a_large_visual_change_needs_a_design_system_audit(tmp_path: Path) -> None:
+    repo = _ds_repo(tmp_path)
+    _screens(repo, 21)
+    r = _gate(repo, "approve", ID)
+    assert r.returncode == 1 and "design-system-audit.md" in r.stdout
+    audit = repo / "changes" / ID / "design-system-audit.md"
+    audit.write_text("| group | part | status |\n|---|---|---|\n| forms | Input | have |\n| forms | Select | gap |\n")
+    r = _gate(repo, "approve", ID)
+    assert r.returncode == 1 and "one design-system release" in r.stdout and "Select" in r.stdout
+    audit.write_text("| group | part | status |\n|---|---|---|\n| forms | Input | have |\n| forms | Select | have |\n")
+    assert _gate(repo, "approve", ID).returncode == 0
+
+
+def test_the_audit_threshold_is_a_setting(tmp_path: Path) -> None:
+    repo = _ds_repo(tmp_path, auditAbove=2)
+    _screens(repo, 3)
+    assert _gate(repo, "approve", ID).returncode == 1
+    repo2 = _ds_repo(tmp_path / "b", auditAbove=50)
+    _screens(repo2, 30)
+    assert _gate(repo2, "approve", ID).returncode == 0

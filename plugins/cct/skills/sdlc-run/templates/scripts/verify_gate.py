@@ -790,6 +790,62 @@ def v4_done(change: Path) -> dict:
     return {"facts": facts}
 
 
+def design_system_pins(cfg: dict, repo: Path) -> dict | None:
+    """The design system's pinned release in each consumer (sdlc.json `designSystem`), or None when
+    the repo declares none. A consumer is a package.json; a missing file or dependency pins ""."""
+    ds = cfg.get("designSystem") or {}
+    if not ds.get("package"):
+        return None
+    pins = []
+    for rel in ds.get("consumers") or []:
+        try:
+            data = json.loads((repo / rel).read_text(encoding="utf-8"))
+            deps = {**data.get("peerDependencies", {}), **data.get("devDependencies", {}), **data.get("dependencies", {})}
+            pin = str(deps.get(ds["package"], ""))
+        except (OSError, ValueError, AttributeError):
+            pin = ""
+        pins.append({"path": rel, "pin": pin})
+    return {"name": ds["package"], "version": pins[0]["pin"] if pins else "", "consumers": pins}
+
+
+def design_system_moves(lock: dict, cfg: dict, repo: Path) -> list[str]:
+    """One line for each consumer whose pin differs from the one approval locked."""
+    locked = lock.get("designSystem") or {}
+    now = {c["path"]: c["pin"] for c in (design_system_pins(cfg, repo) or {}).get("consumers", [])}
+    return [
+        f"the design system moved from {c['pin'] or 'none'} to {now.get(c['path']) or 'none'} in {c['path']}: re-approve "
+        "with the new release (every screen is re-judged against it) or pin it back"
+        for c in locked.get("consumers", [])
+        if now.get(c["path"], "") != c["pin"]
+    ]
+
+
+def screen_count(change: Path) -> int:
+    """The screens of a design bundle: one html page each (the gallery is not one)."""
+    try:
+        declared = json.loads(spec.state_path(change, "decisions.json").read_text(encoding="utf-8"))
+        folder = change / declared["visualSource"]["path"]
+    except (OSError, ValueError, KeyError, TypeError, AttributeError):
+        folder = change / "asks"
+    return sum(1 for h in folder.rglob("*.html") if h.name != "gallery.html")
+
+
+def audit_problems(change: Path, cfg: dict) -> list[str]:
+    """A change with many screens names the design-system parts it needs before the first batch:
+    `design-system-audit.md`, rows of group | part | have or gap. A gap is closed by one release."""
+    limit = int((cfg.get("designSystem") or {}).get("auditAbove", 20))
+    if screen_count(change) <= limit:
+        return []
+    rows = [r for r in table_rows(read(change / "design-system-audit.md")) if r[-1].lower() in ("have", "gap")]
+    if not rows:
+        return [
+            f"design-system-audit.md is missing or empty: more than {limit} screens need a table of the "
+            "design-system parts per screen group, status have or gap"
+        ]
+    gaps = [f"{r[0]}: {r[1]}" for r in rows if r[-1].lower() == "gap"]
+    return [f"design-system-audit.md still has gaps ({'; '.join(gaps)}): ship one design-system release that closes them all, then approve"] if gaps else []
+
+
 def approve(change: Path, cfg: dict) -> int:
     v4 = spec.applies(change)
     problems = lint_problems(change) + approval_blockers(change)  # the cheap pure check first
@@ -803,6 +859,9 @@ def approve(change: Path, cfg: dict) -> int:
         problems += [f"{name} is missing: approval locks it" for name in ("facts.md", "plan.md") if not (change / name).is_file()]
         problems += graph_problems(read(change / "plan.md"))
     problems += branch_mode_problems(change, cfg)
+    visual = visual_run_required(change, cfg, root())
+    if visual:
+        problems += audit_problems(change, cfg)
     if gap := full_e2e_gap((cfg.get("checks") or {}).get("milestone") or [], root()):
         problems.append(gap)
     if not v4 and not spec.state_path(change, "done.json").exists():  # approval requires its artifacts
@@ -823,6 +882,13 @@ def approve(change: Path, cfg: dict) -> int:
         "format": LOCK_FORMAT,  # strict validation rows and records apply to this lock and later ones
         "layout": 4 if v4 else 3,  # the hooks read the layout here, not from files an edit can change
     }
+    if visual:  # from 3.23.0: the milestone gate holds visual work to its screens
+        lock["screens"] = "required"
+        # the folders the plan says new files go in: the chain-gate scope guard reads this snapshot, not the plan
+        found = re.findall(r"`([^`]+/)`", section(read(change / "plan.md"), "Where things go") + section(read(change / "design.md"), "Where things go"))
+        lock["scopeFolders"] = sorted({f.strip("/") for f in found if f.strip("/") and ".." not in f.split("/")})
+    if pins := design_system_pins(cfg, root()):  # and to the design-system release it was approved against
+        lock["designSystem"] = pins
     spec.state_path(change, "lock.json").write_text(json.dumps(lock, indent=2) + "\n", encoding="utf-8")
     print(f"locked {', '.join(lock['criteria'])} in {change.name}/lock.json -- commit it")
     return 0
@@ -1317,6 +1383,10 @@ def run_close(
             )
             print(f"upgrade gap: {gap}")
             report.setdefault("upgrade_gaps", []).append(gap)
+        if scope == "milestone" and (drift := design_system_moves(lock, cfg, repo)):
+            print("\n".join(drift))
+            report["moved"] = ["designSystem"]
+            return finish("VERIFY BLOCKED reason=protected-path", 3)
         moved = sorted(k for k in set(locked) | set(now) if locked.get(k) != now.get(k))
         if moved:
             print(

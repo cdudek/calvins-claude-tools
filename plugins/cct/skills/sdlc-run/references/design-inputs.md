@@ -52,6 +52,18 @@ rendered. Rendering never touches the pinned folder:
 fewer images than the bundle has HTML screens, so missing screens show up in stage 2, before any
 build or browser. The images become reference rows, and every one needs a checked row.
 
+## The design system is frozen at approval
+
+Set `sdlc.json` `designSystem` to `{"package": "<npm name>", "consumers": ["package.json",
+"apps/x/package.json"], "auditAbove": 20}`. `approve` reads the pinned version from each consumer
+and locks it in `lock.json`; `verify_gate.py milestone` blocks when a pin has moved, naming the file.
+Re-approve with the new release, because every screen is re-judged against it, or pin it back.
+
+A change with more than `auditAbove` screens also needs `design-system-audit.md` before approval: a
+table of screen group, design-system part, status `have` or `gap`. Any `gap` means one
+design-system release that closes them all comes first, so the design system does not move while
+the screens are built.
+
 ## What wins when inputs disagree
 
 1. The owner's written words and decisions: the owner is accountable, and later words replace earlier ones.
