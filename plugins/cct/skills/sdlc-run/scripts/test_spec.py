@@ -221,7 +221,7 @@ def test_find_uses_aliases_and_stems_and_never_leaves_a_committed_index(repo: Pa
     assert sh(repo, "git", "status", "--porcelain") == ""
     assert (repo / ".git" / "spec-index.json").exists()
     rows = json.loads((repo / ".git/spec-index.json").read_text())["rules"]
-    assert set(rows[0]) == {"id", "cap", "summary", "status"}
+    assert set(rows[0]) == {"id", "cap", "summary", "status", "b"}
 
 
 def test_find_rebuilds_when_a_rule_changes_and_finds_an_exact_id(repo: Path) -> None:
@@ -727,3 +727,83 @@ def test_the_old_layout_still_reads_r_as_a_finding(repo: Path) -> None:
     (old / "facts.md").write_text("see R1\n")
     (old / "findings.md").write_text("| R1 | finding | text of the finding |\n")
     assert "R1   " in "\n".join(change_docs.ids(old))
+
+
+# ------------------------------------------------------------------ find: body, idf, caps, ties
+# Shaped like the misses of the multi-repo recall eval (summary-only scoring, one common word
+# outvoting a rare one, a capability name lifting a whole capability, every new rule tying).
+
+
+def _ids(out: list[str]) -> list[str]:
+    return [ln.split()[0] for ln in out if ln.startswith("R")]
+
+
+def test_find_scores_the_whole_rule_body_and_the_summary_counts_more(repo: Path) -> None:
+    rule(
+        repo,
+        "values",
+        1,
+        text="No rendered value shall be a lone dash. Missing configuration shall read Not set.",
+    )
+    rule(repo, "billing", 2, text="The invoice shall list the vat. Missing vat shall read Not set.")
+    rule(repo, "billing", 3, text="The vat id shall be named.")
+    out = spec.find(repo, "missing configuration")
+    assert _ids(out)[0] == "R1"  # R1 has both words in its body; none is in a summary
+    assert _ids(spec.find(repo, "vat id"))[0] == "R3"  # a summary hit beats a body hit
+    rows = json.loads((repo / ".git/spec-index.json").read_text())["rules"]
+    assert "configuration" in rows[0]["b"] and len(rows[0]["b"]) < 120
+
+
+def test_a_query_word_found_in_many_rules_counts_far_less_than_a_rare_one(repo: Path) -> None:
+    for n, w in enumerate("alpha beta gamma delta epsilon zeta eta theta iota kappa".split(), 1):
+        rule(repo, "listing", n, text=f"The page shall show {w}.")
+    rule(repo, "other", 11, text="The banner shall be hidden.")
+    assert _ids(spec.find(repo, "page banner"))[0] == "R11"
+
+
+def test_the_capability_name_cannot_lift_a_whole_capability_over_a_specific_rule(
+    repo: Path,
+) -> None:
+    for n, w in enumerate("alpha beta gamma delta epsilon zeta eta theta".split(), 1):
+        rule(repo, "mail-sequences", n, text=f"The editor shall open {w}.")
+    rule(repo, "preferences", 20, text="The unsubscribe screen shall name the banner.")
+    out = spec.find(repo, "mail sequences banner", limit=3)
+    assert _ids(out)[0] == "R20"
+    assert _ids(out)[1].startswith("R") and "mail-sequences" in out[1]  # the capability follows
+
+
+def test_ties_break_on_age_and_unreleased_rules_do_not_all_tie_on_now(
+    repo: Path, monkeypatch
+) -> None:
+    same = "The cart shall keep the gift note."
+    monkeypatch.setenv("GIT_COMMITTER_DATE", "2020-01-01T00:00:00")
+    rule(repo, "cart", 2, text=same)
+    commit(repo)
+    monkeypatch.setenv("GIT_COMMITTER_DATE", "2024-01-01T00:00:00")
+    rule(repo, "cart", 1, text=same)
+    commit(repo)
+    rule(repo, "cart", 4, text=same)
+    rule(repo, "cart", 3, text=same)
+    assert _ids(spec.find(repo, "gift note")) == ["R2", "R1", "R3", "R4"]
+
+
+def test_the_corpus_builder_reads_the_asks_and_spec_folders(tmp_path: Path) -> None:
+    sys.path.insert(0, str(SKILL / "scripts"))
+    import eval_corpus
+
+    ch = tmp_path / "changes" / "2026-11-01-mute-alerts"
+    (ch / "asks" / "2026-11-01").mkdir(parents=True)
+    (ch / "spec").mkdir()
+    (ch / "asks/2026-11-01/notes.md").write_text('A1: "let me mute the alerts at night."\n')
+    (ch / "spec/brief.md").write_text('| A2 | spec | "the badge should show a count" |\n')
+    (ch / "facts.md").write_text(
+        "- [ ] **F1** (A1) The system shall mute alerts at night.\n"
+        "- F2 (A2) The badge shall show a count.\n"
+    )
+    out = tmp_path / "out"
+    assert eval_corpus.build(tmp_path, out) == {"rules": 2, "cases": 2}
+    fx = json.loads((out / "fixture.json").read_text())
+    assert {c["id"]: c["relevant"] for c in fx} == {
+        "mute-alerts/A1": ["R1"],
+        "mute-alerts/A2": ["R2"],
+    }

@@ -38,10 +38,12 @@ import argparse
 import datetime as dt
 import hashlib
 import json
+import math
 import os
 import re
 import subprocess
 import sys
+from collections import Counter
 from dataclasses import dataclass, field
 from pathlib import Path
 
@@ -710,7 +712,7 @@ def render_capabilities(root: Path) -> str:
 
 
 def _fingerprint(root: Path) -> str:
-    h = hashlib.sha1()
+    h = hashlib.sha1(b"index-v2")  # bump when the row format changes
     base = root / specs_name(root)
     if base.is_dir():
         for p in sorted(base.rglob("*")):
@@ -726,7 +728,8 @@ def _index_path(root: Path) -> Path | None:
 
 
 def load_index(root: Path, force: bool = False) -> list[dict]:
-    """The local index: id, cap, summary, status. Rebuilt when any rule or manifest changed."""
+    """The local index: id, cap, summary, status and `b`, the body's own words. Rebuilt when any
+    rule or manifest changed."""
     root = Path(root)
     path, fp = _index_path(root), _fingerprint(root)
     if path and path.exists() and not force:
@@ -737,7 +740,7 @@ def load_index(root: Path, force: bool = False) -> list[dict]:
         except (OSError, ValueError, KeyError):
             pass
     rules, _, _ = load_rules(root)
-    rows = [{"id": r.id, "cap": r.cap, "summary": r.summary, "status": r.status} for r in rules]
+    rows = [index_row(r) for r in rules]
     if path:
         try:
             path.write_text(json.dumps({"fp": fp, "rules": rows}))
@@ -762,29 +765,60 @@ def tokens(text: str) -> list[str]:
     ]
 
 
+BODY_WORDS = 80  # stored per rule: the index stays small and `find` fast
+
+
+def index_row(r: Rule) -> dict:
+    """One index row. `b` holds the stems the body adds to the summary, space-joined."""
+    seen = set(tokens(r.summary))
+    body = [t for t in dict.fromkeys(tokens(r.body)) if len(t) > 2 and t not in seen]
+    return {
+        "id": r.id, "cap": r.cap, "summary": r.summary, "status": r.status,
+        "b": " ".join(body[:BODY_WORDS]),
+    }  # fmt: skip
+
+
+W_SUMMARY, W_BODY, CAP_MAX, CAP_NAME, CAP_PURPOSE = (
+    1.5,
+    1.0,
+    2.0,
+    0.5,
+    0.2,
+)  # a capability name never outweighs a rule's own words
+
+
 def rank(rows: list[dict], manifests: dict, query: str, paths: list[str] | None = None):
-    """Score rows by id, summary, capability name, aliases and purpose; [(score, row, matched)]."""
+    """Score rows; [(score, row, matched)], best first. A query word counts by its rarity (idf over
+    the rows' summary and body), three times as much in the summary as in the body. The capability
+    name, aliases and purpose add a capped bonus. Ties break on how many query words matched, then
+    on the rule number; `find` puts git age before the number."""
     q = list(dict.fromkeys(tokens(query)))
     raw = {t.lower() for t in re.findall(r"[A-Za-z0-9]+", query)}
+    words = [(set(tokens(r["summary"])), set(r.get("b", "").split())) for r in rows]
+    n = len(rows) or 1
+    idf = {t: math.log(1 + n / max(1, sum(t in s or t in b for s, b in words))) for t in q}
     scored = []
-    for row in rows:
+    for row, (summ, body) in zip(rows, words):
         m = manifests.get(row["cap"], {})
         score, hit = 0.0, []
         if row["id"].lower() in raw:
             score += 100
             hit.append(row["id"])
-        summ = set(tokens(row["summary"]))
         cap_t = set(tokens(row["cap"].replace("-", " ").replace("_", " ")))
         for a in _as_list(m.get("aliases")):
             cap_t |= set(tokens(str(a)))
         purpose = set(tokens(str(m.get("purpose", ""))))
+        bonus = 0.0
         for t in q:
             if t in summ:
-                score, hit = score + 2, hit + [t]
+                score, hit = score + W_SUMMARY * idf[t], hit + [t]
+            elif t in body:
+                score, hit = score + W_BODY * idf[t], hit + [t]
             if t in cap_t:
-                score, hit = score + 3, hit + [t]
+                bonus, hit = bonus + CAP_NAME * idf[t], hit + [t]
             elif t in purpose:
-                score += 1
+                bonus += CAP_PURPOSE * idf[t]
+        score += min(bonus, CAP_MAX)
         for p in paths or []:
             if any(p.startswith(str(c).rstrip("/")) for c in _as_list(m.get("code")) if c):
                 score += 2
@@ -799,13 +833,21 @@ def rank(rows: list[dict], manifests: dict, query: str, paths: list[str] | None 
     near = {rel: cap for cap, _ in best for rel in _as_list(manifests.get(cap, {}).get("related"))}
     for row in rows:
         if row["id"] not in direct and row["cap"] in near:
-            scored.append((0.5, row, [f"via {near[row['cap']]}"]))
+            scored.append((0.01, row, [f"via {near[row['cap']]}"]))
+    scored.sort(key=lambda s: (-round(s[0], 9), -len(s[2]), int(s[1]["id"][1:])))
     return scored
 
 
 def _rule_ts(root: Path, path: str) -> int:
     out = git(root, "log", "-1", "--format=%ct", "--", path)
     return int(out.strip()) if out and out.strip() else int(dt.datetime.now().timestamp())
+
+
+def _age_key(root: Path, specs: str, row: dict) -> tuple:
+    """Oldest committed rule first; rules not in git yet come last, by number, so they never tie."""
+    out = git(root, "log", "-1", "--format=%ct", "--", f"{specs}/{row['cap']}/rules/{row['id']}.md")
+    num = int(row["id"][1:])
+    return (0, int(out), num) if out and out.strip() else (1, 0, num)
 
 
 def _stale(root: Path, row: dict, manifest: dict, path: str) -> bool:
@@ -839,12 +881,13 @@ def find(root: Path, query: str, paths=None, limit: int = 10, prs: bool = False)
     _, manifests, _ = (
         load_rules(root) if rows or (root / specs_name(root)).is_dir() else ([], {}, [])
     )
-    scored = rank(rows, manifests, query, paths)
-    scored.sort(key=lambda s: -s[0])
-    top = scored[:30]
+    top = rank(rows, manifests, query, paths)[:30]
     specs = specs_name(root)
-    # git dates break ties: a long-lived rule outranks yesterday's copy edit
-    top.sort(key=lambda s: (-s[0], -_rule_ts(root, f"{specs}/{s[1]['cap']}/rules/{s[1]['id']}.md")))
+    # what score and match count leave tied is ordered by git age, then rule number
+    kind = lambda s: (round(s[0], 9), len(s[2]))  # noqa: E731
+    size = Counter(kind(s) for s in top)
+    age = {s[1]["id"]: _age_key(root, specs, s[1]) for s in top if size[kind(s)] > 1}
+    top.sort(key=lambda s: (-round(s[0], 9), -len(s[2]), age.get(s[1]["id"], (0, 0, 0))))
     top = top[:limit]
     open_prs = open_pr_files(root) if prs else []
     out = []
@@ -903,12 +946,9 @@ def evaluate(root: Path, fixture: list[dict], k: int = 10) -> dict:
             res["no_prior"] += 1
             continue
         rules, manifests, _ = load_rules(root, case.get("rev"))
-        rows = [{"id": r.id, "cap": r.cap, "summary": r.summary, "status": r.status} for r in rules]
+        rows = [index_row(r) for r in rules]
         got = [
-            row["id"]
-            for s, row, _ in sorted(
-                rank(rows, manifests, case["query"], case.get("paths")), key=lambda x: -x[0]
-            )[:k]
+            row["id"] for _, row, _ in rank(rows, manifests, case["query"], case.get("paths"))[:k]
         ]
         base = grep_baseline(rules, case["query"], k)
         a, b = len(rel & set(got)) / len(rel), len(rel & set(base)) / len(rel)
