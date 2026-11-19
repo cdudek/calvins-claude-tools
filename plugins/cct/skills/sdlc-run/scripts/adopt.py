@@ -738,6 +738,37 @@ def add_ci_commands(cfg: dict, preset: str) -> None:
         )
 
 
+CHEAP = re.compile(r"format|fmt|lint|ruff|eslint|prettier|biome|oxlint|stylelint|typecheck|tsc|mypy|secret|gitleaks|actionlint|shellcheck|docs")
+HEAVY_CI_KEYS = ("unit", "build", "e2e", "e2eTouched")  # the ciCommands that are suites, not installs or lint
+
+
+def add_heavy_patterns(cfg: dict) -> None:
+    """`heavy.patterns` (3.22.0) is the repo's own list of commands that take a heavy slot. The
+    classifier knows builds, servers, browsers and `npm test`; a full suite under another name
+    (`uv run pytest`, `sh scripts/run-suite.sh`) it cannot know. Seeded once, from the milestone checks
+    and the suite jobs of `ciCommands`, for every command that is not a lint/format/type check and
+    that the classifier calls light; `{placeholders}` match anything. A repo that has the key keeps it."""
+    if "patterns" in (cfg.get("heavy") if isinstance(cfg.get("heavy"), dict) else {}):
+        return
+    spec = importlib.util.spec_from_file_location("heavy_kit", TPL / "scripts" / "heavy.py")
+    heavy = importlib.util.module_from_spec(spec)  # type: ignore[arg-type]
+    spec.loader.exec_module(heavy)  # type: ignore[union-attr]
+    commands = [c if isinstance(c, str) else c.get("run") for c in (cfg.get("checks") or {}).get("milestone", [])]
+    commands += [(cfg.get("ciCommands") or {}).get(k) for k in HEAVY_CI_KEYS]
+    seeds: list[str] = []
+    for cmd in commands:
+        if not isinstance(cmd, str) or not cmd.strip() or len(cmd) > 160 or CHEAP.search(cmd):
+            continue  # a long shell fragment is the repo's to list
+        if heavy.is_heavy(["sh", "-c", cmd], {}):
+            continue
+        pattern = ".*".join(re.escape(part) for part in re.split(r"\{\w+\}", cmd.strip()))
+        if pattern not in seeds:
+            seeds.append(pattern)
+    if seeds:
+        cfg.setdefault("heavy", {})["patterns"] = seeds
+        wrote.append(f"sdlc.json: heavy.patterns added ({len(seeds)} suite command(s) from checks.milestone and ciCommands; edit to the repo's own)")
+
+
 BUILDERS = ("claude", "codex")
 EFFORTS = ("low", "medium", "high", "xhigh")
 DEFAULT_MODEL = {"claude": "sonnet", "codex": "gpt-5.5"}
@@ -861,6 +892,31 @@ def e2e_gap_note(milestone: list) -> None:
         )
 
 
+MIGRATIONS_PATH = re.compile(r"(?:^|/)(?:migrations|migrate)/|^(?:drizzle|alembic)/")
+
+
+def db_gap_note(cfg: dict) -> None:
+    """MANUAL line when tracked files look like database migrations and sdlc.json has no `db.test`:
+    without it every database test pays for a full migration run instead of a template copy."""
+    if (cfg.get("db") or {}).get("test"):
+        return
+    tracked = subprocess.run(["git", "ls-files"], cwd=ROOT, capture_output=True, text=True).stdout
+    found = [
+        f
+        for f in tracked.splitlines()
+        if MIGRATIONS_PATH.search(f) and "node_modules/" not in f and "vendor/" not in f
+    ]
+    if found:
+        folder = re.match(r"(.*?(?:migrations|migrate)|drizzle|alembic)/", found[0]).group(1)
+        manual.append(
+            f"sdlc.json has no db.test although the repo has migrations ({folder}/): add "
+            '`"db": {"test": {"container", "port", "template", "migrate", "migrations"}}` '
+            f'with `migrations` set to a glob such as "{folder}/**" (a change rebuilds the '
+            "template, one copy per job) and `python3 scripts/db.py test run -- <tests>` "
+            "(references/heavy-work.md, Databases)"
+        )
+
+
 def migrate_test_cost(cfg: dict, preset: str) -> None:
     """Bring an adopted repo's test cost in line with the preset (measured in leadhub: a
     `--repeat-each 3` over the whole suite took 59-71 min per gate, and the Stop hook fell back
@@ -958,14 +1014,19 @@ KIT_SPEC = {
     "d493b854eb70d6ec",
 }
 KIT_HEAVY = {
+    "5deaa2eb45d65844",
     "7dfd1429b4f9cd2d",
     "8b4f8c3dfa44073f",
     "af2eb2673c676348",
     "cc25027d60793b2b",
     "f411b8feb66c33ed",
+    "1bb86e7356aa80e0",
 }
 KIT_DB = {
     "b34ea79ae0841fc5",
+    "132fb5df36b3a3ca",
+    "392a3cb2e1676489",
+    "473a8a34cad7f3e3",
 }
 KIT_EVIDENCE = {
     "6a317db378861d28",
@@ -973,6 +1034,8 @@ KIT_EVIDENCE = {
 KIT_PREFLIGHT = {
     "848114ac6dd4a375",
     "d5c15466ff9464be",
+    "9e40826faba1db82",
+    "020f538fc743c5b0",
 }
 KIT_HELPER_GUARD = {
     "ca26ffb8ad16e8b3",
@@ -1233,6 +1296,7 @@ def main() -> int:
         add_ci_paths(cfg, preset)
         add_ci_commands(cfg, preset)
         add_builders(cfg)
+        add_heavy_patterns(cfg)
         stamp_version(cfg, fresh=True)
         plan = migrate_plan(cfg) if MIGRATE else {}
         write(cfg_path, json.dumps(cfg, indent=2, ensure_ascii=False) + "\n")
@@ -1261,6 +1325,7 @@ def main() -> int:
             add_ci_paths(cfg, preset)
             add_ci_commands(cfg, preset)
         add_builders(cfg)
+        add_heavy_patterns(cfg)
         check_rules(cfg)
         if "claude" in cfg:
             cfg.pop("claude")
@@ -1908,6 +1973,7 @@ def main() -> int:
         ]
     )
 
+    db_gap_note(cfg)
     manual.append(
         "audit: run `python3 scripts/verify_gate.py audit` once the gate has run (it reports "
         "which declared gates are installed, configured, executed and required); add the "

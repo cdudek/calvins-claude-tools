@@ -5,6 +5,7 @@
     python3 ${CLAUDE_SKILL_DIR}/scripts/sdlc_status.py ids [<id>]
     python3 ${CLAUDE_SKILL_DIR}/scripts/sdlc_status.py readme [<id>]
     python3 ${CLAUDE_SKILL_DIR}/scripts/sdlc_status.py record <id> project --sha <sha> [--accepted]
+    python3 ${CLAUDE_SKILL_DIR}/scripts/sdlc_status.py worktrees [--remove PATH --into BRANCH]
 
 Runs from the plugin and is never copied into a repo: run it with the working directory inside the
 adopted repo, which it finds from the cwd. It loads `verify_gate` from the plugin's own
@@ -52,6 +53,7 @@ branch, merged or armed, as above.
 from __future__ import annotations
 
 import json
+import os
 import re
 import subprocess
 import sys
@@ -982,10 +984,141 @@ def write_readme(change: Path, text: str) -> int:
     return 0
 
 
+def git_out(cwd: Path, *args: str) -> tuple[int, str]:
+    res = subprocess.run(["git", *args], cwd=cwd, capture_output=True, text=True)
+    return res.returncode, res.stdout.strip()
+
+
+REBUILDABLE = {
+    "node_modules", ".next", ".turbo", "__pycache__", ".pytest_cache", ".ruff_cache", ".venv", "coverage",
+}  # fmt: skip  (directory names only: never `build` or `dist`, which can hold a local database)
+
+
+def worktree_blockers(path: Path) -> list[str]:
+    """Why a worktree may not be removed: any git failure, a change, an untracked file, or an ignored
+    entry that is not inside a rebuildable cache directory (`git worktree remove` would delete it,
+    e.g. a `.env`)."""
+    code, out = git_out(path, "status", "--porcelain", "--ignored=matching")
+    if code:
+        return ["git status failed"]
+    kept = []
+    for line in out.splitlines():
+        status, name = line[:2], line[3:].strip('"')
+        parts = name.rstrip("/").split("/")
+        dirs = parts if name.endswith("/") else parts[:-1]  # a file named `coverage` is not a directory
+        if status == "!!" and set(dirs) & REBUILDABLE:
+            continue
+        kept.append(name)
+    return kept
+
+
+def pid_alive(pid: int) -> bool:
+    try:
+        os.kill(pid, 0)
+    except ProcessLookupError:
+        return False
+    except PermissionError:
+        return True
+    return True
+
+
+def lock_blocker(root: Path, path: Path, locked: bool) -> str:
+    """A live `codex-build.lock` (its pid is running), any other lock file in the worktree's git dir
+    (a git operation is in progress) or a `git worktree lock`: not ours to remove."""
+    if locked:
+        return "worktree is locked"
+    code, gitdir = git_out(path, "rev-parse", "--absolute-git-dir")
+    if code:
+        return "git dir unreadable"
+    for lock in Path(gitdir).glob("*.lock"):
+        if lock.name != "codex-build.lock":
+            return f"{lock.name} present"
+        try:
+            pid = int(lock.read_text(encoding="utf-8").strip() or 0)
+        except (OSError, ValueError):
+            return "codex-build.lock unreadable"
+        if pid > 0 and pid_alive(pid):
+            return f"a codex build is running (pid {pid})"
+    return ""
+
+
+def removal_blocker(root: Path, path: Path, branch: str, into: str, locked: bool = False) -> str:
+    """"" when the worktree may go, else the reason to keep it. Fails closed: any git error is a reason."""
+    if not into or git_out(root, "rev-parse", "-q", "--verify", into)[0]:
+        return f"{into or 'no branch'} is not a known branch"
+    if git_out(root, "merge-base", "--is-ancestor", branch, into)[0]:
+        return f"not merged into {into}"
+    if why := lock_blocker(root, path, locked):
+        return why
+    if blockers := worktree_blockers(path):
+        return f"not clean: {', '.join(blockers)}"
+    return ""
+
+
+def builder_worktrees(root: Path) -> list[tuple[Path, str, bool]]:
+    """(path, branch, locked) of every `<root>/.worktrees/agent-*` worktree."""
+    _, listing = git_out(root, "worktree", "list", "--porcelain")
+    out = []
+    for block in listing.split("\n\n"):
+        fields = dict(line.partition(" ")[::2] for line in block.splitlines())
+        path = Path(fields.get("worktree", ""))
+        branch = fields.get("branch", "").removeprefix("refs/heads/")
+        if path.parent.resolve() == (root / ".worktrees").resolve() and path.name.startswith("agent-") and branch:
+            out.append((path, branch, "locked" in fields))
+    return out
+
+
+def worktrees_main(argv: list[str]) -> int:
+    """`worktrees` lists the builder worktrees `<root>/.worktrees/agent-*` and whether each could go.
+    `worktrees --remove <path> --into <branch>` removes ONE: the supervisor runs it right after it merged
+    that builder into <branch>. It checks that the path is a builder worktree of this repo, that no codex
+    build or git operation holds it, that nothing in it is uncommitted or ignored (except the cache
+    directories in REBUILDABLE) and that its branch is merged into <branch>; then `git worktree remove`
+    and `git branch -d`, never forced. Fails closed: any git error means keep (exit 1)."""
+    root = repo_root(Path.cwd())
+    if not root:
+        print("no sdlc.json in this repo: run `sdlc-run adopt`")
+        return 2
+    opt = lambda flag: argv[argv.index(flag) + 1] if flag in argv and argv.index(flag) + 1 < len(argv) else ""  # noqa: E731
+    found = builder_worktrees(root)
+    if "--remove" not in argv:
+        code, current = git_out(root, "symbolic-ref", "-q", "--short", "HEAD")
+        into = opt("--into") or (current if code == 0 else "")
+        for path, branch, locked in found:
+            why = removal_blocker(root, path, branch, into, locked)
+            print(f"keep {path.name}: {why}" if why else f"removable {path.name} (merged into {into}, clean); remove it with --remove {path} --into {into}")
+        return 0
+    target, into = opt("--remove"), opt("--into")
+    if not target or not into:
+        print("usage: worktrees --remove <path> --into <milestone branch>")
+        return 2
+    want = Path(target).resolve()
+    match = [(p, b, k) for p, b, k in found if p.resolve() == want]
+    if not match:
+        print(f"keep {want.name}: not a builder worktree (<root>/.worktrees/agent-*) of this repo")
+        return 1
+    path, branch, locked = match[0]
+    if why := removal_blocker(root, path, branch, into, locked):
+        print(f"keep {path.name}: {why}")
+        return 1
+    removed = subprocess.run(["git", "worktree", "remove", str(path)], cwd=root, capture_output=True, text=True)
+    if removed.returncode:
+        print(f"keep {path.name}: git worktree remove refused: {removed.stderr.strip()}")
+        return 1
+    deleted = subprocess.run(["git", "branch", "-d", branch], cwd=root, capture_output=True, text=True)
+    if deleted.returncode:
+        print(f"removed {path.name}; branch {branch} retained (git branch -d refused: {deleted.stderr.strip()})")
+    else:
+        print(f"removed {path.name} and branch {branch}")
+    return 0
+
+
 def main(argv: list[str]) -> int:
-    if len(argv) < 2 or argv[1] not in ("map", "goal", "ids", "readme", "base", "record", "handoff"):
+    if len(argv) < 2 or argv[1] not in ("map", "goal", "ids", "readme", "base", "record", "handoff", "worktrees"):
         print(__doc__)
         return 2
+    if argv[1] == "worktrees":
+        return worktrees_main(argv[2:])
     if argv[1] == "goal":
         return goal_main(argv[2:])
     root = repo_root(Path.cwd())

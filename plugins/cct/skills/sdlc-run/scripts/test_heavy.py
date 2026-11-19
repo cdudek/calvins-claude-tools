@@ -9,6 +9,7 @@ from __future__ import annotations
 
 import json
 import os
+import signal
 import subprocess
 import sys
 import time
@@ -163,20 +164,45 @@ def test_config_slots_come_from_sdlc_json(tmp_path: Path) -> None:
     assert out.stdout.strip() == "5000"
 
 
-def test_classify_separates_heavy_from_light() -> None:
-    def kind(*cmd: str) -> str:
-        res = subprocess.run(
-            [sys.executable, str(HEAVY), "classify", "--", *cmd], capture_output=True, text=True
-        )
-        return res.stdout.strip()
+HEAVY_CMDS = [
+    ("pnpm", "build"), ("npx", "playwright", "test"), ("pnpm", "dev"), ("make", "e2e"),
+    ("python3", "scripts/capture.py"), ("npm", "test"), ("pnpm", "test"), ("yarn", "test:e2e"),
+    ("npm", "run", "smoke:background"), ("pnpm", "run", "build"), ("npx", "next", "start"),
+    ("pnpm", "exec", "playwright", "test", "--project", "x"), ("pnpm", "--filter", "web", "build"),
+    ("python3", "scripts/verify_gate.py", "milestone", "x"), ("sh", "scripts/e2e.sh"),
+    ("sh", "-c", "pnpm format:check && pnpm test"), ("npx", "vite", "build"),
+]  # fmt: skip
+LIGHT_CMDS = [
+    ("pnpm", "lint"), ("tsc", "--noEmit"), ("ruff", "check", "."), ("git", "status"),
+    ("prettier", "--check", "e2e/a.spec.ts"), ("pnpm", "lint", "e2e"),
+    ("vitest", "run", "src/build/x.test.ts"), ("npx", "vitest", "run", "build.test.ts"),
+    ("pnpm", "format:check"), ("pnpm", "typecheck"), ("python3", "-m", "pytest", "tests/test_build.py"),
+    ("echo", "build"), ("git", "commit", "-m", "fix the build"), ("grep", "-r", "e2e", "."),
+    ("sh", "-c", "pnpm lint && pnpm typecheck"), ("python3", "scripts/verify_gate.py", "feature", "x"),
+]  # fmt: skip
 
-    for heavy in (
-        ("pnpm", "build"), ("npx", "playwright", "test"), ("pnpm", "dev"),
-        ("make", "e2e"), ("python3", "scripts/capture.py"),
-    ):  # fmt: skip
-        assert kind(*heavy) == "heavy", heavy
-    for light in (("pnpm", "lint"), ("tsc", "--noEmit"), ("ruff", "check", "."), ("git", "status")):
-        assert kind(*light) == "light", light
+
+@pytest.mark.parametrize("cmd", HEAVY_CMDS, ids=" ".join)
+def test_classify_heavy_by_program_and_script(cmd: tuple[str, ...]) -> None:
+    assert _classify(*cmd) == "heavy"
+
+
+@pytest.mark.parametrize("cmd", LIGHT_CMDS, ids=" ".join)
+def test_classify_light_by_program_and_script(cmd: tuple[str, ...]) -> None:
+    assert _classify(*cmd) == "light"
+
+
+def _classify(*cmd: str, cwd: Path | None = None) -> str:
+    res = subprocess.run(
+        [sys.executable, str(HEAVY), "classify", "--", *cmd], capture_output=True, text=True, cwd=cwd
+    )
+    return res.stdout.strip()
+
+
+def test_the_repos_heavy_patterns_still_override(tmp_path: Path) -> None:
+    (tmp_path / "sdlc.json").write_text(json.dumps({"heavy": {"patterns": [r"\bmy-suite\b"]}}))
+    assert _classify("./my-suite", "--all", cwd=tmp_path) == "heavy"
+    assert _classify("./other", cwd=tmp_path) == "light"
 
 
 def test_auto_runs_a_light_command_without_a_slot(tmp_path: Path) -> None:
@@ -304,3 +330,305 @@ def test_evidence_screen_name_cannot_escape_the_folder(tmp_path: Path) -> None:
 def test_help_prints_the_usage(flag: str) -> None:
     out = subprocess.run([sys.executable, str(HEAVY), flag], capture_output=True, text=True)
     assert out.returncode == 0 and "heavy.py run" in out.stdout
+
+
+# ---------------------------------------------------------------- 3.22.0: the machine queue
+
+def test_the_queue_is_one_per_user_and_names_repo_worktree_and_job_group(tmp_path: Path) -> None:
+    home = tmp_path / "home"
+    env = {k: v for k, v in _env(tmp_path).items() if k != "SDLC_HEAVY_DIR"}
+    state = home / ".local" / "state" / "sdlc" / "heavy" / "tickets"
+    for extra, where in (({"HOME": str(home)}, state), ({"HOME": str(home), "XDG_STATE_HOME": str(tmp_path / "x")}, tmp_path / "x" / "sdlc" / "heavy" / "tickets")):
+        e = {k: v for k, v in env.items() if k != "XDG_STATE_HOME"} | extra
+        res = _heavy(tmp_path, "run", "--", "sh", "-c", f"sleep 0.5; cat {where}/*.json", env=e)  # the wrapper lists the group just after the start
+        ticket = json.loads(res.stdout)
+        assert ticket["pid"] and ticket["pgid"] and ticket["repo"] and ticket["worktree"], res.stderr
+        assert ticket["pgid"] != ticket["pid"], "the job's own group, not the wrapper's"
+
+
+def test_the_old_git_dir_queue_is_ignored(tmp_path: Path) -> None:
+    repo = tmp_path / "repo"
+    repo.mkdir()
+    _git(repo, "init", "-q")
+    old = repo / ".git" / "sdlc-heavy" / "tickets"
+    old.mkdir(parents=True)
+    (old / f"{time.time_ns():020d}-1.json").write_text(json.dumps({"pid": os.getpid(), "cmd": ["x"], "slot": 0}))
+    env = {k: v for k, v in _env(tmp_path).items() if k != "SDLC_HEAVY_DIR"} | {"HOME": str(tmp_path / "h")}
+    res = _heavy(tmp_path, "run", "--wait-timeout", "1", "--", "true", env=env, cwd=repo)
+    assert res.returncode == 0, "a live ticket in the old place blocks nothing"
+
+
+# ---------------------------------------------------------------- 3.22.0: kill the job, not only the wrapper
+
+def _alive(pid: int) -> bool:
+    try:
+        os.kill(pid, 0)
+    except ProcessLookupError:
+        return False
+    return True
+
+
+def test_a_dead_wrappers_job_is_killed_before_its_slot_is_freed(tmp_path: Path) -> None:
+    job = subprocess.Popen(["sleep", "30"], start_new_session=True)
+    (tmp_path / "tickets").mkdir()
+    pid = _dead_pid()
+    (tmp_path / "tickets" / f"{time.time_ns():020d}-{pid}.json").write_text(
+        json.dumps({"pid": pid, "cmd": ["sleep"], "slot": 0, "pgid": job.pid})
+    )
+    assert _heavy(tmp_path, "run", "--", "true").returncode == 0
+    assert job.wait(timeout=5) == -9, "the orphaned job was killed"
+
+
+@pytest.mark.parametrize("sig", [signal.SIGTERM, signal.SIGHUP, signal.SIGINT])
+def test_a_signal_to_the_wrapper_kills_the_job_and_frees_the_slot(tmp_path: Path, sig: int) -> None:
+    wrapper = _popen(tmp_path, "run", "--", "sleep", "30")
+    _until(lambda: _tickets(tmp_path) and json.loads(_tickets(tmp_path)[0].read_text()).get("pgid"), "job started")
+    pgid = json.loads(_tickets(tmp_path)[0].read_text())["pgid"]
+    wrapper.send_signal(sig)
+    assert wrapper.wait(timeout=10) == 128 + sig
+    _until(lambda: not _alive(pgid), "the job to die")
+    assert _heavy(tmp_path, "run", "--wait-timeout", "2", "--", "true").returncode == 0
+
+
+def test_results_are_written_by_rename(tmp_path: Path) -> None:
+    job = _heavy(tmp_path, "submit", "--", "true").stdout.split()[0]
+    assert _heavy(tmp_path, "wait", job, "--timeout", "10").returncode == 0
+    assert sorted(p.name for p in (tmp_path / "jobs" / job).iterdir()) == ["job.json", "log.txt", "result.json"]
+
+
+def test_a_submit_inside_a_slot_still_queues(tmp_path: Path) -> None:
+    out = tmp_path / "out"
+    inner = (
+        f"python3 {HEAVY} submit -- sh -c 'echo $SDLC_HEAVY_SLOT > {out}' > {tmp_path}/id; "
+        f"sleep 1; test ! -e {out}"
+    )  # the submitted job must be waiting behind this holder, not running at once
+    assert _heavy(tmp_path, "run", "--", "sh", "-c", inner).returncode == 0
+    job = (tmp_path / "id").read_text().split()[0]
+    assert _heavy(tmp_path, "wait", job, "--timeout", "10").returncode == 0
+    assert out.read_text().strip() == "0", "it ran later, in a slot of its own"
+
+
+# ---------------------------------------------------------------- 3.22.0: a patient waiter
+
+def _module():
+    import importlib.util
+
+    spec = importlib.util.spec_from_file_location("heavy_under_test_q", HEAVY)
+    mod = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(mod)
+    return mod
+
+
+def _hand_ticket(q: Path, pid: int, **extra: object) -> Path:
+    (q / "tickets").mkdir(exist_ok=True)
+    path = q / "tickets" / f"{time.time_ns() - 10**9:020d}-{pid}.json"
+    path.write_text(json.dumps({"pid": pid, "cmd": ["held"], "slot": 0, "since": time.time(), "started": time.time(), **extra}))
+    return path
+
+
+def test_a_patient_waiter_has_no_deadline_while_the_holder_is_within_its_own(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    import threading
+
+    monkeypatch.setenv("SDLC_HEAVY_DIR", str(tmp_path))
+    monkeypatch.setenv("SDLC_HEAVY_POLL", "0.05")
+    mod = _module()
+    held = _hand_ticket(tmp_path, os.getpid(), cap=0)  # alive, no run deadline
+    threading.Timer(1.0, held.unlink).start()
+    t0 = time.time()
+    q, ticket, slot = mod.acquire(["gate"], "gate", {"slots": 1}, 0.3, patient=True)
+    assert slot == 0 and time.time() - t0 >= 0.9, "waited past the 0.3 s wait deadline"
+    q.leave(ticket)
+
+
+def test_a_patient_waiter_still_times_out_on_a_holder_past_its_deadline(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    monkeypatch.setenv("SDLC_HEAVY_DIR", str(tmp_path))
+    monkeypatch.setenv("SDLC_HEAVY_POLL", "0.05")
+    monkeypatch.setenv("SDLC_HEAVY_GRACE", "0")
+    mod = _module()
+    _hand_ticket(tmp_path, os.getpid(), cap=1, started=time.time() - 100)
+    with pytest.raises(mod.SlotTimeout, match="no slot after"):
+        mod.acquire(["gate"], "gate", {"slots": 1}, 0.3, patient=True)
+    assert len(_tickets(tmp_path)) == 1, "the waiter's own ticket is gone"
+    with pytest.raises(mod.SlotTimeout):  # and an impatient waiter never waits past its deadline
+        _hand_ticket(tmp_path, os.getpid(), cap=0)
+        mod.acquire(["x"], "job", {"slots": 1}, 0.3)
+
+
+# ---------------------------------------------------------------- 3.22.0: prune
+
+def test_prune_drops_old_and_orphaned_jobs_and_keeps_the_rest(tmp_path: Path) -> None:
+    jobs = tmp_path / "jobs"
+    def job(name: str, age: float, pid: int | None, result: bool) -> Path:
+        d = jobs / name
+        d.mkdir(parents=True)
+        if pid is not None:
+            (d / "job.json").write_text(json.dumps({"pid": pid}))
+        if result:
+            (d / "result.json").write_text("{}")
+        os.utime(d, (time.time() - age, time.time() - age))
+        return d
+    old = job("old", 8 * 86400, os.getpid(), True)
+    orphan = job("orphan", 600, _dead_pid(), False)
+    finished = job("finished", 600, _dead_pid(), True)
+    running = job("running", 600, os.getpid(), False)
+    fresh = job("fresh", 1, None, False)  # just submitted: no pid yet
+    assert _heavy(tmp_path, "prune").returncode == 0
+    assert [d.exists() for d in (old, orphan, finished, running, fresh)] == [False, False, True, True, True]
+
+
+# ---------------------------------------------------------------- 3.22.0: the guard in hook mode
+
+def test_the_hook_refuses_a_helpers_write_in_the_main_folder(tmp_path: Path) -> None:
+    main = tmp_path / "main"
+    main.mkdir()
+    _git(main, "init", "-q")
+    _git(main, "-c", "user.name=t", "-c", "user.email=t@t", "commit", "-q", "--allow-empty", "-m", "i")
+    wt = tmp_path / "wt"
+    _git(main, "worktree", "add", "-q", "-b", "feat", str(wt))
+
+    def call(cmd: str, cwd: Path, agent: str | None = "a1") -> int:
+        payload = {"cwd": str(cwd), "tool_input": {"command": cmd}}
+        if agent:
+            payload["agent_id"] = agent
+        return _guard(cwd, payload).returncode
+
+    assert call("pnpm install", main) == 2, "a write in the main folder blocks (exit 2), it does not just warn"
+    assert call("touch x.txt", main) == 2
+    assert call("echo hi > x.txt", main) == 2 and call("cat x.txt 2>/dev/null", main) == 0
+    stderr = _guard(main, {"cwd": str(main), "agent_id": "a1", "tool_input": {"command": "touch x"}}).stderr
+    assert "main working folder" in stderr
+    for mutating in ("git commit -m x", "git add .", "git checkout -b y", "git stash", "git reset --hard",
+                     "git push", "git rebase main", "git worktree add ../z", "git branch -D feat", "sed -i s/a/b/ f"):  # fmt: skip
+        assert call(mutating, main) == 2, mutating
+    for reading in ("git status", "git log -3", "git diff", "git branch", "git worktree list", "ls -la",
+                    "pnpm lint", "grep -r x .", "git -C . show HEAD"):  # fmt: skip
+        assert call(reading, main) == 0, reading
+    assert call(f"cd {wt} && touch x", main) == 0, "the shell starts in the main folder; a cd leaves it"
+    assert call(f"touch x && cd {wt}", main) == 2, "a write before the cd is still in the main folder"
+    assert call("cd .. && touch x", main) == 0, "outside the main folder"
+    assert call(f"cd {main} && touch x", wt) == 2, "a cd back into the main folder counts"
+    assert call(f"git -C {wt} commit -m x", main) == 0 and call(f"git -C {main} commit -m x", wt) == 2
+    assert call("touch x.txt", wt) == 0
+    assert call("pnpm lint", main, agent=None) == 0, "the owner's own session is never refused"
+    assert call("pnpm build", main) == 2, "an unqueued heavy command is still refused first"
+    # the kit's self-queuing close is the one heavy command the hook lets through
+    for gate in ("python3 scripts/verify_gate.py milestone m-1", "scripts/verify_gate.py project p",
+                 "python3 /abs/x/scripts/verify_gate.py milestone m-1 --keep-going"):  # fmt: skip
+        assert call(gate, wt) == 0 and call(gate, main) == 0, gate
+    assert call("python3 scripts/verify_gate.py approve m-1", wt) == 0
+
+
+@pytest.mark.parametrize("cmd", [
+    "cargo build", "cargo +nightly test", "uv build", "yarn workspace app run build", "go build ./...", "go test ./...",
+    "mvn package", "./mvnw verify", "gradle build", "./gradlew test",
+])  # fmt: skip
+def test_real_build_and_test_commands_are_heavy(cmd: str) -> None:
+    assert _heavy_classify(cmd) == "heavy"
+
+
+@pytest.mark.parametrize("cmd", ["cargo fmt", "cargo clippy", "go vet ./...", "uv sync", "mvn -v", "yarn workspace app run lint"])
+def test_neighbouring_light_commands_stay_light(cmd: str) -> None:
+    assert _heavy_classify(cmd) == "light"
+
+
+def _heavy_classify(cmd: str) -> str:
+    import shlex
+
+    out = subprocess.run([sys.executable, str(HEAVY), "classify", "--", *shlex.split(cmd)], capture_output=True, text=True)
+    return out.stdout.strip()
+
+
+def test_a_late_publisher_never_crashes_the_allocator(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    """A ticket that sorts first but whose slot is already taken waits; it does not raise StopIteration."""
+    monkeypatch.setenv("SDLC_HEAVY_DIR", str(tmp_path))
+    mod = _module()
+    q = mod.Queue(tmp_path, 1)
+    t = tmp_path / "tickets"
+    base = {"pid": os.getpid(), "cmd": ["x"], "kind": "job", "since": time.time(), "cap": 0}
+    (t / "00000000000000000001-1.json").write_text(json.dumps({**base, "slot": None}))
+    (t / "00000000000000000002-1.json").write_text(json.dumps({**base, "slot": 0}))
+    slot, holders = q.try_take(t / "00000000000000000001-1.json")
+    assert slot is None and holders and holders[0]["slot"] == 0
+
+
+def test_the_arrival_name_is_made_under_the_publication_lock(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setenv("SDLC_HEAVY_DIR", str(tmp_path))
+    mod = _module()
+    q = mod.Queue(tmp_path, 1)
+    a = q.enter(["a"], "job")
+    b = q.enter(["b"], "job")
+    assert a.name < b.name
+
+
+def test_a_recycled_group_id_is_not_killed(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setenv("SDLC_HEAVY_DIR", str(tmp_path))
+    mod = _module()
+    victim = subprocess.Popen(["sleep", "30"], start_new_session=True)
+    try:
+        mod.kill_pgid(victim.pid, "Thu Jan  1 00:00:00 1970")  # recorded for another process: the id was recycled
+        assert victim.poll() is None, "a different start time means a different process"
+        mod.kill_pgid(victim.pid, mod.proc_start(victim.pid))
+        assert victim.wait(5) != 0
+    finally:
+        victim.kill()
+
+
+def test_leave_stops_every_group_the_ticket_lists(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setenv("SDLC_HEAVY_DIR", str(tmp_path))
+    mod = _module()
+    q = mod.Queue(tmp_path, 1)
+    ticket = q.enter(["gate"], "gate")
+    check = subprocess.Popen(["sleep", "30"], start_new_session=True)
+    q.track_group(ticket, check.pid)
+    other = subprocess.Popen(["sleep", "30"], start_new_session=True)
+    q.track_group(ticket, other.pid)
+    q.track_group(ticket, other.pid, on=False)  # finished checks are forgotten
+    try:
+        q.leave(ticket)
+        assert check.wait(5) != 0 and other.poll() is None
+    finally:
+        other.kill()
+        check.kill()
+
+
+def test_a_cancelled_wrapper_leaves_no_check_behind(tmp_path: Path) -> None:
+    """`heavy.py run -- <job that starts a session of its own and lists it on the ticket>`: SIGTERM to the wrapper."""
+    pidfile = tmp_path / "check.pid"
+    job = (
+        "import os, subprocess, sys; sys.path.insert(0, os.path.dirname(os.environ['H'])); import heavy; "
+        "q = heavy.Queue(heavy.queue_dir(), 1); "
+        f"p = subprocess.Popen(['sleep', '60'], start_new_session=True); open({str(pidfile)!r}, 'w').write(str(p.pid)); "
+        "q.track_group(__import__('pathlib').Path(os.environ['SDLC_HEAVY_TICKET']), p.pid); import time; time.sleep(60)"
+    )
+    wrapper = _popen(tmp_path, "run", "--", sys.executable, "-c", job, H=str(HEAVY))
+    _until(lambda: pidfile.exists() and pidfile.read_text(), "the check to start")
+    time.sleep(0.5)
+    check = int(pidfile.read_text())
+    assert _alive(check)
+    wrapper.terminate()
+    wrapper.wait(10)
+    _until(lambda: not _alive(check), "the check to die with the cancelled wrapper")
+
+
+def test_prune_never_removes_a_running_job_and_tolerates_a_vanished_one(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setenv("SDLC_HEAVY_DIR", str(tmp_path))
+    mod = _module()
+    running = tmp_path / "jobs" / "running"
+    running.mkdir(parents=True)
+    (running / "job.json").write_text(json.dumps({"pid": os.getpid()}))
+    os.utime(running, (time.time() - 30 * 86400,) * 2)
+    gone = tmp_path / "jobs" / "gone"
+    gone.mkdir()
+    real = Path.stat
+
+    def stat(self, *a, **k):  # another prune removed it between the listing and the stat
+        if self.name == "gone":
+            raise FileNotFoundError(self)
+        return real(self, *a, **k)
+
+    monkeypatch.setattr(Path, "stat", stat)
+    assert mod.prune_jobs() == 0 and running.exists()

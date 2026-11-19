@@ -71,13 +71,16 @@ import argparse
 import datetime as dt
 import functools
 import hashlib
+import importlib.util
 import json
 import os
 import re
 import shlex
 import shutil
+import signal
 import subprocess
 import sys
+import threading
 import time
 from pathlib import Path
 from urllib.parse import quote
@@ -962,18 +965,14 @@ def is_e2e(cmd: str) -> bool:
     return "playwright" in cmd or "test:e2e" in cmd
 
 
-def classify_e2e(cmd: str, repo: Path) -> str:
-    """Re-run only the failures of an E2E check: they reproduce (real) or they do not (flaky)."""
+def classify_e2e(cmd: str, repo: Path, rerun=None) -> str:
+    """Re-run only the failures of an E2E check: they reproduce (real) or they do not (flaky). `rerun`
+    runs the command the way the first run ran (same private env, timeout and group tracking)."""
     last = repo / "test-results" / ".last-run.json"
     if last.exists() and not json.loads(last.read_text(encoding="utf-8")).get("failedTests"):
         return ""  # nothing recorded as failed: --last-failed would run the whole suite
-    again = subprocess.run(
-        f"{cmd} --last-failed",
-        shell=True,
-        cwd=repo,
-        capture_output=True,
-        text=True,
-        stdin=subprocess.DEVNULL,
+    again = rerun(f"{cmd} --last-failed") if rerun else subprocess.run(
+        f"{cmd} --last-failed", shell=True, cwd=repo, capture_output=True, text=True, stdin=subprocess.DEVNULL
     )
     return "reproduced (real)" if again.returncode else "did not reproduce (flaky)"
 
@@ -1059,14 +1058,17 @@ def order_checks(
 CHECK_TIMEOUT = 1800  # seconds a single check may run (sdlc.json `checkTimeout`, or `timeout` on the check)
 
 
-def run_check(cmd: str, cwd: Path, limit: int) -> subprocess.CompletedProcess[str]:
-    """Run a shell check in its own process group; past `limit` seconds kill the group and report 124."""
+def run_check(cmd: str, cwd: Path, limit: int, env: dict | None = None, on_start=None) -> subprocess.CompletedProcess[str]:
+    """Run a shell check in its own process group; past `limit` seconds kill the group and report 124.
+    `on_start` gets the group id (the close's slot ticket records it, so a dead gate's check is killed)."""
     import signal
 
     proc = subprocess.Popen(
         cmd, shell=True, cwd=cwd, stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True,
-        stdin=subprocess.DEVNULL, start_new_session=True,
+        stdin=subprocess.DEVNULL, start_new_session=True, env=env,
     )  # fmt: skip
+    if on_start:
+        on_start(proc.pid)
     try:
         out, err = proc.communicate(timeout=limit)
     except subprocess.TimeoutExpired:
@@ -1076,30 +1078,149 @@ def run_check(cmd: str, cwd: Path, limit: int) -> subprocess.CompletedProcess[st
     return subprocess.CompletedProcess(cmd, proc.returncode, out, err)
 
 
+LIVE_GROUPS: set[int] = set()  # process groups of the checks running now, for the signal handler
+
+
+def run_tracked(cmd: str, cwd: Path, limit: float, env: dict | None, hold=None) -> subprocess.CompletedProcess[str]:
+    """`run_check` that lists its group with the process (so a SIGTERM kills it) and on the close's
+    ticket (so the reaper can), and forgets it afterwards."""
+    started: list[int] = []
+
+    def on_start(pgid: int) -> None:
+        started.append(pgid)
+        LIVE_GROUPS.add(pgid)
+        if hold:
+            hold.track(pgid, True)
+
+    try:
+        return run_check(cmd, cwd, limit, env, on_start)
+    finally:
+        for pgid in started:
+            LIVE_GROUPS.discard(pgid)
+            if hold:
+                hold.track(pgid, False)
+
+
 # sha256[:16] of every heavy.py the kit shipped (adopt.py KIT_HEAVY lists the same). The gate runs each
 # check through heavy.py, so a heavy.py of the repo's own could report a pass for a check it never ran.
 KIT_HEAVY = {
+    "5deaa2eb45d65844",
     "7dfd1429b4f9cd2d",
     "8b4f8c3dfa44073f",
     "af2eb2673c676348",
     "cc25027d60793b2b",
     "f411b8feb66c33ed",
+    "1bb86e7356aa80e0",
 }
 
 
-def queued(cmd: str, limit: int, cfg: dict) -> tuple[str, int]:
-    """The command the check loop starts and its outer deadline. With heavy.py beside the gate, a heavy
-    check takes a slot and a light one passes straight through (`--auto`); a gate already inside a
-    slot runs it at once, so a close builder's `heavy.py run -- verify_gate.py milestone` never queues
-    behind itself. heavy.py enforces the check's own timeout (`--run-timeout`, the process-group
-    kill); the outer deadline adds the slot wait, so waiting never counts against the check."""
-    heavy = Path(__file__).with_name("heavy.py")
-    if not heavy.is_file():  # a repo adopted before the queue
-        return cmd, limit
-    section = cfg.get("heavy") if isinstance(cfg.get("heavy"), dict) else {}
-    wait = int(section.get("waitTimeout", 1800))
-    wrapped = shlex.join([sys.executable, str(heavy), "run", "--auto", "--run-timeout", str(limit), "--", "sh", "-c", cmd])
-    return wrapped, limit + max(wait, 0) + 60
+def load_heavy():
+    """scripts/heavy.py beside the gate (hash-checked by `run` first), or None in a repo adopted before the queue."""
+    path = Path(__file__).with_name("heavy.py")
+    if not path.is_file():
+        return None
+    spec_ = importlib.util.spec_from_file_location("sdlc_heavy", path)
+    module = importlib.util.module_from_spec(spec_)
+    spec_.loader.exec_module(module)
+    return module
+
+
+class HoldError(Exception):
+    """The close could not get what it needs (a slot, a database): nothing ran, a handoff not a failure."""
+
+
+class Hold:
+    """The milestone close is one heavy job: one slot (taken before the first heavy check, held to the
+    end) and, with `db.test` configured, one database copy for the whole close. Light checks run before
+    the slot is taken. A gate already inside a slot (`heavy.py run -- verify_gate.py milestone`, the env
+    marker names a live process) takes none and runs everything under that slot."""
+
+    def __init__(self, cfg: dict, repo: Path) -> None:
+        self.hv, self.repo, self.waited = load_heavy(), repo, 0.0
+        self.env = dict(os.environ)
+        self.cfg = self.hv.config(str(repo)) if self.hv else {}
+        held = self.env.get("SDLC_HEAVY_HOLDER", "")
+        self.inherited = bool(self.hv) and held.isdigit() and self.hv.alive(int(held))
+        self.queue = self.ticket = None
+        self.taken = False
+        self.db_name = self.db_dirty = None
+        self.db_py = Path(__file__).with_name("db.py")
+        test_db = (cfg.get("db") or {}).get("test") if isinstance(cfg.get("db"), dict) else None
+        self.wants_db = bool(test_db) and self.db_py.is_file()
+        self.prep = float((test_db or {}).get("prepareTimeout", 600)) if isinstance(test_db, dict) else 600.0
+        if self.wants_db:  # a check that runs before the copy exists never gets the caller's database
+            self.env.pop("DATABASE_URL", None)
+        if self.inherited and self.hv and self.env.get("SDLC_HEAVY_TICKET"):
+            self.queue = self.hv.Queue(self.hv.queue_dir(), int(self.cfg["slots"]))
+            self.ticket = Path(self.env["SDLC_HEAVY_TICKET"])  # the wrapper's: its reaper reads our groups
+
+    def heavy(self, cmd: str) -> bool:
+        return bool(self.hv) and self.hv.is_heavy(["sh", "-c", cmd], self.cfg)
+
+    def enter(self) -> None:
+        """Before a heavy check: the slot and the database, once."""
+        if self.taken or not self.hv:
+            return
+        if not self.inherited:
+            started = time.monotonic()
+            try:
+                self.queue, self.ticket, slot = self.hv.acquire(
+                    [sys.executable, *sys.argv], "gate", self.cfg, float(self.cfg["waitTimeout"]), patient=True
+                )
+            except self.hv.SlotTimeout as e:
+                raise HoldError(str(e)) from e
+            finally:
+                self.waited = time.monotonic() - started
+            port = int(self.cfg["portBase"]) + 10 * slot
+            self.env.update(
+                SDLC_HEAVY_HOLDER=str(os.getpid()), SDLC_HEAVY_SLOT=str(slot),
+                SDLC_APP_PORT=str(port), SDLC_STUB_PORT=str(port + 1),
+            )  # fmt: skip
+        self.taken = True
+        if self.wants_db:
+            self.set_cap(self.prep)  # waiters see a deadline for the holder while it prepares
+            try:
+                self.db_create()
+            finally:
+                self.set_cap(0)
+
+    def set_cap(self, cap: float) -> None:
+        if self.queue and self.ticket and not self.inherited:
+            self.queue.update(self.ticket, lambda d: d.update(cap=cap, started=time.time()))
+
+    def track(self, pgid: int, on: bool) -> None:
+        if self.queue and self.ticket:
+            self.queue.track_group(self.ticket, pgid, on)
+
+    def _db(self, *args: str) -> str:
+        res = run_tracked(shlex.join([sys.executable, str(self.db_py), "test", *args]), self.repo, self.prep, self.env, self)
+        if res.returncode:
+            raise HoldError(f"db.py test {' '.join(args)} failed:\n{(res.stdout + res.stderr).strip()}")
+        return res.stdout
+
+    def db_create(self, name: str | None = None) -> None:
+        out = self._db("create", *([name] if name else []), "--owner-pid", str(os.getpid())).strip().splitlines()
+        parts = out[-1].split() if out else []
+        if len(parts) != 2:
+            raise HoldError(f"db.py test create printed {out[-1:] or 'nothing'}, not `NAME URL`")
+        self.db_name, self.env["DATABASE_URL"] = parts
+        self.db_dirty = False
+
+    def reset_db(self) -> None:
+        """A fresh copy of the template under the same name: the next check starts from clean data."""
+        if self.db_name and self.db_dirty:
+            self._db("drop", self.db_name)
+            self.db_create(self.db_name)
+
+    def release(self) -> None:
+        try:
+            if self.db_name:
+                self._db("drop", self.db_name)
+        except HoldError as e:
+            print(f"WARN database {self.db_name} not dropped: {e}", file=sys.stderr)  # the verdict stays the last stdout line
+        finally:
+            if self.queue and self.ticket and not self.inherited:  # a wrapper's ticket is the wrapper's
+                self.queue.leave(self.ticket)
 
 
 def run(
@@ -1118,6 +1239,40 @@ def run(
     if heavy.is_file() and hashlib.sha256(heavy.read_bytes()).hexdigest()[:16] not in KIT_HEAVY:
         print(f"refused before any check runs: {heavy} is not a kit version, so it could record a pass for a check that never ran")
         return end("VERIFY BLOCKED reason=env", 3)
+    hold = Hold(cfg, repo)  # only after the hash check: it runs heavy.py's code
+
+    def cancelled(signum, _frame) -> None:  # stop every running check, free the copy and the slot
+        for pgid in list(LIVE_GROUPS):
+            try:
+                os.killpg(pgid, signal.SIGKILL)
+            except OSError:
+                pass
+        hold.release()
+        sys.exit(128 + signum)
+
+    old = {}
+    if threading.current_thread() is threading.main_thread():
+        old = {s: signal.signal(s, cancelled) for s in (signal.SIGTERM, signal.SIGHUP, signal.SIGINT)}
+    try:
+        if hold.hv:
+            hold.hv.prune_jobs()  # cheap: old job logs of earlier runs
+        return run_close(scope, change, cfg, repo, hold, visual_check, visual_runs, keep_going)
+    finally:
+        hold.release()  # the slot and the database copy, whatever the verdict
+        for sig, handler in old.items():
+            signal.signal(sig, handler)
+
+
+def run_close(
+    scope: str,
+    change: Path,
+    cfg: dict,
+    repo: Path,
+    hold: Hold,
+    visual_check: str | None = None,
+    visual_runs: list[str] | None = None,
+    keep_going: bool = False,
+) -> int:
     out_dir = change / "verify"
     out_dir.mkdir(exist_ok=True)
     report: dict = {"scope": scope, "id": change.name, "checks": []}
@@ -1144,6 +1299,7 @@ def run(
         if scope == "milestone":
             report["milestone"] = number
         report["metrics"] = metrics(change, report, retries, started_run)
+        report["metrics"]["queue_wait_s"] = round(hold.waited, 1)
         text = json.dumps(report, indent=2) + "\n"
         (out_dir / "report.json").write_text(text, encoding="utf-8")
         # report.json holds the last scope run only: a milestone also keeps its own receipt, which
@@ -1176,6 +1332,9 @@ def run(
         )
         if code == 0:
             (out_dir / "state.json").unlink(missing_ok=True)
+        if report["checks"]:
+            ran = ", ".join(f"{c['name']} {c['seconds']}s" for c in report["checks"] if not c.get("cached"))
+            print(f"timing: queue wait {report['metrics']['queue_wait_s']}s, total {report['metrics']['elapsed_s']}s" + (f"; {ran}" if ran else ""))
         return end(line, code)
 
     declared = False  # an approval from before 3.18.0 keeps the order its checks were written in
@@ -1296,6 +1455,7 @@ def run(
             {
                 "name": "preflight",
                 "cache": False,
+                "serial": True,
                 "run": f"{shlex.join([sys.executable, str(preflight)])} || {{ echo 'VERIFY BLOCKED reason=env'; exit 1; }}",
             }
         )
@@ -1358,6 +1518,8 @@ def run(
                 ),
             }
         )
+    for e in evidence:
+        e["serial"] = True  # evidence is a wall: it fails before any suite or parallel light group starts
     checks = evidence + checks
 
     diff_base = parent_ref(change, cfg, repo) if scope == "milestone" else ""
@@ -1396,10 +1558,44 @@ def run(
         return finish(f"VERIFY FAIL {scope} {change.name} check={name}", 1)
 
     first_failure: tuple[str, str, str] | None = None  # --keep-going: the verdict names the first
+    plan = []
     for check in checks:
-        name = check["name"]
         cmd = expand(check["run"], change.name, cfg, diff_base)
-        key = cache_key(tree, cmd, now) if check.get("cache", True) and tree else ""
+        plan.append((check, cmd, cache_key(tree, cmd, now) if check.get("cache", True) and tree else ""))
+
+    def limit_of(check: dict) -> int:
+        return int(check.get("timeout") or cfg.get("checkTimeout") or CHECK_TIMEOUT)
+
+    def execute(check: dict, cmd: str, env: dict) -> tuple[subprocess.CompletedProcess[str], float]:
+        started = time.monotonic()
+        proc = run_tracked(cmd, repo, limit_of(check), env, hold)
+        return proc, round(time.monotonic() - started, 1)
+
+    # Light checks run side by side (3.22.0): a group is a run of neighbours that are light, not cached,
+    # and not ordered behind one another; a `serial` check or a heavy one ends it. Each group starts when
+    # the loop reaches its first member, so the order of the verdicts is still the order of the checks.
+    # A lock from before 3.18.0 (declared order) runs every check one after the other: the order is the
+    # contract (a code generator before the type check), and parallel starts would break it.
+    width = max(1, int(hold.cfg.get("lightParallel", 4))) if hold.hv and not declared else 1
+    groups: dict[int, list[int]] = {}
+    if width > 1:
+        run_of: list[int] = []
+        for i, (check, cmd, key) in enumerate(plan):
+            if key in cache:
+                continue
+            behind = {plan[j][0]["name"] for j in run_of} & set(check.get("after") or [])
+            if not (hold.heavy(cmd) or check.get("serial") or check.get("resetDb") or behind):  # a reset is a boundary
+                run_of.append(i)
+                continue
+            if len(run_of) > 1:
+                groups[run_of[0]] = run_of
+            run_of = []
+        if len(run_of) > 1:
+            groups[run_of[0]] = run_of
+    ready: dict[int, tuple[subprocess.CompletedProcess[str], float]] = {}
+
+    for i, (check, cmd, key) in enumerate(plan):
+        name = check["name"]
         if key in cache:
             report["checks"].append(
                 {"name": name, "run": cmd, "status": "pass", "exit": 0, "seconds": 0,
@@ -1407,15 +1603,30 @@ def run(
             )  # fmt: skip
             print(f"ok (cached) {name}: {cmd}")
             continue
-        started = time.monotonic()
-        limit = int(check.get("timeout") or cfg.get("checkTimeout") or CHECK_TIMEOUT)
-        started_cmd, outer = queued(cmd, limit, cfg)
-        proc = run_check(started_cmd, repo, outer)
+        if i in groups:
+            from concurrent.futures import ThreadPoolExecutor
+
+            with ThreadPoolExecutor(max_workers=width) as pool:
+                futures = {j: pool.submit(execute, plan[j][0], plan[j][1], hold.env) for j in groups[i]}
+                ready = {j: f.result() for j, f in futures.items()}
+        if i in ready:
+            proc, seconds = ready.pop(i)
+        else:
+            heavy_check = hold.heavy(cmd)
+            try:
+                if heavy_check or check.get("resetDb"):  # `resetDb: true` names a database check
+                    hold.enter()  # the one slot of this close, held to the end
+                if hold.taken and (check.get("resetDb") or (heavy_check and check.get("resetDb") is None)):
+                    hold.reset_db()
+            except HoldError as err:  # nothing ran: a handoff naming the holder or the database, not a failed check
+                print(f"FAIL {name}: {cmd}\n{err}")
+                report["checks"].append(
+                    {"name": name, "run": cmd, "status": "fail", "exit": 75, "seconds": 0, "tail": str(err)[-2000:]}
+                )
+                return finish("VERIFY BLOCKED reason=env", 3)
+            proc, seconds = execute(check, cmd, hold.env)
+            hold.db_dirty = hold.taken and bool(hold.db_name)
         output = proc.stdout + proc.stderr
-        if started_cmd != cmd and proc.returncode == 124 and "timed out" not in output:
-            output += f"\ntimed out after {limit}s\n"  # heavy.py killed the group at the check's limit
-        if started_cmd != cmd and proc.returncode == 75 and "heavy: no slot after" in output:
-            output += "\nVERIFY BLOCKED reason=env\n"  # nothing ran: a handoff naming the holder, not a failed check
         tail = "\n".join(output.strip().splitlines()[-TAIL:])
         status = "pass" if proc.returncode == 0 else "fail"
         report["checks"].append(
@@ -1424,7 +1635,7 @@ def run(
                 "run": cmd,
                 "status": status,
                 "exit": proc.returncode,
-                "seconds": round(time.monotonic() - started, 1),
+                "seconds": seconds,
                 "tail": tail,
             }
         )
@@ -1446,7 +1657,7 @@ def run(
                 continue
             return finish(f"VERIFY BLOCKED reason={reason}", 3)
         if is_e2e(cmd):
-            verdict = classify_e2e(cmd, repo)
+            verdict = classify_e2e(cmd, repo, lambda c, chk=check: run_tracked(c, repo, limit_of(chk), hold.env, hold))
             if verdict:
                 print(f"--last-failed re-run: the failures {verdict}")
                 report["checks"][-1]["rerun"] = verdict

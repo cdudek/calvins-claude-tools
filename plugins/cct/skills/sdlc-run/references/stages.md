@@ -327,11 +327,26 @@ a change small enough for one milestone has one.
    commits its records, then dispatches each builder with a `Base: <milestone head sha>` line,
    and merges the builders' branches into the milestone branch locally, one at a time. Commits
    need Conventional Commit subjects: a merge commit keeps them, and the release reads them.
+   **Right after each merge, remove that builder's worktree and branch**, not at Stage 7: every builder
+   worktree holds a full checkout with its installed dependencies and caches, and a milestone of eight
+   builders fills a disk. Run `python3 ${CLAUDE_SKILL_DIR}/scripts/sdlc_status.py worktrees --remove
+   <builder worktree path> --into <milestone branch>` for THAT builder, and never a raw `git worktree
+   remove`. It removes exactly that one path, only when it is a `<repo root>/.worktrees/agent-*`
+   worktree of this repo, no codex build or git operation holds it, its branch is merged into the
+   milestone branch you name, and it is clean: it keeps a worktree with uncommitted changes or ignored
+   files other than the cache directories `node_modules`, `.next`, `.turbo`, `__pycache__`,
+   `.pytest_cache`, `.ruff_cache`, `.venv` and `coverage` (a `.env`, or a local file under `build/`,
+   is never deleted), names the reason, and fails closed on any git error (exit 1). It reports a branch
+   that `git branch -d` refused to delete as retained. Without flags `worktrees` only lists. It runs
+   only in an adopted repo (one with `sdlc.json`). A builder that is still running is never removed:
+   the lock, not a clean tree, decides.
 4. When every feature of the milestone is `done`, the supervisor hands the milestone's local
    pipeline to **one `cct:sdlc-feature-builder` subagent with `Mode: close`** and the head it runs on
    (the one fix round with targeted tests, then `verify_gate.py milestone`, the only runner of the
-   full suite and the full E2E; it spawns no agents of its own and takes its own heavy slot for the
-   heavy checks, `heavy.py run --auto`: [heavy work](heavy-work.md)). Nothing merges into the milestone while it runs: the gate fails
+   full suite and the full E2E; it spawns no agents of its own. The close is **one heavy job**: the gate
+   runs the light checks first, side by side, then takes one slot for all the heavy ones and holds it to
+   the end, with one database copy reset between suites when `db.test` is set, and prints seconds per
+   check, queue wait and total: [heavy work](heavy-work.md)). Nothing merges into the milestone while it runs: the gate fails
    `check=moved` if the head changes. The supervisor dispatches
    the Stage 6 reviews and the validation in parallel, writes the findings the subagent fixes, and
    goes on building the next milestone wherever that does not build on this one. Only a
@@ -498,7 +513,7 @@ disappear.
   for any builder. `blocked` or `failed` (exit 4) carries the blockers: answer in the brief and
   re-dispatch. To cancel, kill the process group in `run.json` first; the lock in the worktree's
   git dir refuses a second run while one lives. Loopback stays open with the network off
-  (checked 2026-11-02), but its `.git` is read-only, so it cannot take a heavy slot: a Codex
+  (checked 2026-11-02), but its `.git` is read-only and the queue lives outside the workspace, so assume it cannot take a heavy slot: a Codex
   builder runs light checks only, and the supervisor runs its touched E2E specs, builds and captures
   through `heavy.py run` on the worker branch before merging it ([heavy work](heavy-work.md)). The milestone close keeps its one `cct:sdlc-feature-builder`, which runs the gate only:
   Codex fix parts, then the gate once (it runs the checks).

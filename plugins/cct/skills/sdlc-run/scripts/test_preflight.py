@@ -7,6 +7,7 @@ failure. Each case runs it in a scratch repo with a PATH that holds only the fak
 from __future__ import annotations
 
 import json
+import shutil
 import stat
 import subprocess
 import sys
@@ -18,6 +19,8 @@ PRE = Path(__file__).resolve().parents[1] / "templates/scripts/preflight.py"
 def _run(tmp: Path, cfg: dict, *, fakes: dict[str, int] | None = None):
     repo = tmp / "repo"
     repo.mkdir(parents=True, exist_ok=True)
+    # the machine's free disk is not under test, except in the disk tests below
+    cfg = {**cfg, "preflight": {"minFreeGB": 0, **cfg.get("preflight", {})}}
     (repo / "sdlc.json").write_text(json.dumps(cfg))
     bin_dir = tmp / "bin"
     bin_dir.mkdir(parents=True, exist_ok=True)
@@ -93,3 +96,35 @@ def test_config_flag_checks_only_the_conflicts(tmp_path: Path) -> None:
         [sys.executable, str(PRE), "--config"], capture_output=True, text=True, cwd=repo, env=env
     )
     assert "FAIL config blocked[0]" in res.stdout and "FAIL tool" not in res.stdout
+
+
+def test_low_free_disk_fails_with_the_free_gb_and_a_margin_warns(tmp_path: Path) -> None:
+    free = shutil.disk_usage(tmp_path).free / 2**30
+    res = _run(tmp_path, {"preflight": {"minFreeGB": free * 100}})
+    line = next(x for x in res.stdout.splitlines() if x.startswith("FAIL disk"))
+    assert f"{free:.0f}" in line or f"{free:.1f}" in line, line
+    assert "minFreeGB" in line and res.returncode == 1
+    warn = _run(tmp_path / "w", {"preflight": {"minFreeGB": free / 1.5}})
+    assert any(x.startswith("WARN disk") for x in warn.stdout.splitlines()), warn.stdout
+    assert warn.returncode == 0 and warn.stdout.splitlines()[-1] == "PREFLIGHT OK"
+    fine = _run(tmp_path / "f", {"preflight": {"minFreeGB": free / 10}})
+    assert fine.stdout.strip() == "PREFLIGHT OK"
+
+
+def test_the_config_only_run_never_looks_at_the_disk(tmp_path: Path) -> None:
+    repo = tmp_path / "repo"
+    repo.mkdir()
+    (repo / "sdlc.json").write_text("{}")
+    env = {"PATH": str(tmp_path), "HOME": str(tmp_path)}
+    out = subprocess.run(
+        [sys.executable, str(PRE), "--config"], capture_output=True, text=True, cwd=repo, env=env
+    )
+    assert out.stdout.strip() == "PREFLIGHT OK", "CI's --config run never looks at the disk"
+
+
+def test_the_selected_engine_is_the_one_probed(tmp_path: Path) -> None:
+    cfg = {"db": {"test": {"engine": "podman"}}}
+    ok = _run(tmp_path, cfg, fakes={"podman": 0, "docker": 1})
+    assert ok.returncode == 0, "podman works; a broken docker is not asked"
+    bad = _run(tmp_path, cfg, fakes={"podman": 1})
+    assert "FAIL podman" in bad.stdout and "docker" not in bad.stdout.lower().replace("podman", "")

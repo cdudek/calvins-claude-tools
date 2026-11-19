@@ -1,6 +1,6 @@
 # sdlc-run, end to end
 
-Describes sdlc-run 3.21.0.
+Describes sdlc-run 3.22.0.
 
 `/cct:sdlc-run` runs an AI-native software lifecycle in any repo. The agent drafts the intent, the UX plan, the facts and the tech plan. You confirm twice. Then one `/goal` builds the whole milestone as commits, runs the heavy checks once, and opens one PR.
 
@@ -249,7 +249,7 @@ It first asks whether to use Ship/Show/Ask merge tiers (a code owner approves ri
 
 ## Staying current
 
-`adopt` writes `"sdlcVersion": "3.21.0"` into `sdlc.json`. Every time the skill runs in the repo, `status` and the verify gate compare the stamp with the installed plugin and print one line when it is missing or older, for example:
+`adopt` writes `"sdlcVersion": "3.22.0"` into `sdlc.json`. Every time the skill runs in the repo, `status` and the verify gate compare the stamp with the installed plugin and print one line when it is missing or older, for example:
 
 ```text
 This repo runs sdlc-run 3.2.0; the kit is 3.3.1. Run `adopt --upgrade` (changes: 3.3.1: adopt --upgrade never overwrites or moves anything; 3.3.0: the CI workflow ships as a template, ciPaths by file type, versioned repos).
@@ -270,3 +270,4 @@ Each version's headline and migration steps are in the skill's [changelog](../pl
 - **A milestone close that is fast and cannot deadlock (3.21):** the milestone gate is the only runner of the full suite and the full E2E, cheap offline checks run first, and your answer to one dialog (not text in a file) settles each leftover finding. Sign-off beats auto-merge: an Ask PR is never `done` without your `Accept milestone`. The full list is in the [changelog](../plugins/cct/skills/sdlc-run/references/changelog.md).
 - **Heavy work (3.21):** the heavy-job queue, local test databases, your own dev database and preflight. See [Heavy work](#heavy-work-builds-browsers-and-databases).
 - **The living spec (3.21, opt-in):** three documents per change, one file per rule, no archive. See [The living spec](#the-living-spec-optional).
+- **One close job, one queue per machine (3.22):** the milestone close takes one heavy slot, builds once and uses one test database copy; heavy commands are recognised by program and script; one queue serves every repo on the machine; the test template is kept per migration version and works with Docker or Podman; preflight checks free disk and merged builder worktrees are removed. See [Heavy work](#heavy-work-builds-browsers-and-databases).

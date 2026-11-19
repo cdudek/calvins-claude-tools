@@ -1475,6 +1475,56 @@ def test_upgrade_adds_builders_claude_when_missing(tmp_path: Path) -> None:
     assert any("builders added" in w for w in _sections(res.stdout)["WROTE"])
 
 
+def _classify(cfg: dict, repo: Path, *cmd: str) -> str:
+    heavy = ADOPT.parents[1] / "templates/scripts/heavy.py"
+    out = subprocess.run(
+        [sys.executable, str(heavy), "classify", "--", *cmd], cwd=repo, capture_output=True, text=True, env=_env()
+    )
+    return out.stdout.strip()
+
+
+def test_adopt_seeds_heavy_patterns_from_the_milestone_checks_and_ci_commands(tmp_path: Path) -> None:
+    repo = _repo(tmp_path, "python")
+    assert _adopt(repo).returncode == 0
+    cfg = json.loads((repo / "sdlc.json").read_text())
+    patterns = cfg["heavy"]["patterns"]
+    assert patterns and all("ruff" not in p and "mypy" not in p for p in patterns), patterns
+    # the suite the repo's own milestone check runs now queues, lint never does
+    assert _classify(cfg, repo, "sh", "-c", "uv run pytest -q --ignore=e2e") == "heavy"
+    assert _classify(cfg, repo, "sh", "-c", "uv run pytest e2e --splits 4 --group 1 --reruns 1") == "heavy"
+    assert _classify(cfg, repo, "sh", "-c", "uv run ruff check .") == "light"
+    assert _classify(cfg, repo, "uv", "run", "pytest", "tests/test_one.py") == "light"
+
+
+def test_adopt_never_overwrites_heavy_patterns_and_seeds_a_repo_that_has_none(tmp_path: Path) -> None:
+    repo = _repo(tmp_path, "python")
+    assert _adopt(repo).returncode == 0
+    cfg = json.loads((repo / "sdlc.json").read_text())
+    cfg["heavy"] = {"patterns": ["my-own-suite"], "slots": 2}
+    (repo / "sdlc.json").write_text(json.dumps(cfg))
+    subprocess.run(["git", "add", "."], cwd=repo, check=True, env=_env())
+    assert _adopt(repo, "--upgrade").returncode == 0
+    assert json.loads((repo / "sdlc.json").read_text())["heavy"] == {"patterns": ["my-own-suite"], "slots": 2}
+
+    cfg["heavy"] = {"slots": 2}  # the key's other settings stay; patterns arrive
+    cfg["checks"]["milestone"] = ["pnpm lint", "sh scripts/run-suite.sh {id}", {"name": "api", "run": "make verify-api"}]
+    (repo / "sdlc.json").write_text(json.dumps(cfg))
+    subprocess.run(["git", "add", "."], cwd=repo, check=True, env=_env())
+    res = _adopt(repo, "--upgrade")
+    assert res.returncode == 0, res.stdout + res.stderr
+    heavy = json.loads((repo / "sdlc.json").read_text())["heavy"]
+    assert heavy["slots"] == 2 and any("run\\-suite" in p for p in heavy["patterns"]), heavy
+    assert any("heavy.patterns added" in w for w in _sections(res.stdout)["WROTE"])
+    assert _classify(cfg, repo, "sh", "-c", "sh scripts/run-suite.sh 2026-x") == "heavy"
+    assert _classify(cfg, repo, "pnpm", "lint") == "light"
+
+
+def test_adopt_seeds_nothing_when_the_classifier_already_knows_every_suite(tmp_path: Path) -> None:
+    repo = _repo(tmp_path, "node")
+    assert _adopt(repo).returncode == 0
+    assert "heavy" not in json.loads((repo / "sdlc.json").read_text())
+
+
 def test_upgrade_keeps_builders_codex(tmp_path: Path) -> None:
     repo = _repo(tmp_path, "node")
     assert _adopt(repo).returncode == 0
@@ -2250,3 +2300,27 @@ def test_the_installed_guardrail_test_reads_the_docs_path_from_sdlc_json(tmp_pat
     assert (repo / "documentation/sdlc.md").is_file()
     test = (repo / "tests/test_sdlc.py").read_text()
     assert 'CFG.get("docs"' in test and '(REPO_ROOT / "docs" / "sdlc.md")' not in test
+
+
+def test_adopt_flags_migrations_without_a_db_test_block(tmp_path: Path) -> None:
+    repo = _repo(tmp_path, "node")
+    (repo / "db" / "migrations").mkdir(parents=True)
+    (repo / "db" / "migrations" / "001.sql").write_text("create table a (id int);")
+    (repo / "node_modules" / "x" / "migrations").mkdir(parents=True)
+    (repo / "node_modules" / "x" / "migrations" / "0.sql").write_text("-- vendored")
+    subprocess.run(["git", "add", "-A", "-f", "."], cwd=repo, check=True, env=_env())
+    res = _adopt(repo)
+    assert res.returncode == 0, res.stderr
+    line = next(m for m in _sections(res.stdout)["MANUAL"] if "db.test" in m)
+    for word in ("container", "port", "template", "migrate", "migrations", "db/migrations"):
+        assert word in line
+    cfg = json.loads((repo / "sdlc.json").read_text())
+    cfg["db"] = {"test": {"container": "c", "port": 55432, "template": "t"}}
+    (repo / "sdlc.json").write_text(json.dumps(cfg, indent=2) + "\n")
+    again = _adopt(repo)
+    assert not any("db.test" in m for m in _sections(again.stdout)["MANUAL"])
+
+
+def test_adopt_stays_quiet_about_databases_when_the_repo_has_no_migrations(tmp_path: Path) -> None:
+    res = _adopt(_repo(tmp_path, "node"))
+    assert not any("db.test" in m for m in _sections(res.stdout)["MANUAL"])
