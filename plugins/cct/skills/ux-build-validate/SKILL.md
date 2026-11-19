@@ -29,14 +29,17 @@ Shared files are in `references/`, two levels up from this skill's base director
 
 1. Read `docs/ux/setup.md`. Missing: stop and run `cct:ux-setup`.
 2. Resolve the spec folder and the mode with the shared `references/spec-folder.md`. No spec
-   folder exists: stop and say `cct:ux-design-run` makes one. No approved `readiness.md` (`validation.md` in a
-   folder written before the rename): stop and
-   say `cct:ux-spec-validate` writes it.
-3. Read the size and skips: `decisions.json` in sdlc mode, the frontmatter of `<spec>/brief.md` in
-   standalone mode. The size is `none`, or the `prototype` skip is set and `decisions.json`
-   names no `visualSource`: do not run; say the skip and its reason in one line. With a
-   `visualSource`, compare the build against it (precedence in sdlc-run's `design-inputs.md`);
-   a generated prototype is advisory, never the reference.
+   folder exists: stop and say `cct:ux-design-run` makes one.
+3. Read the size and skips first: `decisions.json` in sdlc mode, the frontmatter of
+   `<spec>/brief.md` in standalone mode. The size is `none`, or the `prototype` skip is set and
+   `decisions.json` names no `visualSource`: do not run; say the skip and its reason in one line.
+   With a `visualSource`, compare the build against it (precedence in sdlc-run's
+   `design-inputs.md`); a generated prototype is advisory, never the reference.
+   Then the approval the run needs: when the `validation` skip is recorded and a `visualSource`
+   is supplied, the owner's approval of the intent authorises this QA, and no `readiness.md` is
+   asked for (never loop back to `cct:ux-spec-validate`, which honours the skip and writes
+   nothing). Otherwise the spec needs an approved `readiness.md` (`validation.md` in a folder
+   written before the rename); without one, stop and say `cct:ux-spec-validate` writes it.
 4. Read the asks (`intent.md` `## Asks`, or the brief's `## Owner Asks`), `facts.md` when present,
    and every file in the spec folder.
 5. Read shared files as needed: `finding-format.md`, `checklist.md`, `writing.md`,

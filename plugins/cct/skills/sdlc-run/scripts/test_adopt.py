@@ -1756,3 +1756,13 @@ def test_the_plan_template_does_not_tell_the_closer_to_run_unit_and_e2e_beside_t
     branch = plan.split("**One milestone**", 1)[1].split("**Feature PRs**", 1)[0]
     assert "unit, E2E (changed and flaky specs ×3) and" not in branch
     assert "only runner of the full suite" in branch
+
+
+def test_replacing_the_gate_replaces_its_marks_partner_too_F3(tmp_path: Path) -> None:
+    repo = _upgrade_fixture(tmp_path)
+    (repo / "scripts/marks.py").write_text("def sessions(change):\n    return []\n")
+    res = _adopt(repo, "--upgrade", "--apply", "--replace", "scripts/verify_gate.py")
+    assert res.returncode == 0, res.stderr
+    for name in ("verify_gate.py", "marks.py"):
+        kit = (ADOPT.parents[1] / "templates/scripts" / name).read_bytes()
+        assert (repo / "scripts" / name).read_bytes() == kit, name

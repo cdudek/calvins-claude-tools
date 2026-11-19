@@ -7,6 +7,7 @@
 # One interpreter start per call: file, then the rules as NUL-separated <globs>, <command>.
 set -uo pipefail
 set -f # the globs are patterns to match against the file name, never expanded against cwd
+export PYTHONDONTWRITEBYTECODE=1 # a hook must not leave __pycache__ in a clean checkout
 . "$(dirname "$0")/sdlc-config.sh"
 : "${SDLC_PY:=python3}" # an older sdlc-config.sh (one-file upgrade) does not set it
 

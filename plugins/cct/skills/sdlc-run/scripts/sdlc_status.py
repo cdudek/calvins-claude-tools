@@ -48,8 +48,11 @@ from pathlib import Path
 
 from change_docs import MARKER, ids, readme
 
-# verify_gate lives in the plugin's templates (it is also what adopt copies into repos).
-sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "templates" / "scripts"))
+# verify_gate and pass_proof live in the plugin's templates (what adopt copies into repos).
+for _sub in ("scripts", "hooks"):
+    sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "templates" / _sub))
+
+from pass_proof import proves  # noqa: E402
 
 STAGES = ("Intent", "UX plan", "Facts", "Tech plan", "Build", "Milestone", "Outcome")
 
@@ -213,12 +216,8 @@ def contains(root: Path, sha: str, into: str) -> bool:
 
 
 def same_head(root: Path, cfg: dict, gated: str, head: str) -> bool:
-    """The head the gate passed, or a descendant that only added records (pr-gate.sh's rule)."""
-    if gated == head:
-        return True
-    rel = str(cfg.get("changesDir", "changes")).rstrip("/") + "/"
-    changed = git(root, "diff", "--name-only", gated, head).splitlines()
-    return contains(root, gated, head) and bool(changed) and all(p.startswith(rel) for p in changed)
+    """What the gate passed still holds at `head` (pass_proof.py, the rule pr-gate.sh applies)."""
+    return proves(root, str(cfg.get("changesDir", "changes")), gated, head)
 
 
 def planned(change: Path) -> int:
@@ -227,8 +226,10 @@ def planned(change: Path) -> int:
     return sum(1 for line in section(plan, "Milestones") if re.match(r"\|\s*M\d+\b", line))
 
 
-def branches(change: Path, decisions: dict, scope: str, n: int | None) -> list[str]:
-    """Head branches whose PRs end the goal: milestone/<slug>-<n>, or the Feature PRs row's branch."""
+def branches(
+    change: Path, decisions: dict, scope: str, n: int | None, cfg: dict | None = None
+) -> list[str]:
+    """Head branches whose PRs end the goal: <prefix><slug>-<n>, or the Feature PRs row's branch."""
     plan = (change / "plan.md").read_text(encoding="utf-8") if (change / "plan.md").exists() else ""
     if scope == "feature":
         for line in section(plan, "Feature PRs"):
@@ -238,7 +239,59 @@ def branches(change: Path, decisions: dict, scope: str, n: int | None) -> list[s
         return []
     slug = decisions.get("milestone", {}).get("slug") or slug_of(change.name)
     count = planned(change)
-    return [f"milestone/{slug}-{i}" for i in ([n] if n else range(1, max(count, 1) + 1))]
+    prefix = ((cfg or {}).get("milestones") or {}).get("branchPrefix", "milestone/")
+    return [f"{prefix}{slug}-{i}" for i in ([n] if n else range(1, max(count, 1) + 1))]
+
+
+def parent_of(change: Path, cfg: dict, scope: str, head: str = "") -> str:
+    """The branch the scope's PR must target: a feature goes into its milestone branch (a hotfix
+    into the default branch), a milestone into its project branch or else the default branch, a
+    project into the default branch."""
+    default = cfg.get("defaultBranch") or "main"
+    if scope == "project":
+        return default
+    if scope == "milestone":
+        from verify_gate import project_branch
+
+        return project_branch(change, cfg) or default
+    if head.startswith("hotfix/") and cfg.get("hotfix", True):
+        return default
+    slug = read_json(change / "decisions.json").get("milestone", {}).get("slug") or slug_of(change.name)
+    return f"{(cfg.get('milestones') or {}).get('branchPrefix', 'milestone/')}{slug}"
+
+
+def read_receipt(root: Path, change: Path, n: int | str) -> dict:
+    """Milestone n's receipt: the common git dir first, the change's own verify/ folder (where
+    the gate wrote it before 3.20.1) as the fallback. It counts only for its own milestone and
+    change, never a copy."""
+    from verify_gate import receipt_path
+
+    for path in (receipt_path(change.name, n, root), change / "verify" / f"milestone-{n}.json"):
+        receipt = read_json(path)
+        if receipt:
+            ok = (
+                receipt.get("scope") == "milestone"
+                and str(receipt.get("milestone")) == str(n)
+                and receipt.get("change") == change.name
+                and re.fullmatch(
+                    rf"VERIFY PASS milestone {re.escape(change.name)} \w+",
+                    str(receipt.get("result", "")),
+                )
+            )
+            return receipt if ok else {"invalid": True, **receipt}
+    return {}
+
+
+def waiting_on(root: Path, cfg: dict, pr: dict) -> str:
+    """Why an open PR is not armed: the reader decides an `ask` PR while askGatesMerge is on, the
+    tier workflow arms the others into the default branch, and only a repo without that workflow
+    leaves arming to the agent."""
+    if "ask" in {str(x.get("name")) for x in pr.get("labels") or []} and cfg.get("askGatesMerge", True):
+        return "awaits-owner"
+    workflow = (root / ".github" / "workflows" / "ship-show-ask.yml").exists()
+    if workflow and pr.get("baseRefName") == (cfg.get("defaultBranch") or "main"):
+        return "awaits-workflow"
+    return "not-merged-or-armed"
 
 
 def goal(
@@ -256,6 +309,9 @@ def goal(
         subject = (read_json(change / "decisions.json").get("project") or {}).get("slug", "")
         folder = project_record(subject, root) if project else change
     report = read_json(folder / "verify" / "report.json")
+    if scope == "milestone" and n:  # milestone n's own receipt, not whichever gate ran last
+        own = read_receipt(root, change, n)
+        report = own if own and not own.get("invalid") else report
     result = str(report.get("result", "")) if report.get("scope") == scope else ""
     blocked = re.fullmatch(r"VERIFY BLOCKED reason=([\w-]+)", result)
     if blocked:
@@ -272,21 +328,12 @@ def goal(
         # receipt (verify/milestone-<n>.json), whose gated head is in the project branch; the
         # branch merge is the fallback for a change gated before receipts existed
         if planned(change):
-            for b in branches(change, read_json(change / "decisions.json"), scope, n):
+            for b in branches(change, read_json(change / "decisions.json"), scope, n, cfg):
                 i = b.rsplit("-", 1)[1]
-                receipt = read_json(change / "verify" / f"milestone-{i}.json")
+                receipt = read_receipt(root, change, i)
                 tip = git(root, "rev-parse", "--verify", "--quiet", f"{b}^{{commit}}")
                 if receipt:
-                    # a receipt counts only for its own milestone and change, never a copy
-                    ok = (
-                        receipt.get("scope") == "milestone"
-                        and str(receipt.get("milestone")) == i
-                        and receipt.get("change") == change.name
-                        and re.fullmatch(
-                            rf"VERIFY PASS milestone {re.escape(change.name)} \w+",
-                            str(receipt.get("result", "")),
-                        )
-                    )
+                    ok = not receipt.get("invalid")
                     if not (ok and contains(root, str(receipt.get("sha", "")), into)):
                         missing.append(f"receipt-not-merged:{i}")
                         continue
@@ -299,7 +346,7 @@ def goal(
         if not names:
             missing.append("no-project-branch")
     else:
-        names = branches(change, read_json(change / "decisions.json"), scope, n)
+        names = branches(change, read_json(change / "decisions.json"), scope, n, cfg)
     if not names and not local and scope != "project":
         missing.append(f"no-branch-for-{scope}-{n}")
     prs = []
@@ -326,23 +373,25 @@ def goal(
             answer = owner_decisions(root, change.name).get(f"PR{pr['number']}", ("",))[0]
             if answer == "hold":
                 flag = "held"
-            elif "ask" in names_on and answer != "accepted":
+            elif "ask" in names_on and answer != "accepted" and cfg.get("askGatesMerge", True):
                 flag = "awaits-owner"  # armed or not: auto-merge must not win the race
         if not flag and not (merged or armed):
             # arming comes after the owner's disposition and after the tier label: a closed PR and
             # a tiered PR still without its label are never recommended for `gh pr merge --auto`
-            tiered = pr.get("baseRefName") == (cfg.get("defaultBranch") or "main") and cfg.get(
-                "tiers"
-            ) is not False
+            tiered = (
+                pr.get("baseRefName") == (cfg.get("defaultBranch") or "main")
+                and cfg.get("tiers") is not False
+                and (root / ".github" / "workflows" / "ship-show-ask.yml").exists()  # it sets the label
+            )
             if pr.get("state") == "CLOSED":
                 flag = "closed"
             elif tiered and not names_on & {"ask", "show", "ship"}:
                 flag = "awaits-tier"
             else:
-                flag = "not-merged-or-armed"
+                flag = waiting_on(root, cfg, pr)
         if flag:
             missing.append(f"pr-{pr['number']}-{flag}")
-        if scope == "project" and pr.get("baseRefName") != (cfg.get("defaultBranch") or "main"):
+        if pr.get("baseRefName") != parent_of(change, cfg, scope, branch):
             missing.append(f"pr-{pr['number']}-wrong-base")
         prs.append((pr, "merged" if merged else "armed"))
     if (
@@ -382,7 +431,7 @@ BLOCKS = {
         "there is no PR for {n}",
         "the branch was never pushed and opened",
         "the agent",
-        "gh pr create --head {n} --fill",
+        "gh pr create --head {n} --base {base} --fill",
     ),
     "gh-unavailable": (
         "GitHub cannot be reached",
@@ -525,10 +574,11 @@ BLOCKS = {
 }
 
 
-def blocker(subject: str, line: str, scope: str = "milestone") -> str:
+def blocker(subject: str, line: str, scope: str = "milestone", base: str = "") -> str:
     """The one thing in the way, as a sentence, from the goal line; empty when the goal is DONE.
-    `subject` is the change id the goal was asked about, `scope` the gate it reads. Built from the
-    first missing item (the line lists them in the order the goal checks them)."""
+    `subject` is the change id the goal was asked about, `scope` the gate it reads, `base` the
+    branch the scope's PR must target. Built from the first missing item (the line lists them in
+    the order the goal checks them)."""
     m = re.search(r"OPEN (\S+)|BLOCKED reason=([\w-]+)", line)
     if not m:
         return ""
@@ -541,20 +591,37 @@ def blocker(subject: str, line: str, scope: str = "milestone") -> str:
                 "",
                 first,
             )
-            fill = {"scope": scope, "id": subject, "n": n}
+            fill = {"scope": scope, "id": subject, "n": n, "base": base or "<parent branch>"}
             return f"Blocking: {what.format(**fill)}, because {why}; {who} runs `{step.format(**fill)}`."
-    waits = re.fullmatch(r"pr-(\d+)-(closed|awaits-owner|held|awaits-tier)", first)
+    waits = re.fullmatch(
+        r"pr-(\d+)-(closed|held|awaits-tier|awaits-owner|awaits-workflow|wrong-base)", first
+    )
+    if waits and waits[2] == "awaits-owner":
+        return (
+            f"Blocking: PR {waits[1]} is labelled ask and waits for its owner's acceptance, because "
+            f"askGatesMerge is on; you read it and decide (Accept milestone or Hold), no one arms auto-merge."
+        )
+    if waits and waits[2] == "awaits-workflow":
+        return (
+            f"Blocking: PR {waits[1]} is open without auto-merge, because the tier workflow arms ship "
+            f"and show PRs into the default branch; the workflow runs "
+            f"`gh pr view {waits[1]} --json labels,autoMergeRequest` to check it."
+        )
+    if waits and waits[2] == "wrong-base":
+        return (
+            f"Blocking: PR {waits[1]} targets the wrong branch, because the {scope} PR goes into "
+            f"{base or 'its parent'}; the agent runs `gh pr edit {waits[1]} --base {base or '<parent branch>'}`."
+        )
     if waits:
         what, step, who = {
             "closed": ("closed without merging, so there is nothing to arm", "opens a new PR for the gated head", "the agent"),
-            "awaits-owner": ("waiting for its owner's acceptance, so nothing arms it", "decides it", "you"),
             "held": ("on Hold, so nothing arms it", "decides what is left", "you"),
             "awaits-tier": ("waiting for its tier label, so nothing arms it", "waits for the workflow to set it", "the agent"),
         }[waits[2]]
         return f"Blocking: PR {waits[1]} is {what}; {who} {step}."
     pr = re.fullmatch(r"pr-(\d+)-not-merged-or-armed", first)
     if pr:
-        flag = "--merge" if scope == "milestone" else "--squash"
+        flag = "--merge" if scope in ("milestone", "project") else "--squash"  # as the tier workflow
         return (
             f"Blocking: PR {pr[1]} is open without auto-merge, because nothing armed it; "
             f"the agent runs `gh pr merge {pr[1]} {flag} --auto`."
@@ -588,7 +655,9 @@ def goal_main(args: list[str]) -> int:
         return 1
     code, line = goal(root, change, scope, int(value) if flag else None)
     print(line)
-    if code and (sentence := blocker(change.name, line, scope)):
+    head = re.search(r"no-pr:([^,\s]+)", line)
+    base = parent_of(change, config(root), scope, head[1] if head else "")
+    if code and (sentence := blocker(change.name, line, scope, base)):
         print(sentence)
     return code
 

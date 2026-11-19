@@ -9,7 +9,9 @@ milestone close and the supervisor owns it.
 
 ## Inputs
 
-- Approved `<spec>/readiness.md` (`<spec>/validation.md` in a folder written before the rename).
+- Approved `<spec>/readiness.md` (`<spec>/validation.md` in a folder written before the rename),
+  unless the `validation` skip is recorded and a `visualSource` is supplied: then the intent
+  approval authorises the run.
 - `<spec>/brief.md`.
 - `<spec>/ia.md`.
 - `<spec>/interaction.md`.

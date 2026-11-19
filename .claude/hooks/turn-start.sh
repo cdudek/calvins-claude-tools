@@ -4,6 +4,7 @@
 # Writes <git dir>/sdlc-turn-start.hash. Cheap and fail-open: any problem -> exit 0, no output.
 set -uo pipefail
 set -f # verifyDirty globs go to git as patterns, never expanded against cwd
+export PYTHONDONTWRITEBYTECODE=1 # a hook must not leave __pycache__ in a clean checkout
 . "$(dirname "$0")/sdlc-config.sh"
 
 cat >/dev/null

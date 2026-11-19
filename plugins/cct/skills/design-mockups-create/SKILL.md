@@ -52,7 +52,7 @@ before the spec settles get redrawn after every spec fix (My Sampler, 2026-10-07
 0. **Validated spec, or stop.** Run:
 
    ```bash
-   test -f <change>/spec/readiness.md || echo 'spec not validated: run cct:ux-spec-validate spec <change> once first'
+   test -f <change>/spec/readiness.md || test -f <change>/spec/validation.md || echo 'spec not validated: run cct:ux-spec-validate spec <change> once first'
    ```
 
    It prints: stop and run the one validation pass first. Exception: three directions on one screen

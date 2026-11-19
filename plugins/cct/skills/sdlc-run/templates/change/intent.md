@@ -32,7 +32,7 @@ evidence: **observed** (seen in data or a session), **reported** (someone said i
 
 | # | When … | I want to … | So I can … | Evidence |
 |---|---|---|---|---|
-| J1 | <situation> | <motivation> | <outcome> | reported — A1 |
+| J1 | <situation> | <motivation> | <outcome> | reported (A1) |
 
 ## Success measure
 

@@ -28,7 +28,8 @@ words (tokens with hex and meaning, type scale, spacing, components), the screen
 state, with two to six reference images passed by `-i`. An edit passes the image it edits by `-i`
 and says "change ONLY ...".
 
-0. **Only from a validated spec.** `<spec>/readiness.md` must say `verdict: ready` (the
+0. **Only from a validated spec.** `<spec>/readiness.md` (`<spec>/validation.md` in a folder
+   written before the rename; the new name wins when both exist) must say `verdict: ready` (the
    validation loop ran), or validation is skipped. Otherwise stop and run
    `cct:ux-spec-validate spec <spec>` first.
    A direction may be explored earlier (step 2), but no screen-by-state images.

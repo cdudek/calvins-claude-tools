@@ -31,6 +31,22 @@ the engineer. A version with no migration lines needs nothing but a re-run of `a
 - Mechanical: re-running `adopt` refreshes `scripts/verify_gate.py`, `scripts/marks.py` and `REVIEW.md` (the old `review-fix-run` sentence is replaced, custom rules stay), and stamps `sdlcVersion`.
 - Manual: a repo with a pending milestone asks the owner through the dialog instead of filling a `## Dispositions` table. An in-flight `plan.md` keeps the old text of its `One milestone` bullet (unit and E2E beside the gate): edit it by hand, the gate is the only runner of the full suite and the full E2E. A repo with an E2E suite and no full E2E entry in `checks.milestone` gets a MANUAL line; the engineer approves the change again.
 
+## 3.20.1 — Review fixes: PR bases, receipts that survive, upgrades in either order
+
+- **A PR opens against its real parent.** A feature goes into its milestone branch, a milestone into its project branch (or the default branch when there is none), a project into the default branch. The missing-PR hint now says `--base`, the hook refuses a milestone PR whose base is not its project, and `goal` is not DONE on any other base.
+- **Recovery hints read the tier.** An unarmed `ask` PR names the human decision when `askGatesMerge` is on and is never told to arm auto-merge. A PR into the default branch is left to the workflow. Milestone and project PRs keep `--merge`.
+- **Old and new files can sit side by side.** The gate loads `marks.py` only where it needs it, so an old `marks.py` never breaks `approve`, `audit` or `lint`. Replacing `verify_gate.py` or `marks.py` with `adopt --upgrade --apply --replace` replaces both. When the repo's `verify_gate.py` has no `--pr-body`, the PR skill lints with the plugin's own copy.
+- **The readiness rename works in both directions.** Every reader prefers `spec/readiness.md` and falls back to `spec/validation.md`; renaming is optional.
+- **Milestone receipts live in the common git directory** (`sdlc/receipts/<change>/milestone-<n>.json`), so every linked worktree sees them and removing a worktree cannot remove them. `goal --milestone <n>` reads that receipt first and uses the shared last report only when none exists. `milestones.branchPrefix` is honoured. The old `verify/milestone-<n>.json` stays readable.
+- **One rule for what a pass proves.** After the gated head only close records and archive moves are allowed. A change to `facts.md`, `done.json`, `lock.json`, the marks ledger or the evidence folders voids the pass. The status check and the PR hook share it (`templates/hooks/pass_proof.py`).
+- **The merge check finds the owner from the gated ref's own change record** and refuses when no single project owns the milestone.
+- **`marks.py init` migrates an old ledger.** Rows for generated mockups (`ref:spec/prototype/...`) move to `retired` with their evidence, and rows for images inside a design bundle fold into the bundle row with their owner decisions. The rendered-folder check needs one image per screen by name, not a count.
+- **The shipped templates pass the gate they ship with.** The intent example brackets its id, and the lint no longer reads `[NEEDS CLARIFICATION]` inside code as an open question.
+- **Build QA resolves size and skips first.** A supplied visual source with a recorded spec-validation skip is authorised by the intent approval, so it never loops back to `validate spec`.
+- **Hooks leave no `__pycache__`.** They run Python with bytecode writes off, as does the gate.
+- Mechanical: re-running `adopt` refreshes the hooks (new file `pass_proof.py` beside `pr-gate.sh`), `verify_gate.py` and `marks.py`.
+- Manual: a repo that replaces `pr-gate.sh` by hand must also take `pass_proof.py`; without it the hook blocks and says so. A receipt written before this version stays where it is and is still read.
+
 ## 3.20.0 — UI review rounds that end
 
 - **Six layers with written tolerances.** A screen passes on structure, copy, tokens, geometry, rules and access, and review. The defaults are in `ux-build-validate` (the Measurements table gains a tolerance column) and the shared visual pass. A repo may tighten them, never loosen them without a decision record.
@@ -77,7 +93,7 @@ the engineer. A version with no migration lines needs nothing but a re-run of `a
 - The spec's readiness verdict is now `spec/readiness.md`, so it no longer shares a name with the milestone's `validation.md`, which stays. The skip key `validation` in `decisions.json` is unchanged.
 - `docs/sdlc-run.md` describes all seven stages as of this version, and a test fails when its stated version falls behind `SKILL.md`.
 - Mechanical: re-running `adopt` refreshes `scripts/verify_gate.py`, `scripts/design_index.py`, the chain-gate hook and the change templates.
-- Manual: a change in flight keeps working with `spec/validation.md` (the readers prefer `spec/readiness.md` and fall back to the old name); rename it with `git mv` when convenient. Run `python3 scripts/design_index.py write` to add the "Read when:" lines.
+- Manual: a change in flight keeps working with `spec/validation.md` (the readers prefer `spec/readiness.md` and fall back to the old name); renaming it is optional, and a rename is never needed to keep a change working. Run `python3 scripts/design_index.py write` to add the "Read when:" lines.
 
 **Review fixes.** `readme` writes only inside a change folder directly under `changesDir`, only over a README it generated, and only when the content changed; `status` never writes it. The id lint counts only ids the change defines, treats table prose as prose, flags `**B19 blocks the build.**`, follows a bracket across a line wrap, and runs on the drafts before reviewers, before the owner gate, first in `approve` (which refuses on failure) and on the PR body you publish (`lint <id> --pr-body <file>|-`). The blocker sentence uses the resolved gate scope, covers every reason the goal and the gate emit, and names the plugin path of `sdlc_status.py`. The reading map lists the standard spec files and any other file, picks the newest handover by date or number, and the glossary reads the `Finding` or `Challenge` column. The id lint skips the verbatim `Words` column of the intent's Asks table, where the owner's sentence is quoted as said.
 
