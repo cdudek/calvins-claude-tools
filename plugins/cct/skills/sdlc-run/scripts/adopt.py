@@ -1024,6 +1024,7 @@ KIT_HEAVY = {
 KIT_DB = {
     "b34ea79ae0841fc5",
     "132fb5df36b3a3ca",
+    "392a3cb2e1676489",
 }
 KIT_EVIDENCE = {
     "6a317db378861d28",

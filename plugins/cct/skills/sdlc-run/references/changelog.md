@@ -14,8 +14,8 @@ the engineer. A version with no migration lines needs nothing but a re-run of `a
 - **The helper guard refuses commands in the main folder** in hook mode too, not only from the command line.
 - **One test template per migration version, Docker or Podman.** `db.py` runs with Docker or Podman (`db.test.engine`), names the template after the migration hash, builds it once under a lock, never deletes a running container after one failed probe, streams `test run` output, reads `sdlc.json` from the repo root, and sweeps job copies of dead processes (after an hour) and templates unused for 7 days (`db.py test sweep`).
 - **Disk.** `preflight.py` fails below `preflight.minFreeGB` free (default 15) and warns below twice that. A builder's worktree is removed right after its merge, and `sdlc_status.py worktrees --prune` removes merged `.worktrees/agent-*` worktrees, keeping any with local changes or ignored files other than rebuildable caches.
-- **Mechanical:** `adopt` adds `heavy.patterns` when missing and replaces the kit scripts (`heavy.py`, `verify_gate.py`, `db.py`, `preflight.py`).
-- **Manual:** a repo with migrations and no `db.test` block gets one line from `adopt` naming the keys to add; until it has one, its checks create their own database as before. Old queue tickets in the git directory are ignored: let running jobs finish before upgrading.
+- Mechanical: `adopt` adds `heavy.patterns` when missing and replaces the kit scripts (`heavy.py`, `verify_gate.py`, `db.py`, `preflight.py`).
+- Manual: a repo with migrations and no `db.test` block gets one line from `adopt` naming the keys to add; until it has one, its checks create their own database as before. Old queue tickets in the git directory are ignored: let running jobs finish before upgrading.
 
 ## 3.21.0 — a fast close, three-document changes and a living spec, a heavy-job queue, kept heads and handoffs, pass records that outlive the worktree
 
