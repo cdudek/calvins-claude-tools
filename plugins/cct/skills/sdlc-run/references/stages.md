@@ -738,17 +738,32 @@ Only when `decisions.json` has a `project`, and only once its last milestone has
    first time anything looks at the seams between them. Run `cct:review-security-run` on the same diff when auth, money or consent is touched;
    it is the project's only security review. The gate line goes in the project's
    tracker entry. No PR. Remove the flags that hid unfinished work as the project's last
-   change, or record when they go.
+   change, or record when they go. Record it once the owner accepts:
+   `python3 ${CLAUDE_SKILL_DIR}/scripts/sdlc_status.py record <id> project --sha <default-branch commit> --accepted`
+   (state/heads.json); `goal --project` is DONE only with that commit in the default branch and the acceptance.
 2. **With `project.branch: true`:** nothing is pushed to `project/<slug>` directly: every
    milestone merged the default branch in (its sync row), so the project branch carries it.
    Re-run `checks.milestone` on a checkout of `origin/project/<slug>` merged with
    `origin/<defaultBranch>`, then one PR `project/<slug>` → default branch with the gate line
    in its description, merged with a merge commit. This is the PR that gets a tier. If the
-   default branch moved after the last sync, merge it in locally once; never rebase it.
+   default branch moved after the last sync, merge it in locally once; never rebase it. That final
+   sync is the one direct push to `project/<slug>` the hook allows: the default branch merged in,
+   `VERIFY PASS project` on that exact head, then one push.
    In local mode: run `python3 scripts/verify_gate.py project <slug>` on the checked-out `project/<slug>` (merged with `origin/<defaultBranch>`), then push it once and open the one PR ([Local milestones](local-first.md#local-milestones)).
 3. A blocking finding becomes one more milestone, closed and merged like any other.
 4. **The engineer accepts the project** in one `AskUserQuestion`. No second fix round: what is
    left becomes the next project's first change.
+
+### Persisted heads and HANDOFF
+
+The gates write `state/heads.json` (the old place is read second): the head and base of each
+passed milestone, and a hotfix head after a feature pass on `hotfix/*`. `goal` reads them, so a
+resumed goal or a new session looks for the same PR the gate saw. A hotfix change with a recorded
+head is pushed in a one-go goal and read as a feature gate plus a hotfix PR into the default branch.
+When a turn, fix-round or retry cap is hit, `sdlc_status.py handoff <id> --cap turns|fix-rounds|retries --what <words> --next <command>`
+writes one `state/handoff.json` (the retry cap of the gate writes it itself) and `goal` prints
+`GOAL <id> HANDOFF cap=<cap>` while the work is open. A passing gate or `handoff <id> --resume` clears it.
+A change folder removed after merge reads `GOAL <id> DONE pr=<n> state=merged folder=removed` when its milestone PR merged.
 
 ## Stage 7 — Outcome and removal
 

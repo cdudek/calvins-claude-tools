@@ -32,11 +32,32 @@
 
 **Known issues, not fixed here**
 
-- `goal --milestone 1` can read `OPEN` after M2 passed (the checkout holds only the last report).
-- `after` across a `serial` boundary in `checks.milestone`.
-- `lint --pr-body` after the change was archived.
-- The feature-PR milestone lookup (a feature row names its own branch; the milestone branch is derived).
-- Left out of Speed B: S5 final project sync publication, S6 hotfix routing, S7 branchless project completion, S8 persisted head/base per milestone, S10 HANDOFF on a cap, F4 tuple resolution beyond the 3.20.5 bindings, hook caching (the hooks already exit before any work unless the command mentions push, pr create or merge). Pass records stay out of this release.
+- F4 and hook caching: see the Group C notes below.
 
 - Mechanical: re-running `adopt` refreshes `verify_gate.py`, `marks.py`, `pass_proof.py`, `pr-gate.sh`, the presets and the tier workflow.
 - Manual: re-approve in-flight changes that should get strict rows (`verify_gate.py approve <id>`, the owner's step); a repo that keeps its own `pass_proof.py` needs `change_paths` and `LAYOUTS`.
+
+## Core stream: Group C (heads, handoff, removed folder)
+
+**Plain words**
+
+- **A removed change folder is DONE, not "no change folder".** The owner's rule removes the folder after merge. When a PR from the change's milestone branch merged, `goal` prints `DONE pr=<n> state=merged folder=removed`. With no merged PR, or when `gh` fails, an unknown id stays `no-change-folder`; the `.sdlc/outcomes` record alone is not proof of a merge, so it is not used.
+- **Heads and bases are kept.** A passing milestone gate writes its head, base and gated commit to `state/heads.json` (new place first, old place second); a feature pass on `hotfix/*` writes the hotfix head. `goal` looks for the PR of the recorded head and compares its base with the recorded base, so a custom prefix, a nonconsecutive number or a unnumbered branch no longer invents a name.
+- **Hotfix.** A hotfix change with a recorded head is pushed inside a one-go goal and `goal` reads a feature gate and a hotfix PR into the default branch. Disabled hotfix or another head opens nothing.
+- **Final project sync.** In PR mode `project/<slug>` may be pushed once: the default branch merged in and `VERIFY PASS project` on that head. Any other push still goes through milestone PRs.
+- **Branchless project.** `sdlc_status.py record <id> project --sha <sha> [--accepted]` stores the default-branch commit that holds every milestone and the owner's acceptance. `goal --project` is DONE only with both (`project-not-integrated`, `project-not-accepted` say what is missing).
+- **HANDOFF on a cap.** `sdlc_status.py handoff <id> --cap turns|fix-rounds|retries` writes one `state/handoff.json` (what, why, exact next command); the gate's retry and no-progress caps write it themselves. `goal` prints `HANDOFF cap=<cap>` (exit 4) while the work is open; a passing gate or `--resume` clears it. The goal templates stop on it and the plan's turn caps run it first. The project goal has its own cap, `goal.projectTurns` (default: the milestone cap).
+- **PR hook.** A milestone PR whose head cannot be resolved to a commit here is refused instead of skipping the gate comparison.
+- **The gate leaves the head and handoff records alone** when it checks the tree is clean; they ride along in the next commit.
+
+**Fixed known issues**
+
+- `goal --milestone 1` after M2 passed reads M1's own receipt.
+- `after` never moves a check across a `serial` check.
+- `lint <id> --pr-body` finds an archived folder, and for a removed one checks ids the body itself puts in brackets.
+- Feature-PR delivery looks for `milestone/<slug>` without a number.
+
+**Not done**
+
+- F4 beyond the unresolved head: one change joining another's milestone legitimately shares its slug, so a receipt cannot be bound to a single change in the hook without breaking joins.
+- Hook caching (the hooks already exit before any work).
