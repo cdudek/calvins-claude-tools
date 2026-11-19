@@ -525,6 +525,22 @@ def manifest_required(change: Path) -> bool:
     return not isinstance(data, dict) or data.get("manifest") == "required"
 
 
+def screens_required(change: Path) -> bool:
+    """A change approved from 3.23.0 has `"screens": "required"` in its lock: the per-screen records
+    in verify/screens/ are its source of truth. Absent (or an unreadable lock) is lenient here."""
+    try:
+        return json.loads(state_path(change, "lock.json").read_text(encoding="utf-8")).get("screens") == "required"
+    except (OSError, ValueError, AttributeError):
+        return False
+
+
+def screens_problems(change: Path) -> list[str]:
+    sys.path.insert(0, str(Path(__file__).resolve().parent))  # evidence.py sits beside this file
+    import evidence
+
+    return evidence.screens_problems(change)
+
+
 def qa_problems(change: Path, repo: Path, visual: bool) -> list[str]:
     """`<spec>/qa.md` verified by its own recorded `Build: <sha>`, never by manifest metadata. It is
     required when the change has visual rows or a spec folder (marks.json is editable, the spec
@@ -671,7 +687,8 @@ def manifest_problems(change: Path, rows: list[dict], repo: Path) -> list[str]:
 
 
 def check(change: Path, sources: list[dict], repo: Path, designs: Path, globs: list[str]) -> int:
-    rows = read_rows(change / "marks.json")
+    ledger = change / "marks.json"
+    rows = read_rows(ledger) if ledger.exists() or not screens_required(change) else []
     problems = []
     wanted = {row["id"]: row for row in sources}
     seen = set()
@@ -762,6 +779,8 @@ def check(change: Path, sources: list[dict], repo: Path, designs: Path, globs: l
         if status in ("fixed", "match") and row.get("differs") not in (None, ""):
             problem("fixed/match must have no differs")
     problems += manifest_problems(change, rows, repo)
+    if screens_required(change):
+        problems += screens_problems(change)
     for rid in wanted.keys() - seen:
         problems.append(f"{rid}: missing row; run marks.py init {change.name}")
     for problem in sorted(problems):
@@ -818,6 +837,8 @@ def main(argv: list[str]) -> int:
         sources = inventory(change)
         if args.mode == "init":
             return init(change, sources)
+        if not (change / "marks.json").exists() and screens_required(change):
+            sources = []  # the per-screen records are the source of truth; no ledger to inventory
         designs = repo / cfg.get("designsDir", "docs/designs")
         return check(change, sources, repo, designs, cfg.get("testGlobs", TEST_GLOBS))
     except (OSError, ValueError) as exc:

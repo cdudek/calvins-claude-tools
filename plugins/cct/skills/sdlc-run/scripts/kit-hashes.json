@@ -187,7 +187,8 @@
   "fe5497fceab1c8e9"
  ],
  "scripts/evidence.py": [
-  "6a317db378861d28"
+  "6a317db378861d28",
+  "c90008dbca3b8a29"
  ],
  "scripts/heavy.py": [
   "050107783daa70ff",
@@ -228,7 +229,8 @@
   "da489951ced4b597",
   "e210db4d72bf4d37",
   "e9511caf3de9934b",
-  "fd8848049fa7ca68"
+  "fd8848049fa7ca68",
+  "546e4908221ea5f5"
  ],
  "scripts/preflight.py": [
   "848114ac6dd4a375",
