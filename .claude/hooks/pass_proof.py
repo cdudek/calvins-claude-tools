@@ -4,7 +4,7 @@ sdlc_status.py (the goal check). stdlib only.
 A pass proves the head the gate ran on. A later head counts as the same pass only when the gated
 head is its ancestor and nothing but the change records moved: a file outside the changes folder,
 a locked input (facts.md, done.json, lock.json; the checks live in sdlc.json, outside the folder)
-or evidence (marks.json and anything under asks/, evidence/, shots/) moved. A record under
+or evidence (marks.json and anything under asks/, evidence/, shots/, screens/) moved. A record under
 .sdlc/outcomes/ is a change record too. An archive
 move (changes/<id> -> changes/archive/<id> or archive/<year>/<year-month>/<id>) is not a change
 when every file keeps its content, except that facts.md may gain one `archived_at:` frontmatter
@@ -23,7 +23,7 @@ from urllib.parse import quote
 
 LOCKED = {"facts.md", "done.json", "lock.json"}
 EVIDENCE_FILES = {"marks.json"}
-EVIDENCE_DIRS = {"asks", "evidence", "shots"}
+EVIDENCE_DIRS = {"asks", "evidence", "shots", "screens"}  # screens/: the per-screen records (3.23.0)
 OUTCOMES = ".sdlc/outcomes/"  # a record of the success measure (spec.py outcome write): records only
 
 

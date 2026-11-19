@@ -51,7 +51,7 @@ esac
 fields=()
 while IFS= read -r -d '' f; do fields+=("$f"); done < <(
   printf '%s' "$payload" | "$SDLC_PY" -c '
-import json, os, sys
+import json, os, re, sys
 def owner(cfg_path):
     """Who owns sdlc.json: the last CODEOWNERS line for it (or for `*`), else a plain description."""
     here = os.path.dirname(os.path.abspath(cfg_path))
@@ -69,6 +69,7 @@ def owner(cfg_path):
     return found or "the owner of sdlc.json"
 try:
     cmd = (json.load(sys.stdin).get("tool_input") or {}).get("command") or ""
+    cmd = re.sub(r"\\\r?\n[ \t]*", " ", cmd)  # a backslash-newline continues the command: one line to match
     cfg = json.load(open(sys.argv[1], encoding="utf-8"))
     rules = cfg.get("blocked") or []
     out = [cmd, cfg.get("docs") or "docs/sdlc.md"]
@@ -101,7 +102,7 @@ while [ "$i" -lt "${#fields[@]}" ]; do
   message=${fields[$((i + 1))]}
   i=$((i + 2))
   [ -n "$match" ] || continue
-  if printf '%s' "$cmd" | grep -Eq -- "$match"; then
+  if printf '%s' "$cmd" | grep -Eqi -- "$match"; then
     text=$(printf 'BLOCKED: %s\n(%s, "Hooks")' "$message" "$docs")
     # a repeat of this block says STOP (block_state.py); without the helper the text is plain
     out=$(printf '%s' "$payload" | python3 "$(dirname "$0")/block_state.py" gate-bash.sh "sdlc.json blocked[]" "$message" "$text" 2>/dev/null) && [ -n "$out" ] && text=$out

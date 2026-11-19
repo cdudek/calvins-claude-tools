@@ -113,5 +113,48 @@ change to a shared file invalidates every cell; and `<spec>/qa.md` must exist an
 Capture all visual evidence from one build per milestone version, from a worktree pinned to one
 commit. Never capture from the live milestone branch: merges moved the branch in the middle of a
 capture and ruined a batch. Builders change code; the capture happens once, after they are done.
-Capture each screen in one batch, twice, to prove it is stable. A screen whose two captures differ
-is unstable and is fixed or ruled before it is judged.
+**Capture once; capture again only a screen marked unstable or whose first judgement fails.** A
+screen is not captured twice up front. If two captures of a screen exist they must agree: a screen
+whose two captures differ is unstable and is fixed or ruled before it is judged.
+
+## One record per screen (changes approved from 3.23.0)
+
+A change whose `lock.json` has `"screens": "required"` keeps one file per approved screen,
+`<change>/screens/<file>.json`, committed with the change (not in the ignored `verify/` folder,
+which holds generated gate output only), so parallel helpers never write the same file and a
+worktree hand-off carries the records. The screen id is the one `marks.py` derives from the approved
+inputs (a note or loose image is its row id, such as `ref:asks/home.png`; a design bundle is one id
+per html page, such as `bundle:asks/export/home`); one shared rule turns an id into the file name.
+A record holds the status (`match`, `fixed`, `open`, `waits-on-design-system`, `ruled-out`,
+`accepted-by-owner`), the frozen defect list (id, severity, layer, text, the build) and a snapshot of
+the first review, `rounds` (fix rounds used in the approved design-system release), the release it
+was last reviewed against, the build sha, and the sha256 of each capture with its build, state,
+viewport and zoom. The files are written with `scripts/evidence.py` (`screen`, `review`, `round`,
+`status`, `sheet`), under a lock and by atomic rename, never by hand. `marks.json` and the shared
+manifest stay for older changes.
+
+A screen is done only when it was reviewed against the approved design-system release (a re-approved
+release makes older reviews not done), has a full 40-character build sha and a capture of that build,
+and has no open High or Medium defect. `accepted-by-owner` needs the owner's recorded answer.
+
+`marks.py check` fails: a screen with no record; a status that its record does not earn; a defect
+added after the first review that is not High and not marked as a regression; a first-review defect
+removed or edited; more than two rounds in one design-system release (send the side-by-side list to
+the owner); two captures of one build, state, viewport and zoom that differ; a capture whose bytes no
+longer match its recorded sha256. The round budget belongs to the approved release in `lock.json`:
+a new release starts a new budget. Commit the records before the close: uncommitted ones block it,
+and a later commit that changes or deletes one voids the pass.
+
+`sdlc_status.py` prints `screens: 62 of 271 done · 40 wait on you · 50 wait on the design system ·
+119 open` (271 is the approved inventory; done is match, fixed, ruled-out and accepted-by-owner that
+earned it; a screen with no record counts as open).
+
+## One owner sheet, answered once per group
+
+Screens still open after their two rounds go to the owner as one sheet, not one dialog per
+finding: `evidence.py sheet <change>` writes `<change>/owner-sheet.md`, one row per screen
+(reference image, build capture, open defects, a blank "accept / send back" column), grouped by the
+screen's `group`. The owner answers it once per group; `evidence.py sheet <change> --import`
+records the answers in the screen records: `accept` becomes `accepted-by-owner`, `send back` reopens
+the screen with a new round budget. Regenerating the sheet keeps answers and refuses to drop one
+that was not imported.

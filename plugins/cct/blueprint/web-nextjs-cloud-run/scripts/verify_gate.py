@@ -621,6 +621,14 @@ def sources_present(change: Path) -> bool:
         return True  # an inventory that cannot be read is itself a marks failure
 
 
+def has_visual_source(value: object) -> bool:
+    """decisions.json `visualSource` names a design: not absent, empty or `none` (a string, or a
+    dict whose `kind` is none). hooks/chain-gate.sh holds the same rule; test_chain_gate keeps them equal."""
+    if isinstance(value, dict):
+        return bool(value) and str(value.get("kind", "")).strip().lower() != "none"
+    return isinstance(value, str) and value.strip().lower() not in ("", "none")
+
+
 def visual_run_required(change: Path, cfg: dict, repo: Path) -> bool:
     """A milestone needs a current UX visual run when the UX plan is on, the decision says the
     change has an interface (`size` is not `none`) and a visual source or reference exists, unless
@@ -637,7 +645,7 @@ def visual_run_required(change: Path, cfg: dict, repo: Path) -> bool:
         if owner_decisions(repo, change.name).get("visual-skip", ("",))[0] == "skip":
             return False
     # `size: none` only waives loose sources: an explicit visual source always needs its run
-    return bool(decisions.get("visualSource")) or (decisions.get("size") != "none" and sources_present(change))
+    return has_visual_source(decisions.get("visualSource")) or (decisions.get("size") != "none" and sources_present(change))
 
 
 def refusal(name: str, message: str) -> dict:
@@ -707,6 +715,17 @@ def legacy_marks() -> bool:
     import marks
 
     return not callable(getattr(marks, "bundles", None))
+
+
+def screens_capable() -> bool:
+    """The installed marks.py and evidence.py can check per-screen records (a kept 3.22 copy cannot)."""
+    import marks
+
+    try:
+        import evidence
+    except ImportError:
+        return False
+    return callable(getattr(marks, "screens_check", None)) and callable(getattr(evidence, "expected", None))
 
 
 def has_owner_marks(change: Path) -> bool:
@@ -792,6 +811,130 @@ def v4_done(change: Path) -> dict:
     return {"facts": facts}
 
 
+def resolved_version(repo: Path, rel: str, package: str, pin: str) -> str:
+    """The installed release of `package` for the consumer package.json `rel`, read from the lockfile
+    beside it or in a parent folder up to the repo root (package-lock.json, pnpm-lock.yaml, yarn.lock),
+    else "". A declared range (^1.2.0) says less than what the lockfile resolved it to."""
+    start = (repo / rel).parent
+    folder = start
+    while True:
+        here = start.relative_to(folder).as_posix()  # "." when the lockfile sits in the consumer's own folder
+        for name in ("package-lock.json", "pnpm-lock.yaml", "yarn.lock"):
+            try:
+                text = (folder / name).read_text(encoding="utf-8")
+            except OSError:
+                continue
+            if found := _lock_version(name, text, package, here, pin):
+                return found
+        if folder == repo or folder == folder.parent:
+            return ""
+        folder = folder.parent
+
+
+def _lock_version(name: str, text: str, package: str, here: str, pin: str) -> str:
+    """`here` is the consumer's folder relative to the lockfile's ("." when it is the same folder)."""
+    quoted = re.escape(package)
+    if name == "package-lock.json":
+        try:
+            data = json.loads(text)
+        except ValueError:
+            return ""
+        packages = data.get("packages") or {}
+        for key in ([f"{here}/node_modules/{package}"] if here != "." else []) + [f"node_modules/{package}"]:
+            if isinstance(packages.get(key), dict) and packages[key].get("version"):
+                return str(packages[key]["version"])
+        return str(((data.get("dependencies") or {}).get(package) or {}).get("version", ""))
+    if name == "pnpm-lock.yaml":
+        block = text
+        if here != "." or re.search(r"^importers:", text, re.M):
+            m = re.search(rf"^  ['\"]?{re.escape(here)}['\"]?:[ \t]*\n((?:    .*\n|[ \t]*\n)*)", text, re.M)
+            block = m[1] if m else ""
+        m = re.search(rf"^\s+['\"]?{quoted}['\"]?:[ \t]*\n\s+specifier:[^\n]*\n\s+version:[ \t]*['\"]?([^\s'\"(]+)", block, re.M)
+        old = re.search(rf"^\s+['\"]?{quoted}['\"]?:[ \t]+['\"]?(\d[^\s'\"(]*)", block, re.M)  # lockfile v5
+        return (m or old or [None, ""])[1]
+    heads = list(re.finditer(rf'^"?[^\n]*?(?:^|[ ,"]){quoted}@([^\n,"]*)[^\n]*:\n((?:  [^\n]*\n)+)', text, re.M))
+    for head in sorted(heads, key=lambda h: h[1] != pin and not h[1].endswith(pin)):
+        if v := re.search(r'^  version:? "?([^"\n]+)"?', head[2], re.M):
+            return v[1]
+    return ""
+
+
+def design_system_pins(cfg: dict, repo: Path) -> dict | None:
+    """The design system's release in each consumer (sdlc.json `designSystem`), or None when the repo
+    declares none. A consumer is a package.json: `pin` is what it declares ("" for a missing file or
+    dependency), `resolved` what the lockfile installed ("" when there is no lockfile to read)."""
+    ds = cfg.get("designSystem") or {}
+    if not ds.get("package"):
+        return None
+    pins = []
+    for rel in ds.get("consumers") or []:
+        try:
+            data = json.loads((repo / rel).read_text(encoding="utf-8"))
+            deps = {**data.get("peerDependencies", {}), **data.get("devDependencies", {}), **data.get("dependencies", {})}
+            pin = str(deps.get(ds["package"], ""))
+        except (OSError, ValueError, AttributeError):
+            pin = ""
+        pins.append({"path": rel, "pin": pin, "resolved": resolved_version(repo, rel, ds["package"], pin) if pin else ""})
+    return {"name": ds["package"], "version": (pins[0]["resolved"] or pins[0]["pin"]) if pins else "", "consumers": pins}
+
+
+def design_system_moves(lock: dict, cfg: dict, repo: Path) -> list[str]:
+    """One line for each way the design system differs from what approval locked: another package, a
+    consumer whose declared or installed release moved, or a consumer the approval did not check."""
+    locked = lock.get("designSystem") or {}
+    if not locked:
+        return []
+    cur = design_system_pins(cfg, repo) or {}
+    now = {c["path"]: c for c in cur.get("consumers", [])}
+    tail = "re-approve with the new release (every screen is re-judged against it) or pin it back"
+    out = []
+    if locked.get("name") and cur.get("name") != locked["name"]:
+        out.append(f"the design-system package moved from {locked['name']} to {cur.get('name') or 'none'}: {tail}")
+    for c in locked.get("consumers", []):
+        got = now.get(c["path"], {})
+        if got.get("pin", "") != c["pin"] or (c.get("resolved") and got.get("resolved", "") != c["resolved"]):
+            old, new = c.get("resolved") or c["pin"], got.get("resolved") or got.get("pin")
+            out.append(f"the design system moved from {old or 'none'} to {new or 'none'} in {c['path']}: {tail}")
+    out += [f"the design system is now also used in {path}, which approval did not check: {tail}" for path in now.keys() - {c["path"] for c in locked.get("consumers", [])}]
+    return out
+
+
+def screen_count(change: Path) -> int:
+    """The approved screen inventory across every input type: a note, a loose reference image and
+    each html page of a bundle count one each (marks.py's `screen_ids`)."""
+    try:
+        from marks import screen_ids  # absent in an older marks.py: count the bundle pages then
+
+        return len(screen_ids(change))
+    except (ImportError, OSError, ValueError):
+        pass
+    try:
+        declared = json.loads(spec.state_path(change, "decisions.json").read_text(encoding="utf-8"))
+        folder = change / declared["visualSource"]["path"]
+    except (OSError, ValueError, KeyError, TypeError, AttributeError):
+        folder = change / "asks"
+    return sum(1 for h in folder.rglob("*.html") if h.name != "gallery.html")
+
+
+def audit_problems(change: Path, cfg: dict) -> list[str]:
+    """A change with many screens names the design-system parts it needs before the first batch:
+    `design-system-audit.md`, rows of group | part | have or gap. A gap is closed by one release.
+    Every data row says have or gap: a pending or blank row is a problem, not a skipped line."""
+    limit = int((cfg.get("designSystem") or {}).get("auditAbove", 20))
+    if screen_count(change) <= limit:
+        return []
+    rows = table_rows(read(change / "design-system-audit.md"))[1:]  # the header is the first row
+    if not rows:
+        return [
+            f"design-system-audit.md is missing or empty: more than {limit} screens need a table of the "
+            "design-system parts per screen group, status have or gap"
+        ]
+    if bad := [f"{r[0]}: {r[1] if len(r) > 2 else ''} is {r[-1] or 'blank'}" for r in rows if r[-1].lower() not in ("have", "gap")]:
+        return [f"design-system-audit.md: every row must end in have or gap: ({'; '.join(bad)})"]
+    gaps = [f"{r[0]}: {r[1]}" for r in rows if r[-1].lower() == "gap"]
+    return [f"design-system-audit.md still has gaps ({'; '.join(gaps)}): ship one design-system release that closes them all, then approve"] if gaps else []
+
+
 def approve(change: Path, cfg: dict) -> int:
     v4 = spec.applies(change)
     problems = lint_problems(change) + approval_blockers(change)  # the cheap pure check first
@@ -805,6 +948,9 @@ def approve(change: Path, cfg: dict) -> int:
         problems += [f"{name} is missing: approval locks it" for name in ("facts.md", "plan.md") if not (change / name).is_file()]
         problems += graph_problems(read(change / "plan.md"))
     problems += branch_mode_problems(change, cfg)
+    visual = visual_run_required(change, cfg, root())
+    if visual:
+        problems += audit_problems(change, cfg)
     if gap := full_e2e_gap((cfg.get("checks") or {}).get("milestone") or [], root()):
         problems.append(gap)
     if not v4 and not spec.state_path(change, "done.json").exists():  # approval requires its artifacts
@@ -825,6 +971,13 @@ def approve(change: Path, cfg: dict) -> int:
         "format": LOCK_FORMAT,  # strict validation rows and records apply to this lock and later ones
         "layout": 4 if v4 else 3,  # the hooks read the layout here, not from files an edit can change
     }
+    if visual:  # from 3.23.0: the milestone gate holds visual work to its screens
+        lock["screens"] = "required"
+        # the folders the plan says new files go in: the chain-gate scope guard reads this snapshot, not the plan
+        found = re.findall(r"`([^`]+/)`", section(read(change / "plan.md"), "Where things go") + section(read(change / "design.md"), "Where things go"))
+        lock["scopeFolders"] = sorted({f.strip("/") for f in found if f.strip("/") and ".." not in f.split("/")})
+    if pins := design_system_pins(cfg, root()):  # and to the design-system release it was approved against
+        lock["designSystem"] = pins
     spec.state_path(change, "lock.json").write_text(json.dumps(lock, indent=2) + "\n", encoding="utf-8")
     print(f"locked {', '.join(lock['criteria'])} in {change.name}/lock.json -- commit it")
     return 0
@@ -1366,6 +1519,10 @@ def run_close(
             )
             print(f"upgrade gap: {gap}")
             report.setdefault("upgrade_gaps", []).append(gap)
+        if scope == "milestone" and (drift := design_system_moves(lock, cfg, repo)):
+            print("\n".join(drift))
+            report["moved"] = ["designSystem"]
+            return finish("VERIFY BLOCKED reason=protected-path", 3)
         moved = sorted(k for k in set(locked) | set(now) if locked.get(k) != now.get(k))
         if moved:
             print(
@@ -1420,6 +1577,13 @@ def run_close(
         print("`adopt --upgrade --replace scripts/marks.py --apply` (or restore the kit's marks.py).")
         return finish("VERIFY BLOCKED reason=env", 3)
 
+    if scope == "milestone" and lock.get("screens") == "required" and not screens_capable():
+        print("this milestone was approved with `screens: required`, but the installed scripts/marks.py or")
+        print("scripts/evidence.py is older than this gate and cannot check per-screen records. If sdlc.json")
+        print("`keep` lists either, remove it from `keep` first, then run")
+        print("`adopt --upgrade --replace scripts/marks.py --replace scripts/evidence.py --apply`.")
+        return finish("VERIFY BLOCKED reason=env", 3)
+
     suite = "milestone" if scope == "project" else scope
     checks = cfg.get("checks", {}).get(suite, [])
     if suite == "milestone" and (gap := full_e2e_gap(checks, repo)):
@@ -1459,7 +1623,7 @@ def run_close(
                 "run": f"{shlex.join([sys.executable, str(preflight)])} || {{ echo 'VERIFY BLOCKED reason=env'; exit 1; }}",
             }
         )
-    if scope == "milestone" and has_owner_marks(change):
+    if scope == "milestone" and (has_owner_marks(change) or lock.get("screens") == "required"):
         evidence.append(
             {
                 "name": "owner-marks",

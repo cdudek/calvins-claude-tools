@@ -291,6 +291,12 @@ package), `tracking-apply` (the success-measure events). Each result lands in th
 2. Annotated: revise and re-gate. Approved: set `status: approved` on facts and plan.
 3. `python3 scripts/verify_gate.py approve <id>` writes `lock.json` (facts, done.json, checks). It runs the lint first and refuses (`APPROVE FAIL`) on any line the lint names, an unchecked `checklist.md` item, an open CRITICAL
    in `analyze.md` or `challenge.md`, and a row of **Justified violations** with an empty cell.
+   From 3.23.0 it also locks what a visual change must not drift from: `"screens": "required"` when the
+   change has visual work, and `designSystem` (name, version, each consumer's pin and installed version, from `sdlc.json`
+   `designSystem`: `{"package", "consumers", "auditAbove"}`). A change with more than `auditAbove`
+   (default 20) screens is refused until `design-system-audit.md` lists the design-system parts each
+   screen group needs (`have` or `gap`) and no `gap` is left: ship one design-system release that
+   closes them all, then approve.
 4. Commit `changes(<id>): approved by <who>`. One tracker comment with the folder permalink.
 5. One tracker sub-issue per row of `## Feature PRs`, under the change's issue (minimal first,
    then update; retry twice). Write each key into its row in `milestone.md`. Feature branches
@@ -354,6 +360,12 @@ a change small enough for one milestone has one.
    check, never the test loop.
    Scope the owner adds mid-run re-locks (`verify_gate.py approve <id>`) and gets one more close,
    logged under `## Revisions`.
+   A visual change restyles what exists. The gate refuses edits to migrations (at any depth), auth and
+   permissions paths (matched as whole words) and to route files that did not exist at the approval
+   commit, outside the plan's folders: data, auth and new pages start a
+   linked change (`sdlc-run` new change). A repo opts a path out with `sdlc.json` `scopeGuard.allow`
+   globs. If the design system's pin moves, the milestone gate blocks: re-approve with the new
+   release (every screen is re-judged against it) or pin it back.
    In local mode: no push, no PR; merge the passed head into the project branch locally (see [Local milestones](local-first.md#local-milestones)).
 
 ### Feature PRs (`delivery: "feature-prs"`)

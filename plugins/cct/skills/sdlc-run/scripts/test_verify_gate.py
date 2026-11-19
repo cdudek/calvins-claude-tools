@@ -1656,7 +1656,7 @@ def test_a_milestone_with_a_visual_source_fails_before_the_suites_without_a_visu
     r = _gate(repo, "milestone", ID)
     assert _last(r) == f"VERIFY FAIL milestone {ID} check=ux-visual-required"
     report = json.loads((repo / "changes" / ID / "verify/report.json").read_text())
-    assert [c["name"] for c in report["checks"]] == ["ux-visual-required"]  # the suite never ran
+    assert [c["name"] for c in report["checks"]] == ["owner-marks", "ux-visual-required"]  # the suite never ran
 
 
 @pytest.mark.parametrize(
@@ -2090,3 +2090,229 @@ def test_the_gates_heavy_hashes_are_adopts() -> None:
 
     gate = (GATE).read_text()
     assert set(re.findall(r'"([0-9a-f]{16})"', re.search(r"^KIT_HEAVY = \{(.*?)\}", gate, re.M | re.S).group(1))) == adopt.KIT_HEAVY
+
+
+def _pkg(repo: Path, rel: str, version: str) -> None:
+    path = repo / rel
+    path.parent.mkdir(parents=True, exist_ok=True)
+    path.write_text(json.dumps({"dependencies": {"@acme/ds": version}}))
+
+
+def _ds_repo(tmp_path: Path, **ds: object) -> Path:
+    repo = _repo(tmp_path, ["true"])
+    cfg = json.loads((repo / "sdlc.json").read_text())
+    cfg["designSystem"] = {
+        "package": "@acme/ds",
+        "consumers": ["package.json", "apps/x/package.json"],
+        **ds,
+    }
+    (repo / "sdlc.json").write_text(json.dumps(cfg))
+    _pkg(repo, "package.json", "1.2.0")
+    _pkg(repo, "apps/x/package.json", "1.2.0")
+    _git(repo, "add", ".")
+    _git(repo, "commit", "-qm", "ds")
+    return repo
+
+
+def _lock(repo: Path) -> dict:
+    return json.loads((repo / "changes" / ID / "lock.json").read_text())
+
+
+def _screens(repo: Path, n: int) -> None:
+    bundle = repo / "changes" / ID / "asks" / "bundle"
+    bundle.mkdir(parents=True, exist_ok=True)
+    for i in range(n):
+        (bundle / f"s{i}.html").write_text("<html></html>")
+    decisions = repo / "changes" / ID / "decisions.json"
+    decisions.write_text(json.dumps({"size": "S", "visualSource": {"path": "asks/bundle"}}))
+    _git(repo, "add", ".")
+    _git(repo, "commit", "-qm", "screens")
+
+
+def test_approval_locks_the_design_system_pin_and_screens_flag(tmp_path: Path) -> None:
+    repo = _ds_repo(tmp_path)
+    _screens(repo, 2)
+    (repo / "changes" / ID / "plan.md").write_text(
+        (repo / "changes" / ID / "plan.md").read_text() + "\n## Where things go\n\n- `src/screens/`: x\n- `../out/`: y\n"
+    )
+    _approve(repo)
+    lock = _lock(repo)
+    assert lock["screens"] == "required"
+    assert lock["scopeFolders"] == ["src/screens"]
+    assert lock["designSystem"] == {
+        "name": "@acme/ds",
+        "version": "1.2.0",
+        "consumers": [
+            {"path": "package.json", "pin": "1.2.0", "resolved": ""},
+            {"path": "apps/x/package.json", "pin": "1.2.0", "resolved": ""},
+        ],
+    }
+
+
+def test_no_design_system_key_or_no_visual_work_records_nothing(tmp_path: Path) -> None:
+    repo = _repo(tmp_path, ["true"])
+    _approve(repo)
+    assert "designSystem" not in _lock(repo) and "screens" not in _lock(repo)
+
+
+def test_a_moved_pin_blocks_the_milestone_until_reapproved(tmp_path: Path) -> None:
+    repo = _ds_repo(tmp_path)
+    _screens(repo, 2)
+    _approve(repo)
+    _pkg(repo, "apps/x/package.json", "1.3.0")
+    _git(repo, "commit", "-qam", "bump")
+    r = _gate(repo, "milestone", ID)
+    assert _last(r) == "VERIFY BLOCKED reason=protected-path"
+    assert "the design system moved from 1.2.0 to 1.3.0 in apps/x/package.json" in r.stdout
+    assert "re-approve with the new release" in r.stdout
+    _pkg(repo, "package.json", "1.3.0")  # re-approval locks the new release
+    _git(repo, "commit", "-qam", "bump root")
+    assert _gate(repo, "approve", ID).returncode == 0
+    assert _lock(repo)["designSystem"]["version"] == "1.3.0"
+
+
+def test_a_large_visual_change_needs_a_design_system_audit(tmp_path: Path) -> None:
+    repo = _ds_repo(tmp_path)
+    _screens(repo, 21)
+    r = _gate(repo, "approve", ID)
+    assert r.returncode == 1 and "design-system-audit.md" in r.stdout
+    audit = repo / "changes" / ID / "design-system-audit.md"
+    audit.write_text("| group | part | status |\n|---|---|---|\n| forms | Input | have |\n| forms | Select | gap |\n")
+    r = _gate(repo, "approve", ID)
+    assert r.returncode == 1 and "one design-system release" in r.stdout and "Select" in r.stdout
+    audit.write_text("| group | part | status |\n|---|---|---|\n| forms | Input | have |\n| forms | Select | have |\n")
+    assert _gate(repo, "approve", ID).returncode == 0
+
+
+def test_the_audit_threshold_is_a_setting(tmp_path: Path) -> None:
+    repo = _ds_repo(tmp_path, auditAbove=2)
+    _screens(repo, 3)
+    assert _gate(repo, "approve", ID).returncode == 1
+    repo2 = _ds_repo(tmp_path / "b", auditAbove=50)
+    _screens(repo2, 30)
+    assert _gate(repo2, "approve", ID).returncode == 0
+
+
+def test_the_milestone_schedules_marks_from_the_lock_not_from_the_inputs(tmp_path: Path) -> None:
+    repo = _visual_repo(tmp_path, VISUAL)  # a visual source, but nothing under asks/ yet
+    assert _lock(repo)["screens"] == "required"
+    _gate(repo, "milestone", ID)
+    names = [c["name"] for c in json.loads((repo / "changes" / ID / "verify/report.json").read_text())["checks"]]
+    assert "owner-marks" in names
+    (repo / "changes" / ID / "asks").mkdir()
+    (repo / "changes" / ID / "asks/home.png").write_bytes(b"x")
+    _git(repo, "add", ".")
+    _git(repo, "commit", "-qm", "reference")
+    r = _gate(repo, "milestone", ID)
+    assert _last(r) == f"VERIFY FAIL milestone {ID} check=owner-marks"
+
+
+def test_a_screens_milestone_is_blocked_when_the_installed_marks_cannot_check_screens(tmp_path: Path) -> None:
+    repo = _visual_repo(tmp_path, VISUAL)
+    scripts = tmp_path / "old-scripts"
+    scripts.mkdir()
+    for f in GATE.parent.glob("*.py"):
+        (scripts / f.name).write_text(f.read_text())
+    marks = (scripts / "marks.py").read_text().replace("def screens_check(", "def renamed_screens_check(")
+    (scripts / "marks.py").write_text(marks)
+    r = subprocess.run([sys.executable, str(scripts / "verify_gate.py"), "milestone", ID], cwd=repo, capture_output=True, text=True, env=_env())
+    assert _last(r) == "VERIFY BLOCKED reason=env" and "cannot check per-screen records" in r.stdout
+
+
+def test_dirty_screen_records_block_a_close(tmp_path: Path) -> None:
+    repo = _visual_repo(tmp_path, VISUAL)
+    screens = repo / "changes" / ID / "screens"
+    screens.mkdir()
+    (screens / "home.json").write_text("{}")
+    r = _gate(repo, "milestone", ID)
+    assert _last(r).endswith("check=uncommitted") and f"{ID}/screens/home.json" in r.stdout
+
+
+def test_has_visual_source_ignores_none_and_empty() -> None:
+    sys.path.insert(0, str(GATE.parent))
+    import verify_gate
+
+    for no in (None, "", "none", " None ", {}, {"kind": "none"}, {"kind": "None", "path": "x"}):
+        assert not verify_gate.has_visual_source(no), no
+    for yes in ("https://example.test/d", {"kind": "images", "path": "asks"}, {"path": "asks"}):
+        assert verify_gate.has_visual_source(yes), yes
+
+
+def _lockfile(repo: Path, rel: str, text: str) -> None:
+    (repo / rel).write_text(text)
+    _git(repo, "add", ".")
+    _git(repo, "commit", "-qm", "lockfile")
+
+
+NPM_LOCK = '{"lockfileVersion": 3, "packages": {"node_modules/@acme/ds": {"version": "%s"}}}'
+
+
+def test_the_pin_records_the_resolved_version_and_a_lockfile_move_blocks(tmp_path: Path) -> None:
+    repo = _ds_repo(tmp_path)
+    _pkg(repo, "package.json", "^1.2.0")
+    _pkg(repo, "apps/x/package.json", "^1.2.0")
+    _lockfile(repo, "package-lock.json", NPM_LOCK % "1.2.4")
+    _screens(repo, 2)
+    _approve(repo)
+    ds = _lock(repo)["designSystem"]
+    assert ds["version"] == "1.2.4" and [c["resolved"] for c in ds["consumers"]] == ["1.2.4", "1.2.4"]
+    _lockfile(repo, "package-lock.json", NPM_LOCK % "1.2.9")  # the range is unchanged, the install moved
+    r = _gate(repo, "milestone", ID)
+    assert _last(r) == "VERIFY BLOCKED reason=protected-path"
+    assert "the design system moved from 1.2.4 to 1.2.9 in package.json" in r.stdout
+
+
+def test_another_package_or_an_unchecked_consumer_blocks_the_milestone(tmp_path: Path) -> None:
+    repo = _ds_repo(tmp_path)
+    _screens(repo, 2)
+    _approve(repo)
+    cfg = json.loads((repo / "sdlc.json").read_text())
+    cfg["designSystem"]["consumers"].append("apps/y/package.json")
+    (repo / "sdlc.json").write_text(json.dumps(cfg))
+    _pkg(repo, "apps/y/package.json", "1.2.0")
+    _git(repo, "add", ".")
+    _git(repo, "commit", "-qm", "y")
+    r = _gate(repo, "milestone", ID)
+    assert _last(r) == "VERIFY BLOCKED reason=protected-path" and "also used in apps/y/package.json" in r.stdout
+    cfg["designSystem"]["consumers"].pop()
+    cfg["designSystem"]["package"] = "@other/ds"
+    (repo / "sdlc.json").write_text(json.dumps(cfg))
+    sys.path.insert(0, str(GATE.parent))
+    import verify_gate
+
+    moves = verify_gate.design_system_moves(_lock(repo), cfg, repo)
+    assert any("package moved from @acme/ds to @other/ds" in m for m in moves)
+
+
+def test_lockfile_readers_for_pnpm_and_yarn(tmp_path: Path) -> None:
+    sys.path.insert(0, str(GATE.parent))
+    import verify_gate
+
+    pnpm = "importers:\n  .:\n    dependencies:\n      '@acme/ds':\n        specifier: ^1.2.0\n        version: 1.2.5(react@18.0.0)\n  apps/x:\n    dependencies:\n      '@acme/ds':\n        specifier: ^1.2.0\n        version: 1.2.7\n"
+    assert verify_gate._lock_version("pnpm-lock.yaml", pnpm, "@acme/ds", ".", "^1.2.0") == "1.2.5"
+    assert verify_gate._lock_version("pnpm-lock.yaml", pnpm, "@acme/ds", "apps/x", "^1.2.0") == "1.2.7"
+    classic = '"@acme/ds@^1.2.0", "@acme/ds@^1.0.0":\n  version "1.2.6"\n  resolved "x"\n\nother@^1:\n  version "9.9.9"\n'
+    assert verify_gate._lock_version("yarn.lock", classic, "@acme/ds", ".", "^1.2.0") == "1.2.6"
+    berry = '"@acme/ds@npm:^1.2.0":\n  version: 1.2.8\n  resolution: "x"\n'
+    assert verify_gate._lock_version("yarn.lock", berry, "@acme/ds", ".", "^1.2.0") == "1.2.8"
+
+
+def test_the_audit_threshold_counts_loose_reference_images(tmp_path: Path) -> None:
+    repo = _ds_repo(tmp_path)
+    asks = repo / "changes" / ID / "asks"
+    asks.mkdir(parents=True)
+    for i in range(21):
+        (asks / f"s{i}.png").write_bytes(b"x")
+    _git(repo, "add", ".")
+    _git(repo, "commit", "-qm", "images")
+    r = _gate(repo, "approve", ID)
+    assert r.returncode == 1 and "design-system-audit.md" in r.stdout
+
+
+def test_an_audit_row_that_is_neither_have_nor_gap_is_a_problem(tmp_path: Path) -> None:
+    repo = _ds_repo(tmp_path)
+    _screens(repo, 21)
+    audit = repo / "changes" / ID / "design-system-audit.md"
+    audit.write_text("| group | part | status |\n|---|---|---|\n| forms | Input | have |\n| forms | Select | pending |\n")
+    r = _gate(repo, "approve", ID)
+    assert r.returncode == 1 and "every row must end in have or gap" in r.stdout and "forms: Select is pending" in r.stdout
