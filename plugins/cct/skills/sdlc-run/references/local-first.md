@@ -11,7 +11,8 @@ Run the gate first; it is not a substitute for CI and CI is not a substitute for
 
 Builds, app servers, browser tests, captures and the full suite run through the queue
 (`python3 scripts/heavy.py run -- <command>`, [heavy work](heavy-work.md)); lint, types and unit
-tests of touched files do not wait for it. The full suite runs once, inside the milestone gate.
+tests of touched files do not wait for it. The full suite runs once, inside the milestone gate, which
+is itself one job: one slot for the whole close, not one wait per check.
 
 ## Before a push
 

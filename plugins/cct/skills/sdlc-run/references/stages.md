@@ -330,8 +330,10 @@ a change small enough for one milestone has one.
 4. When every feature of the milestone is `done`, the supervisor hands the milestone's local
    pipeline to **one `cct:sdlc-feature-builder` subagent with `Mode: close`** and the head it runs on
    (the one fix round with targeted tests, then `verify_gate.py milestone`, the only runner of the
-   full suite and the full E2E; it spawns no agents of its own and takes its own heavy slot for the
-   heavy checks, `heavy.py run --auto`: [heavy work](heavy-work.md)). Nothing merges into the milestone while it runs: the gate fails
+   full suite and the full E2E; it spawns no agents of its own. The close is **one heavy job**: the gate
+   runs the light checks first, side by side, then takes one slot for all the heavy ones and holds it to
+   the end, with one database copy reset between suites when `db.test` is set, and prints seconds per
+   check, queue wait and total: [heavy work](heavy-work.md)). Nothing merges into the milestone while it runs: the gate fails
    `check=moved` if the head changes. The supervisor dispatches
    the Stage 6 reviews and the validation in parallel, writes the findings the subagent fixes, and
    goes on building the next milestone wherever that does not build on this one. Only a
@@ -498,7 +500,7 @@ disappear.
   for any builder. `blocked` or `failed` (exit 4) carries the blockers: answer in the brief and
   re-dispatch. To cancel, kill the process group in `run.json` first; the lock in the worktree's
   git dir refuses a second run while one lives. Loopback stays open with the network off
-  (checked 2026-11-02), but its `.git` is read-only, so it cannot take a heavy slot: a Codex
+  (checked 2026-11-02), but its `.git` is read-only and the queue lives outside the workspace, so assume it cannot take a heavy slot: a Codex
   builder runs light checks only, and the supervisor runs its touched E2E specs, builds and captures
   through `heavy.py run` on the worker branch before merging it ([heavy work](heavy-work.md)). The milestone close keeps its one `cct:sdlc-feature-builder`, which runs the gate only:
   Codex fix parts, then the gate once (it runs the checks).
