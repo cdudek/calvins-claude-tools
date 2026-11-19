@@ -75,12 +75,32 @@ runs nothing.
 in under a second (`CREATE DATABASE ... TEMPLATE`).
 
 ```bash
-python3 scripts/db.py test prepare          # container up, template built (rebuilt when a migration changes)
+python3 scripts/db.py test prepare          # container up, this migration set's template built once
 python3 scripts/db.py test run -- pytest    # a private copy, DATABASE_URL set, dropped afterwards
+python3 scripts/db.py test sweep            # drop leaked copies and old templates
 ```
 
-`db.test`: `container`, `port`, `template`, `migrate` (a command that reads `DATABASE_URL`),
-`migrations` (globs: their hash is stored on the template, so a stale template never serves tests),
+- **A template per migration hash.** The template is `<template>_<hash>`, built once and never
+  overwritten or dropped by a checkout with other migrations. Two worktrees on different migrations
+  each have their own, side by side in the one container; `create` copies from the template of the
+  current checkout's hash.
+- **One lock per machine.** `prepare` and `create` hold an exclusive file lock, keyed by the container
+  name, in `${SDLC_DB_DIR:-${XDG_STATE_HOME:-$HOME/.local/state}/sdlc/db}` while they start the
+  container and build a template. A second process waits, then finds the template published (the
+  hash comment is stamped last) and only clones. Parallel builders never race to start or rebuild.
+- **A running container is never removed on one failed probe.** `pg_isready` is retried; the
+  container is removed only when `docker inspect` says it exists and is not running. A running one
+  that is not ready yet is waited for.
+- **A job gets one copy; the close is one job and one copy.** Use `test run` once around a whole
+  command, not once per test file. The milestone close runs its checks under one copy.
+- **Sweep.** `prepare` and `test sweep` drop `sdlc_job_<pid>_*` copies whose process is gone (a copy
+  from a standalone `test create` is spared for an hour, because that command exits at once) and
+  templates of other migration sets not used for 7 days (last use is kept beside the lock).
+- `test run` streams the command's output as it runs and returns its exit code. `db.py` reads
+  `sdlc.json` and the migration globs from the repo root, wherever it is started.
+
+`db.test`: `container`, `port`, `template` (a name prefix), `migrate` (a command that reads `DATABASE_URL`),
+`migrations` (globs: their hash names and stamps the template, so a stale template never serves tests),
 optional `image`, `user`. The container listens on 127.0.0.1 with trust auth: a throwaway with no
 password. Database tests are light and need no slot.
 
@@ -126,3 +146,8 @@ word of `verify`, `preflight.tools`), sign-in (`preflight.auth`: `{name, check, 
 `db.test` exists, and two config conflicts: feature PRs with local milestones, and a `blocked[]` rule
 with no message. It prints one `FAIL <what>: <fix>` line per failure and ends with `PREFLIGHT OK` or
 `PREFLIGHT FAIL <n>`. Run it at plan approval, and `--config` in CI.
+
+**Free disk.** It also checks the free space on the repo's volume: a `FAIL disk` line with the free GB
+below `preflight.minFreeGB` (default 15), a `WARN disk` line below twice that (a warning does not fail
+the run). Worktrees, installed dependencies, containers and browser caches fill a disk during a long
+run, and a full disk fails a build in a way that reads like a code bug.

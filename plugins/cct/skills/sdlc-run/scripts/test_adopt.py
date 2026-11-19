@@ -2250,3 +2250,27 @@ def test_the_installed_guardrail_test_reads_the_docs_path_from_sdlc_json(tmp_pat
     assert (repo / "documentation/sdlc.md").is_file()
     test = (repo / "tests/test_sdlc.py").read_text()
     assert 'CFG.get("docs"' in test and '(REPO_ROOT / "docs" / "sdlc.md")' not in test
+
+
+def test_adopt_flags_migrations_without_a_db_test_block(tmp_path: Path) -> None:
+    repo = _repo(tmp_path, "node")
+    (repo / "db" / "migrations").mkdir(parents=True)
+    (repo / "db" / "migrations" / "001.sql").write_text("create table a (id int);")
+    (repo / "node_modules" / "x" / "migrations").mkdir(parents=True)
+    (repo / "node_modules" / "x" / "migrations" / "0.sql").write_text("-- vendored")
+    subprocess.run(["git", "add", "-A", "-f", "."], cwd=repo, check=True, env=_env())
+    res = _adopt(repo)
+    assert res.returncode == 0, res.stderr
+    line = next(m for m in _sections(res.stdout)["MANUAL"] if "db.test" in m)
+    for word in ("container", "port", "template", "migrate", "migrations", "db/migrations"):
+        assert word in line
+    cfg = json.loads((repo / "sdlc.json").read_text())
+    cfg["db"] = {"test": {"container": "c", "port": 55432, "template": "t"}}
+    (repo / "sdlc.json").write_text(json.dumps(cfg, indent=2) + "\n")
+    again = _adopt(repo)
+    assert not any("db.test" in m for m in _sections(again.stdout)["MANUAL"])
+
+
+def test_adopt_stays_quiet_about_databases_when_the_repo_has_no_migrations(tmp_path: Path) -> None:
+    res = _adopt(_repo(tmp_path, "node"))
+    assert not any("db.test" in m for m in _sections(res.stdout)["MANUAL"])

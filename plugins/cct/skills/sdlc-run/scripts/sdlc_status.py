@@ -5,6 +5,7 @@
     python3 ${CLAUDE_SKILL_DIR}/scripts/sdlc_status.py ids [<id>]
     python3 ${CLAUDE_SKILL_DIR}/scripts/sdlc_status.py readme [<id>]
     python3 ${CLAUDE_SKILL_DIR}/scripts/sdlc_status.py record <id> project --sha <sha> [--accepted]
+    python3 ${CLAUDE_SKILL_DIR}/scripts/sdlc_status.py worktrees [--prune]
 
 Runs from the plugin and is never copied into a repo: run it with the working directory inside the
 adopted repo, which it finds from the cwd. It loads `verify_gate` from the plugin's own
@@ -982,10 +983,76 @@ def write_readme(change: Path, text: str) -> int:
     return 0
 
 
+def git_out(cwd: Path, *args: str) -> tuple[int, str]:
+    res = subprocess.run(["git", *args], cwd=cwd, capture_output=True, text=True)
+    return res.returncode, res.stdout.strip()
+
+
+REBUILDABLE = {
+    "node_modules", ".next", "dist", "build", ".turbo", ".venv", "__pycache__",
+    ".pytest_cache", ".ruff_cache", "coverage",
+}  # fmt: skip
+
+
+def worktree_blockers(path: Path) -> list[str]:
+    """Why a worktree may not be removed: any git failure, a change, an untracked file, or an ignored
+    file that is not a rebuildable cache (`git worktree remove` would delete it, e.g. a `.env`)."""
+    code, out = git_out(path, "status", "--porcelain", "--ignored=matching")
+    if code:
+        return ["git status failed"]
+    kept = []
+    for line in out.splitlines():
+        status, name = line[:2], line[3:].strip('"')
+        if status == "!!" and set(Path(name).parts) & REBUILDABLE:
+            continue
+        kept.append(name)
+    return kept
+
+
+def worktrees_main(prune: bool) -> int:
+    """List the builder worktrees `<root>/.worktrees/agent-*` that are clean and whose branch is merged
+    into the milestone branch checked out in the root worktree or into the default branch; with
+    --prune remove them and their branches (`git worktree remove` and `git branch -d`, never forced).
+    Fails closed: any git error means keep."""
+    root = repo_root(Path.cwd())
+    if not root:
+        print("no sdlc.json in this repo: run `sdlc-run adopt`")
+        return 2
+    code, current = git_out(root, "symbolic-ref", "-q", "--short", "HEAD")
+    default = config(root).get("defaultBranch") or "master"
+    refs = [current if code == 0 else "", default, f"origin/{default}"]
+    targets = [r for r in refs if r and git_out(root, "rev-parse", "-q", "--verify", r)[0] == 0]
+    _, listing = git_out(root, "worktree", "list", "--porcelain")
+    for block in listing.split("\n\n"):
+        fields = dict(line.partition(" ")[::2] for line in block.splitlines())
+        path = Path(fields.get("worktree", ""))
+        branch = fields.get("branch", "").removeprefix("refs/heads/")
+        if not (path.parent == root / ".worktrees" and path.name.startswith("agent-") and branch):
+            continue
+        merged = any(
+            git_out(root, "merge-base", "--is-ancestor", branch, t)[0] == 0 for t in targets
+        )
+        blockers = worktree_blockers(path) if merged else []
+        if not merged:
+            print(f"keep {path.name}: not merged into {' or '.join(targets) or 'any known ref'}")
+        elif blockers:
+            print(f"keep {path.name}: not clean: {', '.join(blockers)}")
+        elif not prune:
+            print(f"removable {path.name} (merged, clean); add --prune to remove it")
+        elif git_out(root, "worktree", "remove", str(path))[0] == 0:
+            git_out(root, "branch", "-d", branch)
+            print(f"removed {path.name} and branch {branch}")
+        else:
+            print(f"keep {path.name}: git worktree remove refused")
+    return 0
+
+
 def main(argv: list[str]) -> int:
-    if len(argv) < 2 or argv[1] not in ("map", "goal", "ids", "readme", "base", "record", "handoff"):
+    if len(argv) < 2 or argv[1] not in ("map", "goal", "ids", "readme", "base", "record", "handoff", "worktrees"):
         print(__doc__)
         return 2
+    if argv[1] == "worktrees":
+        return worktrees_main("--prune" in argv[2:])
     if argv[1] == "goal":
         return goal_main(argv[2:])
     root = repo_root(Path.cwd())
