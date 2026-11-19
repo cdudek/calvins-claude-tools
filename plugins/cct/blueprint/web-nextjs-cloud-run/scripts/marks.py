@@ -180,8 +180,9 @@ def spec_text(repo: Path, globs: list[str]) -> str:
 
 def shot_screen(image: Path) -> str:
     """The screen a rendered image shows: render.sh puts <screen>--<viewport>@2x.png in a shots/
-    folder beside the screen, so the folder (minus shots/) plus the name before `--` or `@`."""
-    name = re.sub(r"(--.*|@.*)$", "", image.stem)
+    folder beside the screen, so the folder (minus shots/) plus the name before that suffix. Only the renderer's own
+    `--<viewport>@2x` comes off: home--compact.html is home--compact--desktop@2x.png, not `home`."""
+    name = re.sub(r"--(?:desktop|mobile|zoom150)@2x$", "", image.stem)
     return "/".join([*(part for part in image.parent.parts if part != "shots"), name])
 
 

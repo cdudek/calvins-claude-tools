@@ -11,9 +11,10 @@ Run up to three fix rounds, then write the verdict.
   unless the `validation` skip is recorded and a `visualSource` is supplied: then the intent
   approval authorises the run.
 - `<spec>/screens.md`, always.
-- `<spec>/brief.md`, `<spec>/ia.md` and `<spec>/interaction.md`, each only when its activity ran:
-  size S skips all three (`sdlc-run` `chain.md`, Size presets), so a missing file is not a
-  blocker and its checks below do not apply.
+- `<spec>/brief.md`, `<spec>/ia.md` and `<spec>/interaction.md`: required, except for an activity
+  the size preset skips (`sdlc-run` `chain.md`, Size presets; the size is `decisions.json`
+  `size`). Size S skips all three, size M skips `ia`, size L skips none. A file missing for a
+  size that does not skip it is a QA failure, never a skip: set `verdict: fail` and name the file.
 - The declared `visualSource`, when `decisions.json` names one: the reference.
 - `<spec>/prototype/index.md` and its screenshots, when present: advisory only.
 - The running build from `docs/ux/setup.md`.
@@ -34,10 +35,11 @@ Run up to three fix rounds, then write the verdict.
 8. Check full view first.
 9. Then check focused regions.
 10. Screenshot menus, selects, popovers, and dialogs open.
-    When `<spec>/ia.md` exists, walk every journey in it in the build, Back included, and check
-    what each Back restores. When `<spec>/interaction.md` exists, exercise every cell of its
-    elements x interactions matrix; a cell that does something other than the spec says is a
-    finding. Size S has neither: check only the delta in `<spec>/screens.md`.
+    Walk every journey in `<spec>/ia.md` in the build, Back included, and check what each Back
+    restores (sizes S and M have no `ia`: nothing to walk). Exercise every cell of the
+    `<spec>/interaction.md` elements x interactions matrix; a cell that does something other
+    than the spec says is a finding (size S has no `interaction`: check only the delta in
+    `<spec>/screens.md`).
 11. Run the mandatory surface pass.
 12. Write one finding per flaw with P0-P3 severity.
 13. Validate every issue against the repo's conventions with exactly one verdict from
@@ -79,8 +81,8 @@ design-system release. Full rules: the sdlc-run `convergence.md`.
 - Tokens and colour.
 - Icons and imagery.
 - Copy against `<spec>/screens.md` and the glossary.
-- States and behaviour against `<spec>/interaction.md`, when it exists.
-- Moves and Back target against `<spec>/ia.md`, when it exists.
+- States and behaviour against `<spec>/interaction.md` (size S: the delta in `<spec>/screens.md`).
+- Moves and Back target against `<spec>/ia.md` (sizes S and M have none).
 - Accessibility focus ring, contrast, and keyboard route.
 
 ## Output Template

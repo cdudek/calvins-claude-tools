@@ -615,3 +615,23 @@ def test_migration_keeps_a_row_whose_bundle_image_never_existed_M4(repo: Path) -
     data = json.loads((root / "marks.json").read_text())
     assert gone in data["rows"] and not any(r.get("folded") for r in data["rows"])
     assert "ref:asks/2026-11-01-export/assets/gone.png: orphan row" in run(repo, "check").stdout
+
+
+# 3.20.3: only the renderer's own suffix comes off an image name.
+def test_a_screen_with_a_double_dash_name_is_satisfied_by_its_rendered_shot_C4(repo: Path) -> None:
+    """render.sh writes <screen>--<viewport>@2x.png: home--compact.html gives
+    home--compact--desktop@2x.png, which is that screen and not `home`."""
+    folder = bundle(repo)
+    write(folder / "home--compact.html", "<html>compact</html>")
+    render = change(repo) / "asks/export-render"
+    write(render / "index--desktop@2x.png")
+    write(render / "home--desktop@2x.png")  # the screen `home`, which does not exist
+    render_row(repo, "asks/export-render")
+    assert "no image for screen: home--compact\n" in run(repo, "check").stdout
+    write(render / "shots/home--compact--desktop@2x.png")
+    out = run(repo, "check").stdout
+    assert "no image for screen" not in out, out
+    shot = render / "shots/home--compact--desktop@2x.png"
+    for viewport in ("mobile", "zoom150"):  # the other two viewports are the same screen
+        shot = shot.rename(render / f"shots/home--compact--{viewport}@2x.png")
+        assert "no image for screen" not in run(repo, "check").stdout

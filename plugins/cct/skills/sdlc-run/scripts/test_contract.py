@@ -309,14 +309,17 @@ def test_the_readiness_writer_keeps_an_older_hooks_validation_md_current_F4() ->
     assert "readiness.md" in mirror and "every write" in mirror
 
 
-def test_size_s_build_qa_needs_neither_ia_nor_interaction_M6() -> None:
-    """Size S skips brief, ia and interaction (chain.md presets): build QA names those files only
-    under a `when ... exists / ran` condition and never requires them."""
+def test_build_qa_waives_only_the_files_the_size_preset_skips_M6_C10() -> None:
+    """chain.md: S skips brief, ia and interaction; M skips ia; L skips none. Build QA waives a
+    file only for a size that skips it: for size L a missing interaction.md fails the QA, and no
+    check is made conditional on the file existing."""
     chain = (SKILL / "references/chain.md").read_text(encoding="utf-8")
     assert re.search(r"\| `S` \|[^\n]*`brief`, `ia`, `interaction`", chain)
+    assert re.search(r"\| `M` \|[^\n]*`ia`, reason", chain) and "| `L` | a new screen, flow or feature | none |" in chain
     build = (SKILLS / "ux-build-validate/references/build.md").read_text(encoding="utf-8")
+    inputs = build.split("## Steps", 1)[0]
+    assert "Size S skips all three, size M skips `ia`, size L skips none" in inputs
+    assert "A file missing for a" in inputs and "`verdict: fail`" in inputs
     for line in build.splitlines():
         if re.search(r"ia\.md|interaction\.md", line) and not line.startswith("- `<spec>/screens.md`"):
-            assert re.search(r"\b(when|Size S)\b", line, re.I), line
-    assert "size S skips" in build.split("## Steps", 1)[0]
-    assert "Size S has neither" in build
+            assert not re.search(r"\bexists?\b", line, re.I), f"a check conditional on the file existing: {line}"

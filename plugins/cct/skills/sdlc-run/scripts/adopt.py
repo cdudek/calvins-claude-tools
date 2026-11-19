@@ -837,14 +837,33 @@ def apply_tiers_answer(cfg: dict) -> None:
         wrote.append(f"sdlc.json: tiers {str(cfg['tiers']).lower()} (Ship/Show/Ask: {answer})")
 
 
-# sha256[:16] of every marks.py a kit shipped before 3.20.2: a copy that matches one is unedited
+# sha256[:16] of every copy of these files a kit ever shipped (every blob in the git history of the
+# template, merges and side branches included): a copy that matches one is unedited. A new version
+# of either file adds its hash here; test_adopt.py walks the history and fails on a missing one.
 KIT_MARKS = {
-    "1d7b567db399b3f8",
     "0b01636d6dc4e428",
-    "9b9eb7671a9fee71",
-    "da489951ced4b597",
+    "1d7b567db399b3f8",
+    "4dc39753a72de141",
+    "54684d37d2b5435c",
+    "6c0c9f03e4eb5e80",
     "71e01d1d701f6c28",
+    "8504021b39d2f3c4",
+    "9b9eb7671a9fee71",
+    "9e291aa9a4ca7939",
+    "a5be99c8d2b1e911",
+    "b35426f37e60f79f",
+    "c31c115f84e2d0cb",
+    "d0b8c44c65ff9ef6",
+    "da489951ced4b597",
+    "e9511caf3de9934b",
 }
+KIT_PASS_PROOF = {
+    "08655b8b92ba1cf3",
+    "6b49e80785b08cd1",
+    "9bf7560ec9b627d8",
+    "faa52678825431ca",
+}
+KIT_PARTS = {"scripts/marks.py": KIT_MARKS, ".claude/hooks/pass_proof.py": KIT_PASS_PROOF}
 
 
 def finish_upgrade() -> str:
@@ -868,21 +887,26 @@ def finish_upgrade() -> str:
             )
     out = []
     # A file whose partner the replaced one needs: the new gate blocks a milestone without
-    # marks.py's `bundles`, and pr-gate.sh loads pass_proof.py. Replacing the gate takes marks.py
-    # along only when marks.py is a kit version nobody edited (sdlc.json `keep` and a customised
-    # copy stay); a replaced marks.py alone is safe, the older gate imports the same names.
+    # marks.py's `bundles`, and pr-gate.sh loads pass_proof.py. Replacing either takes its partner
+    # along only when the partner is a kit version nobody edited (sdlc.json `keep` and a customised
+    # copy stay, and a MANUAL line names it); a replaced marks.py alone is safe, the older gate
+    # imports the same names.
     partner = {"scripts/verify_gate.py": "scripts/marks.py", ".claude/hooks/pr-gate.sh": ".claude/hooks/pass_proof.py"}
+    PARTNER_NEEDS = {  # noqa: N806 -- what the replaced file cannot work without
+        "scripts/marks.py": "`bundles(change)`: the new gate blocks milestone gates with design bundles until it has it",
+        ".claude/hooks/pass_proof.py": "`holds(...)` (the one reader of the gate's receipts): the new hook blocks every push and merge without it",
+    }
     wanted = list(dict.fromkeys(REPLACE))
     for rel in REPLACE:
         other = partner.get(rel)
         if other is None or other not in pending:
             continue  # no partner, or it is the kit's copy already
         mine = ROOT / other
-        if other == "scripts/marks.py" and mine.exists() and hashlib.sha256(mine.read_bytes()).hexdigest()[:16] not in KIT_MARKS:
+        if mine.exists() and hashlib.sha256(mine.read_bytes()).hexdigest()[:16] not in KIT_PARTS[other]:
             manual.append(
                 f"--replace {rel}: {other} is customised (it matches no kit version), so it was not "
-                f"replaced with it. The new gate blocks milestone gates until it has `bundles`: merge "
-                f"your changes into the kit's copy, then `adopt --upgrade --replace {other} --apply`"
+                f"replaced with it. {rel} needs {PARTNER_NEEDS[other]}: merge your changes into the "
+                f"kit's copy, then `adopt --upgrade --replace {other} --apply`"
             )
             continue
         wanted.append(other)

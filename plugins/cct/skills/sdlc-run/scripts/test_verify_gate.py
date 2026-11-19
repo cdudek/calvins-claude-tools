@@ -702,7 +702,8 @@ def test_milestone_gate_keeps_its_receipt_in_the_common_git_dir_F5(tmp_path: Pat
     verify = repo / "changes" / ID / "verify"
     shared = _common(repo) / "sdlc" / "receipts" / ID / "milestone-2.json"
     receipt = json.loads(shared.read_text())
-    assert receipt == {**json.loads((verify / "report.json").read_text()), "milestone": 2, "change": ID}
+    report = json.loads((verify / "report.json").read_text())
+    assert receipt == {**report, "milestone": 2, "change": ID, "verdict": "pass", "owner": "project/big", "time": receipt["time"]}
     assert receipt["result"].startswith("VERIFY PASS milestone") and receipt["sha"]
     assert not (verify / "milestone-2.json").exists()
     # a linked worktree has no copy of changes/<id>/verify, and still resolves the same receipt
@@ -753,8 +754,8 @@ def test_a_newer_gate_beside_an_older_marks_py_still_approves_audits_and_lints_F
         [sys.executable, str(old / "verify_gate.py"), "milestone", ID],
         cwd=repo, capture_output=True, text=True, env=_env(),
     )  # fmt: skip
-    # the milestone gate is where a marks.py without `bundles` is refused (H5, below)
-    assert _last(r) == "VERIFY BLOCKED reason=env", r.stdout + r.stderr
+    # a marks.py without `bundles` is refused only for a milestone with a design bundle (H5, below)
+    assert _last(r).startswith(f"VERIFY PASS milestone {ID}"), r.stdout + r.stderr
 
 
 @pytest.mark.parametrize("merge", [None, "pr"])
@@ -1299,6 +1300,27 @@ def test_a_kept_legacy_marks_py_blocks_the_milestone_gate_and_names_the_upgrade_
     r = subprocess.run([*gate, "milestone", ID], cwd=repo, capture_output=True, text=True, env=_env())
     assert r.returncode == 3 and _last(r) == "VERIFY BLOCKED reason=env", r.stdout
     assert "scripts/marks.py" in r.stdout and "adopt --upgrade --replace scripts/marks.py" in r.stdout
+    assert r.stdout.index("remove it from `keep`") < r.stdout.index("adopt --upgrade --replace")  # keep first
+
+
+def test_a_kept_legacy_marks_py_blocks_only_a_milestone_with_design_inputs(tmp_path: Path) -> None:
+    """A code-only milestone has nothing for the old marks.py to miss: it passes."""
+    old = tmp_path / "scripts"
+    old.mkdir()
+    for f in GATE.parent.glob("*.py"):
+        (old / f.name).write_text(f.read_text())
+    (old / "marks.py").write_text("def sessions(change):\n    return []\n")
+    repo = _repo(tmp_path, ["true"])
+    cfg = json.loads((repo / "sdlc.json").read_text())
+    (repo / "sdlc.json").write_text(json.dumps({**cfg, "checks": {"milestone": ["true"]}}))
+    _git(repo, "add", ".")
+    _git(repo, "commit", "-qm", "code only")
+    gate = [sys.executable, str(old / "verify_gate.py")]
+    assert subprocess.run([*gate, "approve", ID], cwd=repo, capture_output=True, env=_env()).returncode == 0
+    _git(repo, "add", ".")
+    _git(repo, "commit", "-qm", "approved")
+    r = subprocess.run([*gate, "milestone", ID], cwd=repo, capture_output=True, text=True, env=_env())
+    assert r.returncode == 0 and _last(r).startswith(f"VERIFY PASS milestone {ID}"), r.stdout
 
 
 def test_an_open_question_inside_a_gherkin_block_still_blocks_approval_M5(tmp_path: Path) -> None:
@@ -1312,3 +1334,94 @@ def test_an_open_question_inside_a_gherkin_block_still_blocks_approval_M5(tmp_pa
     # the template's own instruction text is not a question
     facts.write_text("---\nstatus: approved\n---\n\n" + scenario.format("[NEEDS CLARIFICATION: <question>]"))
     assert _gate(repo, "lint", ID).returncode == 0
+
+
+# 3.20.3: one receipt per gate run, the one authority (hooks/pass_proof.py reads it).
+def _receipt_of(repo: Path, scope: str, n: int) -> dict:
+    return json.loads((_common(repo) / "sdlc" / "receipts" / ID / f"{scope}-{n}.json").read_text())
+
+
+def test_a_failed_and_a_blocked_run_write_a_receipt_that_replaces_the_pass_C1(tmp_path: Path) -> None:
+    repo = _local_repo(tmp_path)
+    _merge_milestone_one_locally(repo)
+    _git(repo, "merge", "-q", "--no-edit", "project/big")
+    assert _gate(repo, "milestone", ID).returncode == 0
+    assert _receipt_of(repo, "milestone", 2)["verdict"] == "pass"
+    cfg = json.loads((repo / "sdlc.json").read_text())
+    (repo / "sdlc.json").write_text(json.dumps({**cfg, "checks": {"milestone": ["false"]}}))
+    (repo / "changes" / ID / "lock.json").unlink()
+    assert _gate(repo, "milestone", ID).returncode == 3  # not approved: blocked, and recorded
+    blocked = _receipt_of(repo, "milestone", 2)
+    assert blocked["verdict"] == "blocked" and blocked["result"] == "VERIFY BLOCKED reason=not-approved"
+    assert blocked["owner"] == "project/big" and blocked["time"] and blocked["milestone"] == 2
+
+
+def test_a_failing_check_leaves_a_fail_receipt_C1(tmp_path: Path) -> None:
+    repo = _local_repo(tmp_path)
+    _merge_milestone_one_locally(repo)
+    _git(repo, "merge", "-q", "--no-edit", "project/big")
+    cfg = json.loads((repo / "sdlc.json").read_text())
+    (repo / "sdlc.json").write_text(json.dumps({**cfg, "checks": {"milestone": ["false"]}}))
+    _git(repo, "commit", "-qam", "a check that fails")
+    _gate(repo, "approve", ID)
+    _git(repo, "add", ".")
+    _git(repo, "commit", "-qm", "approved again")
+    assert _gate(repo, "milestone", ID).returncode == 1
+    got = _receipt_of(repo, "milestone", 2)
+    assert got["verdict"] == "fail" and got["checks"] and got["sha"]
+
+
+def test_the_receipt_and_the_report_name_the_head_the_gate_started_on_C2(tmp_path: Path) -> None:
+    """HEAD is read once: a check that moves it fails the run, and no record names the new head."""
+    mover = "git -c user.name=t -c user.email=t@t commit -q --allow-empty -m moved"
+    repo = _repo(tmp_path, [mover])
+    _approve(repo)
+    start = subprocess.run(
+        ["git", "rev-parse", "HEAD"], cwd=repo, capture_output=True, text=True
+    ).stdout.strip()
+    r = _gate(repo, "feature", ID)
+    assert _last(r) == f"VERIFY FAIL feature {ID} check=moved"
+    report = json.loads((repo / "changes" / ID / "verify" / "report.json").read_text())
+    assert report["sha"] == start and _receipt_of(repo, "feature", 0)["sha"] == start
+
+
+def test_a_detached_milestone_run_names_its_milestone_or_is_refused_C3(tmp_path: Path) -> None:
+    repo = _local_repo(tmp_path)
+    _merge_milestone_one_locally(repo)
+    _git(repo, "merge", "-q", "--no-edit", "project/big")
+    _git(repo, "checkout", "-q", "--detach")
+    r = _gate(repo, "milestone", ID)
+    assert r.returncode == 3 and _last(r) == "VERIFY BLOCKED reason=env" and "--milestone" in r.stdout
+    assert not (_common(repo) / "sdlc" / "receipts" / ID).exists()  # no record without a subject
+    assert _gate(repo, "milestone", ID, "--milestone", "2").returncode == 0
+    got = _receipt_of(repo, "milestone", 2)
+    assert got["verdict"] == "pass" and got["milestone"] == 2
+
+
+def test_an_explicit_milestone_that_the_branch_contradicts_is_refused_C3(tmp_path: Path) -> None:
+    repo = _local_repo(tmp_path)
+    _merge_milestone_one_locally(repo)  # on milestone/big-2
+    _git(repo, "merge", "-q", "--no-edit", "project/big")
+    r = _gate(repo, "milestone", ID, "--milestone", "1")
+    assert r.returncode == 3 and "milestone 2" in r.stdout
+
+
+def test_the_writer_and_the_reader_agree_on_the_receipt_path_C1(tmp_path: Path) -> None:
+    sys.path.insert(0, str(SKILL / "templates" / "hooks"))
+    sys.path.insert(0, str(GATE.parent))
+    import pass_proof
+    import verify_gate
+
+    repo = _repo(tmp_path, ["true"])
+    assert verify_gate.receipt_path(ID, "milestone", 3, repo) == pass_proof.receipt_path(repo, ID, "milestone", 3)
+
+
+def test_an_open_question_with_angle_brackets_is_not_the_placeholder_M5(tmp_path: Path) -> None:
+    repo = _repo(tmp_path, ["true"])
+    facts = repo / "changes" / ID / "facts.md"
+    scenario = "```gherkin\nScenario: list\n  Then {}\n```\n"
+    facts.write_text("---\nstatus: approved\n---\n\n" + scenario.format("[NEEDS CLARIFICATION: <admin or owner?>]"))
+    r = _gate(repo, "lint", ID)
+    assert r.returncode == 1 and "facts.md: an open [NEEDS CLARIFICATION]" in r.stdout
+    facts.write_text("---\nstatus: approved\n---\n\n" + scenario.format("[NEEDS CLARIFICATION: ...]"))
+    assert _gate(repo, "lint", ID).returncode == 0  # the template's own two placeholders stay free

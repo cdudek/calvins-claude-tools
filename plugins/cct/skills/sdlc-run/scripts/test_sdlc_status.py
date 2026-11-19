@@ -589,12 +589,28 @@ def test_goal_local_waits_for_every_planned_milestone_F2(repo: Path) -> None:
     assert sdlc_status.goal(repo, folder, "milestone", 1, gh=_no_gh)[0] == 0
 
 
+def _receipts(repo: Path) -> Path:
+    common = _sh(repo, "rev-parse", "--path-format=absolute", "--git-common-dir")
+    out = Path(common) / "sdlc" / "receipts" / ID
+    out.mkdir(parents=True, exist_ok=True)
+    return out
+
+
 def _receipt(repo: Path, n: int, sha: str, verdict: str = "PASS", change: str = ID) -> None:
-    out = repo / "changes" / ID / "verify"
-    out.mkdir(exist_ok=True)
+    """A receipt where the gate writes it: <git-common-dir>/sdlc/receipts/<id>/milestone-<n>.json."""
+    out = _receipts(repo)
     result = f"VERIFY {verdict} milestone {change} {sha}"
-    receipt = {"scope": "milestone", "milestone": n, "change": change, "result": result, "sha": sha}
+    receipt = {
+        "scope": "milestone", "milestone": n, "change": change, "result": result, "sha": sha,
+        "verdict": verdict.lower(), "owner": "project/big",
+    }  # fmt: skip
     (out / f"milestone-{n}.json").write_text(json.dumps(receipt))
+
+
+def _merge(repo: Path, branch: str, into: str = "project/big") -> None:
+    """What `git switch project/big && git merge --no-ff <branch>` leaves: a merge commit."""
+    _sh(repo, "switch", "-q", into)
+    _sh(repo, "merge", "-q", "--no-ff", "--no-edit", branch)
 
 
 def _two_milestones(repo: Path) -> tuple[str, str]:
@@ -607,7 +623,7 @@ def _two_milestones(repo: Path) -> tuple[str, str]:
     _sh(repo, "branch", "project/big")
     _sh(repo, "checkout", "-qb", "milestone/redesign-r2-1")
     m1 = _commit(repo, "m1.txt")
-    _sh(repo, "branch", "-f", "project/big", m1)
+    _merge(repo, "milestone/redesign-r2-1")
     _sh(repo, "checkout", "-qb", "milestone/redesign-r2-2")
     return m1, _commit(repo, "m2.txt")
 
@@ -616,14 +632,12 @@ def test_goal_local_milestone_is_done_by_its_receipt_after_the_branch_is_deleted
     repo: Path,
 ) -> None:
     m1, m2 = _two_milestones(repo)
-    _sh(repo, "branch", "-f", "project/big", m2)
-    _sh(repo, "checkout", "-q", "project/big")
+    _merge(repo, "milestone/redesign-r2-2")
     _sh(repo, "branch", "-D", "milestone/redesign-r2-1", "milestone/redesign-r2-2")
     _receipt(repo, 1, m1)
-    _receipt(repo, 2, m2)
-    _gate(repo, f"VERIFY PASS milestone {ID} {m2}")
+    _receipt(repo, 2, m2)  # no report.json at all: the receipts decide
     got = sdlc_status.goal(repo, repo / "changes" / ID, "milestone", None, gh=_no_gh)
-    assert got == (0, f"GOAL {ID} DONE merged=project/big gate={m2}")
+    assert got == (0, f"GOAL {ID} DONE merged=project/big gate={m2}")  # no AttributeError, round 3 (5)
 
 
 def test_goal_local_names_the_milestone_with_no_receipt(repo: Path) -> None:
@@ -631,7 +645,6 @@ def test_goal_local_names_the_milestone_with_no_receipt(repo: Path) -> None:
     _sh(repo, "checkout", "-q", "project/big")
     _sh(repo, "branch", "-D", "milestone/redesign-r2-1", "milestone/redesign-r2-2")
     _receipt(repo, 1, m1)
-    _gate(repo, f"VERIFY PASS milestone {ID} {m1}")
     got = sdlc_status.goal(repo, repo / "changes" / ID, "milestone", None, gh=_no_gh)
     assert got == (1, f"GOAL {ID} OPEN merge-missing:milestone/redesign-r2-2")
     assert "verify_gate.py milestone" in sdlc_status.blocker(ID, got[1])
@@ -641,32 +654,27 @@ def test_goal_local_receipt_whose_head_is_not_in_the_project_branch_is_open(repo
     m1, m2 = _two_milestones(repo)
     _receipt(repo, 1, m1)
     _receipt(repo, 2, m2)  # M2 passed its gate but never merged
-    _gate(repo, f"VERIFY PASS milestone {ID} {m1}")
     got = sdlc_status.goal(repo, repo / "changes" / ID, "milestone", None, gh=_no_gh)
     assert got == (1, f"GOAL {ID} OPEN receipt-not-merged:2")
 
 
 def test_goal_local_receipt_copied_from_another_milestone_is_rejected(repo: Path) -> None:
     m1, m2 = _two_milestones(repo)
-    _sh(repo, "branch", "-f", "project/big", m2)
-    _sh(repo, "checkout", "-q", "project/big")
+    _merge(repo, "milestone/redesign-r2-2")
     _sh(repo, "branch", "-D", "milestone/redesign-r2-1", "milestone/redesign-r2-2")
     _receipt(repo, 1, m1)
-    out = repo / "changes" / ID / "verify"
+    out = _receipts(repo)
     (out / "milestone-2.json").write_text((out / "milestone-1.json").read_text())  # M1's, as M2's
-    _gate(repo, f"VERIFY PASS milestone {ID} {m2}")
     got = sdlc_status.goal(repo, repo / "changes" / ID, "milestone", None, gh=_no_gh)
     assert got == (1, f"GOAL {ID} OPEN receipt-not-merged:2")
 
 
 def test_goal_local_receipt_for_another_change_is_rejected(repo: Path) -> None:
     m1, m2 = _two_milestones(repo)
-    _sh(repo, "branch", "-f", "project/big", m2)
-    _sh(repo, "checkout", "-q", "project/big")
+    _merge(repo, "milestone/redesign-r2-2")
     _sh(repo, "branch", "-D", "milestone/redesign-r2-1", "milestone/redesign-r2-2")
     _receipt(repo, 1, m1)
     _receipt(repo, 2, m2, change="2026-01-01-other")
-    _gate(repo, f"VERIFY PASS milestone {ID} {m2}")
     got = sdlc_status.goal(repo, repo / "changes" / ID, "milestone", None, gh=_no_gh)
     assert got == (1, f"GOAL {ID} OPEN receipt-not-merged:2")
 
@@ -677,7 +685,6 @@ def test_goal_local_receipt_needs_the_branch_ancestry_while_the_branch_exists(re
     _sh(repo, "branch", "-f", "project/big", m1)
     _receipt(repo, 1, m1)
     _receipt(repo, 2, m1)  # a valid-looking receipt, but milestone/redesign-r2-2 is not merged
-    _gate(repo, f"VERIFY PASS milestone {ID} {m1}")
     got = sdlc_status.goal(repo, repo / "changes" / ID, "milestone", None, gh=_no_gh)
     assert got == (1, f"GOAL {ID} OPEN merge-missing:milestone/redesign-r2-2")
 
@@ -859,13 +866,17 @@ def test_an_unarmed_pr_in_a_repo_without_the_workflow_is_armed_with_merge_F2(rep
 
 def _shared_receipt(repo: Path, n: int, sha: str, verdict: str = "PASS") -> None:
     """A receipt in the common git dir, where the gate writes it: it outlives the builder's worktree."""
-    from verify_gate import receipt_path
-
-    path = receipt_path(ID, n, repo)
-    path.parent.mkdir(parents=True, exist_ok=True)
-    result = f"VERIFY {verdict}" if "reason=" in verdict else f"VERIFY {verdict} milestone {ID} {sha}"
-    path.write_text(
-        json.dumps({"scope": "milestone", "milestone": n, "change": ID, "result": result, "sha": sha})
+    out = _receipts(repo)
+    blocked = "reason=" in verdict
+    result = f"VERIFY {verdict}" if blocked else f"VERIFY {verdict} milestone {ID} {sha}"
+    verdict = "blocked" if blocked else verdict.lower()
+    (out / f"milestone-{n}.json").write_text(
+        json.dumps(
+            {
+                "scope": "milestone", "milestone": n, "change": ID, "result": result, "sha": sha,
+                "verdict": verdict, "owner": "",
+            }  # fmt: skip
+        )
     )
 
 
@@ -877,7 +888,7 @@ def test_goal_milestone_n_reads_its_receipt_not_the_last_report_F5(repo: Path) -
     _shared_receipt(wt, 1, m1)  # written from the milestone's own worktree
     _sh(repo, "worktree", "remove", "--force", str(wt))
     _sh(repo, "checkout", "-q", "milestone/redesign-r2-2")
-    _gate(repo, f"VERIFY PASS milestone {ID} {m2}")  # the shared last report is M2's
+    _shared_receipt(repo, 2, m2)  # the newest gate run is M2's, which must not finish M1
     folder = repo / "changes" / ID
     got = sdlc_status.goal(repo, folder, "milestone", 1, gh=_no_gh)
     assert got == (0, f"GOAL {ID} DONE merged=project/big gate={m1}")
@@ -885,9 +896,13 @@ def test_goal_milestone_n_reads_its_receipt_not_the_last_report_F5(repo: Path) -
     assert sdlc_status.goal(repo, folder, "milestone", 1, gh=_no_gh)[0] == 0
 
 
-def test_goal_still_reads_a_receipt_in_the_old_location_F5(repo: Path) -> None:
+def test_legacy_rule_a_change_without_receipts_still_reads_its_own_verify_folder_F5(repo: Path) -> None:
+    """LEGACY RULE: no receipt in the common git dir, so the older files decide."""
     m1, m2 = _two_milestones(repo)
-    _receipt(repo, 1, m1)  # changes/<id>/verify/milestone-1.json, as before 3.20.1
+    out = repo / "changes" / ID / "verify"  # changes/<id>/verify/milestone-1.json, as before 3.20.1
+    out.mkdir(exist_ok=True)
+    old = {"scope": "milestone", "milestone": 1, "change": ID, "result": f"VERIFY PASS milestone {ID} {m1}", "sha": m1}
+    (out / "milestone-1.json").write_text(json.dumps(old))
     _gate(repo, f"VERIFY PASS milestone {ID} {m2}")
     got = sdlc_status.goal(repo, repo / "changes" / ID, "milestone", 1, gh=_no_gh)
     assert got == (0, f"GOAL {ID} DONE merged=project/big gate={m1}")
@@ -906,7 +921,7 @@ def test_goal_honours_the_milestone_branch_prefix_F5(repo: Path) -> None:
     _sh(repo, "checkout", "-qb", "ms/redesign-r2-1")
     m1 = _commit(repo, "m1.txt")
     _sh(repo, "branch", "-f", "project/big", m1)
-    _gate(repo, f"VERIFY PASS milestone {ID} {m1}")
+    _gate(repo, f"VERIFY PASS milestone {ID} {m1}")  # legacy: no receipt
     got = sdlc_status.goal(repo, repo / "changes" / ID, "milestone", None, gh=_no_gh)
     assert got == (0, f"GOAL {ID} DONE merged=project/big gate={m1}")
 
@@ -1000,7 +1015,6 @@ def test_local_goal_applies_the_pass_proof_to_the_milestone_tip_F6(repo: Path) -
     _sh(repo, "checkout", "-qb", "milestone/redesign-r2-1")
     gated = _commit(repo, "m1.txt")
     _shared_receipt(repo, 1, gated)
-    _gate(repo, f"VERIFY PASS milestone {ID} {gated}")
     _commit(repo, f"changes/{ID}/milestone.md")  # a close record rides along
     tip = _sh(repo, "rev-parse", "HEAD")
     _sh(repo, "branch", "-f", "project/big", tip)
@@ -1031,3 +1045,103 @@ def test_a_wrong_base_hotfix_pr_is_told_the_default_branch_M3(
     assert sdlc_status.goal_main([ID, "--feature", "1"]) == 1
     out = capsys.readouterr().out
     assert "gh pr edit 7 --base main" in out and "gh pr merge" not in out
+
+
+# --- 3.20.3: round-3 review ----------------------------------------------------------------
+def test_local_goal_proves_a_deleted_branch_against_the_commit_that_merged_it_C6(repo: Path) -> None:
+    """Item 6: with the milestone branch gone, the receipt sha being in the project branch is not
+    enough: the criteria edited after the gate, then merged, must not read DONE."""
+    _local_project(repo)
+    _plan(repo, 1)
+    (repo / "changes" / ID / "facts.md").write_text("F1 the first\n")
+    _commit(repo, "base.txt")
+    _sh(repo, "branch", "project/big")
+    _sh(repo, "checkout", "-qb", "milestone/redesign-r2-1")
+    gated = _commit(repo, "m1.txt")
+    _receipt(repo, 1, gated)
+    folder = repo / "changes" / ID
+    (folder / "facts.md").write_text("F1 easier\n")  # edited after the gate, on the same branch
+    _commit(repo, "after.txt")
+    _merge(repo, "milestone/redesign-r2-1")
+    _sh(repo, "branch", "-D", "milestone/redesign-r2-1")
+    got = sdlc_status.goal(repo, folder, "milestone", None, gh=_no_gh)
+    assert got == (1, f"GOAL {ID} OPEN gate-sha-not-tip:milestone/redesign-r2-1")
+
+
+def test_local_goal_never_falls_back_to_the_receipt_sha_being_an_ancestor_C6(repo: Path) -> None:
+    """A fast-forward leaves no merge commit: nothing proves which head merged, so it is open."""
+    _local_project(repo)
+    _plan(repo, 1)
+    _commit(repo, "base.txt")
+    _sh(repo, "branch", "project/big")
+    _sh(repo, "checkout", "-qb", "milestone/redesign-r2-1")
+    gated = _commit(repo, "m1.txt")
+    _receipt(repo, 1, gated)
+    _sh(repo, "branch", "-f", "project/big", gated)
+    _sh(repo, "switch", "-q", "project/big")
+    _sh(repo, "branch", "-D", "milestone/redesign-r2-1")
+    got = sdlc_status.goal(repo, repo / "changes" / ID, "milestone", None, gh=_no_gh)
+    assert got == (1, f"GOAL {ID} OPEN receipt-not-merged:1")
+
+
+def test_a_milestone_merged_before_receipts_existed_stays_done_C7(repo: Path) -> None:
+    """LEGACY RULE: M1's PR merged with no receipt, M2 has one: M1 is never reopened."""
+    _plan(repo)
+    _shared_receipt(repo, 2, SHA2)
+    prs = {BRANCH: _pr(head=GATE), M2_BRANCH: _pr(head=SHA2, number=8)}
+    assert _goal(repo, prs) == (0, f"GOAL {ID} DONE pr=8 state=merged gate={SHA2}")
+    armed = {BRANCH: _pr("OPEN", head=GATE, armed=True), M2_BRANCH: _pr(head=SHA2, number=8)}
+    assert _goal(repo, armed) == (1, f"GOAL {ID} OPEN milestone-gate-pass")  # unmerged and ungated
+
+
+def test_a_local_milestone_merged_before_receipts_existed_stays_done_C7(repo: Path) -> None:
+    m1, m2 = _two_milestones(repo)  # M1 is merged into project/big, its branch still exists
+    _merge(repo, "milestone/redesign-r2-2")
+    _receipt(repo, 2, m2)
+    got = sdlc_status.goal(repo, repo / "changes" / ID, "milestone", None, gh=_no_gh)
+    assert got == (0, f"GOAL {ID} DONE merged=project/big gate={m2}")
+
+
+def test_once_a_change_has_a_receipt_report_json_is_never_read_C1(repo: Path) -> None:
+    """The report says PASS; the receipt says the newest run failed: the receipt is the record."""
+    _gate(repo, PASS)
+    assert _goal(repo, {BRANCH: _pr()}, n=1)[0] == 0  # LEGACY RULE: no receipt yet, report.json counts
+    _shared_receipt(repo, 1, GATE, "FAIL")
+    assert _goal(repo, {BRANCH: _pr()}, n=1) == (1, f"GOAL {ID} OPEN milestone-gate-pass")
+    assert _goal(repo, {BRANCH: _pr()})[0] == 1  # unnumbered: the PASS report does not stand in either
+
+
+def test_a_pass_receipt_naming_another_sha_than_its_line_is_no_pass_C2(repo: Path) -> None:
+    _shared_receipt(repo, 1, MOVED)
+    path = _receipts(repo) / "milestone-1.json"
+    data = json.loads(path.read_text())
+    path.write_text(json.dumps({**data, "result": f"VERIFY PASS milestone {ID} {GATE}"}))  # line says A
+    assert _goal(repo, {BRANCH: _pr(head=MOVED)}, n=1) == (1, f"GOAL {ID} OPEN milestone-gate-pass")
+
+
+def test_a_goal_poll_resolves_the_git_dir_once_and_reads_each_receipt_once_C9(
+    repo: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    import pass_proof
+
+    _plan(repo, 5)
+    for i in range(1, 6):
+        _shared_receipt(repo, i, GATE)
+    prs = {f"milestone/redesign-r2-{i}": _pr(head=GATE, number=i) for i in range(1, 6)}
+    pass_proof._common.cache_clear()
+    runs, reads = [], []
+    real_run, real_read = subprocess.run, Path.read_text
+
+    def run(cmd, *a, **k):
+        runs.append(list(cmd))
+        return real_run(cmd, *a, **k)
+
+    def read(self, *a, **k):
+        reads.append(self.name)
+        return real_read(self, *a, **k)
+
+    monkeypatch.setattr(subprocess, "run", run)
+    monkeypatch.setattr(Path, "read_text", read)
+    assert _goal(repo, prs)[0] == 0
+    assert sum("--git-common-dir" in c for c in runs) <= 1
+    assert all(reads.count(f"milestone-{i}.json") == 1 for i in range(1, 6)), reads

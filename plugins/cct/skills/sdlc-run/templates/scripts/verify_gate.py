@@ -30,7 +30,13 @@ origin's default branch, or project/<slug> in a project, has commits HEAD lacks:
 locally first. With `milestones.merge: "local"` the local project/<slug> must also be an ancestor
 of HEAD, so a milestone cannot skip an earlier one merged locally. Then it runs the checks cheapest first and the first
 failure stops the run (`--keep-going` runs them all and reports the first failure's verdict), and
-writes <changesDir>/<id>/verify/report.json + report.md (a milestone on branch milestone/<slug>-<n> also milestone-<n>.json, never overwritten by another scope).
+writes <changesDir>/<id>/verify/report.json + report.md, which are for people. Every run, passed,
+failed or blocked, also writes its receipt, <git common dir>/sdlc/receipts/<id>/<scope>-<n>.json
+(n is the milestone number from branch milestone/<slug>-<n>, or `--milestone <n>`; 0 for another
+scope): verdict, the one sha the run started on, scope, number, the owning project, time and the
+checks. The receipt is the only record `pr-gate.sh`, `sdlc_status.py goal` and the stop hook accept
+as proof (hooks/pass_proof.py); the newest run of a (change, scope, n) replaces the one before. A
+milestone run on a detached HEAD without `--milestone` is refused (`reason=env`).
 
 Cheapest first: a check that passed takes its seconds into verify/durations.json (keyed by command)
 and the next run sorts by them; a check with no record yet sorts by a static guess from its
@@ -69,6 +75,7 @@ from __future__ import annotations
 
 import argparse
 import datetime as dt
+import functools
 import hashlib
 import json
 import os
@@ -118,7 +125,7 @@ LABEL = re.compile(
 )
 TABLE_ID = re.compile(rf"^\s*\|\s*({ID_TOKEN})\s*\|")
 IDS_ONLY = re.compile(rf"[\s,;/&+-]*(?:{ID_TOKEN}[\s,;/&+-]*)*")
-PLACEHOLDER = re.compile(r"\[NEEDS CLARIFICATION: (?:<[^>\n]*>|\.\.\.)\]")  # the template's own
+PLACEHOLDER = re.compile(r"\[NEEDS CLARIFICATION: (?:<question>|\.\.\.)\]")  # the template's own words, no other
 BRACKETS = re.compile(r"\([^()]*\)|\[[^\[\]]*\]")  # may span a line wrap, never a blank line
 
 
@@ -148,12 +155,14 @@ def merges_locally(cfg: dict) -> bool:
     return (cfg.get("milestones") or {}).get("merge") == "local"
 
 
+@functools.cache
+def _common(repo: str) -> str:
+    return sh("git", "-C", repo, "rev-parse", "--path-format=absolute", "--git-common-dir")
+
+
 def common_dir(repo: Path | None = None) -> Path:
-    """The git dir every worktree of the repo shares."""
-    common = sh(
-        "git", "-C", str(repo or "."), "rev-parse", "--path-format=absolute", "--git-common-dir"
-    )
-    return Path(common or ".git")
+    """The git dir every worktree of the repo shares, resolved once per process."""
+    return Path(_common(str(repo or ".")) or ".git")
 
 
 def project_record(slug: str, repo: Path | None = None) -> Path:
@@ -161,10 +170,32 @@ def project_record(slug: str, repo: Path | None = None) -> Path:
     return common_dir(repo) / "sdlc" / "projects" / slug
 
 
-def receipt_path(change: str, n: int | str, repo: Path | None = None) -> Path:
-    """A milestone's receipt: in the common git dir, so every worktree sees it and removing the
-    milestone's worktree does not remove it."""
-    return common_dir(repo) / "sdlc" / "receipts" / change / f"milestone-{n}.json"
+def receipt_path(change: str, scope: str, n: int | str, repo: Path | None = None) -> Path:
+    """A gate run's receipt, the one record of whether it passed (hooks/pass_proof.py reads it):
+    in the common git dir, so every worktree sees it and removing the worktree does not remove
+    it. `n` is the milestone number, 0 for any other scope."""
+    return common_dir(repo) / "sdlc" / "receipts" / change / f"{scope}-{n}.json"
+
+
+def write_atomic(path: Path, text: str) -> None:
+    """Never a half-written file: a reader sees the old record or the whole new one."""
+    path.parent.mkdir(parents=True, exist_ok=True)
+    tmp = path.with_name(f".{path.name}.{os.getpid()}.tmp")
+    tmp.write_text(text, encoding="utf-8")
+    os.replace(tmp, path)
+
+
+def has_bundle_inputs(change: Path) -> bool:
+    """A design bundle under asks/ (an index.html, or the folder decisions.json names as
+    visualSource.path). Read without marks.py, so an old copy of it cannot hide one."""
+    if next((change / "asks").rglob("index.html"), None):
+        return True
+    try:
+        declared = json.loads((change / "decisions.json").read_text(encoding="utf-8"))
+        path = (change / declared["visualSource"]["path"]).resolve()
+        return path.is_dir() and path.is_relative_to((change / "asks").resolve())
+    except (OSError, ValueError, KeyError, TypeError, AttributeError):
+        return False
 
 
 def project_branch(change: Path, cfg: dict) -> str:
@@ -267,8 +298,8 @@ def has_owner_marks(change: Path) -> bool:
     return bool(
         (change / "marks.json").exists()
         or marks.sessions(change)
-        or marks.bundles(change)  # the milestone gate blocks on a marks.py without it first
-    )
+        or (callable(getattr(marks, "bundles", None)) and marks.bundles(change))
+    )  # an old marks.py has no `bundles`: the milestone gate blocks it only when a bundle exists
 
 
 def end(line: str, code: int) -> int:
@@ -515,7 +546,9 @@ def run(
     visual_check: str | None = None,
     visual_runs: list[str] | None = None,
     keep_going: bool = False,
+    milestone: int | None = None,
 ) -> int:
+    head = sh("git", "rev-parse", "HEAD")  # read once: the receipt, the report and the PASS line name it
     out_dir = change / "verify"
     out_dir.mkdir(exist_ok=True)
     report: dict = {"scope": scope, "id": change.name, "checks": []}
@@ -531,19 +564,25 @@ def run(
 
     def finish(line: str, code: int) -> int:
         report["result"] = line
-        report["sha"] = sh("git", "rev-parse", "HEAD")
+        report["sha"] = head
         report["metrics"] = metrics(change, report, retries, started_run)
         text = json.dumps(report, indent=2) + "\n"
         (out_dir / "report.json").write_text(text, encoding="utf-8")
-        # report.json holds the last scope run only: a milestone also keeps its own receipt, which
-        # `sdlc_status.py goal` reads, so a deleted merged branch does not undo a finished milestone
-        prefix = (cfg.get("milestones") or {}).get("branchPrefix", "milestone/")
-        on = re.fullmatch(re.escape(prefix) + r".+-(\d+)", sh("git", "rev-parse", "--abbrev-ref", "HEAD"))
-        if scope == "milestone" and on:
-            bound = {**report, "milestone": int(on[1]), "change": change.name}  # bound to its subject
-            path = receipt_path(change.name, on[1], repo)
-            path.parent.mkdir(parents=True, exist_ok=True)
-            path.write_text(json.dumps(bound, indent=2) + "\n", encoding="utf-8")
+        # report.json is a readable artifact of the last run in this checkout and proves nothing.
+        # Every run also writes its receipt, the one record hooks/pass_proof.py reads: a failed or
+        # blocked run replaces an older pass. A milestone run with no number (detached HEAD and no
+        # --milestone) was refused above and writes none.
+        if number is not None:
+            verdict = "pass" if code == 0 else "blocked" if code == 3 else "fail"
+            bound = {
+                **report,
+                "verdict": verdict,
+                "change": change.name,
+                "owner": project_branch(change, cfg),
+                "time": dt.datetime.now(dt.timezone.utc).isoformat(timespec="seconds"),  # noqa: UP017 -- runs on macOS python3 3.9
+                **({"milestone": number} if scope == "milestone" else {}),
+            }
+            write_atomic(receipt_path(change.name, scope, number, repo), json.dumps(bound, indent=2) + "\n")
         rows = "\n".join(
             f"| {c['name']} | {c['status']} | {c['seconds']} |" for c in report["checks"]
         )
@@ -558,6 +597,21 @@ def run(
         if code == 0:
             (out_dir / "state.json").unlink(missing_ok=True)
         return end(line, code)
+
+    number: int | None = 0  # the receipt's number: the milestone's, else 0 (which no reader counts)
+    if scope == "milestone":
+        prefix = (cfg.get("milestones") or {}).get("branchPrefix", "milestone/")
+        branch = sh("git", "symbolic-ref", "--short", "-q", "HEAD")
+        on = re.fullmatch(re.escape(prefix) + r".+-(\d+)", branch)
+        if on and milestone is not None and int(on[1]) != milestone:
+            print(f"--milestone {milestone} but {branch} is milestone {on[1]}.")
+            number = None
+            return finish("VERIFY BLOCKED reason=env", 3)
+        if not branch and milestone is None:  # a detached run would write a record with no subject
+            print("detached HEAD: name the milestone, `verify_gate.py milestone <id> --milestone <n>`.")
+            number = None
+            return finish("VERIFY BLOCKED reason=env", 3)
+        number = milestone if milestone is not None else int(on[1]) if on else 0
 
     declared = False  # an approval from before 3.18.0 keeps the order its checks were written in
     now: dict[str, str] = {}  # a project has no lock: its checks are the milestones' locked ones
@@ -615,10 +669,11 @@ def run(
     if scope == "milestone" and (blocker := milestone_blockers(change)):
         print("\n".join(blocker[1][:TAIL]))
         return finish(f"VERIFY BLOCKED reason={blocker[0]}", 3)
-    if scope == "milestone" and legacy_marks():
+    if scope == "milestone" and legacy_marks() and has_bundle_inputs(change):
         print("scripts/marks.py is older than this gate (it has no `bundles`): it cannot inventory")
-        print("design bundles, and an empty inventory would pass an unrendered one.")
-        print("Run `adopt --upgrade --replace scripts/marks.py --apply` (or restore the kit's marks.py).")
+        print("this milestone's design bundles, and an empty inventory would pass an unrendered one.")
+        print("If sdlc.json `keep` lists scripts/marks.py, remove it from `keep` first, then run")
+        print("`adopt --upgrade --replace scripts/marks.py --apply` (or restore the kit's marks.py).")
         return finish("VERIFY BLOCKED reason=env", 3)
 
     suite = "milestone" if scope == "project" else scope
@@ -674,7 +729,6 @@ def run(
     cache_path = out_dir / "cache.json"
     cache = json.loads(cache_path.read_text()) if cache_path.exists() else {}
     tree = sh("git", "rev-parse", "HEAD^{tree}")
-    head = sh("git", "rev-parse", "HEAD")
 
     def failed(name: str, output: str) -> int:
         """The breaker and the attempt count, for the run's first failing check."""
@@ -953,6 +1007,7 @@ def main(argv: list[str]) -> int:
         help="run every check, not only up to the first failure",
     )
     parser.add_argument("--pr-body", metavar="FILE", help="lint: check this PR body ('-' = stdin)")
+    parser.add_argument("--milestone", type=int, help="milestone: its number, when the branch does not say")
     parser.add_argument("--visual-check")
     parser.add_argument("--visual-run", action="append", default=[])
     args = parser.parse_args(argv[1:])
@@ -981,7 +1036,7 @@ def main(argv: list[str]) -> int:
         if args.pr_body:
             body = sys.stdin.read() if args.pr_body == "-" else Path(args.pr_body).read_text("utf-8")
         return lint(change, body)
-    return run(args.scope, change, cfg, repo, args.visual_check, args.visual_run, args.keep_going)
+    return run(args.scope, change, cfg, repo, args.visual_check, args.visual_run, args.keep_going, args.milestone)
 
 
 if __name__ == "__main__":
