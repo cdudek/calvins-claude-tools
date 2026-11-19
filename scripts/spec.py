@@ -1254,14 +1254,15 @@ def outcome_write(root: Path, change: Path, due: str | None = None) -> Path:
     """Copy the success measure out of the change folder before the folder is removed, to
     `.sdlc/outcomes/<id>.json`. It survives the folder, needs no tracker and no later PR."""
     root, change = Path(root), Path(change)
-    text = (change / "spec.md").read_text(encoding="utf-8")
+    v4 = applies(change)  # the measure is in spec.md on layout 4, in intent.md on the older one
+    text = (change / ("spec.md" if v4 else "intent.md")).read_text(encoding="utf-8")
     fm, _ = split_frontmatter(text)
     measure = " ".join(section(text, "Success measure").split())
     due = due or (dt.date.today() + dt.timedelta(days=14)).isoformat()
     rec = {
         "change": change.name,
         "capabilities": _as_list(fm.get("capabilities")),
-        "rules": [f"R{n}" for n in sorted(change_rules(change))],
+        "rules": [f"R{n}" for n in sorted(change_rules(change))] if v4 else [],
         "measure": measure,
         "due": due,
         "observed": None,

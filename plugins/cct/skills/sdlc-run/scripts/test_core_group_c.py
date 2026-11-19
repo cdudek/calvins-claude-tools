@@ -88,8 +88,8 @@ def test_lint_pr_body_works_once_the_change_folder_is_archived_or_removed(repo: 
 # --- a removed change folder whose PR merged -----------------------------------------------------
 
 
-def _merged(head: str, number: int = 7) -> dict:
-    return {"number": number, "headRefName": head, "state": "MERGED"}
+def _merged(head: str, number: int = 7, base: str = "main") -> dict:
+    return {"number": number, "headRefName": head, "baseRefName": base, "state": "MERGED"}
 
 
 def test_a_removed_folder_whose_pr_merged_reads_done(repo: Path) -> None:  # noqa: F811

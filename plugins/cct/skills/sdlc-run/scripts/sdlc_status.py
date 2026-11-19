@@ -64,7 +64,7 @@ for _sub in ("scripts", "hooks"):
     sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "templates" / _sub))
 
 import spec  # noqa: E402
-from pass_proof import bound, change_paths, milestone_of, newest, pass_key, proves, shared  # noqa: E402
+from pass_proof import _read, bound, change_paths, milestone_of, newest, pass_key, proves, shared  # noqa: E402
 
 STAGES = ("Intent", "UX plan", "Facts", "Tech plan", "Build", "Milestone", "Outcome")
 
@@ -448,10 +448,12 @@ def handoff_sentence(change: Path) -> str:
 def goal(
     root: Path, change: Path, scope: str = "milestone", n: int | None = None, gh=gh_json
 ) -> tuple[int, str]:
-    """`goal_state` plus the handoff: a goal still OPEN when a cap stopped the run reads HANDOFF."""
+    """`goal_state` plus the handoff: a goal still OPEN or BLOCKED when a cap stopped the run reads
+    HANDOFF (the retry cap leaves a blocked gate report beside its record, and the record is the
+    one that names the next command)."""
     code, line = goal_state(root, change, scope, n, gh)
     cap = handoff_of(change).get("cap")
-    return (4, f"GOAL {change.name} HANDOFF cap={cap}") if code == 1 and cap else (code, line)
+    return (4, f"GOAL {change.name} HANDOFF cap={cap}") if code in (1, 3) and cap else (code, line)
 
 
 def goal_state(
@@ -482,9 +484,17 @@ def goal_state(
     # the checkout's report and the gate's shared copy: the newest one speaks (pass_proof.newest)
     report = newest([folder / "verify" / "report.json", shared(root, subject, scope, key)], scope)
     if scope == "milestone" and n:  # report.json is the last run only: milestone n keeps its own receipt
-        receipt = newest([folder / "verify" / f"milestone-{n}.json", shared(root, subject, "milestone", str(n))])
+        files = [folder / "verify" / f"milestone-{n}.json", shared(root, subject, "milestone", str(n))]
+        receipt = newest(files)
         if receipt and not bound(report, scope, subject, n, project):
-            report = receipt
+            # the receipt stands in for report.json (the last run of any scope), unless report.json
+            # is a newer failure of this milestone: the newest report wins, whichever gate wrote it
+            last = _read(folder / "verify" / "report.json")
+            about = last and last[1].get("scope") == "milestone" and last[1].get("id", subject) == subject
+            about = about and last[1].get("milestone", n) == n
+            newer = about and last[0] > max(r[0] for r in map(_read, files) if r)
+            if not newer:
+                report = receipt
     result = str(report.get("result", ""))
     blocked = re.fullmatch(r"VERIFY BLOCKED reason=([\w-]+)", result)
     if blocked:
@@ -561,14 +571,12 @@ def goal_state(
             continue
         pr = found[0]
         merged = pr.get("state") == "MERGED" or bool(pr.get("mergedAt"))
-        answer = ""
-        if pr.get("state") == "OPEN":
-            # the owner's answer to `Change <id>, finding PR<n>: ...` (Accept milestone | Hold), for
-            # every open PR: a Hold blocks at any tier. Parsed once per process, from sessions newer
-            # than the change (marks.answers)
-            from marks import owner_decisions
+        # the owner's answer to `Change <id>, finding PR<n>: ...` (Accept milestone | Hold), for
+        # every PR, merged ones too: a Hold blocks at any tier, and an Ask PR accepted and then merged
+        # stays DONE. Parsed once per process, from sessions newer than the change (marks.answers)
+        from marks import owner_decisions
 
-            answer = owner_decisions(root, change.name).get(f"PR{pr['number']}", ("",))[0]
+        answer = owner_decisions(root, change.name).get(f"PR{pr['number']}", ("",))[0]
         _, flag = pr_flag(root, cfg, pr, answer)
         if pr.get("baseRefName") != parent_of(change, cfg, scope, branch):
             missing.append(f"pr-{pr['number']}-wrong-base")  # first: arming it would merge elsewhere
@@ -588,23 +596,48 @@ def goal_state(
     return 0, f"{name} DONE pr={pr['number']} state={state} gate={passed.group(1)}"
 
 
+def planned_in_history(root: Path, cfg: dict, change_id: str) -> int:
+    """How many milestones the removed change's plan.md listed, read from the last commit that
+    held it (any ref); 0 when no plan is left to read."""
+    rel = f"{cfg.get('changesDir', 'changes')}/{change_id}/plan.md"
+    commit = git(root, "log", "--all", "--diff-filter=AM", "-n1", "--format=%H", "--", rel)
+    text = git(root, "show", f"{commit}:{rel}") if commit else ""
+    return sum(1 for line in section(text, "Milestones") if re.match(r"\|\s*M\d+\b", line))
+
+
 def goal_removed(root: Path, change_id: str, scope: str, n: int | None, gh=gh_json) -> tuple[int, str] | None:
     """The folder is gone: the owner's rule removes it after merge, so that is the normal end state.
-    A merged PR from the change's milestone branch is the proof; None when there is none."""
+    Merged PRs from the change's milestone branches are the proof; None when they do not prove it.
+    `--milestone n` needs milestone n merged. The whole goal needs every planned milestone merged
+    (the plan is read from history), or, with no plan left, a merged PR into the default branch: a
+    milestone merged into a project branch counts only with the project's own PR merged there."""
     cfg = config(root) if (root / "sdlc.json").exists() else {}
     if scope != "milestone" or Path(change_id).name != change_id or change_id in ("", "..", "archive"):
         return None
     prefix, slug = (cfg.get("milestones") or {}).get("branchPrefix", "milestone/"), slug_of(change_id)
-    found = gh(root, "pr", "list", "--state", "merged", "--limit", "200", "--json", "number,headRefName,state")
+    default = cfg.get("defaultBranch") or "main"
+    found = gh(root, "pr", "list", "--state", "merged", "--limit", "200", "--json", "number,headRefName,baseRefName,state")
     if not found:  # gh failed or nothing merged: no proof, so the id is still unknown
         return None
     merged = [  # the one rule of the gate and the hook: <prefix><slug>-<n> is n, <prefix><slug> is 1
-        p for p in found
+        (num, p) for p in found
         if (num := milestone_of(str(p.get("headRefName", "")), prefix, slug)) and (n is None or num == n)
     ]
     if not merged:
         return None
-    return 0, f"GOAL {change_id} DONE pr={merged[-1]['number']} state=merged folder=removed"
+    last = merged[-1][1]
+    if n is None:
+        parents = {str(p.get("baseRefName", "")) for _, p in merged}
+        project = next((p for p in found if p.get("headRefName") in parents and p.get("baseRefName") == default), None)
+        total = planned_in_history(root, cfg, change_id)
+        if project:
+            last = project
+        elif total:
+            if not set(range(1, total + 1)) <= {num for num, _ in merged}:
+                return None
+        elif not any(p.get("baseRefName") == default for _, p in merged):
+            return None
+    return 0, f"GOAL {change_id} DONE pr={last['number']} state=merged folder=removed"
 
 
 # what is in the way, by the first missing item: (what, why, who acts, the exact step)

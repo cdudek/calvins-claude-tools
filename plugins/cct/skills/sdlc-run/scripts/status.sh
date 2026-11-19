@@ -64,6 +64,30 @@ fi
 state_of() {
   local d="$1"
   local decisions="$d/decisions.json"
+  # Layout 4 (spec.md, design.md, tasks.md; no facts.md): the stage comes from those documents and the
+  # lock, by the scope the spec names (S: spec alone, M: + tasks, L: all three).
+  if [ -f "$d/spec.md" ] && [ ! -f "$d/facts.md" ]; then
+    python3 - "$d" <<'PY'
+import pathlib, re, sys
+d = pathlib.Path(sys.argv[1])
+def fm(name, key):
+    f = d / name
+    m = re.search(rf"^{key}:\s*(\S+)", f.read_text(encoding="utf-8"), re.M) if f.exists() else None
+    return m.group(1) if m else ""
+scope = fm("spec.md", "scope")
+need = ["spec.md"] + (["tasks.md"] if scope in ("M", "L") else []) + (["design.md"] if scope == "L" else [])
+locked = (d / "state" / "lock.json").exists() or (d / "lock.json").exists()
+if fm("spec.md", "status") == "in-review":
+    print("intent-in-review")
+elif fm("spec.md", "status") != "approved":
+    print("intent")
+elif locked and all(fm(n, "status") == "approved" for n in need):
+    print("build")
+else:
+    print("plan-draft")
+PY
+    return
+  fi
   if [ -f "$d/intent.md" ] && grep -q '^status: in-review' "$d/intent.md"; then echo "intent-in-review"; return; fi
   if [ -f "$decisions" ] && python3 - "$decisions" "$d" <<'PY'
 import json, pathlib, sys
@@ -125,7 +149,7 @@ for d in "$root/$changes"/*/; do
     *) [ "$id" = "$mode" ] || continue ;;
   esac
   found=1
-  linear=$(grep -m1 '^linear:' "$d/plan.md" "$d/facts.md" "$d/intent.md" 2>/dev/null | head -1 | sed 's/^.*linear: *//')
+  linear=$(grep -m1 '^linear:' "$d/spec.md" "$d/plan.md" "$d/facts.md" "$d/intent.md" 2>/dev/null | head -1 | sed 's/^.*linear: *//')
   st=$(state_of "$d")
   pr="none"
   if command -v gh >/dev/null 2>&1; then

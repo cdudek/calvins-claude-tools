@@ -564,7 +564,9 @@ if is_milestone(decisions) or is_v4(change_dir, decisions):
             f for f in ("spec.md", "design.md", "tasks.md")
             if (change_dir / f).exists() and fm(change_dir / f, "status") != "approved"
         ] + ([] if (change_dir / "spec.md").exists() else ["spec.md"])
-        handover = ("tasks.md", "Handover")
+        # scope S is spec.md alone (no tasks.md, so no handover to require); M and L keep it in tasks.md
+        no_tasks = fm(change_dir / "spec.md", "scope") not in ("M", "L") and not (change_dir / "tasks.md").exists()
+        handover = None if no_tasks else ("tasks.md", "Handover")
     else:
         unapproved = [] if fm(change_dir / "plan.md", "status") == "approved" else ["plan.md"]
         handover = ("plan.md", "Goal handover")
@@ -575,17 +577,19 @@ if is_milestone(decisions) or is_v4(change_dir, decisions):
             f"python3 scripts/verify_gate.py approve {change_id}.",
             source=f"{changes}/{change_id}/{unapproved[0] if unapproved else 'lock.json'} and lock.json"
         )
-    if not section(change_dir / handover[0], handover[1]):
+    if handover and not section(change_dir / handover[0], handover[1]):
         deny(f"{changes}/{change_id}/{handover[0]} has an empty ## {handover[1]}. Write the /goal there first.", source=f"{changes}/{change_id}/{handover[0]}")
     active = goal_active(transcript)
     if active is None:
         print("chain-gate: transcript unreadable, cannot check for an active /goal; allowing.", file=sys.stderr)
     elif not active and os.environ.get("SDLC_GOAL_OFF") != "1":  # the off switch lets build edits through
         deny(
-            "building happens inside /goal. Start it with the condition in "
-            f"{changes}/{change_id}/{handover[0]} ## {handover[1]}, then edit again.",
+            "building happens inside /goal. Start it "
+            + (f"with the condition in {changes}/{change_id}/{handover[0]} ## {handover[1]}" if handover else f"for {changes}/{change_id}/spec.md")
+            + ", then edit again.",
             source=f"the transcript {transcript}",
-            action=f"start the /goal from the ## {handover[1]} in {changes}/{change_id}/{handover[0]} (a person types it)",
+            action=(f"start the /goal from the ## {handover[1]} in {changes}/{change_id}/{handover[0]}" if handover else f"start the /goal for {changes}/{change_id}/spec.md")
+            + " (a person types it)",
         )
     sys.exit(0)
 

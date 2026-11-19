@@ -120,8 +120,15 @@ class Queue:
             "pid": os.getpid(), "cmd": cmd, "kind": kind, "since": time.time(),
             "worktree": git_out("rev-parse", "--show-toplevel") or os.getcwd(), "slot": None,
         }  # fmt: skip
-        path.write_text(json.dumps(data), encoding="utf-8")
+        with self._locked():  # a scan holds the lock; it never sees a ticket half written
+            self._write(path, data)
         return path
+
+    @staticmethod
+    def _write(path: Path, data: dict) -> None:
+        tmp = path.with_name(f".{path.name}.tmp")  # not *.json: a scan skips it
+        tmp.write_text(json.dumps(data), encoding="utf-8")
+        os.replace(tmp, path)
 
     def try_take(self, ticket: Path) -> tuple[int | None, list[dict]]:
         """(slot, []) when this ticket is among the first `slots` live ones, else (None, holders)."""
@@ -135,7 +142,7 @@ class Queue:
                 used = {d["slot"] for p, d in live if p != ticket and d.get("slot") is not None}
                 slot = next(i for i in range(self.slots) if i not in used)
                 data = dict(live[ahead][1], slot=slot, started=time.time())
-                ticket.write_text(json.dumps(data), encoding="utf-8")
+                self._write(ticket, data)
                 return slot, []
             return None, [d for _, d in live[: self.slots]]
 
