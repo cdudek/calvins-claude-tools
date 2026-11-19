@@ -699,49 +699,11 @@ def test_local_mode_milestone_must_contain_the_local_project_branch(tmp_path: Pa
     assert _last(_gate(repo, "milestone", ID)).startswith(f"VERIFY PASS milestone {ID}")
 
 
-def _common(repo: Path) -> Path:
-    out = subprocess.run(
-        ["git", "rev-parse", "--path-format=absolute", "--git-common-dir"],
-        cwd=repo, capture_output=True, text=True, env=_env(),
-    )  # fmt: skip
-    return Path(out.stdout.strip())
-
-
-def test_milestone_gate_keeps_its_receipt_in_the_common_git_dir_F5(tmp_path: Path) -> None:
-    repo = _local_repo(tmp_path)
-    _merge_milestone_one_locally(repo)
-    _git(repo, "merge", "-q", "--no-edit", "project/big")
-    assert _last(_gate(repo, "milestone", ID)).startswith(f"VERIFY PASS milestone {ID}")
-    verify = repo / "changes" / ID / "verify"
-    shared = _common(repo) / "sdlc" / "receipts" / ID / "milestone-2.json"
-    receipt = json.loads(shared.read_text())
-    assert receipt == {**json.loads((verify / "report.json").read_text()), "milestone": 2, "change": ID}
-    assert receipt["result"].startswith("VERIFY PASS milestone") and receipt["sha"]
-    assert not (verify / "milestone-2.json").exists()
-    # a linked worktree has no copy of changes/<id>/verify, and still resolves the same receipt
-    _git(repo, "worktree", "add", "-q", str(tmp_path / "wt"), "-b", "other", "project/big")
-    assert _common(tmp_path / "wt") == _common(repo)
-    _git(repo, "worktree", "remove", "--force", str(tmp_path / "wt"))
-    assert shared.exists()
-
-
-def test_milestone_receipt_honours_the_branch_prefix_F5(tmp_path: Path) -> None:
-    repo = _local_repo(tmp_path)
-    _merge_milestone_one_locally(repo)
-    _git(repo, "merge", "-q", "--no-edit", "project/big")
-    cfg = json.loads((repo / "sdlc.json").read_text())
-    cfg["milestones"]["branchPrefix"] = "ms/"
-    (repo / "sdlc.json").write_text(json.dumps(cfg))
-    _git(repo, "commit", "-qam", "own prefix")
-    _git(repo, "branch", "-m", "milestone/big-2", "ms/big-2")
-    assert _last(_gate(repo, "milestone", ID)).startswith(f"VERIFY PASS milestone {ID}")
-    assert (_common(repo) / "sdlc" / "receipts" / ID / "milestone-2.json").exists()
-
-
 def test_a_newer_gate_beside_an_older_marks_py_still_approves_audits_and_lints_F3(
     tmp_path: Path,
 ) -> None:
-    """A one-file upgrade: verify_gate.py replaced, marks.py not (it has no `bundles` yet)."""
+    """A one-file upgrade: verify_gate.py replaced, marks.py not (it has no `bundles` yet): approve,
+    lint and audit still run."""
     old = tmp_path / "scripts"
     old.mkdir()
     for f in GATE.parent.glob("*.py"):
@@ -765,6 +727,7 @@ def test_a_newer_gate_beside_an_older_marks_py_still_approves_audits_and_lints_F
         [sys.executable, str(old / "verify_gate.py"), "milestone", ID],
         cwd=repo, capture_output=True, text=True, env=_env(),
     )  # fmt: skip
+    # a marks.py without `bundles` is refused only for a milestone with a design bundle (H5, below)
     assert _last(r).startswith(f"VERIFY PASS milestone {ID}"), r.stdout + r.stderr
 
 
@@ -1929,3 +1892,109 @@ def test_the_gate_and_every_hook_keep_a_clean_tree_clean_F13(tmp_path: Path) -> 
         if hook.name not in ("sdlc-config.sh", "plan-gate.sh"):
             assert "PYTHONDONTWRITEBYTECODE=1" in hook.read_text(), hook.name
     assert "PYTHONDONTWRITEBYTECODE=1" in (hooks / "sdlc-config.sh").read_text()
+
+
+def test_a_kept_legacy_marks_py_blocks_the_milestone_gate_and_names_the_upgrade_H5(
+    tmp_path: Path,
+) -> None:
+    """A marks.py with no `bundles` cannot inventory design bundles: that is a blocked gate, never
+    an empty inventory that lets an unrendered bundle pass."""
+    old = tmp_path / "scripts"
+    old.mkdir()
+    for f in GATE.parent.glob("*.py"):
+        (old / f.name).write_text(f.read_text())
+    (old / "marks.py").write_text("def sessions(change):\n    return []\n")
+    repo = _repo(tmp_path, ["true"])
+    cfg = json.loads((repo / "sdlc.json").read_text())
+    (repo / "sdlc.json").write_text(json.dumps({**cfg, "checks": {"milestone": ["true"]}}))
+    bundle = repo / "changes" / ID / "asks" / "export"
+    bundle.mkdir(parents=True)
+    (bundle / "index.html").write_text("<html>screen</html>")
+    _git(repo, "add", ".")
+    _git(repo, "commit", "-qm", "a bundle nobody rendered")
+    gate = [sys.executable, str(old / "verify_gate.py")]
+    approve = subprocess.run([*gate, "approve", ID], cwd=repo, capture_output=True, text=True, env=_env())
+    assert approve.returncode == 0, approve.stdout
+    _git(repo, "add", ".")
+    _git(repo, "commit", "-qm", "approved")
+    r = subprocess.run([*gate, "milestone", ID], cwd=repo, capture_output=True, text=True, env=_env())
+    assert r.returncode == 3 and _last(r) == "VERIFY BLOCKED reason=env", r.stdout
+    assert "scripts/marks.py" in r.stdout and "adopt --upgrade --replace scripts/marks.py" in r.stdout
+    assert r.stdout.index("remove it from `keep`") < r.stdout.index("adopt --upgrade --replace")  # keep first
+
+
+def test_a_kept_legacy_marks_py_blocks_only_a_milestone_with_design_inputs(tmp_path: Path) -> None:
+    """A code-only milestone has nothing for the old marks.py to miss: it passes."""
+    old = tmp_path / "scripts"
+    old.mkdir()
+    for f in GATE.parent.glob("*.py"):
+        (old / f.name).write_text(f.read_text())
+    (old / "marks.py").write_text("def sessions(change):\n    return []\n")
+    repo = _repo(tmp_path, ["true"])
+    cfg = json.loads((repo / "sdlc.json").read_text())
+    (repo / "sdlc.json").write_text(json.dumps({**cfg, "checks": {"milestone": ["true"]}}))
+    _git(repo, "add", ".")
+    _git(repo, "commit", "-qm", "code only")
+    gate = [sys.executable, str(old / "verify_gate.py")]
+    assert subprocess.run([*gate, "approve", ID], cwd=repo, capture_output=True, env=_env()).returncode == 0
+    _git(repo, "add", ".")
+    _git(repo, "commit", "-qm", "approved")
+    r = subprocess.run([*gate, "milestone", ID], cwd=repo, capture_output=True, text=True, env=_env())
+    assert r.returncode == 0 and _last(r).startswith(f"VERIFY PASS milestone {ID}"), r.stdout
+
+
+def test_an_open_question_inside_a_gherkin_block_still_blocks_approval_M5(tmp_path: Path) -> None:
+    repo = _repo(tmp_path, ["true"])
+    facts = repo / "changes" / ID / "facts.md"
+    scenario = "```gherkin\nScenario: list\n  Then the list shows {}\n```\n"
+    facts.write_text("---\nstatus: approved\n---\n\n" + scenario.format("[NEEDS CLARIFICATION: how many rows?]"))
+    r = _gate(repo, "lint", ID)
+    assert r.returncode == 1 and "facts.md: an open [NEEDS CLARIFICATION]" in r.stdout
+    assert _gate(repo, "approve", ID).returncode == 1
+    # the template's own instruction text is not a question
+    facts.write_text("---\nstatus: approved\n---\n\n" + scenario.format("[NEEDS CLARIFICATION: <question>]"))
+    assert _gate(repo, "lint", ID).returncode == 0
+
+
+def test_an_open_question_with_angle_brackets_is_not_the_placeholder_M5(tmp_path: Path) -> None:
+    repo = _repo(tmp_path, ["true"])
+    facts = repo / "changes" / ID / "facts.md"
+    scenario = "```gherkin\nScenario: list\n  Then {}\n```\n"
+    facts.write_text("---\nstatus: approved\n---\n\n" + scenario.format("[NEEDS CLARIFICATION: <admin or owner?>]"))
+    r = _gate(repo, "lint", ID)
+    assert r.returncode == 1 and "facts.md: an open [NEEDS CLARIFICATION]" in r.stdout
+    facts.write_text("---\nstatus: approved\n---\n\n" + scenario.format("[NEEDS CLARIFICATION: ...]"))
+    assert _gate(repo, "lint", ID).returncode == 0  # the template's own two placeholders stay free
+
+
+
+
+# 3.20.5: the report binds a pass to its change, milestone number and owning project.
+@pytest.mark.parametrize(
+    ("branch", "prefix", "number"),
+    [("milestone/trial-2", "milestone/", 2), ("milestone/trial", "milestone/", 1), ("ms/trial-3", "ms/", 3)],
+)
+def test_a_milestone_report_names_its_change_milestone_and_owner_3_20_5(
+    tmp_path: Path, branch: str, prefix: str, number: int
+) -> None:
+    repo = _repo(tmp_path, ["true"])
+    cfg = json.loads((repo / "sdlc.json").read_text())
+    cfg = {**cfg, "checks": {"milestone": ["true"]}, "milestones": {"branchPrefix": prefix}}
+    (repo / "sdlc.json").write_text(json.dumps(cfg))
+    _git(repo, "commit", "-qam", "milestone checks")
+    _git(repo, "checkout", "-qb", branch)
+    _approve(repo)
+    r = _gate(repo, "milestone", ID)
+    assert _last(r).startswith(f"VERIFY PASS milestone {ID}"), r.stdout
+    verify = repo / "changes" / ID / "verify"
+    for name in ("report.json", f"milestone-{number}.json"):
+        data = json.loads((verify / name).read_text())
+        assert (data["change"], data["milestone"], data["owner"]) == (ID, number, ""), name
+
+
+def test_a_feature_report_names_its_change_and_a_project_report_none_3_20_5(tmp_path: Path) -> None:
+    repo = _repo(tmp_path, ["true"])
+    _approve(repo)
+    assert _last(_gate(repo, "feature", ID)).startswith("VERIFY PASS")
+    data = json.loads((repo / "changes" / ID / "verify" / "report.json").read_text())
+    assert data["change"] == ID and "milestone" not in data

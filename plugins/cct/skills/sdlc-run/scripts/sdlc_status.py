@@ -52,7 +52,7 @@ from change_docs import MARKER, ids, readme
 for _sub in ("scripts", "hooks"):
     sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "templates" / _sub))
 
-from pass_proof import proves  # noqa: E402
+from pass_proof import bound, proves  # noqa: E402
 
 STAGES = ("Intent", "UX plan", "Facts", "Tech plan", "Build", "Milestone", "Outcome")
 
@@ -260,28 +260,6 @@ def parent_of(change: Path, cfg: dict, scope: str, head: str = "") -> str:
     return f"{(cfg.get('milestones') or {}).get('branchPrefix', 'milestone/')}{slug}"
 
 
-def read_receipt(root: Path, change: Path, n: int | str) -> dict:
-    """Milestone n's receipt: the common git dir first, the change's own verify/ folder (where
-    the gate wrote it before 3.20.1) as the fallback. It counts only for its own milestone and
-    change, never a copy."""
-    from verify_gate import receipt_path
-
-    for path in (receipt_path(change.name, n, root), change / "verify" / f"milestone-{n}.json"):
-        receipt = read_json(path)
-        if receipt:
-            ok = (
-                receipt.get("scope") == "milestone"
-                and str(receipt.get("milestone")) == str(n)
-                and receipt.get("change") == change.name
-                and re.fullmatch(
-                    rf"VERIFY PASS milestone {re.escape(change.name)} \w+",
-                    str(receipt.get("result", "")),
-                )
-            )
-            return receipt if ok else {"invalid": True, **receipt}
-    return {}
-
-
 def waiting_on(root: Path, cfg: dict, pr: dict) -> str:
     """Why an open PR is not armed: the reader decides an `ask` PR while askGatesMerge is on, the
     tier workflow arms the others into the default branch, and only a repo without that workflow
@@ -297,8 +275,10 @@ def waiting_on(root: Path, cfg: dict, pr: dict) -> str:
 def goal(
     root: Path, change: Path, scope: str = "milestone", n: int | None = None, gh=gh_json
 ) -> tuple[int, str]:
-    """(exit code, the one line) for the change's goal; `gh(root, *args)` is injectable."""
-    from verify_gate import merges_locally, project_branch, project_record
+    """(exit code, the one line) for the change's goal; `gh(root, *args)` is injectable. The gate's
+    report.json in the checkout says whether the scope passed; a local milestone is also done by
+    its own receipt (verify/milestone-<n>.json) or its merged branch."""
+    from verify_gate import merges_locally, milestone_blockers, project_branch, project_record
 
     name = f"GOAL {change.name}"
     cfg = config(root) if (root / "sdlc.json").exists() else {}
@@ -309,14 +289,16 @@ def goal(
         subject = (read_json(change / "decisions.json").get("project") or {}).get("slug", "")
         folder = project_record(subject, root) if project else change
     report = read_json(folder / "verify" / "report.json")
-    if scope == "milestone" and n:  # milestone n's own receipt, not whichever gate ran last
-        own = read_receipt(root, change, n)
-        report = own if own and not own.get("invalid") else report
     result = str(report.get("result", "")) if report.get("scope") == scope else ""
     blocked = re.fullmatch(r"VERIFY BLOCKED reason=([\w-]+)", result)
     if blocked:
         return 3, f"{name} BLOCKED reason={blocked.group(1)}"
     passed = re.fullmatch(rf"VERIFY PASS {scope} {re.escape(subject)} (\w+)", result)
+    # a pass counts for the milestone it was gated as (the goal's last one without --milestone) and
+    # the project the change belongs to: M1's pass never finishes M2, nor another project's
+    number = (n or max(planned(change), 1)) if scope == "milestone" else None
+    if passed and scope != "project" and not bound(report, scope, subject, number, project):
+        passed = None
     missing = [] if passed else [f"{scope}-gate-pass"]
     local = scope == "milestone" and project and merges_locally(cfg)
     if local:  # no PR: the gated head must be merged into the local project branch
@@ -330,10 +312,11 @@ def goal(
         if planned(change):
             for b in branches(change, read_json(change / "decisions.json"), scope, n, cfg):
                 i = b.rsplit("-", 1)[1]
-                receipt = read_receipt(root, change, i)
+                receipt = read_json(change / "verify" / f"milestone-{i}.json")
                 tip = git(root, "rev-parse", "--verify", "--quiet", f"{b}^{{commit}}")
                 if receipt:
-                    ok = not receipt.get("invalid")
+                    # a receipt counts only for its own milestone and change, never a copy
+                    ok = bound(receipt, "milestone", change.name, int(i), project)
                     if not (ok and contains(root, str(receipt.get("sha", "")), into)):
                         missing.append(f"receipt-not-merged:{i}")
                         continue
@@ -341,6 +324,8 @@ def goal(
                         continue
                 if not contains(root, tip, into):  # no receipt, or the branch is still there
                     missing.append(f"merge-missing:{b}")
+                elif receipt and not same_head(root, cfg, str(receipt.get("sha", "")), tip):
+                    missing.append(f"gate-sha-not-tip:{b}")  # code, criteria or evidence moved after the gate
     elif scope == "project":
         names = [project] if project else []
         if not names:
@@ -389,21 +374,15 @@ def goal(
                 flag = "awaits-tier"
             else:
                 flag = waiting_on(root, cfg, pr)
+        if pr.get("baseRefName") != parent_of(change, cfg, scope, branch):
+            missing.append(f"pr-{pr['number']}-wrong-base")  # first: arming it would merge elsewhere
         if flag:
             missing.append(f"pr-{pr['number']}-{flag}")
-        if pr.get("baseRefName") != parent_of(change, cfg, scope, branch):
-            missing.append(f"pr-{pr['number']}-wrong-base")
         prs.append((pr, "merged" if merged else "armed"))
-    if (
-        prs
-        and passed
-        and not same_head(root, cfg, passed.group(1), prs[-1][0].get("headRefOid", ""))
-    ):
+    if prs and passed and not same_head(root, cfg, passed.group(1), prs[-1][0].get("headRefOid", "")):
         missing.append(f"gate-sha-not-pr-{prs[-1][0]['number']}-head")
     if scope == "milestone":
-        from verify_gate import milestone_blockers  # the gate's own record rules, one definition
-
-        if blocker := milestone_blockers(change):
+        if blocker := milestone_blockers(change):  # the gate's own record rules, one definition
             missing.append(blocker[0])
     if missing:
         return 1, f"{name} OPEN " + ",".join(missing)
@@ -486,6 +465,12 @@ BLOCKS = {
         "its verify/milestone-{n}.json is missing, failed, or its head is not in the project branch",
         "the agent",
         "on branch milestone/<slug>-{n}: python3 scripts/verify_gate.py milestone {id}, then merge it",
+    ),
+    "gate-sha-not-tip:": (
+        "the milestone branch {n} moved past its gate in more than records",
+        "code, facts.md, done.json or evidence changed after its gate receipt",
+        "the agent",
+        "on {n}: python3 scripts/verify_gate.py milestone {id} (writes a new receipt)",
     ),
     "no-branch-for-": (
         "the plan names no branch for {n}",
@@ -587,7 +572,7 @@ def blocker(subject: str, line: str, scope: str = "milestone", base: str = "") -
     for key, (what, why, who, step) in BLOCKS.items():
         if key_of == key or (key.endswith(("-", ":")) and first.startswith(key)):
             n = re.sub(
-                r"^no-pr:|^no-branch-for-|^merge-missing:|^receipt-not-merged:|^gate-sha-not-pr-|-head$",
+                r"^no-pr:|^no-branch-for-|^merge-missing:|^receipt-not-merged:|^gate-sha-not-tip:|^gate-sha-not-pr-|-head$",
                 "",
                 first,
             )
@@ -656,7 +641,10 @@ def goal_main(args: list[str]) -> int:
     code, line = goal(root, change, scope, int(value) if flag else None)
     print(line)
     head = re.search(r"no-pr:([^,\s]+)", line)
-    base = parent_of(change, config(root), scope, head[1] if head else "")
+    # a feature's base depends on its branch (a hotfix goes to the default branch): the no-pr one,
+    # or else the plan's row
+    row = branches(change, read_json(change / "decisions.json"), scope, int(value) if flag else None)
+    base = parent_of(change, config(root), scope, head[1] if head else row[0] if scope == "feature" and row else "")
     if code and (sentence := blocker(change.name, line, scope, base)):
         print(sentence)
     return code

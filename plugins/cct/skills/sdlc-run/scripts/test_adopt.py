@@ -1758,11 +1758,171 @@ def test_the_plan_template_does_not_tell_the_closer_to_run_unit_and_e2e_beside_t
     assert "only runner of the full suite" in branch
 
 
-def test_replacing_the_gate_replaces_its_marks_partner_too_F3(tmp_path: Path) -> None:
+def _kit_marks_of_3_20_1() -> bytes:
+    """The marks.py the 3.20.1 kit shipped: a previous kit version, read from history."""
+    out = subprocess.run(
+        ["git", "show", "8ac4850:plugins/cct/skills/sdlc-run/templates/scripts/marks.py"],
+        cwd=ADOPT.parent, capture_output=True, env=_env(),
+    )  # fmt: skip
+    if out.returncode:
+        pytest.skip("history of the 3.20.1 kit is not in this checkout")
+    return out.stdout
+
+
+def test_replacing_the_gate_replaces_an_unmodified_marks_partner_too_F3(tmp_path: Path) -> None:
     repo = _upgrade_fixture(tmp_path)
-    (repo / "scripts/marks.py").write_text("def sessions(change):\n    return []\n")
+    (repo / "scripts/marks.py").write_bytes(_kit_marks_of_3_20_1())  # a previous kit version
     res = _adopt(repo, "--upgrade", "--apply", "--replace", "scripts/verify_gate.py")
     assert res.returncode == 0, res.stderr
     for name in ("verify_gate.py", "marks.py"):
         kit = (ADOPT.parents[1] / "templates/scripts" / name).read_bytes()
         assert (repo / "scripts" / name).read_bytes() == kit, name
+
+
+def test_replacing_the_gate_never_overwrites_a_customised_marks_M1(tmp_path: Path) -> None:
+    repo = _upgrade_fixture(tmp_path)
+    mine = "def sessions(change):\n    return []  # the repo's own\n"
+    (repo / "scripts/marks.py").write_text(mine)
+    kit = (ADOPT.parents[1] / "templates/scripts/verify_gate.py").read_bytes()
+    for extra in (["--dry-run"], []):  # the diff first, then the apply
+        res = _adopt(repo, "--upgrade", "--apply", "--replace", "scripts/verify_gate.py", *extra)
+        assert res.returncode == 0, res.stderr
+        assert (repo / "scripts/marks.py").read_text() == mine
+        manual = "\n".join(_sections(res.stdout)["MANUAL"])
+        assert "scripts/marks.py is customised" in manual and "scripts/verify_gate.py" in manual
+    assert (repo / "scripts/verify_gate.py").read_bytes() == kit
+
+
+def test_replacing_the_pr_hook_installs_its_pass_proof_dependency_M2(tmp_path: Path) -> None:
+    repo = _upgrade_fixture(tmp_path)
+    (repo / ".claude/hooks/pass_proof.py").unlink()  # a repo adopted before the helper existed
+    hook = repo / ".claude/hooks/pr-gate.sh"
+    hook.write_text(hook.read_text() + "\n# the repo's own edit\n")
+    res = _adopt(repo, "--upgrade", "--apply", "--replace", ".claude/hooks/pr-gate.sh")
+    assert res.returncode == 0, res.stderr
+    for name in ("pr-gate.sh", "pass_proof.py"):
+        kit = (ADOPT.parents[1] / "templates/hooks" / name).read_bytes()
+        assert (repo / ".claude/hooks" / name).read_bytes() == kit, name
+
+
+# 3.20.3: the lists of kit versions come from the history, so an unedited copy is never "customised".
+def _hashes_in_history(template: str) -> set[str]:
+    """sha256[:16] of every blob `template` has at any commit reachable from HEAD. Not `git log -- path`:
+    that prunes a merge whose result matches one parent, and hid the 3.20.0 copy once."""
+    import hashlib
+
+    if subprocess.run(["git", "rev-parse", "--is-shallow-repository"], cwd=ADOPT.parent, capture_output=True, text=True).stdout.strip() == "true":
+        pytest.skip("a shallow checkout has no history to walk")
+    commits = subprocess.run(["git", "rev-list", "HEAD"], cwd=ADOPT.parent, capture_output=True, text=True, check=True).stdout.split()
+    top = subprocess.run(["git", "rev-parse", "--show-toplevel"], cwd=ADOPT.parent, capture_output=True, text=True, check=True).stdout.strip()
+    rel = (ADOPT.parents[1] / "templates" / template).relative_to(top).as_posix()
+    listing = subprocess.run(
+        ["git", "cat-file", "--batch-check"], cwd=top, capture_output=True, text=True, check=True,
+        input="".join(f"{c}:{rel}\n" for c in commits),
+    ).stdout  # fmt: skip
+    blobs = {line.split()[0] for line in listing.splitlines() if line.split()[1:2] == ["blob"]}
+    return {
+        hashlib.sha256(subprocess.run(["git", "cat-file", "blob", b], cwd=top, capture_output=True, check=True).stdout).hexdigest()[:16]
+        for b in blobs
+    }
+
+
+def _listed(name: str) -> set[str]:
+    return set(re.findall(r'"([0-9a-f]{16})"', re.search(rf"^{name} = \{{(.*?)\}}", ADOPT.read_text(), re.M | re.S).group(1)))
+
+
+@pytest.mark.parametrize(
+    ("template", "name"),
+    [
+        ("scripts/marks.py", "KIT_MARKS"),
+        ("scripts/verify_gate.py", "KIT_GATE"),
+        ("hooks/pr-gate.sh", "KIT_PR_GATE"),
+        ("hooks/pass_proof.py", "KIT_PASS_PROOF"),
+    ],
+)
+def test_the_kit_version_lists_cover_every_shipped_copy_C5(template: str, name: str) -> None:
+    import hashlib
+
+    listed = _listed(name)
+    missing = _hashes_in_history(template) - listed
+    assert not missing, f"{name} lacks {sorted(missing)}: add them (and the next version's hash when {template} changes)"
+    now = hashlib.sha256((ADOPT.parents[1] / "templates" / template).read_bytes()).hexdigest()[:16]
+    assert now in listed, f"{name} lacks the current {template}: {now}"
+
+
+def test_replacing_the_gate_takes_a_stock_3_20_0_marks_along_C5(tmp_path: Path) -> None:
+    """The 3.20.0 copy (6c0c9f03e4eb5e80) is unedited: it must not read as customised and keep the weak gate."""
+    out = subprocess.run(
+        ["git", "show", "a21488a:plugins/cct/skills/sdlc-run/templates/scripts/marks.py"],
+        cwd=ADOPT.parent, capture_output=True, env=_env(),
+    )  # fmt: skip
+    if out.returncode:
+        pytest.skip("history of the 3.20.0 kit is not in this checkout")
+    repo = _upgrade_fixture(tmp_path)
+    (repo / "scripts/marks.py").write_bytes(out.stdout)
+    res = _adopt(repo, "--upgrade", "--apply", "--replace", "scripts/verify_gate.py")
+    assert res.returncode == 0, res.stderr
+    kit = (ADOPT.parents[1] / "templates/scripts/marks.py").read_bytes()
+    assert (repo / "scripts/marks.py").read_bytes() == kit
+    assert "customised" not in "\n".join(_sections(res.stdout)["MANUAL"])
+
+
+def test_replacing_the_pr_hook_never_overwrites_a_customised_pass_proof_C5(tmp_path: Path) -> None:
+    repo = _upgrade_fixture(tmp_path)
+    mine = "def proves(repo, changes_dir, gated, head):\n    return True  # the repo's own rule\n"
+    (repo / ".claude/hooks/pass_proof.py").write_text(mine)
+    hook = repo / ".claude/hooks/pr-gate.sh"
+    hook.write_text(hook.read_text() + "\n# the repo's own edit\n")
+    for extra in (["--dry-run"], []):
+        res = _adopt(repo, "--upgrade", "--apply", "--replace", ".claude/hooks/pr-gate.sh", *extra)
+        assert res.returncode == 0, res.stderr
+        assert (repo / ".claude/hooks/pass_proof.py").read_text() == mine
+        manual = "\n".join(_sections(res.stdout)["MANUAL"])
+        assert ".claude/hooks/pass_proof.py is customised" in manual and "proves(" in manual
+    kit = (ADOPT.parents[1] / "templates/hooks/pr-gate.sh").read_bytes()
+    assert hook.read_bytes() == kit
+
+
+def _kit_at(commit: str, rel: str) -> bytes:
+    """A previous kit version of a template, read from history."""
+    out = subprocess.run(
+        ["git", "show", f"{commit}:plugins/cct/skills/sdlc-run/templates/{rel}"],
+        cwd=ADOPT.parent, capture_output=True, env=_env(),
+    )  # fmt: skip
+    if out.returncode:
+        pytest.skip(f"history of {commit} is not in this checkout")
+    return out.stdout
+
+
+TRIO = {
+    "scripts/verify_gate.py": "scripts/verify_gate.py",
+    ".claude/hooks/pr-gate.sh": "hooks/pr-gate.sh",
+    ".claude/hooks/pass_proof.py": "hooks/pass_proof.py",
+}
+
+
+@pytest.mark.parametrize("replaced", sorted(TRIO))
+def test_replacing_one_of_the_gate_files_brings_the_other_two_to_the_same_version_3_20_5(
+    tmp_path: Path, replaced: str
+) -> None:
+    """3.20.4 copies of the gate, the hook and the helper read a pass another way than 3.20.5's:
+    the three must never be left at different versions."""
+    repo = _upgrade_fixture(tmp_path)
+    for rel, template in TRIO.items():  # an unedited 3.20.4 install
+        (repo / rel).write_bytes(_kit_at("cec0058", template))
+    res = _adopt(repo, "--upgrade", "--apply", "--replace", replaced)
+    assert res.returncode == 0, res.stderr
+    for rel, template in TRIO.items():
+        kit = (ADOPT.parents[1] / "templates" / template).read_bytes()
+        assert (repo / rel).read_bytes() == kit, rel
+
+
+def test_replacing_the_gate_leaves_an_edited_hook_and_names_it_3_20_5(tmp_path: Path) -> None:
+    repo = _upgrade_fixture(tmp_path)
+    hook = repo / ".claude/hooks/pr-gate.sh"
+    mine = hook.read_text() + "\n# the repo's own edit\n"
+    hook.write_text(mine)
+    res = _adopt(repo, "--upgrade", "--apply", "--replace", "scripts/verify_gate.py")
+    assert res.returncode == 0, res.stderr
+    assert hook.read_text() == mine
+    assert ".claude/hooks/pr-gate.sh is customised" in "\n".join(_sections(res.stdout)["MANUAL"])

@@ -119,6 +119,7 @@ LABEL = re.compile(
 )
 TABLE_ID = re.compile(rf"^\s*\|\s*({ID_TOKEN})\s*\|")
 IDS_ONLY = re.compile(rf"[\s,;/&+-]*(?:{ID_TOKEN}[\s,;/&+-]*)*")
+PLACEHOLDER = re.compile(r"\[NEEDS CLARIFICATION: (?:<question>|\.\.\.)\]")  # the template's own words, no other
 BRACKETS = re.compile(r"\([^()]*\)|\[[^\[\]]*\]")  # may span a line wrap, never a blank line
 
 
@@ -155,23 +156,43 @@ def merges_locally(cfg: dict) -> bool:
     return (cfg.get("milestones") or {}).get("merge") == "local"
 
 
-def common_dir(repo: Path | None = None) -> Path:
-    """The git dir every worktree of the repo shares."""
+def project_record(slug: str, repo: Path | None = None) -> Path:
+    """Where `project <slug>` writes its report: the common git dir, shared by all worktrees."""
     common = sh(
         "git", "-C", str(repo or "."), "rev-parse", "--path-format=absolute", "--git-common-dir"
     )
-    return Path(common or ".git")
+    return Path(common or ".git") / "sdlc" / "projects" / slug
 
 
-def project_record(slug: str, repo: Path | None = None) -> Path:
-    """Where `project <slug>` writes its report: the common git dir, shared by all worktrees."""
-    return common_dir(repo) / "sdlc" / "projects" / slug
+def has_bundle_inputs(change: Path) -> bool:
+    """A design bundle under asks/ (an index.html, or the folder decisions.json names as
+    visualSource.path). Read without marks.py, so an old copy of it cannot hide one."""
+    if next((change / "asks").rglob("index.html"), None):
+        return True
+    try:
+        declared = json.loads((change / "decisions.json").read_text(encoding="utf-8"))
+        path = (change / declared["visualSource"]["path"]).resolve()
+        return path.is_dir() and path.is_relative_to((change / "asks").resolve())
+    except (OSError, ValueError, KeyError, TypeError, AttributeError):
+        return False
 
 
-def receipt_path(change: str, n: int | str, repo: Path | None = None) -> Path:
-    """A milestone's receipt: in the common git dir, so every worktree sees it and removing the
-    milestone's worktree does not remove it."""
-    return common_dir(repo) / "sdlc" / "receipts" / change / f"milestone-{n}.json"
+def milestone_number(change: Path, cfg: dict, branch: str) -> int | None:
+    """The milestone `branch` is (`<prefix><slug>-<n>` is n, `<prefix><slug>` is 1), else None; the
+    rule of hooks/pass_proof.py `milestone_of`, kept equal by test_contract."""
+    prefix = (cfg.get("milestones") or {}).get("branchPrefix", "milestone/")
+    try:
+        slug = (json.loads((change / "decisions.json").read_text(encoding="utf-8")).get("milestone") or {}).get("slug")
+    except (OSError, ValueError, AttributeError):
+        slug = None
+    slug = slug or re.sub(r"^[A-Z][A-Z0-9]+-\d+-", "", re.sub(r"^\d{4}-\d{2}-\d{2}-", "", change.name))
+    name = branch[len(prefix) :] if branch.startswith(prefix) else ""
+    if not name:
+        return None
+    if name == slug:
+        return 1
+    found = re.fullmatch(re.escape(slug) + r"-(\d+)", name)
+    return int(found[1]) if found else None
 
 
 def project_branch(change: Path, cfg: dict) -> str:
@@ -483,6 +504,13 @@ def milestone_blockers(change: Path) -> tuple[str, list[str]] | None:
     return None
 
 
+def legacy_marks() -> bool:
+    """scripts/marks.py from before design bundles: a kept copy (sdlc.json `keep`) can stay old."""
+    import marks
+
+    return not callable(getattr(marks, "bundles", None))
+
+
 def has_owner_marks(change: Path) -> bool:
     """Owner notes or a design bundle to check. marks.py is imported here and nowhere else, so an
     older copy of it beside a newer gate never breaks approve, audit or lint."""
@@ -491,7 +519,7 @@ def has_owner_marks(change: Path) -> bool:
     return bool(
         (change / "marks.json").exists()
         or marks.sessions(change)
-        or getattr(marks, "bundles", lambda _: {})(change)  # absent before design bundles
+        or (callable(getattr(marks, "bundles", None)) and marks.bundles(change))  # an old marks.py has no `bundles`
         or sources_present(change)
     )
 
@@ -615,7 +643,10 @@ def lint_problems(change: Path, body: str | None = None) -> list[str]:
             if len(s.split()) > SENTENCE_WORDS:
                 problems.append(f"{name}: {len(s.split())} words: {s[:90]}...")
         # an open question is a marker in running text; the same words in code explain the syntax
-        if "[NEEDS CLARIFICATION" in re.sub(r"```.*?```|`[^`\n]*`|<!--.*?-->", "", text, flags=re.S):
+        # a fenced Gherkin step is running requirements text: only the template's own placeholder
+        # marker (`<question>`, `...`) is skipped there
+        unfenced = re.sub(r"```(.*?)```", lambda m: PLACEHOLDER.sub("", m[1]), text, flags=re.S)
+        if "[NEEDS CLARIFICATION" in re.sub(r"`[^`\n]*`|<!--.*?-->", "", unfenced, flags=re.S):
             problems.append(f"{name}: an open [NEEDS CLARIFICATION] remains")
     return problems
 
@@ -759,21 +790,22 @@ def run(
     if notice:
         print(f"WARN {notice}")  # never blocks; the last line stays the verdict
 
+    number = milestone_number(change, cfg, sh("git", "symbolic-ref", "--short", "-q", "HEAD")) if scope == "milestone" else None
+
     def finish(line: str, code: int) -> int:
         report["result"] = line
         report["sha"] = sh("git", "rev-parse", "HEAD")
+        if scope != "project":  # what the hook and the goal check bind a pass to
+            report["change"], report["owner"] = change.name, project_branch(change, cfg)
+        if scope == "milestone":
+            report["milestone"] = number
         report["metrics"] = metrics(change, report, retries, started_run)
         text = json.dumps(report, indent=2) + "\n"
         (out_dir / "report.json").write_text(text, encoding="utf-8")
         # report.json holds the last scope run only: a milestone also keeps its own receipt, which
         # `sdlc_status.py goal` reads, so a deleted merged branch does not undo a finished milestone
-        prefix = (cfg.get("milestones") or {}).get("branchPrefix", "milestone/")
-        on = re.fullmatch(re.escape(prefix) + r".+-(\d+)", sh("git", "rev-parse", "--abbrev-ref", "HEAD"))
-        if scope == "milestone" and on:
-            bound = {**report, "milestone": int(on[1]), "change": change.name}  # bound to its subject
-            path = receipt_path(change.name, on[1], repo)
-            path.parent.mkdir(parents=True, exist_ok=True)
-            path.write_text(json.dumps(bound, indent=2) + "\n", encoding="utf-8")
+        if scope == "milestone" and number:
+            (out_dir / f"milestone-{number}.json").write_text(text, encoding="utf-8")
         rows = "\n".join(
             f"| {c['name']} | {c['status']} | {c['seconds']} |" for c in report["checks"]
         )
@@ -853,6 +885,12 @@ def run(
     if scope == "milestone" and (blocker := milestone_blockers(change)):
         print("\n".join(blocker[1][:TAIL]))
         return finish(f"VERIFY BLOCKED reason={blocker[0]}", 3)
+    if scope == "milestone" and legacy_marks() and has_bundle_inputs(change):
+        print("scripts/marks.py is older than this gate (it has no `bundles`): it cannot inventory")
+        print("this milestone's design bundles, and an empty inventory would pass an unrendered one.")
+        print("If sdlc.json `keep` lists scripts/marks.py, remove it from `keep` first, then run")
+        print("`adopt --upgrade --replace scripts/marks.py --apply` (or restore the kit's marks.py).")
+        return finish("VERIFY BLOCKED reason=env", 3)
 
     suite = "milestone" if scope == "project" else scope
     checks = cfg.get("checks", {}).get(suite, [])

@@ -187,7 +187,7 @@ This repo runs sdlc-run 3.2.0; the kit is 3.3.1. Run `adopt --upgrade` (changes:
 
 A repo newer than the plugin is told to update the plugin. The verify gate prints it as a `WARN` line and never blocks.
 
-`/cct:sdlc-run adopt --upgrade` is the safe path. It adds the keys a newer plugin introduced with the stack's defaults, never changes a value, stamps the new version and writes nothing else: no file overwritten, no folder moved. Each file that differs from the plugin's copy (a hook, `scripts/verify_gate.py`, `docs/sdlc.md`, the guardrail test) is listed as `review diff`, together with the manual migrations of `references/changelog.md` since your stamp. `adopt --upgrade --replace <file>` shows one file's diff; `adopt --upgrade --apply --replace <file>` replaces that file. A plain `adopt` refreshes every copy at once. `--dry-run` writes nothing.
+`/cct:sdlc-run adopt --upgrade` is the safe path. It adds the keys a newer plugin introduced with the stack's defaults, never changes a value, stamps the new version and writes nothing else: no file overwritten, no folder moved. Each file that differs from the plugin's copy (a hook, `scripts/verify_gate.py`, `docs/sdlc.md`, the guardrail test) is listed as `review diff`, together with the manual migrations of `references/changelog.md` since your stamp. `adopt --upgrade --replace <file>` shows one file's diff; `adopt --upgrade --apply --replace <file>` replaces that file (and its partners: `verify_gate.py`, `pr-gate.sh` and `pass_proof.py` come as one set, and `marks.py` comes with `verify_gate.py`, each only when nobody edited it). A plain `adopt` refreshes every copy at once. `--dry-run` writes nothing.
 
 ## What changed since 3.7
 
