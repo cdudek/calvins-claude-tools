@@ -573,7 +573,13 @@ person's own browser session. Never use Claude in Chrome or any tool driving tha
    cct UX skill, never a cross-plugin relative path. The gate derives the need itself: with `ux` on, a size
    other than `none` and a visual source, a reference image or a capture manifest, a milestone
    without `--visual-run` fails `check=ux-visual-required` before the suites, unless
-   `decisions.json` records `"skips": {"visual": "skip -- <reason>"}`. An older gate without these flags needs `sdlc-run adopt`, not a bypass.
+   `decisions.json` records `"skips": {"visual": "skip -- <reason>"}` and the owner attests it
+   (decisions.json is not locked at approval): an `AskUserQuestion` `Change <change id>, finding
+   visual-skip: ...` with the options `Skip visual evidence` and `Run visual evidence`, answered
+   `Skip visual evidence`. A current-format change (its lock holds `done.json`) never loses
+   `done.json` or `decisions.json`: a missing one is a blocker. The validation rows come from
+   `done.json`; on a milestone branch the plan's `## Milestones` row must list the milestone's
+   facts, and that section is part of the approval lock (an older lock reports an `upgrade gap`). An older gate without these flags needs `sdlc-run adopt`, not a bypass.
    The milestone gate also runs `marks.py check` as `owner-marks` when sessions or `marks.json`
    exist, independently of `sdlc.json` checks or UX skips. Paste `python3 scripts/marks.py table <id>`
    into the milestone report, including accepted gaps. A file check proves coverage, not pixels.

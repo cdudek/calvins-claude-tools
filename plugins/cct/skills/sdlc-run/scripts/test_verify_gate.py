@@ -41,6 +41,12 @@ def _repo(tmp_path: Path, feature: list) -> Path:
     (repo / ".gitignore").write_text("/changes/*/verify/\n")
     (change / "facts.md").write_text("---\nstatus: approved\n---\n\n- [ ] **F1** It works.\n")
     (change / "done.json").write_text('{"facts": ["F1"]}\n')
+    (change / "decisions.json").write_text('{"size": "S"}\n')  # a current-format change has one
+    # on a milestone branch the plan's Milestones rows say which facts each milestone proves
+    (change / "plan.md").write_text(
+        "## Milestones\n\n| Milestone | Features | needs |\n|---|---|---|\n"
+        "| M1 a | F1 | none |\n| M2 b | F1 | M1 |\n"
+    )
     # a milestone passes only with a met row and evidence for every approved fact
     (change / "validation.md").write_text("| F1 | It works | ran | tests/x.py::test_f1 | met |\n")
     _git(repo, "init", "-q", "-b", "master")
@@ -1509,8 +1515,7 @@ def _facts_repo(tmp_path: Path, facts: list, plan: str = "") -> Path:
     (repo / "sdlc.json").write_text(json.dumps({**cfg, "checks": {"milestone": ["true"]}}))
     change = repo / "changes" / ID
     (change / "done.json").write_text(json.dumps({"facts": facts}))
-    if plan:
-        (change / "plan.md").write_text(plan)
+    (change / "plan.md").write_text(plan)
     _git(repo, "add", ".")
     _git(repo, "commit", "-qm", "facts")
     _approve(repo)
@@ -1629,7 +1634,26 @@ def test_a_recorded_skip_or_no_interface_needs_no_visual_run(
     tmp_path: Path, decisions: dict | None, ux: str
 ) -> None:
     repo = _visual_repo(tmp_path, decisions, ux)
-    assert _last(_gate(repo, "milestone", ID)).startswith(f"VERIFY PASS milestone {ID}")
+    answer = _skip_answer() if decisions and "skips" in decisions else []
+    assert _last(_owner_gate(repo, answer)).startswith(f"VERIFY PASS milestone {ID}")
+
+
+def _skip_answer(label: str = "Skip visual evidence", n: int = 1) -> list[dict]:
+    return _dialog(
+        finding="visual-skip", label=label, n=n, options=["Skip visual evidence", "Run visual evidence"]
+    )
+
+
+def test_a_skip_in_decisions_json_alone_is_not_enough_the_owner_must_attest_it(
+    tmp_path: Path,
+) -> None:
+    """Review (security) 4: decisions.json is not part of the approval lock, so `skips.visual` counts
+    only with the owner's answer to `Change <id>, finding visual-skip: ...`."""
+    skip = {**VISUAL, "skips": {"visual": "skip -- the screens are unchanged"}}
+    repo = _visual_repo(tmp_path, skip)
+    assert _last(_owner_gate(repo, [])).endswith("check=ux-visual-required")
+    assert _last(_owner_gate(repo, _skip_answer("Run visual evidence"))).endswith("check=ux-visual-required")
+    assert _last(_owner_gate(repo, _skip_answer())).startswith(f"VERIFY PASS milestone {ID}")
 
 
 def test_a_skip_without_a_reason_is_not_a_recorded_skip(tmp_path: Path) -> None:
@@ -1651,3 +1675,131 @@ def test_a_capture_manifest_alone_triggers_the_owner_marks_check(tmp_path: Path)
     (shots / "manifest.json").write_text('{"entries": []}')
     _approve(repo)
     assert _last(_gate(repo, "milestone", ID)).endswith("check=owner-marks")
+
+
+# --- Review (security): plain names, quoting, the change path inside the changes folder ----------
+
+
+@pytest.mark.parametrize("name", ["a..b", ".hidden-start"])  # a leading `-` never gets past argparse
+def test_a_change_id_must_start_alphanumeric_and_hold_no_dotdot(tmp_path: Path, name: str) -> None:
+    repo = _repo(tmp_path, ["true"])
+    (repo / "changes" / name).mkdir(exist_ok=True)
+    r = _gate(repo, "milestone", name)
+    assert r.returncode == 3 and _last(r) == "VERIFY BLOCKED reason=env" and "change id" in r.stdout
+
+
+def test_a_change_path_outside_the_changes_folder_is_refused(tmp_path: Path) -> None:
+    repo = _repo(tmp_path, ["true"])
+    (repo / "outside").mkdir()
+    r = _gate(repo, "milestone", "../outside")
+    assert r.returncode == 3 and _last(r) == "VERIFY BLOCKED reason=env" and "change id" in r.stdout
+    assert not (repo / "outside" / "verify").exists()
+
+
+@pytest.mark.parametrize("branch", ["-x", "a/../b", "../x", "a//b"])
+def test_a_default_branch_must_not_lead_with_a_dash_or_hold_a_dotdot_component(
+    tmp_path: Path, branch: str
+) -> None:
+    repo = _milestone_repo(tmp_path)
+    cfg = json.loads((repo / "sdlc.json").read_text())
+    (repo / "sdlc.json").write_text(json.dumps({**cfg, "defaultBranch": branch}))
+    r = _gate(repo, "milestone", ID)
+    assert r.returncode == 3 and _last(r) == "VERIFY BLOCKED reason=env" and "defaultBranch" in r.stdout
+
+
+def test_expand_quotes_what_it_substitutes() -> None:
+    sys.path.insert(0, str(GATE.parent))
+    import verify_gate
+
+    assert verify_gate.expand("git diff {base} {id}", "x-1", {"defaultBranch": "feat/a"}) == (
+        "git diff origin/feat/a x-1"
+    )
+    assert verify_gate.shlex.quote("a b") == "'a b'"
+    src = GATE.read_text()
+    assert "shlex.quote(" in src.split("def expand", 1)[1].split("def ", 1)[0]
+
+
+# --- Review (security): current-format changes cannot lose the records the gate derives from ----
+
+
+def test_an_unparsable_done_json_on_a_current_format_change_blocks(tmp_path: Path) -> None:
+    repo = _repo(tmp_path, [])
+    cfg = json.loads((repo / "sdlc.json").read_text())
+    (repo / "sdlc.json").write_text(json.dumps({**cfg, "checks": {"milestone": ["true"]}}))
+    (repo / "changes" / ID / "done.json").write_text("{not json")
+    _git(repo, "add", ".")
+    _git(repo, "commit", "-qm", "broken facts")
+    _approve(repo)
+    r = _gate(repo, "milestone", ID)
+    assert _last(r) == "VERIFY BLOCKED reason=validation-not-met" and "done.json" in r.stdout
+
+
+def test_a_legacy_change_without_done_json_keeps_the_old_behaviour(tmp_path: Path) -> None:
+    repo = _repo(tmp_path, [])
+    cfg = json.loads((repo / "sdlc.json").read_text())
+    (repo / "sdlc.json").write_text(json.dumps({**cfg, "checks": {"milestone": ["true"]}}))
+    (repo / "changes" / ID / "done.json").unlink()
+    (repo / "changes" / ID / "validation.md").unlink()
+    _git(repo, "add", "-A")
+    _git(repo, "commit", "-qm", "legacy")
+    _approve(repo)
+    assert _last(_gate(repo, "milestone", ID)).startswith(f"VERIFY PASS milestone {ID}")
+
+
+def test_a_missing_decisions_json_on_a_current_format_change_blocks(tmp_path: Path) -> None:
+    repo = _milestone_repo(tmp_path)
+    (repo / "changes" / ID / "decisions.json").unlink()
+    _git(repo, "add", "-A")
+    _git(repo, "commit", "-qm", "no decisions")
+    assert _last(_gate(repo, "milestone", ID)) == f"VERIFY FAIL milestone {ID} check=decisions-json"
+
+
+@pytest.mark.parametrize("content", ["{broken", "[]", "null", '"s"'])
+def test_an_unparsable_or_non_object_decisions_json_reads_as_empty(
+    tmp_path: Path, content: str
+) -> None:
+    repo = _milestone_repo(tmp_path)
+    (repo / "changes" / ID / "decisions.json").write_text(content)
+    _git(repo, "commit", "-qam", "odd decisions")
+    assert _last(_gate(repo, "milestone", ID)).startswith(f"VERIFY PASS milestone {ID}")
+
+
+PLAN2 = "## Milestones\n\n| Milestone | Features | needs |\n|---|---|---|\n| M1 a | F1 | none |\n"
+
+
+@pytest.mark.parametrize(
+    "plan",
+    [
+        "## Milestones\n\n| Milestone | Features | needs |\n|---|---|---|\n| M2 b | F2 | none |\n",  # no M1 row
+        "## Milestones\n\n| Milestone | Features | needs |\n|---|---|---|\n| M1 a | none | none |\n",  # no facts
+        "",  # no plan at all
+    ],
+)
+def test_a_milestone_branch_whose_plan_row_is_missing_or_empty_blocks(tmp_path: Path, plan: str) -> None:
+    repo = _facts_repo(tmp_path, ["F1"], plan)
+    _git(repo, "checkout", "-q", "-b", "milestone/trial-1")
+    r = _gate(repo, "milestone", ID)
+    assert _last(r) == "VERIFY BLOCKED reason=validation-not-met" and "M1" in r.stdout
+
+
+def test_the_plan_milestones_section_is_part_of_the_approval_lock(tmp_path: Path) -> None:
+    repo = _facts_repo(tmp_path, ["F1"], PLAN2)
+    lock = json.loads((repo / "changes" / ID / "lock.json").read_text())
+    assert "plan.milestones" in lock["criteria"]
+    (repo / "changes" / ID / "plan.md").write_text(PLAN2.replace("| F1 |", "| F9 |"))
+    _git(repo, "commit", "-qam", "move the milestone rows")
+    assert _last(_gate(repo, "milestone", ID)) == "VERIFY BLOCKED reason=protected-path"
+
+
+def test_an_old_lock_without_the_plan_hash_reports_an_upgrade_gap_and_still_runs(
+    tmp_path: Path,
+) -> None:
+    repo = _facts_repo(tmp_path, ["F1"], PLAN2)
+    path = repo / "changes" / ID / "lock.json"
+    lock = json.loads(path.read_text())
+    del lock["criteria"]["plan.milestones"]
+    path.write_text(json.dumps(lock))
+    _git(repo, "commit", "-qam", "an older lock")
+    r = _gate(repo, "milestone", ID)
+    assert "upgrade gap" in r.stdout and "plan.milestones" in r.stdout
+    assert _last(r).startswith(f"VERIFY PASS milestone {ID}")

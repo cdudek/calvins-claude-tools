@@ -262,3 +262,9 @@ def test_the_workflow_does_not_arm_a_pr_awaiting_the_owner_or_on_hold() -> None:
 def test_stages_name_the_acceptance_dialog_and_the_hold_rule() -> None:
     assert "finding PR<n>: " in STAGES and "`Accept milestone`" in STAGES and "`Hold`" in STAGES
     assert "never DONE, armed or not" in STAGES
+
+
+def test_stages_say_how_the_visual_skip_is_attested_and_what_current_format_requires() -> None:
+    assert "`Skip visual evidence`" in STAGES and "visual-skip" in STAGES
+    assert "decisions.json` is not locked at approval" in STAGES or "is not locked at approval" in STAGES
+    assert "a missing one is a blocker" in STAGES and "upgrade gap" in STAGES

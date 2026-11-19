@@ -131,7 +131,10 @@ def root() -> Path:
     return Path(sh("git", "rev-parse", "--show-toplevel") or ".").resolve()
 
 
-def criteria_hash(change: Path, checks: object) -> dict[str, str]:
+def criteria_hash(change: Path, checks: object, plan: bool = True) -> dict[str, str]:
+    """Hashes of what approval locks: facts.md, done.json, the checks and (from 3.21.0) the plan's
+    `## Milestones` section, which decides which facts each milestone must prove. `plan=False`
+    reads an older lock, which lacks that key."""
     hashes = {
         name: hashlib.sha256((change / name).read_bytes()).hexdigest()
         for name in LOCKED
@@ -140,6 +143,10 @@ def criteria_hash(change: Path, checks: object) -> dict[str, str]:
     hashes["checks"] = hashlib.sha256(
         json.dumps(checks, sort_keys=True).encode("utf-8")
     ).hexdigest()
+    if plan:
+        hashes["plan.milestones"] = hashlib.sha256(
+            section(read(change / "plan.md"), "Milestones").encode("utf-8")
+        ).hexdigest()
     return hashes
 
 
@@ -251,16 +258,31 @@ def full_e2e_gap(checks: list, repo: Path) -> str:
     )
 
 
-PLAIN_REF = re.compile(r"[A-Za-z0-9._/-]+")
+PLAIN_ID = re.compile(r"[A-Za-z0-9][A-Za-z0-9._-]*")  # one path component, never a flag
+PLAIN_BRANCH = re.compile(r"[A-Za-z0-9][A-Za-z0-9._/-]*")
+
+
+def plain_id(name: str) -> bool:
+    return bool(PLAIN_ID.fullmatch(name)) and ".." not in name
+
+
+def plain_branch(name: str) -> bool:
+    return bool(PLAIN_BRANCH.fullmatch(name)) and all(p not in ("", "..") for p in name.split("/"))
 
 
 def unsafe_substitutions(change_id: str, cfg: dict) -> str:
     """Why `{id}` or `{base}` may not be put into a shell command line, or "" when both are plain."""
-    if not PLAIN_REF.fullmatch(change_id):
-        return f"the change id {change_id!r} holds characters outside [A-Za-z0-9._/-]"
+    if not plain_id(change_id):
+        return (
+            f"the change id {change_id!r} is not a plain name "
+            "(start with a letter or digit; then letters, digits, . _ -; no ..)"
+        )
     branch = cfg.get("defaultBranch") or "main"
-    if not PLAIN_REF.fullmatch(branch):
-        return f"sdlc.json defaultBranch {branch!r} holds characters outside [A-Za-z0-9._/-]"
+    if not plain_branch(branch):
+        return (
+            f"sdlc.json defaultBranch {branch!r} is not a plain branch name "
+            "(start with a letter or digit; no leading -, no .. or empty component)"
+        )
     return ""
 
 
@@ -270,7 +292,7 @@ def expand(cmd: str, change_id: str, cfg: dict) -> str:
     if why := unsafe_substitutions(change_id, cfg):
         raise ValueError(why)
     base = f"origin/{cfg.get('defaultBranch') or 'main'}"
-    return cmd.replace("{id}", change_id).replace("{base}", base)
+    return cmd.replace("{id}", shlex.quote(change_id)).replace("{base}", shlex.quote(base))
 
 
 SETTLED = ("accepted", "deferred")  # `fixed` is the ticked box; `blocked` is terminal
@@ -287,28 +309,48 @@ def item_id(item: str) -> str:
 NO_EVIDENCE = {"", "-", "--", "n/a", "na", "none", "tbd", "todo", "?"}
 
 
-def approved_facts(change: Path) -> list[str]:
-    """The fact ids the approved `done.json` lists (a string, or an object with an `id`)."""
+def current_format(change: Path) -> bool:
+    """The approval locked `done.json`: the change was written in the format that has it, so its
+    `done.json` and `decisions.json` may not be missing. An older lock keeps the old behaviour."""
     try:
-        listed = json.loads(read(change / "done.json")).get("facts") or []
+        return "done.json" in json.loads(read(change / "lock.json")).get("criteria", {})
     except (ValueError, AttributeError):
-        return []
-    return [str(f["id"] if isinstance(f, dict) else f) for f in listed if f]
+        return False
 
 
-def milestone_facts(change: Path) -> list[str]:
-    """The approved facts this milestone must prove: the `## Milestones` row of `plan.md` for the
-    checked-out `milestone/<slug>-<n>` branch, else every approved fact."""
-    facts = approved_facts(change)
+def approved_facts(change: Path) -> tuple[list[str], list[str]]:
+    """(fact ids of the approved `done.json`, problems). A missing or unparsable file is a problem
+    on a current-format change; a legacy change without one has no facts to derive."""
+    problem = "validation.md: done.json is missing or unreadable, so the approved facts are unknown"
+    if not (change / "done.json").exists():
+        return [], [problem] if current_format(change) else []
+    try:
+        listed = json.loads(read(change / "done.json")).get("facts")
+        if not isinstance(listed, list):
+            raise ValueError("facts is not a list")
+        return [str(f["id"] if isinstance(f, dict) else f) for f in listed if f], []
+    except (ValueError, AttributeError, KeyError, TypeError):
+        return [], [problem]
+
+
+def milestone_facts(change: Path) -> tuple[list[str], list[str]]:
+    """(the approved facts this milestone must prove, problems): the `## Milestones` row of
+    `plan.md` for the checked-out `milestone/<slug>-<n>` branch, else every approved fact. On a
+    milestone branch a missing row, or one listing none of the approved facts, is a problem."""
+    facts, problems = approved_facts(change)
     on = re.fullmatch(
         r"milestone/.+-(\d+)", sh("git", "-C", str(change), "rev-parse", "--abbrev-ref", "HEAD")
     )
-    if on:
-        for row in table_rows(section(read(change / "plan.md"), "Milestones"))[1:]:
-            if re.match(rf"M{on[1]}\b", row[0]) and len(row) > 1:
-                mine = re.findall(r"[A-Z]\d+", row[1])
-                return [f for f in facts if f in mine]
-    return facts
+    if on and facts:
+        rows = table_rows(section(read(change / "plan.md"), "Milestones"))[1:]
+        row = next((r for r in rows if re.match(rf"M{on[1]}\b", r[0]) and len(r) > 1), None)
+        mine = [f for f in facts if row and f in re.findall(r"[A-Z]\d+", row[1])]
+        if not mine:
+            return [], problems + [
+                f"validation.md: plan.md ## Milestones has no row for M{on[1]} that lists approved facts"
+            ]
+        return mine, problems
+    return facts, problems
 
 
 def validation_gaps(change: Path) -> list[str]:
@@ -317,8 +359,8 @@ def validation_gaps(change: Path) -> list[str]:
     rows = table_rows(read(change / "validation.md"))
     head = [c.lower() for c in rows[0]] if rows else []
     at = head.index("evidence") if "evidence" in head else 3
-    gaps = []
-    for fact in milestone_facts(change):
+    facts, gaps = milestone_facts(change)
+    for fact in facts:
         mine = [r for r in rows if fact in re.findall(r"[A-Z]\d+", r[0] if r else "")]
         if not mine:
             gaps.append(f"validation.md: {fact} has no row")
@@ -329,6 +371,18 @@ def validation_gaps(change: Path) -> list[str]:
             elif evidence.lower() in NO_EVIDENCE or evidence[:1] == "<":
                 gaps.append(f"validation.md: {fact} is met without evidence")
     return gaps
+
+
+def read_decisions(change: Path) -> dict | None:
+    """decisions.json as a dict ({} when unparsable or not an object), None when the file is missing."""
+    path = change / "decisions.json"
+    if not path.exists():
+        return None
+    try:
+        data = json.loads(read(path))
+    except (OSError, ValueError, AttributeError):
+        return {}
+    return data if isinstance(data, dict) else {}
 
 
 def sources_present(change: Path) -> bool:
@@ -342,20 +396,29 @@ def sources_present(change: Path) -> bool:
         return True  # an inventory that cannot be read is itself a marks failure
 
 
-def visual_run_required(change: Path, cfg: dict) -> bool:
+def visual_run_required(change: Path, cfg: dict, repo: Path) -> bool:
     """A milestone needs a current UX visual run when the UX plan is on, the decision says the
     change has an interface (`size` is not `none`) and a visual source or reference exists, unless
-    `decisions.json` `skips.visual` is a recorded `skip -- <reason>`."""
-    try:
-        decisions = json.loads(read(change / "decisions.json")) or {}
-    except ValueError:
-        decisions = {}
+    `decisions.json` `skips.visual` is a `skip -- <reason>` that the owner attested. decisions.json
+    is not part of the approval lock, so the attestation is the owner's answer to the dialog
+    `Change <id>, finding visual-skip: ...` (options Skip visual evidence, Run visual evidence)."""
+    decisions = read_decisions(change) or {}
     if cfg.get("ux") == "off" or decisions.get("size") == "none":
         return False
     skip = str((decisions.get("skips") or {}).get("visual", ""))
     if re.match(r"skip -- \S", skip):
-        return False
+        if owner_decisions(repo, change.name).get("visual-skip", ("",))[0] == "skip":
+            return False
     return bool(decisions.get("visualSource")) or sources_present(change)
+
+
+def refusal(name: str, message: str) -> dict:
+    """An evidence check that fails with `message`: the gate says why before any suite runs."""
+    return {
+        "name": name,
+        "cache": False,
+        "run": shlex.join([sys.executable, "-c", f"import sys; print({message!r}); sys.exit(1)"]),
+    }
 
 
 def milestone_blockers(change: Path) -> tuple[str, list[str]] | None:
@@ -705,7 +768,15 @@ def run(
         lock = json.loads(lock_path.read_text(encoding="utf-8"))
         locked = lock["criteria"]
         declared = lock.get("order") != "cost"
-        now = criteria_hash(change, cfg.get("checks", {}))
+        old_plan = "plan.milestones" not in locked  # an approval before the plan rows were locked
+        now = criteria_hash(change, cfg.get("checks", {}), not old_plan)
+        if old_plan and scope == "milestone":
+            gap = (
+                "lock.json predates plan.milestones: the rows of the plan's ## Milestones that decide "
+                "which facts this milestone proves are not locked; the engineer approves again to lock them"
+            )
+            print(f"upgrade gap: {gap}")
+            report.setdefault("upgrade_gaps", []).append(gap)
         moved = sorted(k for k in set(locked) | set(now) if locked.get(k) != now.get(k))
         if moved:
             print(
@@ -751,7 +822,7 @@ def run(
     if suite == "milestone" and (gap := full_e2e_gap(checks, repo)):
         # an approval made before this rule keeps working: report, never fail
         print(f"upgrade gap: {gap}")
-        report["upgrade_gaps"] = [gap]
+        report.setdefault("upgrade_gaps", []).append(gap)
     if not checks:
         print(f"sdlc.json checks.{suite} is empty: nothing would prove this change.")
         return finish("VERIFY BLOCKED reason=env", 3)
@@ -788,20 +859,23 @@ def run(
                 ),
             }
         )
-    if scope == "milestone" and not (visual_check and visual_runs) and visual_run_required(change, cfg):
-        missing = (
-            "this milestone has a UX decision and a visual source, but no --visual-check and "
-            "--visual-run were given: run cct:ux-assessment-run and pass its run, or record "
-            '`"skips": {"visual": "skip -- <reason>"}` in decisions.json'
-        )
+    if scope == "milestone" and read_decisions(change) is None and current_format(change):
         evidence.append(
-            {
-                "name": "ux-visual-required",
-                "cache": False,
-                "run": shlex.join(
-                    [sys.executable, "-c", f"import sys; print({missing!r}); sys.exit(1)"]
-                ),
-            }
+            refusal("decisions-json", "decisions.json is missing: it records the size, the visual source and the skips this gate reads")
+        )
+    elif (
+        scope == "milestone"
+        and not (visual_check and visual_runs)
+        and visual_run_required(change, cfg, repo)
+    ):
+        evidence.append(
+            refusal(
+                "ux-visual-required",
+                "this milestone has a UX decision and a visual source, but no --visual-check and "
+                "--visual-run were given: run cct:ux-assessment-run and pass its run, or have the "
+                "owner attest a skip (decisions.json skips.visual `skip -- <reason>` plus the "
+                "dialog `Change <id>, finding visual-skip: ...` answered Skip visual evidence)",
+            )
         )
     for number, visual_run in enumerate(visual_runs or [], 1):
         evidence.append(
@@ -1120,7 +1194,11 @@ def main(argv: list[str]) -> int:
         change = project_record(args.id, repo)
         change.mkdir(parents=True, exist_ok=True)
         return run(args.scope, change, cfg, repo, keep_going=args.keep_going)
+    changes = (repo / cfg.get("changesDir", "changes")).resolve()
     change = repo / cfg.get("changesDir", "changes") / args.id
+    if not change.resolve().is_relative_to(changes) or change.resolve() == changes:
+        print(f"the change id {args.id!r} does not name a folder inside {changes.name}/.")
+        return end("VERIFY BLOCKED reason=env", 3)
     if not change.is_dir():
         print(f"no change folder {change.relative_to(repo)}")
         return end("VERIFY BLOCKED reason=env", 3)
