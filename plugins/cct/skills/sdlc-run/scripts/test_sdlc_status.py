@@ -857,12 +857,13 @@ def test_an_unarmed_pr_in_a_repo_without_the_workflow_is_armed_with_merge_F2(rep
         assert f"gh pr merge 7 {flag} --auto" in sentence
 
 
-def _shared_receipt(repo: Path, n: int, sha: str) -> None:
+def _shared_receipt(repo: Path, n: int, sha: str, verdict: str = "PASS") -> None:
+    """A receipt in the common git dir, where the gate writes it: it outlives the builder's worktree."""
     from verify_gate import receipt_path
 
     path = receipt_path(ID, n, repo)
     path.parent.mkdir(parents=True, exist_ok=True)
-    result = f"VERIFY PASS milestone {ID} {sha}"
+    result = f"VERIFY {verdict}" if "reason=" in verdict else f"VERIFY {verdict} milestone {ID} {sha}"
     path.write_text(
         json.dumps({"scope": "milestone", "milestone": n, "change": ID, "result": result, "sha": sha})
     )
@@ -934,3 +935,99 @@ def test_a_live_file_and_its_archive_copy_void_the_pass(repo: Path) -> None:
     (repo / "changes" / ID / "facts.md").write_text("F1 something easier\n")
     head = _commit(repo, f"changes/{ID}/facts.md")
     assert pass_proof.proves(repo, "changes", gated, head) is False
+
+
+# --- 3.20.2: round-2 review (findings 5, 6, H2, H3, M3) --------------------------------------
+M2_BRANCH = "milestone/redesign-r2-2"
+SHA2 = "c" * 40
+
+
+def _plan(repo: Path, milestones: int = 2) -> None:
+    rows = "".join(f"| M{i} | m |\n" for i in range(1, milestones + 1))
+    (repo / "changes" / ID / "plan.md").write_text(
+        f"# Plan: R\n\n## Milestones\n\n| # | what |\n|---|---|\n{rows}"
+    )
+
+
+def test_unnumbered_goal_reads_every_shared_receipt_after_the_worktree_is_gone_F5(
+    repo: Path,
+) -> None:
+    _plan(repo)
+    _shared_receipt(repo, 1, GATE)
+    _shared_receipt(repo, 2, SHA2)  # no verify/report.json anywhere: the builder worktree is gone
+    prs = {BRANCH: _pr(head=GATE), M2_BRANCH: _pr(head=SHA2, number=8)}
+    assert _goal(repo, prs) == (0, f"GOAL {ID} DONE pr=8 state=merged gate={SHA2}")
+
+
+def test_unnumbered_goal_holds_each_milestone_to_its_own_receipt_F5(repo: Path) -> None:
+    _plan(repo)
+    _shared_receipt(repo, 1, GATE)
+    _shared_receipt(repo, 2, SHA2)
+    moved = {BRANCH: _pr(head=MOVED), M2_BRANCH: _pr(head=SHA2, number=8)}
+    assert _goal(repo, moved) == (1, f"GOAL {ID} OPEN gate-sha-not-pr-7-head")
+    _shared_receipt(repo, 2, SHA2, "FAIL")
+    failed = {BRANCH: _pr(head=GATE), M2_BRANCH: _pr(head=SHA2, number=8)}
+    assert _goal(repo, failed) == (1, f"GOAL {ID} OPEN milestone-gate-pass")
+
+
+def test_a_newer_failed_receipt_is_not_done_even_with_an_older_local_pass_H3(repo: Path) -> None:
+    _gate(repo, PASS)  # the checkout-local report still says PASS at the same sha
+    _shared_receipt(repo, 1, GATE, "FAIL")  # the gate ran again after it, and failed
+    got = _goal(repo, {BRANCH: _pr()}, n=1)
+    assert got == (1, f"GOAL {ID} OPEN milestone-gate-pass")
+
+
+def test_a_newer_blocked_receipt_blocks_the_goal_H3(repo: Path) -> None:
+    _gate(repo, PASS)
+    _shared_receipt(repo, 1, GATE, "BLOCKED reason=env")
+    assert _goal(repo, {BRANCH: _pr()}, n=1) == (3, f"GOAL {ID} BLOCKED reason=env")
+
+
+def test_a_wrong_base_comes_before_the_arming_remedy_H2(repo: Path) -> None:
+    _gate(repo, PASS)
+    code, line = _goal(repo, {BRANCH: _pr("OPEN", base="project/other")})
+    assert code == 1 and line.split("OPEN ")[1].split(",")[0] == "pr-7-wrong-base"
+    sentence = sdlc_status.blocker(ID, line, "milestone", "main")
+    assert "gh pr edit 7 --base main" in sentence and "gh pr merge" not in sentence
+
+
+def test_local_goal_applies_the_pass_proof_to_the_milestone_tip_F6(repo: Path) -> None:
+    _local_project(repo)
+    _plan(repo, 1)
+    (repo / "changes" / ID / "facts.md").write_text("F1 the first\n")
+    _commit(repo, "base.txt")
+    _sh(repo, "branch", "project/big")
+    _sh(repo, "checkout", "-qb", "milestone/redesign-r2-1")
+    gated = _commit(repo, "m1.txt")
+    _shared_receipt(repo, 1, gated)
+    _gate(repo, f"VERIFY PASS milestone {ID} {gated}")
+    _commit(repo, f"changes/{ID}/milestone.md")  # a close record rides along
+    tip = _sh(repo, "rev-parse", "HEAD")
+    _sh(repo, "branch", "-f", "project/big", tip)
+    folder = repo / "changes" / ID
+    assert sdlc_status.goal(repo, folder, "milestone", None, gh=_no_gh)[0] == 0
+    (folder / "facts.md").write_text("F1 easier\n")  # a criteria edit after the gate
+    _commit(repo, "after.txt")
+    _sh(repo, "branch", "-f", "project/big", "HEAD")
+    got = sdlc_status.goal(repo, folder, "milestone", None, gh=_no_gh)
+    assert got == (1, f"GOAL {ID} OPEN gate-sha-not-tip:milestone/redesign-r2-1")
+
+
+def test_a_wrong_base_hotfix_pr_is_told_the_default_branch_M3(
+    repo: Path, tmp_path: Path, monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
+) -> None:
+    (repo / "changes" / ID / "plan.md").write_text(
+        "# Plan: R\n\n## Feature PRs\n\n| # | change | feature | branch |\n|---|---|---|---|\n"
+        "| 1 | x | y | hotfix/x |\n"
+    )
+    _gate(repo, f"VERIFY PASS feature {ID} {GATE}", scope="feature")
+    pr = _pr("OPEN", base="milestone/redesign-r2")
+    fake = tmp_path / "bin"
+    fake.mkdir()
+    (fake / "gh").write_text(f"#!/bin/sh\necho '{json.dumps(pr)}'\n")
+    (fake / "gh").chmod(0o755)
+    monkeypatch.setenv("PATH", f"{fake}{os.pathsep}{os.environ['PATH']}")
+    monkeypatch.chdir(repo)
+    assert sdlc_status.goal_main([ID, "--feature", "1"]) == 1
+    out = capsys.readouterr().out
+    assert "gh pr edit 7 --base main" in out and "gh pr merge" not in out

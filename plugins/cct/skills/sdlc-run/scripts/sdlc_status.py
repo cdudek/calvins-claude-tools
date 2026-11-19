@@ -310,14 +310,22 @@ def goal(
         folder = project_record(subject, root) if project else change
     report = read_json(folder / "verify" / "report.json")
     if scope == "milestone" and n:  # milestone n's own receipt, not whichever gate ran last
-        own = read_receipt(root, change, n)
-        report = own if own and not own.get("invalid") else report
+        report = read_receipt(root, change, n) or report  # the newest wins, a failed one too
     result = str(report.get("result", "")) if report.get("scope") == scope else ""
     blocked = re.fullmatch(r"VERIFY BLOCKED reason=([\w-]+)", result)
     if blocked:
         return 3, f"{name} BLOCKED reason={blocked.group(1)}"
-    passed = re.fullmatch(rf"VERIFY PASS {scope} {re.escape(subject)} (\w+)", result)
-    missing = [] if passed else [f"{scope}-gate-pass"]
+    passed = (
+        None
+        if report.get("invalid")
+        else re.fullmatch(rf"VERIFY PASS {scope} {re.escape(subject)} (\w+)", result)
+    )
+    # every milestone's own receipt (the shared git dir outlives the builder's worktree); the one
+    # report.json is the last gate run of this checkout only
+    receipts = {}
+    if scope == "milestone" and not n:
+        receipts = {i: r for i in range(1, planned(change) + 1) if (r := read_receipt(root, change, i))}
+    missing = [] if passed or receipts else [f"{scope}-gate-pass"]
     local = scope == "milestone" and project and merges_locally(cfg)
     if local:  # no PR: the gated head must be merged into the local project branch
         names = []
@@ -341,6 +349,8 @@ def goal(
                         continue
                 if not contains(root, tip, into):  # no receipt, or the branch is still there
                     missing.append(f"merge-missing:{b}")
+                elif receipt and not same_head(root, cfg, str(receipt.get("sha", "")), tip):
+                    missing.append(f"gate-sha-not-tip:{b}")  # code, criteria or evidence moved
     elif scope == "project":
         names = [project] if project else []
         if not names:
@@ -350,7 +360,8 @@ def goal(
     if not names and not local and scope != "project":
         missing.append(f"no-branch-for-{scope}-{n}")
     prs = []
-    for branch in names:
+    last_gate = None  # the receipt of the last milestone's PR, when it has one
+    for k, branch in enumerate(names):
         found = gh(
             root,
             *("pr", "list", "--head", branch, "--state", "all", "--limit", "1"),
@@ -364,15 +375,26 @@ def goal(
         pr = found[0]
         merged = pr.get("state") == "MERGED" or bool(pr.get("mergedAt"))
         armed = pr.get("state") == "OPEN" and bool(pr.get("autoMergeRequest"))
+        if pr.get("baseRefName") != parent_of(change, cfg, scope, branch):
+            missing.append(f"pr-{pr['number']}-wrong-base")  # first: arming it would merge elsewhere
         if not (merged or armed):
             missing.append(f"pr-{pr['number']}-{waiting_on(root, cfg, pr)}")
-        if pr.get("baseRefName") != parent_of(change, cfg, scope, branch):
-            missing.append(f"pr-{pr['number']}-wrong-base")
         prs.append((pr, "merged" if merged else "armed"))
-    if (
-        prs
-        and passed
-        and not same_head(root, cfg, passed.group(1), prs[-1][0].get("headRefOid", ""))
+        mine = receipts.get(int(branch.rsplit("-", 1)[1])) if receipts else None
+        if mine:
+            verdict = re.fullmatch(r"VERIFY BLOCKED reason=([\w-]+)", str(mine.get("result", "")))
+            if verdict:
+                return 3, f"{name} BLOCKED reason={verdict.group(1)}"
+            if mine.get("invalid"):
+                missing.append("milestone-gate-pass")
+            elif not same_head(root, cfg, str(mine.get("sha", "")), pr.get("headRefOid", "")):
+                missing.append(f"gate-sha-not-pr-{pr['number']}-head")
+        elif receipts and not (passed and k == len(names) - 1):  # a milestone nobody gated
+            missing.append("milestone-gate-pass")
+        if k == len(names) - 1:
+            last_gate = mine
+    if prs and passed and not last_gate and not same_head(
+        root, cfg, passed.group(1), prs[-1][0].get("headRefOid", "")
     ):
         missing.append(f"gate-sha-not-pr-{prs[-1][0]['number']}-head")
     if scope == "milestone":
@@ -385,7 +407,8 @@ def goal(
     if local:
         return 0, f"{name} DONE merged={project} gate={passed.group(1)}"
     pr, state = prs[-1]
-    return 0, f"{name} DONE pr={pr['number']} state={state} gate={passed.group(1)}"
+    gate = last_gate.get("sha", "") if last_gate else passed.group(1)
+    return 0, f"{name} DONE pr={pr['number']} state={state} gate={gate}"
 
 
 # what is in the way, by the first missing item: (what, why, who acts, the exact step)
@@ -455,6 +478,12 @@ BLOCKS = {
         "its verify/milestone-{n}.json is missing, failed, or its head is not in the project branch",
         "the agent",
         "on branch milestone/<slug>-{n}: python3 scripts/verify_gate.py milestone {id}, then merge it",
+    ),
+    "gate-sha-not-tip:": (
+        "the milestone branch {n} moved past its gate in more than records",
+        "code, facts.md, done.json or evidence changed after its gate receipt",
+        "the agent",
+        "on {n}: python3 scripts/verify_gate.py milestone {id} (writes a new receipt)",
     ),
     "no-branch-for-": (
         "the plan names no branch for {n}",
@@ -556,7 +585,7 @@ def blocker(subject: str, line: str, scope: str = "milestone", base: str = "") -
     for key, (what, why, who, step) in BLOCKS.items():
         if key_of == key or (key.endswith(("-", ":")) and first.startswith(key)):
             n = re.sub(
-                r"^no-pr:|^no-branch-for-|^merge-missing:|^receipt-not-merged:|^gate-sha-not-pr-|-head$",
+                r"^no-pr:|^no-branch-for-|^merge-missing:|^receipt-not-merged:|^gate-sha-not-tip:|^gate-sha-not-pr-|-head$",
                 "",
                 first,
             )
@@ -615,7 +644,10 @@ def goal_main(args: list[str]) -> int:
     code, line = goal(root, change, scope, int(value) if flag else None)
     print(line)
     head = re.search(r"no-pr:([^,\s]+)", line)
-    base = parent_of(change, config(root), scope, head[1] if head else "")
+    # a feature's base depends on its branch (a hotfix goes to the default branch): the no-pr one,
+    # or else the plan's row
+    row = branches(change, read_json(change / "decisions.json"), scope, int(value) if flag else None)
+    base = parent_of(change, config(root), scope, head[1] if head else row[0] if scope == "feature" and row else "")
     if code and (sentence := blocker(change.name, line, scope, base)):
         print(sentence)
     return code
