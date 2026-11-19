@@ -73,6 +73,7 @@ def test_marks_py_runs_without_spec_py_unless_layout_4_is_in_use(tmp_path: Path)
 # ---------------------------------------------------------------- the gate runs under the queue
 
 import os  # noqa: E402
+import re  # noqa: E402
 import shutil  # noqa: E402
 import shlex  # noqa: E402
 import time  # noqa: E402
@@ -424,3 +425,35 @@ def test_adopt_writes_a_first_plan_for_the_one_go_mode_without_leftover_markers(
     text = plan.read_text(encoding="utf-8")
     assert "Stop after 150 turns" in text and "{{#" not in text and "{{/" not in text
     assert "verify_gate.py feature" not in text.split("## Done")[1].split("## How to run")[0]
+
+
+# ---------------------------------------------------------------- local and CI run the same commands
+
+
+def _commands(value: object) -> list[str]:
+    return [c.strip() for c in str(value).split("&&")]
+
+
+def _local_profile(preset: str) -> set[str]:
+    """What the milestone gate runs besides the browser suites: lint, types and unit tests."""
+    checks = json.loads((SCRIPTS.parent / "presets" / f"{preset}.json").read_text())["checks"]["milestone"]
+    runs = [c if isinstance(c, str) else c["run"] for c in checks]
+    browser = re.compile(r"test:e2e|playwright|pytest e2e|-d e2e|^changed=")  # `--ignore=e2e` is a unit run
+    return {r for r in runs if not browser.search(r)}
+
+
+@pytest.mark.parametrize(("preset", "stack"), [("node", "typescript"), ("python", "python")])
+def test_the_milestone_checks_and_the_ci_commands_do_not_drift(preset: str, stack: str) -> None:
+    ci = json.loads((SCRIPTS.parent / "ci-commands.json").read_text())[stack]
+    in_ci = {c for key in ("lint", "unit") for c in _commands(ci[key])}
+    assert in_ci == _local_profile(preset), (
+        f"{preset}: the CI `lint` and `unit` commands and the preset's milestone checks differ; "
+        "change both or neither"
+    )
+
+
+def test_this_repos_own_milestone_checks_and_ci_commands_do_not_drift() -> None:
+    cfg = json.loads((Path(__file__).resolve().parents[5] / "sdlc.json").read_text())
+    runs = {c if isinstance(c, str) else c["run"] for c in cfg["checks"]["milestone"]}
+    in_ci = {c for key in ("lint", "unit") for c in _commands(cfg["ciCommands"][key])}
+    assert in_ci == runs, "sdlc.json checks.milestone and ciCommands lint+unit differ; change both or neither"

@@ -11,7 +11,7 @@
   "python": {
     "install": "uv sync --frozen",
     "lint": "uv run ruff check . && uv run ruff format --check . && uv run mypy src",
-    "unit": "uv run pytest tests",
+    "unit": "uv run pytest -q --ignore=e2e",
     "build": "uv build",
     "e2e": "uv run pytest e2e --splits {total} --group {shard} --reruns 1",
     "e2eTouched": "uv run pytest {files} --reruns 1"
