@@ -238,15 +238,16 @@ class Repo:
                 for i, d in self.matching(branch, sha)
             ]
         rel = self.changes.relative_to(self.top).as_posix()
-        for report in self.reports(scope, slug):
-            try:
-                data = json.loads(report.read_text(encoding="utf-8"))
-            except (OSError, ValueError):
+        for subject, number in subjects:
+            if not subject:
                 continue
-            for subject, number in subjects:
-                if subject and proof("bound")(data, scope, subject, number, owner):
-                    if proof("proves")(self.dir, rel, data["sha"], sha):
-                        return str(data["sha"])
+            # the checkout reports and the gate's shared copy: the newest report of the key speaks, and
+            # a newer failure or block ends the walk (pass_proof.chain), whichever copy holds it
+            key = proof("pass_key")(scope, branch, number)
+            files = [*self.reports(scope, slug), proof("shared")(self.dir, subject, scope, key)]
+            for is_pass, data in proof("chain")(files, scope, subject, number, owner):
+                if is_pass and proof("proves")(self.dir, rel, data["sha"], sha):
+                    return str(data["sha"])
         return ""
 
     def passed(

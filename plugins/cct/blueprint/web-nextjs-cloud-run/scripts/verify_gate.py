@@ -30,7 +30,7 @@ origin's default branch, or project/<slug> in a project, has commits HEAD lacks:
 locally first. With `milestones.merge: "local"` the local project/<slug> must also be an ancestor
 of HEAD, so a milestone cannot skip an earlier one merged locally. Then it runs the checks cheapest first and the first
 failure stops the run (`--keep-going` runs them all and reports the first failure's verdict), and
-writes <changesDir>/<id>/verify/report.json + report.md (a milestone on branch milestone/<slug>-<n> also milestone-<n>.json, never overwritten by another scope).
+writes <changesDir>/<id>/verify/report.json + report.md (a milestone on branch milestone/<slug>-<n> also milestone-<n>.json, never overwritten by another scope). Every report also gets a copy in <git common dir>/sdlc/passes/<change>/<scope>-<key>.json (atomic), which outlives the worktree; hooks/pass_proof.py reads both.
 
 Cheapest first: a check that passed takes its seconds into verify/durations.json (keyed by command)
 and the next run sorts by them; a check with no record yet sorts by a static guess from its
@@ -80,6 +80,7 @@ import subprocess
 import sys
 import time
 from pathlib import Path
+from urllib.parse import quote
 
 sys.dont_write_bytecode = True  # imports of marks and sdlc_version must not leave __pycache__
 import spec  # noqa: E402  (layout 4: the three documents, the rules, the id families)
@@ -197,12 +198,29 @@ def merges_locally(cfg: dict) -> bool:
     return (cfg.get("milestones") or {}).get("merge") == "local"
 
 
+def common_git_dir(repo: Path | None = None) -> Path:
+    return Path(sh("git", "-C", str(repo or "."), "rev-parse", "--path-format=absolute", "--git-common-dir") or ".git")
+
+
 def project_record(slug: str, repo: Path | None = None) -> Path:
     """Where `project <slug>` writes its report: the common git dir, shared by all worktrees."""
-    common = sh(
-        "git", "-C", str(repo or "."), "rev-parse", "--path-format=absolute", "--git-common-dir"
-    )
-    return Path(common or ".git") / "sdlc" / "projects" / slug
+    return common_git_dir(repo) / "sdlc" / "projects" / slug
+
+
+def pass_record(scope: str, change: str, branch: str, number: int | None, repo: Path | None = None) -> Path | None:
+    """The shared copy of a report: <common git dir>/sdlc/passes/<change>/<scope>-<key>.json, the file
+    hooks/pass_proof.py `shared` names (test_passes keeps the two equal). The key is the milestone
+    number (`milestone_number`), the feature's branch (percent-encoded) or 0 for the project; None
+    for a milestone branch that is no milestone, which keeps only its checkout report."""
+    key = {"milestone": str(number or ""), "feature": quote(branch, safe=""), "project": "0"}.get(scope)
+    return common_git_dir(repo) / "sdlc" / "passes" / change / f"{scope}-{key}.json" if key else None
+
+
+def write_atomic(path: Path, text: str) -> None:
+    path.parent.mkdir(parents=True, exist_ok=True)
+    tmp = path.with_name(f".{path.name}.{os.getpid()}.tmp")
+    tmp.write_text(text, encoding="utf-8")
+    os.replace(tmp, path)
 
 
 def has_bundle_inputs(change: Path) -> bool:
@@ -1098,7 +1116,9 @@ def run(
     if notice:
         print(f"WARN {notice}")  # never blocks; the last line stays the verdict
 
-    number = milestone_number(change, cfg, sh("git", "symbolic-ref", "--short", "-q", "HEAD")) if scope == "milestone" else None
+    branch_now = sh("git", "symbolic-ref", "--short", "-q", "HEAD")
+    number = milestone_number(change, cfg, branch_now) if scope == "milestone" else None
+    shared_copy = pass_record(scope, change.name, branch_now, number)  # fixed before any check runs
 
     def finish(line: str, code: int) -> int:
         report["result"] = line
@@ -1123,6 +1143,11 @@ def run(
                 record_head(change, "milestones", str(number), {"head": branch, "base": project_branch(change, cfg) or default, "sha": report["sha"]})
             elif scope == "feature" and branch.startswith("hotfix/") and cfg.get("hotfix", True) and hotfix_change(change):
                 record_head(change, "hotfix", None, {"head": branch, "base": default, "sha": report["sha"]})
+        if shared_copy:  # survives the worktree and the branch; an older writer leaves none
+            try:
+                write_atomic(shared_copy, text)
+            except OSError as err:
+                print(f"WARN pass record not written: {err}")
         rows = "\n".join(
             f"| {c['name']} | {c['status']} | {c['seconds']} |" for c in report["checks"]
         )
