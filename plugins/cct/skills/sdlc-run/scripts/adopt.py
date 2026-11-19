@@ -858,6 +858,7 @@ KIT_MARKS = {
     "e9511caf3de9934b",
 }
 KIT_PASS_PROOF = {
+    "66d1b0004ebe5a4f",
     "08655b8b92ba1cf3",
     "6b49e80785b08cd1",
     "9bf7560ec9b627d8",
@@ -887,29 +888,33 @@ def finish_upgrade() -> str:
             )
     out = []
     # A file whose partner the replaced one needs: the new gate blocks a milestone without
-    # marks.py's `bundles`, and pr-gate.sh loads pass_proof.py. Replacing either takes its partner
+    # marks.py's `bundles` and writes its records through pass_proof.py's `key`, and pr-gate.sh
+    # loads pass_proof.py. Replacing either takes its partners
     # along only when the partner is a kit version nobody edited (sdlc.json `keep` and a customised
     # copy stay, and a MANUAL line names it); a replaced marks.py alone is safe, the older gate
     # imports the same names.
-    partner = {"scripts/verify_gate.py": "scripts/marks.py", ".claude/hooks/pr-gate.sh": ".claude/hooks/pass_proof.py"}
+    partner = {
+        "scripts/verify_gate.py": ["scripts/marks.py", ".claude/hooks/pass_proof.py"],
+        ".claude/hooks/pr-gate.sh": [".claude/hooks/pass_proof.py"],
+    }
     PARTNER_NEEDS = {  # noqa: N806 -- what the replaced file cannot work without
         "scripts/marks.py": "`bundles(change)`: the new gate blocks milestone gates with design bundles until it has it",
-        ".claude/hooks/pass_proof.py": "`holds(...)` (the one reader of the gate's receipts): the new hook blocks every push and merge without it",
+        ".claude/hooks/pass_proof.py": "`key(...)`, `write_record(...)` and `holds(...)` (the one key, writer and reader of the gate's records): the new gate refuses to run and the new hook blocks every push and merge without it",
     }
     wanted = list(dict.fromkeys(REPLACE))
     for rel in REPLACE:
-        other = partner.get(rel)
-        if other is None or other not in pending:
-            continue  # no partner, or it is the kit's copy already
-        mine = ROOT / other
-        if mine.exists() and hashlib.sha256(mine.read_bytes()).hexdigest()[:16] not in KIT_PARTS[other]:
-            manual.append(
-                f"--replace {rel}: {other} is customised (it matches no kit version), so it was not "
-                f"replaced with it. {rel} needs {PARTNER_NEEDS[other]}: merge your changes into the "
-                f"kit's copy, then `adopt --upgrade --replace {other} --apply`"
-            )
-            continue
-        wanted.append(other)
+        for other in partner.get(rel, []):
+            if other not in pending or other in wanted:
+                continue  # it is the kit's copy already, or already on the list
+            mine = ROOT / other
+            if mine.exists() and hashlib.sha256(mine.read_bytes()).hexdigest()[:16] not in KIT_PARTS[other]:
+                manual.append(
+                    f"--replace {rel}: {other} is customised (it matches no kit version), so it was not "
+                    f"replaced with it. {rel} needs {PARTNER_NEEDS[other]}: merge your changes into the "
+                    f"kit's copy, then `adopt --upgrade --replace {other} --apply`"
+                )
+                continue
+            wanted.append(other)
     for rel in wanted:
         if rel not in pending and rel not in REPLACE:
             continue  # the partner is already the kit's copy

@@ -813,7 +813,12 @@ def test_a_pr_create_naming_the_same_repo_is_still_gated_F1(repo: Path) -> None:
 
 # 3.20.3: one authority (pass_proof.holds reads the receipts; report.json is only the legacy path).
 def _owned(repo: Path, owner: str, n: int = 1, verdict: str = "pass") -> str:
-    """A receipt as the gate writes it, for the head and `owner`."""
+    """A record as the 3.20.4 gate writes it (and that gate installed: RECEIPT_FORMAT, kept out of the
+    tree), for the head and `owner`."""
+    (repo / "scripts").mkdir(exist_ok=True)
+    (repo / "scripts" / "verify_gate.py").write_text("RECEIPT_FORMAT = 2\n")
+    with open(repo / ".git" / "info" / "exclude", "a", encoding="utf-8") as exclude:
+        exclude.write("/scripts/\n")
     sha = _git(repo, "rev-parse", "HEAD")
     common = Path(_git(repo, "rev-parse", "--path-format=absolute", "--git-common-dir"))
     out = common / "sdlc" / "receipts" / ID
@@ -821,7 +826,7 @@ def _owned(repo: Path, owner: str, n: int = 1, verdict: str = "pass") -> str:
     result = {"pass": f"VERIFY PASS milestone {ID} {sha}", "fail": f"VERIFY FAIL milestone {ID} check=unit"}[verdict]
     receipt = {
         "scope": "milestone", "milestone": n, "change": ID, "sha": sha, "result": result,
-        "verdict": verdict, "owner": owner, "time": "2026-11-19T00:00:00+00:00",
+        "verdict": verdict, "owner": owner, "time": "2026-11-19T00:00:00+00:00", "key": f"milestone-{n}",
     }  # fmt: skip
     (out / f"milestone-{n}.json").write_text(json.dumps(receipt))
     return sha
@@ -892,7 +897,46 @@ def test_the_hook_and_the_status_check_ask_the_same_reader_C1(repo: Path) -> Non
     from pass_proof import holds
 
     sha = _owned(repo, "project/trial")
-    assert holds(repo, "changes", ID, "milestone", 1, sha, "project/trial") == sha
-    assert holds(repo, "changes", ID, "milestone", 1, sha, "project/other") == ""
-    assert holds(repo, "changes", ID, "milestone", 2, sha, None) == ""  # M1's receipt, asked for M2
-    assert holds(repo, "changes", ID, "milestone", 0, sha, None) == ""  # no number, no milestone pass
+    assert holds(repo, "changes", ID, "milestone-1", sha, "project/trial") == sha
+    assert holds(repo, "changes", ID, "milestone-1", sha, "project/other") == ""
+    assert holds(repo, "changes", ID, "milestone-2", sha, None) == ""  # M1's record, asked for M2
+    assert holds(repo, "changes", ID, "milestone-0", sha, None) == ""  # no number, no milestone pass
+
+
+# 3.20.4: one key (the unnumbered feature-PR milestone branch is milestone 1), one scan of the records.
+def test_the_unnumbered_milestone_branch_closes_with_a_milestone_1_record_K1(repo: Path) -> None:
+    """The documented feature-PR flow has `milestone/<slug>`: the gate keys it 1, the hook must ask for 1."""
+    _git(repo, "checkout", "-q", "-B", "milestone/trial")
+    r = _run(repo, "git push -u origin milestone/trial")
+    assert r.returncode == 2 and "without a passing milestone gate" in r.stderr
+    _owned(repo, "", 1)
+    assert _run(repo, "git push -u origin milestone/trial").returncode == 0
+    assert _run(repo, "gh pr create --base master --title t --body x").returncode == 0
+
+
+def test_a_slug_ending_in_digits_is_not_a_milestone_number_K1(repo: Path) -> None:
+    (repo / "changes" / ID / "decisions.json").write_text(json.dumps({"milestone": {"slug": "q4-2026"}}))
+    _git(repo, "commit", "-qam", "slug")
+    _git(repo, "checkout", "-q", "-B", "milestone/q4-2026")
+    _owned(repo, "", 1)  # milestone 1, not milestone 2026
+    assert _run(repo, "git push -u origin milestone/q4-2026").returncode == 0
+
+
+def test_the_hook_reads_each_change_record_once_per_command_M1(repo: Path, tmp_path: Path) -> None:
+    log = tmp_path / "git.log"
+    bin_dir = tmp_path / "bin"
+    bin_dir.mkdir()
+    real = shutil.which("git")
+    (bin_dir / "git").write_text(f'#!/bin/sh\necho "$@" >> {log}\nexec {real} "$@"\n')
+    (bin_dir / "git").chmod(0o755)
+    _owned(repo, "", 1)
+    transcript = repo.parent / "t.jsonl"
+    transcript.write_text("")
+    payload = {"tool_input": {"command": "git push -u origin milestone/trial-1"}, "cwd": str(repo), "transcript_path": str(transcript)}
+    r = subprocess.run(
+        ["bash", str(repo / ".claude" / "hooks" / "pr-gate.sh")], input=json.dumps(payload), capture_output=True, text=True,
+        env={**_env(), "CLAUDE_PROJECT_DIR": str(repo), "PATH": f"{bin_dir}{os.pathsep}{os.environ['PATH']}"},
+    )  # fmt: skip
+    assert r.returncode == 0, r.stderr
+    shows = [line for line in log.read_text().splitlines() if " show " in line and "decisions.json" in line]
+    assert len(shows) == len(set(shows)), shows  # no record read twice

@@ -19,9 +19,9 @@ prints one line and the evaluator matches it. Exit 0 `GOAL <id> DONE pr=<n> stat
 gate=<sha>`, exit 3 `GOAL <id> BLOCKED reason=<code>` (the last gate said VERIFY BLOCKED), exit 1
 `GOAL <id> OPEN <what is missing>`. DONE needs every milestone PR (branch `milestone/<slug>-<n>`,
 n from plan.md `## Milestones`) merged or open with auto-merge armed, the last
-`VERIFY PASS milestone <id> <sha>` receipt (the gate's newest run, in the common git dir; a change
-gated before receipts existed falls back to verify/report.json) equal to the head sha of the last
-PR (`gh`, never local HEAD: records written after a merge move HEAD), and no open record
+`VERIFY PASS milestone <id> <sha>` record of each milestone (the gate's newest run of it, found by
+`pass_proof.key`, bound to the change, the owning project and the sha) holding at the head sha of
+its PR (`gh`, never local HEAD: records written after a merge move HEAD), and no open record
 (validation.md, findings.md; `verify_gate.milestone_blockers`). `--feature <n>` reads the plan's
 `## Feature PRs` row n and a `feature` gate; `--milestone <n>` narrows to one milestone. A `gh`
 that is missing or fails is `OPEN gh-unavailable`, never DONE. When the goal is not DONE a second
@@ -29,6 +29,12 @@ line `Blocking: <what>, because <why>; <who> runs `<step>`.` says the one thing 
 
 `ids` prints every id the change defines with its one-line meaning and the file that decides it.
 `readme` writes `<change>/README.md`, the reading map (`references/readability.md`).
+
+Which reader runs follows the repo's own installed gate: a `scripts/verify_gate.py` with
+`RECEIPT_FORMAT` is read by its records alone (a newer report.json can only block), an older one by
+what its own readers did (report.json, and the old milestone-<n>.json). A milestone merged without
+a record counts as done only when it merged before the change's first record; one merged later
+never does.
 
 With sdlc.json `milestones.merge: "local"` and a project branch, a milestone has no PR: it is DONE
 when its `VERIFY PASS milestone` head is an ancestor of the local project/<slug> (line `GOAL <id>
@@ -43,6 +49,7 @@ branch, merged or armed, as above.
 
 from __future__ import annotations
 
+import datetime as dt
 import json
 import re
 import subprocess
@@ -264,25 +271,54 @@ def parent_of(change: Path, cfg: dict, scope: str, head: str = "") -> str:
     return f"{(cfg.get('milestones') or {}).get('branchPrefix', 'milestone/')}{slug}"
 
 
-def read_receipt(root: Path, change: Path, n: int, shared: bool) -> dict:
-    """Milestone n's receipt, normalized by pass_proof (the one reader): {} when the gate never
-    ran it. LEGACY RULE: a change with no receipt at all (`shared` False) has only what a gate
-    before 3.20.3 left in its own verify/ folder; once it has one, that folder is never read."""
-    if shared:
-        return pass_proof.read_receipt(root, change.name, "milestone", n)
-    local = read_json(change / "verify" / f"milestone-{n}.json")
-    return pass_proof.normalize(local, change.name, "milestone", n)
+def _ts(text: str) -> dt.datetime | None:
+    try:
+        return dt.datetime.fromisoformat(str(text).replace("Z", "+00:00"))
+    except ValueError:
+        return None
 
 
-def merged_tip(root: Path, sha: str, into: str) -> str:
-    """The head that actually merged `sha` into `into`: the second parent of the oldest merge
-    commit on `into` whose second parent contains it. "" when none does (a fast-forward, or never
-    merged): the receipt sha being an ancestor of `into` proves nothing about what merged."""
-    for line in git(root, "rev-list", "--merges", "--parents", "--reverse", "--first-parent", into).splitlines():
-        parts = line.split()
-        if len(parts) >= 3 and contains(root, sha, parts[2]):
-            return parts[2]
-    return ""
+def before(when: str, first: str) -> bool:
+    """`when` is earlier than `first` (the change's first gate record): both must be real times."""
+    a, b = _ts(when), _ts(first)
+    return bool(a and b and a < b)
+
+
+class Merges:
+    """The first-parent merge commits of `into`, listed once per poll (newest first) with the
+    ancestry answers remembered, so a project of many milestones costs one history scan."""
+
+    def __init__(self, root: Path, into: str) -> None:
+        self.root, self.into, self.seen = root, into, {}
+        self.rows: list[tuple[str, str, str]] = []  # (second parent, committer time, subject)
+        for line in git(root, "log", "--first-parent", "--merges", "--format=%P%x09%cI%x09%s", into).splitlines():
+            parents, when, subject = (line.split("\t", 2) + ["", ""])[:3]
+            if len(parents.split()) >= 2:
+                self.rows.append((parents.split()[1], when, subject))
+
+    def has(self, sha: str, tip: str) -> bool:
+        if (sha, tip) not in self.seen:
+            self.seen[sha, tip] = contains(self.root, sha, tip)
+        return self.seen[sha, tip]
+
+    def brought(self, gated: str, mine: int, later: list[str], branch_of: str) -> tuple[str, str]:
+        """(second parent, time) of the merge that brought milestone `mine` in: the newest merge whose
+        second parent holds `gated`, skipping merges of another milestone (its branch named in the
+        message, or a later milestone's own gated head inside it: a later branch is cut from the
+        project and holds every earlier head). ("", "") when none."""
+        for tip, when, subject in self.rows:
+            other = re.search(re.escape(branch_of) + r"-(\d+)", subject)
+            if other and int(other[1]) != mine:
+                continue
+            if any(self.has(g, tip) for g in later):
+                continue
+            if self.has(gated, tip):
+                return tip, when
+        return "", ""
+
+    def first_with(self, sha: str) -> str:
+        """The time of the oldest merge that holds `sha`, "" when none does."""
+        return next((when for tip, when, _ in reversed(self.rows) if self.has(sha, tip)), "")
 
 
 def waiting_on(root: Path, cfg: dict, pr: dict) -> str:
@@ -300,79 +336,198 @@ def waiting_on(root: Path, cfg: dict, pr: dict) -> str:
 def goal(
     root: Path, change: Path, scope: str = "milestone", n: int | None = None, gh=gh_json
 ) -> tuple[int, str]:
-    """(exit code, the one line) for the change's goal; `gh(root, *args)` is injectable."""
-    from verify_gate import merges_locally, project_branch, project_record
+    """(exit code, the one line) for the change's goal; `gh(root, *args)` is injectable. The mode
+    comes from the repo's installed gate: a writer of bound records (RECEIPT_FORMAT) is read by
+    its records alone; an older one by the legacy path, which is what its own readers did."""
+    if pass_proof.writer_format(root) >= 2:
+        return goal_records(root, change, scope, n, gh)
+    return goal_legacy(root, change, scope, n, gh)
+
+
+def goal_units(change: Path, cfg: dict, scope: str, n: int | None, project: str) -> list[tuple[str, str]]:
+    """(head branch, record key) of everything whose PR (or local merge) ends the goal. The one
+    place a key is named here is pass_proof.key."""
+    decisions = read_json(change / "decisions.json")
+    if scope == "project":
+        return [(project, pass_proof.key("project"))] if project else []
+    prefix = ((cfg.get("milestones") or {}).get("branchPrefix")) or "milestone/"
+    out = []
+    for b in branches(change, decisions, scope, n, cfg):
+        k = pass_proof.key("feature", b) if scope == "feature" else pass_proof.key("milestone", milestone=int(b.rsplit("-", 1)[1]), prefix=prefix)
+        out.append((b, k))
+    return out
+
+
+def goal_records(root: Path, change: Path, scope: str, n: int | None, gh) -> tuple[int, str]:
+    """The goal under a writer of bound records: only `holds()` speaks for a gate run, a PASS counts
+    only for the owner and head it is bound to, and report.json can block but never grant."""
+    from verify_gate import merges_locally, milestone_blockers, project_branch, project_record
 
     name = f"GOAL {change.name}"
     cfg = config(root) if (root / "sdlc.json").exists() else {}
+    project = project_branch(change, cfg)
+    decisions = read_json(change / "decisions.json")
+    subject = (decisions.get("project") or {}).get("slug", "") if scope == "project" else change.name
+    owner = "" if scope == "project" else project
+    cdir = str(cfg.get("changesDir", "changes"))
+    local = scope == "milestone" and bool(project) and merges_locally(cfg)
+    units = goal_units(change, cfg, scope, n, project)
+    held = {k: pass_proof.holds(root, cdir, subject, k, "", owner) for _, k in units}
+    # a newer report.json of the checkout (no record behind it: a refused run) can block, never grant
+    report = read_json((project_record(subject, root) if scope == "project" and project else change) / "verify" / "report.json")
+    newer = report.get("scope") == scope and any(
+        report.get("key") in (k, None) and str(report.get("time", "")) > str(held[k].record.get("time", ""))
+        for _, k in units
+    )
+    if newer and (m := re.fullmatch(r"VERIFY BLOCKED reason=([\w-]+)", str(report.get("result", "")))):
+        return 3, f"{name} BLOCKED reason={m.group(1)}"
+    for h in held.values():  # the newest run of any unit says blocked: stop and ask
+        if m := re.fullmatch(r"VERIFY BLOCKED reason=([\w-]+)", h.result if h.verdict == "blocked" else ""):
+            return 3, f"{name} BLOCKED reason={m.group(1)}"
+    gate_missing: list[str] = []
+    pr_missing: list[str] = []
+    first = next((h.first for h in held.values() if h.first), "")
+    last = ""  # the gated head the DONE line names
+    if not units:
+        pr_missing.append("no-project-branch" if scope == "project" else f"no-branch-for-{scope}-{n}")
+    if local:
+        into = git(root, "rev-parse", "--verify", "--quiet", f"{project}^{{commit}}")
+        merges = Merges(root, into) if into else None
+        prefix = ((cfg.get("milestones") or {}).get("branchPrefix")) or "milestone/"
+        mslug = (decisions.get("milestone") or {}).get("slug") or slug_of(change.name)
+        count = planned(change)
+        for b, k in units:
+            i = int(k.split("-")[1])
+            h = held[k]
+            tip = git(root, "rev-parse", "--verify", "--quiet", f"{b}^{{commit}}")
+            if not h.gated:  # no bound PASS: only a milestone merged before the first record stands
+                merged_at = merges.first_with(tip) if merges and tip else ""
+                if not (h.first and merged_at and before(merged_at, h.first)):
+                    gate_missing.append(f"receipt-not-merged:{i}" if merged_at or h.present else f"merge-missing:{b}")
+                continue
+            last = h.gated
+            if not (merges and merges.has(h.gated, into)):
+                gate_missing.append(f"receipt-not-merged:{i}")
+                continue
+            if tip:  # the branch is still there: its tip is what the gate must still cover
+                if not merges.has(tip, into):
+                    gate_missing.append(f"merge-missing:{b}")
+                elif not h.at(tip):
+                    gate_missing.append(f"gate-sha-not-tip:{b}")  # code, criteria or evidence moved
+                continue
+            # every later milestone's own gated head (its branch is cut from the project, so its merge holds this one too)
+            later = [
+                g
+                for j in range(i + 1, count + 1)
+                if (g := (held.get(f"milestone-{j}") or pass_proof.holds(root, cdir, subject, f"milestone-{j}", "", owner)).gated)
+            ]
+            merged, _ = merges.brought(h.gated, i, later, f"{prefix}{mslug}")
+            if not merged:
+                gate_missing.append(f"receipt-not-merged:{i}")  # a fast-forward or never merged
+            elif not h.at(merged):
+                gate_missing.append(f"gate-sha-not-tip:{b}")
+        units = []
+    prs = []
+    for b, k in units:
+        found = gh(
+            root,
+            *("pr", "list", "--head", b, "--state", "all", "--limit", "1"),
+            *("--json", "number,headRefOid,state,autoMergeRequest,mergedAt,baseRefName,labels"),
+        )
+        if found is None:
+            return 1, f"{name} OPEN gh-unavailable"
+        if not found:
+            pr_missing.append(f"no-pr:{b}")
+            if not held[k].gated:
+                gate_missing.append(f"{scope}-gate-pass")
+            continue
+        pr = found[0]
+        merged = pr.get("state") == "MERGED" or bool(pr.get("mergedAt"))
+        armed = pr.get("state") == "OPEN" and bool(pr.get("autoMergeRequest"))
+        if pr.get("baseRefName") != parent_of(change, cfg, scope, b):
+            pr_missing.append(f"pr-{pr['number']}-wrong-base")  # first: arming it would merge elsewhere
+        if not (merged or armed):
+            pr_missing.append(f"pr-{pr['number']}-{waiting_on(root, cfg, pr)}")
+        prs.append((pr, "merged" if merged else "armed"))
+        h = held[k].at(pr.get("headRefOid", ""))
+        if h:
+            last = h.gated
+        elif held[k].gated:
+            pr_missing.append(f"gate-sha-not-pr-{pr['number']}-head")
+        elif not (merged and held[k].first and before(str(pr.get("mergedAt") or ""), held[k].first)):
+            gate_missing.append(f"{scope}-gate-pass")  # nobody gated it, and it did not merge before the first record
+    if scope == "milestone":
+        if blocker := milestone_blockers(change):  # the gate's own record rules, one definition
+            pr_missing.append(blocker[0])
+    missing = list(dict.fromkeys(gate_missing + pr_missing))
+    if missing:
+        return 1, f"{name} OPEN " + ",".join(missing)
+    if local:
+        return 0, f"{name} DONE merged={project} gate={last or 'none'}"
+    pr, state = prs[-1]
+    return 0, f"{name} DONE pr={pr['number']} state={state} gate={last or 'none'}"
+
+
+def goal_legacy(root: Path, change: Path, scope: str, n: int | None, gh) -> tuple[int, str]:
+    """The goal under an older writer (no RECEIPT_FORMAT): what its own status check did. The
+    checkout's report.json says whether the scope passed (a numbered milestone: its own old
+    milestone-<n>.json receipt, read by pass_proof like every record), and a local milestone is
+    done by its receipt or its merged branch."""
+    from verify_gate import merges_locally, milestone_blockers, project_branch, project_record
+
+    name = f"GOAL {change.name}"
+    cfg = config(root) if (root / "sdlc.json").exists() else {}
+    cdir = str(cfg.get("changesDir", "changes"))
     project = project_branch(change, cfg)
     subject = change.name
     folder = change
     if scope == "project":
         subject = (read_json(change / "decisions.json").get("project") or {}).get("slug", "")
         folder = project_record(subject, root) if project else change
-    # pass_proof is the one reader: a change with receipts is decided by them alone (the newest run
-    # of each milestone, a failed one too), and report.json is read only under the LEGACY RULE, for
-    # a change with no receipt at all. Each receipt is read once, the git dir resolved once.
-    shared = pass_proof.has_receipts(root, subject)
-    got: dict[int, dict] = {}
-    if scope == "milestone":
-        for i in [n] if n else range(1, planned(change) + 1):
-            if found := read_receipt(root, change, i, shared):
-                got[i] = found
-    if shared:
-        report = got.get(n or 0, {}) if scope == "milestone" else pass_proof.read_receipt(root, subject, scope, 0)
-    else:
-        report = read_json(folder / "verify" / "report.json")
-        if scope == "milestone" and n:  # milestone n's own record, not whichever gate ran last
-            report = got.get(n) or report
+
+    def own(i: int | str):  # milestone i's old receipt: the Hold, whose .record is it
+        got = pass_proof.holds(root, cdir, subject, f"milestone-{i}", "", None)
+        old = read_json(change / "verify" / f"milestone-{i}.json")  # where the gate wrote it before 3.20.1
+        ok = (
+            old.get("scope") == "milestone"
+            and str(old.get("milestone")) == str(i)
+            and old.get("change") == change.name
+            and re.fullmatch(rf"VERIFY PASS milestone {re.escape(change.name)} \w+", str(old.get("result", "")))
+        )
+        return got if got.present or not ok else pass_proof.Hold("", "pass", {**old, "valid": True}, "", True)
+
+    report = read_json(folder / "verify" / "report.json")
+    if scope == "milestone" and n:  # milestone n's own receipt, not whichever gate ran last
+        mine = own(n)
+        report = mine.record if mine.record else report
     result = str(report.get("result", "")) if report.get("scope") == scope else ""
     blocked = re.fullmatch(r"VERIFY BLOCKED reason=([\w-]+)", result)
     if blocked:
         return 3, f"{name} BLOCKED reason={blocked.group(1)}"
-    passed = (
-        None
-        if report.get("valid") is False
-        else re.fullmatch(rf"VERIFY PASS {scope} {re.escape(subject)} (\w+)", result)
-    )
-    receipts = got if scope == "milestone" and not n else {}  # every milestone's own record
-    for r in receipts.values():  # the newest run of any milestone says blocked: stop and ask
-        if verdict := re.fullmatch(r"VERIFY BLOCKED reason=([\w-]+)", str(r.get("result", ""))):
-            return 3, f"{name} BLOCKED reason={verdict.group(1)}"
-    missing = [] if passed or receipts else [f"{scope}-gate-pass"]
+    passed = re.fullmatch(rf"VERIFY PASS {scope} {re.escape(subject)} (\w+)", result)
+    missing = [] if passed else [f"{scope}-gate-pass"]
     local = scope == "milestone" and project and merges_locally(cfg)
-    last_sha = ""  # the gated head the local DONE line names
     if local:  # no PR: the gated head must be merged into the local project branch
         names = []
         into = git(root, "rev-parse", "--verify", "--quiet", f"{project}^{{commit}}")
         if passed and not contains(root, passed.group(1), into):
             missing.append(f"gate-not-merged-into-{project}")
-        last_sha = passed.group(1) if passed else ""
-        # each planned milestone is done by its own receipt, whose gated head is in the project
-        # branch; the branch merge is the fallback for a milestone merged before receipts existed
+        # report.json holds the last gate run only: each planned milestone is done by its own
+        # receipt, whose gated head is in the project branch; the branch merge is the fallback
         if planned(change):
             for b in branches(change, read_json(change / "decisions.json"), scope, n, cfg):
                 i = b.rsplit("-", 1)[1]
-                receipt = got.get(int(i), {})
+                receipt = own(i)
                 tip = git(root, "rev-parse", "--verify", "--quiet", f"{b}^{{commit}}")
-                if receipt:
-                    gated = str(receipt.get("sha", ""))
-                    ok = receipt.get("valid") and receipt.get("verdict") == "pass"
-                    if not (ok and contains(root, gated, into)):
+                if receipt.present:
+                    ok = receipt.verdict == "pass" and receipt.record.get("valid")
+                    if not (ok and contains(root, str(receipt.record.get("sha", "")), into)):
                         missing.append(f"receipt-not-merged:{i}")
                         continue
-                    last_sha = gated
-                    if not tip:  # the branch is gone: what merged it is the project's merge commit
-                        merged = merged_tip(root, gated, into)
-                        if not merged:
-                            missing.append(f"receipt-not-merged:{i}")
-                        elif not same_head(root, cfg, gated, merged):
-                            missing.append(f"gate-sha-not-tip:{b}")  # code, criteria or evidence moved
+                    if not tip:  # the branch is gone: the receipt stands in for it
                         continue
                 if not contains(root, tip, into):  # no receipt, or the branch is still there
                     missing.append(f"merge-missing:{b}")
-                elif receipt and not same_head(root, cfg, str(receipt.get("sha", "")), tip):
-                    missing.append(f"gate-sha-not-tip:{b}")  # code, criteria or evidence moved
     elif scope == "project":
         names = [project] if project else []
         if not names:
@@ -382,8 +537,7 @@ def goal(
     if not names and not local and scope != "project":
         missing.append(f"no-branch-for-{scope}-{n}")
     prs = []
-    last_gate = None  # the receipt of the last milestone's PR, when it has one
-    for k, branch in enumerate(names):
+    for branch in names:
         found = gh(
             root,
             *("pr", "list", "--head", branch, "--state", "all", "--limit", "1"),
@@ -402,32 +556,17 @@ def goal(
         if not (merged or armed):
             missing.append(f"pr-{pr['number']}-{waiting_on(root, cfg, pr)}")
         prs.append((pr, "merged" if merged else "armed"))
-        mine = receipts.get(int(branch.rsplit("-", 1)[1])) if receipts else None
-        if mine:
-            if not mine.get("valid") or mine.get("verdict") != "pass":
-                missing.append("milestone-gate-pass")
-            elif not same_head(root, cfg, str(mine.get("sha", "")), pr.get("headRefOid", "")):
-                missing.append(f"gate-sha-not-pr-{pr['number']}-head")
-        elif receipts and not merged:  # nobody gated it; LEGACY RULE: merged before receipts, it stays done
-            missing.append("milestone-gate-pass")
-        if k == len(names) - 1:
-            last_gate = mine
-    if prs and passed and not last_gate and not same_head(
-        root, cfg, passed.group(1), prs[-1][0].get("headRefOid", "")
-    ):
+    if prs and passed and not same_head(root, cfg, passed.group(1), prs[-1][0].get("headRefOid", "")):
         missing.append(f"gate-sha-not-pr-{prs[-1][0]['number']}-head")
     if scope == "milestone":
-        from verify_gate import milestone_blockers  # the gate's own record rules, one definition
-
-        if blocker := milestone_blockers(change):
+        if blocker := milestone_blockers(change):  # the gate's own record rules, one definition
             missing.append(blocker[0])
     if missing:
         return 1, f"{name} OPEN " + ",".join(missing)
     if local:
-        return 0, f"{name} DONE merged={project} gate={last_sha}"
+        return 0, f"{name} DONE merged={project} gate={passed.group(1)}"
     pr, state = prs[-1]
-    gate = last_gate.get("sha", "") if last_gate else passed.group(1) if passed else pr.get("headRefOid", "")
-    return 0, f"{name} DONE pr={pr['number']} state={state} gate={gate}"
+    return 0, f"{name} DONE pr={pr['number']} state={state} gate={passed.group(1)}"
 
 
 # what is in the way, by the first missing item: (what, why, who acts, the exact step)
@@ -494,7 +633,7 @@ BLOCKS = {
     ),
     "receipt-not-merged:": (
         "milestone {n} has no passing gate receipt merged into its local project branch",
-        "its verify/milestone-{n}.json is missing, failed, or its head is not in the project branch",
+        "its gate record is missing, failed, issued for another project, or its head is not in the project branch",
         "the agent",
         "on branch milestone/<slug>-{n}: python3 scripts/verify_gate.py milestone {id}, then merge it",
     ),

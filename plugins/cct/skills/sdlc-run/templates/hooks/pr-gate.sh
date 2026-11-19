@@ -105,16 +105,15 @@ def goal_active() -> bool:
     return bool(read(transcript))
 
 
-def holds(repo_dir: Path, changes_rel: str, change: str, scope: str, n: int, head: str, owner: str | None, legacy: list[Path]) -> str:
-    """Whether a pass holds is pass_proof.py's, shared with sdlc_status.py and verify_gate.py."""
+def proof(name: str):
+    """What pass_proof.py defines (the one key, the one reader), shared with sdlc_status.py and verify_gate.py."""
     try:
-        check = helper("pass_proof").holds
+        return getattr(helper("pass_proof"), name)
     except Exception:  # a gate that cannot read the rule blocks
         block(
             "pass_proof.py is missing or broken beside pr-gate.sh.", "Run `sdlc-run adopt` to restore it.",
             source="pass_proof.py beside pr-gate.sh",
         )
-    return check(repo_dir, changes_rel, change, scope, n, head, owner, legacy)
 
 
 class Repo:
@@ -133,6 +132,7 @@ class Repo:
         self.local = (self.cfg.get("milestones") or {}).get("merge") == "local"
         self.hotfix = bool(self.cfg.get("hotfix", True))
         self.changes = self.top / self.cfg.get("changesDir", "changes")
+        self.seen: dict[tuple, list[tuple[str, dict]]] = {}  # records() per question: one scan per command
 
     def is_this(self, named: str) -> bool:
         """`--repo` is empty or names this repo (any remote's OWNER/REPO, URL or HOST/OWNER/REPO)."""
@@ -180,6 +180,8 @@ class Repo:
         (unless `live` is off) and the records committed on each of `refs` (the gated ref carries
         its own change, which the checkout receiving a merge does not hold yet). A ref's record
         wins over another worktree's copy of the same change."""
+        if (ask := (refs, live)) in self.seen:
+            return self.seen[ask]
         found = {}
         for path in self.in_changes("decisions.json") if live else []:
             try:
@@ -198,7 +200,8 @@ class Repo:
                         found[Path(name).parent.name] = json.loads(git(self.dir, "show", f"{ref}:{name}"))
                     except ValueError:
                         continue
-        return [(i, d) for i, d in found.items() if isinstance(d, dict)]
+        self.seen[ask] = [(i, d) for i, d in found.items() if isinstance(d, dict)]
+        return self.seen[ask]
 
     def matching(self, milestone: str, *refs: str, live: bool = True) -> list[tuple[str, dict]]:
         """The records whose milestone slug names this branch (milestone/<slug> or <slug>-<n>).
@@ -220,18 +223,21 @@ class Repo:
         `slug`) that still holds at `sha`, or "". A pass holds on its own commit or on a descendant
         that only records followed: writing the gate line into milestone.md must not need a second
         full gate. Another change's pass never counts; a milestone's receipt counts only for its
-        own number (the branch's -<n>: M1's never admits M2), and only for the `owner` (the project
-        branch) it was gated for when the caller names one. pass_proof.holds decides."""
+        own key (pass_proof.key: the branch's -<n>, 1 for the unnumbered milestone/<slug>; M1's never
+        admits M2), and only for the `owner` (the project branch) it was gated for when the caller
+        names one. pass_proof.holds decides."""
         if not sha:
             return ""
-        subjects = {slug} if scope == "project" else self.change_ids(branch, sha)
-        number = re.search(r"-(\d+)$", branch)
-        n = int(number[1]) if number and scope == "milestone" else 0
+        if scope == "project":
+            subjects, owner = [(slug, "")], ""  # a project record is issued for no other project
+        else:
+            subjects = [(i, (d.get("milestone") or {}).get("slug", "")) for i, d in self.matching(branch, sha)]
         rel = self.changes.relative_to(self.top).as_posix()
         legacy = self.reports(scope, slug)
-        for subject in sorted(s for s in subjects if s):
-            if gated := holds(self.dir, rel, subject, scope, n, sha, owner, legacy):
-                return gated
+        for subject, named in sorted(s for s in subjects if s[0]):
+            record = proof("key")(scope, branch, None, self.m, named)
+            if record and (gated := proof("holds")(self.dir, rel, subject, record, sha, owner, legacy)):
+                return str(gated)
         return ""
 
     def passed(

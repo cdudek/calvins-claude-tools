@@ -5,6 +5,21 @@ version warning, the **Mechanical** lines are what `adopt` does for you (it adds
 with the stack's defaults and never overwrites a value), the **Manual** lines are printed for
 the engineer. A version with no migration lines needs nothing but a re-run of `adopt`.
 
+## 3.20.4 — Fourth review round: one key, one reader, and a reader that follows the installed gate
+
+The earlier rounds fixed findings one at a time. This one makes three things true, each with a test that fails if it breaks.
+
+- **One name for a gate run's record.** A single function in `pass_proof.py` turns the branch, the scope and `--milestone` into the record's name. The gate, the PR hook and `goal` all call it, and nothing else works out a milestone number. Each feature has its own record (`feature-<branch>`), so two features no longer overwrite each other. The unnumbered `milestone/<slug>` branch and a plan with no milestone rows both mean milestone 1, so the feature-PR milestone can close. A visual run can no longer move a milestone's record to another number.
+- **One reader.** Only `pass_proof.holds()` opens a record, and the goal check calls it with the owner, the commit, the name and the change. A test fails if any other shipped script or hook reads the records folder. A record missing any field it is bound by (change, scope, name, number, owner, commit, verdict) does not count, and another project's record never counts, `goal --milestone <n>` included.
+- **The reader follows the writer, not the files.** `scripts/verify_gate.py` now says `RECEIPT_FORMAT = 2`. `goal` and the hook read that line in the repo's own copy. A gate without it (3.20.1 to 3.20.3, which `adopt --upgrade` keeps) is read the old way: `report.json` and the old `milestone-<n>.json`. A gate with it is read by its records alone, and a newer `report.json` can only block, never finish a goal. The version stamp in `sdlc.json` is used only when the gate file cannot be read.
+- **A milestone merged without a record is done only if it merged before the change's first record.** One merged later without its own PASS is never done, and the done line no longer prints a PR head as the gate commit (`gate=none` when every milestone predates records). The gate writes a marker once, with the change's first record, to tell the two apart.
+- **A deleted milestone branch is proven against the merge that brought it in.** `goal` finds the newest merge on the project branch that holds the gated commit and belongs to no later milestone, and checks that nothing but records changed after the gate. A second merge that carries a post-gate edit is not done, and a later milestone's merge cannot stand in for an earlier one. The history is listed once per poll.
+- **The gate refuses instead of guessing.** If `pass_proof.py` is too old to name the key, or a feature run is on a detached HEAD, the gate stops with `reason=env` and says what to run.
+- **The PR hook reads each change record once** per command, not twice.
+- **Build QA follows the owner's record.** An activity is skipped when `decisions.json` `skips` lists it, so a restored preset skip is checked and a waived activity is not failed. The size is only the default.
+- Mechanical: re-running `adopt` refreshes `verify_gate.py`, `pass_proof.py` and `pr-gate.sh`. `--replace scripts/verify_gate.py` now takes `pass_proof.py` along when it is an unedited kit copy.
+- Manual: a repo that keeps its own `pass_proof.py` must give it `key(...)`, `write_record(...)` and `holds(...)` (or take the kit's copy) before it takes the new `verify_gate.py`. Until a repo replaces its gate it stays on the old reader, so a goal finished by the old gate is read the old way.
+
 ## 3.20.3 — Third review round: one record of a pass, read in one place
 
 - **Every gate run writes one receipt, and only the receipt is proof.** A passed, failed or blocked run writes `<git common dir>/sdlc/receipts/<change>/<scope>-<n>.json`: the verdict, the one commit the run started on, the scope, the milestone number, the project that owns the change, the time and the checks. It is written in one piece, and the `PASS` line names the same commit. `verify/report.json` stays as something to read and counts for nothing.

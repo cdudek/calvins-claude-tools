@@ -10,10 +10,20 @@ when every file keeps its content, except that facts.md may gain one `archived_a
 line: Stage 7 requires it in that same commit, and its value must be a real date written the way
 templates/tests/test_sdlc.py accepts (YYYY-MM-DD).
 
-Which gate run counts at all is `holds()`: the one reader of the gate's receipts. Every gate run
-writes one receipt, <git-common-dir>/sdlc/receipts/<change>/<scope>-<n>.json (verify_gate.py), so
-every worktree sees it and the newest run of a (change, scope, n) is the one record. pr-gate.sh,
-sdlc_status.py and verify_gate.py all ask `holds()`; report.json is a human-readable artifact.
+Three rules keep the gate (the writer, scripts/verify_gate.py), the hook and the status check
+(the readers) from drifting apart; sdlc_status.py ships in the plugin and updates with it, the
+other two are copies in each repo that change only when someone runs adopt.
+
+1. ONE KEY. `key()` maps (scope, branch, explicit milestone) to the record key, the file stem
+   <git-common-dir>/sdlc/receipts/<change>/<key>.json. The gate, the hook and the status check all
+   call it; nothing else derives a milestone number or a record name.
+2. ONE READER. `holds()` is the only reader of those files, and `write_record()` the only writer.
+   A record must carry every binding field (change, scope, key, number, owner, sha, verdict): one
+   that lacks any does not hold. The newest run of a key replaces the one before it.
+3. THE READER'S MODE COMES FROM THE WRITER. `writer_format()` reads RECEIPT_FORMAT from the repo's
+   own scripts/verify_gate.py (the sdlcVersion stamp in sdlc.json only when that file cannot be
+   read). A writer without the constant is older: only the legacy path applies (report.json, and
+   the old milestone-<n>.json receipt), exactly what that writer's own readers accepted.
 """
 
 from __future__ import annotations
@@ -21,6 +31,7 @@ from __future__ import annotations
 import datetime as dt
 import functools
 import json
+import os
 import re
 import subprocess
 from pathlib import Path
@@ -28,6 +39,8 @@ from pathlib import Path
 LOCKED = {"facts.md", "done.json", "lock.json"}
 EVIDENCE_FILES = {"marks.json"}
 EVIDENCE_DIRS = {"asks", "evidence", "shots"}
+RECEIPT_FORMAT_RE = re.compile(r"^RECEIPT_FORMAT\s*=\s*(\d+)\s*$", re.M)
+FIRST = ".first"  # written once, with the first record of a change; never read by the writer
 
 
 @functools.cache
@@ -39,94 +52,205 @@ def _common(repo: str) -> str:
     return out.stdout.decode("utf-8", "replace").strip() if out.returncode == 0 else ""
 
 
-def receipt_dir(repo: Path, change: str) -> Path:
+@functools.cache
+def _top(repo: str) -> str:
+    out = subprocess.run(["git", "-C", repo, "rev-parse", "--show-toplevel"], capture_output=True)
+    return out.stdout.decode("utf-8", "replace").strip() or repo if out.returncode == 0 else repo
+
+
+def slug_of(name: str) -> str:
+    """A change folder's slug: the id without its date and ticket prefix."""
+    return re.sub(r"^[A-Z][A-Z0-9]+-\d+-", "", re.sub(r"^\d{4}-\d{2}-\d{2}-", "", name))
+
+
+def key(
+    scope: str, branch: str = "", milestone: int | None = None, prefix: str = "milestone/", slug: str = ""
+) -> str | None:
+    """The record key of a gate run, or None when nothing names one (a detached HEAD). A milestone
+    is the explicit number, else the branch's `-<n>`; the unnumbered branch `<prefix><slug>` is
+    milestone 1, as is a plan without a Milestones row. A run on some other branch writes
+    `milestone-0`, a slot no reader counts. A feature is its branch's name (one slot per feature),
+    a project has one."""
+    if scope == "project":
+        return "project-0"
+    if scope == "feature":
+        name = re.sub(r"[^A-Za-z0-9._-]+", "-", branch).strip("-.")
+        return f"feature-{name}" if name else None
+    if scope != "milestone":
+        return None
+    if milestone is not None:
+        return f"milestone-{int(milestone)}"
+    name = branch[len(prefix) :] if prefix and branch.startswith(prefix) else ""
+    if slug and name == slug:
+        return "milestone-1"
+    numbered = (slug and re.fullmatch(re.escape(slug) + r"-(\d+)", name)) or re.fullmatch(r".+-(\d+)", name)
+    return f"milestone-{int(numbered[1])}" if numbered else "milestone-0" if branch else None
+
+
+def _dir(repo: Path, change: str) -> Path:
     return Path(_common(str(repo)) or ".git") / "sdlc" / "receipts" / change
 
 
-def receipt_path(repo: Path, change: str, scope: str, n: int) -> Path:
-    """verify_gate.py writes here; the layout is written down twice (the gate lives in scripts/,
-    this file in the hooks) and test_verify_gate.py holds the two together."""
-    return receipt_dir(repo, change) / f"{scope}-{n}.json"
+def write_record(repo: Path, change: str, record_key: str, data: dict) -> None:
+    """The gate's one write: the record under its key, replaced whole (a reader sees the old record
+    or the new one), after the change's FIRST marker exists (created once, never read here)."""
+    folder = _dir(repo, change)
+    folder.mkdir(parents=True, exist_ok=True)
+    try:
+        with open(folder / FIRST, "x", encoding="utf-8") as marker:
+            marker.write(str(data.get("time", "")))
+    except FileExistsError:
+        pass
+    path = folder / f"{record_key}.json"
+    tmp = path.with_name(f".{path.name}.{os.getpid()}.tmp")
+    tmp.write_text(json.dumps(data, indent=2) + "\n", encoding="utf-8")
+    os.replace(tmp, path)
 
 
-def has_receipts(repo: Path, change: str) -> bool:
-    return next(receipt_dir(repo, change).glob("*.json"), None) is not None
+def writer_format(repo: Path) -> int:
+    """2 when the repo's installed gate writes bound records (RECEIPT_FORMAT in its
+    scripts/verify_gate.py), else 1. The sdlcVersion stamp is the fallback only for a gate file
+    that cannot be read: adopt restamps it on a plain --upgrade, which keeps the old gate."""
+    top = Path(_top(str(repo)))
+    try:
+        found = RECEIPT_FORMAT_RE.search((top / "scripts" / "verify_gate.py").read_text(encoding="utf-8"))
+        return int(found[1]) if found else 1
+    except OSError:
+        pass
+    try:
+        stamp = json.loads((top / "sdlc.json").read_text(encoding="utf-8")).get("sdlcVersion", "")
+        return 2 if tuple(int(x) for x in re.findall(r"\d+", str(stamp))[:3]) >= (3, 20, 4) else 1
+    except (OSError, ValueError, AttributeError):
+        return 1
 
 
-def normalize(data: object, change: str, scope: str, n: int) -> dict:
-    """A receipt (or a report an older gate wrote as one) with `verdict` (pass, fail, blocked) and
-    `valid` added; {} for nothing. Valid: it names this change, scope and number, and a pass line
-    carries the record's own sha. Older records have no `verdict`: it comes from `result`."""
-    if not isinstance(data, dict) or not data:
+def _json(path: Path) -> dict:
+    try:
+        data = json.loads(path.read_text(encoding="utf-8"))
+    except (OSError, ValueError):
+        return {}
+    return data if isinstance(data, dict) else {}
+
+
+def _normalize(data: dict, change: str, scope: str, record_key: str, n: int, strict: bool) -> dict:
+    """The record with `verdict` and `valid`. Strict (a format-2 writer): every binding field must
+    be present and right. Lenient (an older writer's receipt): scope, change and milestone must
+    match, the verdict comes from `result`, and an owner counts only when the record names one."""
+    if not data:
         return {}
     result = str(data.get("result", ""))
-    verdict = data.get("verdict") or (
-        "pass" if result.startswith("VERIFY PASS") else "blocked" if result.startswith("VERIFY BLOCKED") else "fail"
-    )
+    if strict:
+        verdict = data.get("verdict")
+        bound = (
+            verdict in ("pass", "fail", "blocked")
+            and data.get("key") == record_key
+            and "owner" in data
+            and isinstance(data.get("sha"), str)
+            and bool(data["sha"])
+        )
+    else:
+        verdict = (
+            "pass" if result.startswith("VERIFY PASS") else "blocked" if result.startswith("VERIFY BLOCKED") else "fail"
+        )
+        bound = True
+    if scope == "milestone":
+        bound = bound and "milestone" in data and str(data["milestone"]) == str(n)
     valid = (
-        data.get("scope") == scope
-        and data.get("change", change) == change
-        and str(data.get("milestone", n)) == str(n)
+        bound
+        and data.get("scope") == scope
+        and data.get("change") == change
         and (verdict != "pass" or result == f"VERIFY PASS {scope} {change} {data.get('sha')}")
     )
     return {**data, "verdict": verdict, "valid": bool(valid)}
 
 
-def read_receipt(repo: Path, change: str, scope: str, n: int) -> dict:
-    """The receipt of (change, scope, n), normalized; {} when the gate never ran it."""
-    try:
-        data = json.loads(receipt_path(repo, change, scope, n).read_text(encoding="utf-8"))
-    except (OSError, ValueError):
-        return {}
-    return normalize(data, change, scope, n)
+class Hold(str):
+    """The gated sha when a pass holds at the head asked about, "" when none does. What else the
+    reader found is on the value, so the caller never reads a record itself:
+    .verdict    the newest record's verdict (pass, fail, blocked) when it is bound to this change,
+                key and owner, else ""
+    .result     that record's last line
+    .gated      the record's own sha when it is a bound PASS, whether or not it holds at the head
+    .first      the time of the change's first record ("" when the new writer never ran for it)
+    .record     the record itself ({} when none, or when it is not bound to this caller)
+    .present    a record file exists for the key, bound or not
+    .at(head)   the same record judged at another head (one read per key per poll)"""
+
+    verdict: str
+    result: str
+    gated: str
+    first: str
+    record: dict
+    present: bool
+    at: object
+
+    def __new__(cls, sha: str, verdict: str, found: dict, first: str, present: bool = False) -> Hold:
+        self = super().__new__(cls, sha)
+        self.verdict, self.record, self.first, self.present = verdict, found, first, present
+        self.result = str(found.get("result", ""))
+        self.gated = str(found.get("sha", "")) if verdict == "pass" else ""
+        return self
 
 
 def holds(
     repo: Path,
     changes_dir: str,
     change: str,
-    scope: str,
-    n: int,
+    record_key: str,
     head: str,
     owner: str | None = None,
     legacy: tuple[Path, ...] | list[Path] = (),
-) -> str:
-    """The gated sha of the pass that holds at `head` for this change, scope and number (the
-    milestone number; 0 for any other scope), or "". `owner` is the project branch the caller
-    needs the pass to have been for ("" for none); None does not ask.
+) -> Hold:
+    """The gated sha of the pass that holds at `head` for this change and key (`key()`), or "". The
+    record must have been issued for `owner`, the project branch the caller needs ("" for none);
+    None does not ask. With no `head` the answer is "" and the record's verdict is still reported.
 
-    A change with receipts is decided by its receipt alone: the newest run of (change, scope, n),
-    a failed or blocked one too, and a milestone without a number has no receipt that counts.
-    LEGACY RULE: a change with no receipt at all (gated before 3.20.3) still reads the old
-    report.json files in `legacy`; the first receipt the change gets ends that for good."""
-    if not head:
-        return ""
-    if has_receipts(repo, change):
-        if scope == "milestone" and n < 1:
-            return ""
-        found = read_receipt(repo, change, scope, n)
-        if found.get("verdict") != "pass" or not found["valid"]:
-            return ""
-        # a receipt from before 3.20.3 names no owner: only the caller's own record check speaks
-        if owner is not None and found.get("owner", owner) != owner:
-            return ""
-        gated = str(found.get("sha", ""))
-        return gated if proves(repo, changes_dir, gated, head) else ""
-    for path in legacy:
-        try:
-            data = json.loads(path.read_text(encoding="utf-8"))
-        except (OSError, ValueError):
-            continue
-        gated = data.get("sha") or ""
-        if not gated or data.get("scope", scope) != scope:
-            continue
-        if scope == "milestone" and "milestone" in data and str(data["milestone"]) != str(n or ""):
-            continue
-        if str(data.get("result", "")).startswith(f"VERIFY PASS {scope} {change} ") and proves(
-            repo, changes_dir, gated, head
-        ):
-            return gated
-    return ""
+    A format-2 writer is decided by its record alone: the newest run of the key, a failed or
+    blocked one too. LEGACY (an older writer): the old milestone-<n>.json receipt decides when
+    there is a valid one; otherwise the report.json files in `legacy` (a pass whose result line
+    names this scope and change, and its milestone when it records one)."""
+    repo = Path(repo)
+    scope = record_key.split("-", 1)[0]
+    n = int(record_key.split("-", 1)[1]) if scope == "milestone" and record_key.split("-", 1)[1].isdigit() else 0
+    strict = writer_format(repo) >= 2
+    marker = _dir(repo, change) / FIRST
+    first = marker.read_text(encoding="utf-8").strip() if marker.is_file() else ""
+    found = _normalize(_json(_dir(repo, change) / f"{record_key}.json"), change, scope, record_key, n, strict)
+    mine = bool(found.get("valid")) and (owner is None or found.get("owner", owner) == owner)
+
+    def decide(at: str) -> Hold:
+        if scope == "milestone" and n < 1:  # no number, no milestone pass
+            return _with(Hold("", "", {}, first, False), decide)
+        done = Hold("", found["verdict"], found, first, True) if mine else Hold("", "", {}, first, bool(found))
+        done.at = decide
+        if (found.get("valid") and not mine) or not at:
+            return done  # another project's record decides nothing here, and no report may stand in
+        if mine:
+            if found["verdict"] != "pass":
+                return done
+            ok = proves(repo, changes_dir, done.gated, at)
+            return _with(Hold(done.gated if ok else "", "pass", found, first, True), decide)
+        if strict:
+            return done
+        for path in legacy:
+            data = _json(path)
+            gated = data.get("sha") or ""
+            if not gated or data.get("scope", scope) != scope:
+                continue
+            if scope == "milestone" and "milestone" in data and str(data["milestone"]) != str(n or ""):
+                continue
+            if str(data.get("result", "")).startswith(f"VERIFY PASS {scope} {change} ") and proves(
+                repo, changes_dir, gated, at
+            ):
+                return _with(Hold(gated, "pass", data, first, bool(found)), decide)
+        return done
+
+    return decide(head)
+
+
+def _with(hold: Hold, decide) -> Hold:
+    hold.at = decide
+    return hold
 
 
 def _git(repo: Path, *args: str) -> subprocess.CompletedProcess[bytes]:

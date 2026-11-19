@@ -733,6 +733,7 @@ def test_a_newer_gate_beside_an_older_marks_py_still_approves_audits_and_lints_F
     lint and audit still run."""
     old = tmp_path / "scripts"
     old.mkdir()
+    _install_proof(tmp_path)
     for f in GATE.parent.glob("*.py"):
         (old / f.name).write_text(f.read_text())
     (old / "marks.py").write_text("def sessions(change):\n    return []\n")
@@ -1281,6 +1282,7 @@ def test_a_kept_legacy_marks_py_blocks_the_milestone_gate_and_names_the_upgrade_
     an empty inventory that lets an unrendered bundle pass."""
     old = tmp_path / "scripts"
     old.mkdir()
+    _install_proof(tmp_path)
     for f in GATE.parent.glob("*.py"):
         (old / f.name).write_text(f.read_text())
     (old / "marks.py").write_text("def sessions(change):\n    return []\n")
@@ -1307,6 +1309,7 @@ def test_a_kept_legacy_marks_py_blocks_only_a_milestone_with_design_inputs(tmp_p
     """A code-only milestone has nothing for the old marks.py to miss: it passes."""
     old = tmp_path / "scripts"
     old.mkdir()
+    _install_proof(tmp_path)
     for f in GATE.parent.glob("*.py"):
         (old / f.name).write_text(f.read_text())
     (old / "marks.py").write_text("def sessions(change):\n    return []\n")
@@ -1337,8 +1340,14 @@ def test_an_open_question_inside_a_gherkin_block_still_blocks_approval_M5(tmp_pa
 
 
 # 3.20.3: one receipt per gate run, the one authority (hooks/pass_proof.py reads it).
-def _receipt_of(repo: Path, scope: str, n: int) -> dict:
-    return json.loads((_common(repo) / "sdlc" / "receipts" / ID / f"{scope}-{n}.json").read_text())
+def _receipt_of(repo: Path, key: str) -> dict:
+    return json.loads((_common(repo) / "sdlc" / "receipts" / ID / f"{key}.json").read_text())
+
+
+def _install_proof(top: Path) -> None:
+    """hooks/pass_proof.py where an adopted repo keeps it: the gate takes its keys and writes its records through it."""
+    (top / ".claude" / "hooks").mkdir(parents=True, exist_ok=True)
+    (top / ".claude" / "hooks" / "pass_proof.py").write_text((GATE.parent.parent / "hooks" / "pass_proof.py").read_text())
 
 
 def test_a_failed_and_a_blocked_run_write_a_receipt_that_replaces_the_pass_C1(tmp_path: Path) -> None:
@@ -1346,12 +1355,12 @@ def test_a_failed_and_a_blocked_run_write_a_receipt_that_replaces_the_pass_C1(tm
     _merge_milestone_one_locally(repo)
     _git(repo, "merge", "-q", "--no-edit", "project/big")
     assert _gate(repo, "milestone", ID).returncode == 0
-    assert _receipt_of(repo, "milestone", 2)["verdict"] == "pass"
+    assert _receipt_of(repo, "milestone-2")["verdict"] == "pass"
     cfg = json.loads((repo / "sdlc.json").read_text())
     (repo / "sdlc.json").write_text(json.dumps({**cfg, "checks": {"milestone": ["false"]}}))
     (repo / "changes" / ID / "lock.json").unlink()
     assert _gate(repo, "milestone", ID).returncode == 3  # not approved: blocked, and recorded
-    blocked = _receipt_of(repo, "milestone", 2)
+    blocked = _receipt_of(repo, "milestone-2")
     assert blocked["verdict"] == "blocked" and blocked["result"] == "VERIFY BLOCKED reason=not-approved"
     assert blocked["owner"] == "project/big" and blocked["time"] and blocked["milestone"] == 2
 
@@ -1367,7 +1376,7 @@ def test_a_failing_check_leaves_a_fail_receipt_C1(tmp_path: Path) -> None:
     _git(repo, "add", ".")
     _git(repo, "commit", "-qm", "approved again")
     assert _gate(repo, "milestone", ID).returncode == 1
-    got = _receipt_of(repo, "milestone", 2)
+    got = _receipt_of(repo, "milestone-2")
     assert got["verdict"] == "fail" and got["checks"] and got["sha"]
 
 
@@ -1382,7 +1391,7 @@ def test_the_receipt_and_the_report_name_the_head_the_gate_started_on_C2(tmp_pat
     r = _gate(repo, "feature", ID)
     assert _last(r) == f"VERIFY FAIL feature {ID} check=moved"
     report = json.loads((repo / "changes" / ID / "verify" / "report.json").read_text())
-    assert report["sha"] == start and _receipt_of(repo, "feature", 0)["sha"] == start
+    assert report["sha"] == start and _receipt_of(repo, "feature-master")["sha"] == start
 
 
 def test_a_detached_milestone_run_names_its_milestone_or_is_refused_C3(tmp_path: Path) -> None:
@@ -1394,7 +1403,7 @@ def test_a_detached_milestone_run_names_its_milestone_or_is_refused_C3(tmp_path:
     assert r.returncode == 3 and _last(r) == "VERIFY BLOCKED reason=env" and "--milestone" in r.stdout
     assert not (_common(repo) / "sdlc" / "receipts" / ID).exists()  # no record without a subject
     assert _gate(repo, "milestone", ID, "--milestone", "2").returncode == 0
-    got = _receipt_of(repo, "milestone", 2)
+    got = _receipt_of(repo, "milestone-2")
     assert got["verdict"] == "pass" and got["milestone"] == 2
 
 
@@ -1406,14 +1415,23 @@ def test_an_explicit_milestone_that_the_branch_contradicts_is_refused_C3(tmp_pat
     assert r.returncode == 3 and "milestone 2" in r.stdout
 
 
-def test_the_writer_and_the_reader_agree_on_the_receipt_path_C1(tmp_path: Path) -> None:
-    sys.path.insert(0, str(SKILL / "templates" / "hooks"))
-    sys.path.insert(0, str(GATE.parent))
+def test_the_writer_and_the_reader_agree_on_the_record_C1(tmp_path: Path) -> None:
+    """The gate in the repo writes through pass_proof, and holds() finds that record at the head."""
+    sys.path.insert(0, str(GATE.parent.parent / "hooks"))
     import pass_proof
-    import verify_gate
 
     repo = _repo(tmp_path, ["true"])
-    assert verify_gate.receipt_path(ID, "milestone", 3, repo) == pass_proof.receipt_path(repo, ID, "milestone", 3)
+    (repo / "scripts").mkdir()
+    for f in GATE.parent.glob("*.py"):  # the installed writer (RECEIPT_FORMAT) and its siblings
+        (repo / "scripts" / f.name).write_text(f.read_text())
+    _install_proof(repo)
+    _git(repo, "add", ".")
+    _git(repo, "commit", "-qm", "installed")
+    _approve(repo)
+    head = subprocess.run(["git", "rev-parse", "HEAD"], cwd=repo, capture_output=True, text=True).stdout.strip()
+    r = subprocess.run([sys.executable, "scripts/verify_gate.py", "feature", ID], cwd=repo, capture_output=True, text=True, env=_env())
+    assert _last(r) == f"VERIFY PASS feature {ID} {head}", r.stdout
+    assert pass_proof.holds(repo, "changes", ID, pass_proof.key("feature", "master"), head, "") == head
 
 
 def test_an_open_question_with_angle_brackets_is_not_the_placeholder_M5(tmp_path: Path) -> None:
@@ -1425,3 +1443,101 @@ def test_an_open_question_with_angle_brackets_is_not_the_placeholder_M5(tmp_path
     assert r.returncode == 1 and "facts.md: an open [NEEDS CLARIFICATION]" in r.stdout
     facts.write_text("---\nstatus: approved\n---\n\n" + scenario.format("[NEEDS CLARIFICATION: ...]"))
     assert _gate(repo, "lint", ID).returncode == 0  # the template's own two placeholders stay free
+
+
+# 3.20.4: one key function. The gate, the hook and the status check name a record the same way.
+def _keys(repo: Path) -> list[str]:
+    folder = _common(repo) / "sdlc" / "receipts" / ID
+    return sorted(p.name for p in folder.glob("*.json")) if folder.exists() else []
+
+
+def _visual_args(tmp_path: Path) -> tuple[str, ...]:
+    checker = tmp_path / "ok.py"
+    checker.write_text("import sys\nsys.exit(0)\n")
+    (tmp_path / "run").mkdir(exist_ok=True)
+    return ("--visual-check", str(checker), "--visual-run", str(tmp_path / "run"))
+
+
+def test_a_visual_run_cannot_move_the_record_of_a_milestone_K1(tmp_path: Path) -> None:
+    """The visual loop used the variable that names the record: M2 with one visual run wrote milestone-1."""
+    repo = _local_repo(tmp_path)
+    _merge_milestone_one_locally(repo)
+    _git(repo, "merge", "-q", "--no-edit", "project/big")
+    assert _gate(repo, "milestone", ID, *_visual_args(tmp_path)).returncode == 0
+    assert _keys(repo) == ["milestone-2.json"]
+
+
+def test_a_visual_run_leaves_a_feature_record_under_its_own_key_K1(tmp_path: Path) -> None:
+    repo = _repo(tmp_path, ["true"])
+    _approve(repo)
+    assert _gate(repo, "feature", ID, *_visual_args(tmp_path)).returncode == 0
+    assert _keys(repo) == ["feature-master.json"]
+
+
+def test_each_feature_has_its_own_record_K1(tmp_path: Path) -> None:
+    repo = _repo(tmp_path, ["true"])
+    _approve(repo)
+    for branch in ("feat/cart", "feat/pay"):
+        _git(repo, "checkout", "-q", "-B", branch, "master")
+        assert _gate(repo, "feature", ID).returncode == 0
+    assert _keys(repo) == ["feature-feat-cart.json", "feature-feat-pay.json"]  # no shared feature-0
+
+
+def test_an_unnumbered_milestone_branch_is_milestone_1_K1(tmp_path: Path) -> None:
+    repo = _local_repo(tmp_path, None)
+    _git(repo, "checkout", "-qb", "milestone/trial")  # the feature-PR flow's branch: no number
+    assert _gate(repo, "milestone", ID).returncode == 0
+    assert _keys(repo) == ["milestone-1.json"] and _receipt_of(repo, "milestone-1")["milestone"] == 1
+
+
+def test_a_slug_that_ends_in_digits_is_not_a_milestone_number_K1(tmp_path: Path) -> None:
+    sys.path.insert(0, str(GATE.parent.parent / "hooks"))
+    import pass_proof
+
+    assert pass_proof.key("milestone", "milestone/q4-2026", None, "milestone/", "q4-2026") == "milestone-1"
+    assert pass_proof.key("milestone", "milestone/q4-2026-3", None, "milestone/", "q4-2026") == "milestone-3"
+
+
+def test_the_gate_refuses_when_its_pass_proof_cannot_name_a_key_K1(tmp_path: Path) -> None:
+    """A repo whose pass_proof.py is older than the gate (a `keep` entry): refuse, never derive a key."""
+    old = tmp_path / "scripts"
+    old.mkdir()
+    for f in GATE.parent.glob("*.py"):
+        (old / f.name).write_text(f.read_text())
+    (tmp_path / ".claude" / "hooks").mkdir(parents=True)
+    (tmp_path / ".claude" / "hooks" / "pass_proof.py").write_text("def holds(*a):\n    return ''\n")
+    repo = _repo(tmp_path, ["true"])
+    _approve(repo)
+    r = subprocess.run(
+        [sys.executable, str(old / "verify_gate.py"), "feature", ID], cwd=repo, capture_output=True, text=True, env=_env()
+    )
+    assert r.returncode == 3 and _last(r) == "VERIFY BLOCKED reason=env" and "pass_proof.py" in r.stdout
+    assert _keys(repo) == []
+
+
+def test_a_detached_feature_run_is_refused_K1(tmp_path: Path) -> None:
+    repo = _repo(tmp_path, ["true"])
+    _approve(repo)
+    _git(repo, "checkout", "-q", "--detach")
+    r = _gate(repo, "feature", ID)
+    assert r.returncode == 3 and _keys(repo) == []
+
+
+def test_the_report_names_its_key_and_time_K1(tmp_path: Path) -> None:
+    repo = _repo(tmp_path, ["true"])
+    _approve(repo)
+    assert _gate(repo, "feature", ID).returncode == 0
+    report = json.loads((repo / "changes" / ID / "verify" / "report.json").read_text())
+    record = _receipt_of(repo, "feature-master")
+    assert report["key"] == record["key"] == "feature-master" and report["time"] == record["time"]
+    assert record["owner"] == "" and record["scope"] == "feature" and record["change"] == ID
+
+
+def test_the_first_record_marker_is_written_once_K4(tmp_path: Path) -> None:
+    repo = _repo(tmp_path, ["true"])
+    _approve(repo)
+    assert _gate(repo, "feature", ID).returncode == 0
+    marker = _common(repo) / "sdlc" / "receipts" / ID / ".first"
+    first = marker.read_text()
+    assert first and _gate(repo, "feature", ID).returncode == 0
+    assert marker.read_text() == first  # the second run left it
