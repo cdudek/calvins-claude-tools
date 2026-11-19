@@ -442,3 +442,32 @@ def test_installed_copies_match_the_template() -> None:
     ):
         if copy.exists():
             assert copy.read_bytes() == template, copy
+
+
+def test_the_shipped_templates_have_the_columns_consistency_reads(repo: Path) -> None:
+    tpl = SKILL / "templates/change"
+    c = repo / "changes" / "2026-11-20-x"
+    c.mkdir(parents=True)
+    (c / "decisions.json").write_text('{"layout": 4}')
+    fill = {
+        "{{CHANGE}}": c.name, "{{LINEAR}}": "none", "{{DESIGN}}": "none", "{{AUTHOR}}": "t",
+        "{{DATE}}": "2026-11-20", "{{TITLE}}": "x",
+        "<S | M | L, chosen by risk: see references/change-folder.md>": "L",
+        "<none | S | M | L>": "none", "R<n>": "R1", "<capability>": "billing",
+    }  # fmt: skip
+    for name in ("spec.md", "design.md", "tasks.md"):
+        text = (tpl / name).read_text()
+        for k, v in fill.items():
+            text = text.replace(k, v)
+        (c / name).write_text(text)
+    rule(repo, "billing", 1)
+    errs = spec.consistency(c, "approve")
+    # the template's own placeholders are not valid content, but every table is found and parsed
+    assert not any("no asks found" in e or "no tasks" in e or "scope" in e for e in errs), errs
+    assert 1 in spec.change_rules(c)
+    for f in ("manifest.yaml",):
+        assert spec.parse_flat((SKILL / "templates/specs" / f).read_text())["purpose"]
+    assert (
+        spec.split_frontmatter((SKILL / "templates/specs/rule.md").read_text())[0]["status"]
+        == "live"
+    )
