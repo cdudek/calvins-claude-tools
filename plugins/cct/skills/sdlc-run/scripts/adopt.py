@@ -991,6 +991,7 @@ KIT_HEAVY = {
 }
 KIT_DB = {
     "b34ea79ae0841fc5",
+    "132fb5df36b3a3ca",
 }
 KIT_EVIDENCE = {
     "6a317db378861d28",
@@ -998,6 +999,7 @@ KIT_EVIDENCE = {
 KIT_PREFLIGHT = {
     "848114ac6dd4a375",
     "d5c15466ff9464be",
+    "9e40826faba1db82",
 }
 KIT_HELPER_GUARD = {
     "ca26ffb8ad16e8b3",

@@ -331,8 +331,10 @@ a change small enough for one milestone has one.
    <path>` without `--force`, then `git branch -d <branch>`), not at Stage 7: every builder worktree
    holds a full checkout with its installed dependencies and caches, and a milestone of eight builders
    fills a disk. `python3 ${CLAUDE_SKILL_DIR}/scripts/sdlc_status.py worktrees --prune` removes the
-   clean `.worktrees/agent-*` worktrees whose branch is merged into the branch checked out here or
-   into the default branch, and keeps the rest.
+   clean `<repo root>/.worktrees/agent-*` worktrees whose branch is merged into the milestone branch
+   checked out at the root or into the default branch, and keeps the rest. It keeps a worktree with
+   uncommitted changes or with ignored files other than rebuildable caches (a `.env`, say), names
+   them, and fails closed on any git error. It runs only in an adopted repo (one with `sdlc.json`).
 4. When every feature of the milestone is `done`, the supervisor hands the milestone's local
    pipeline to **one `cct:sdlc-feature-builder` subagent with `Mode: close`** and the head it runs on
    (the one fix round with targeted tests, then `verify_gate.py milestone`, the only runner of the

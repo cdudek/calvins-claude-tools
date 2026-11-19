@@ -1230,15 +1230,21 @@ def test_worktrees_prune_removes_clean_merged_builder_worktrees(tmp_path: Path) 
     _git(main, "add", ".")
     _git(main, "commit", "-qm", "base")
     _git(main, "checkout", "-qb", "milestone/x-1")
-    for name in ("agent-merged", "agent-unmerged", "agent-dirty", "keep-merged"):
+    (main / ".gitignore").write_text(".env\nnode_modules/\n")
+    _git(main, "add", ".")
+    _git(main, "commit", "-qm", "ignore")
+    for name in ("agent-merged", "agent-unmerged", "agent-dirty", "agent-env", "keep-merged"):
         wt = main / ".worktrees" / name
         _git(main, "worktree", "add", "-q", "-b", name, str(wt))
         (wt / f"{name}.txt").write_text(name)
         _git(wt, "add", ".")
         _git(wt, "commit", "-qm", name)
-    for name in ("agent-merged", "agent-dirty", "keep-merged"):
+    for name in ("agent-merged", "agent-dirty", "agent-env", "keep-merged"):
         _git(main, "merge", "-q", "--no-ff", "-m", f"merge {name}", name)
     (main / ".worktrees/agent-dirty/scratch.txt").write_text("uncommitted")
+    (main / ".worktrees/agent-env/.env").write_text("SECRET=1")  # ignored, not rebuildable
+    (main / ".worktrees/agent-merged/node_modules").mkdir()  # ignored, rebuildable: removable
+    (main / ".worktrees/agent-merged/node_modules/x.js").write_text("x")
 
     listed = subprocess.run(
         [sys.executable, str(SCRIPT), "worktrees"], cwd=main, capture_output=True, text=True
@@ -1250,8 +1256,42 @@ def test_worktrees_prune_removes_clean_merged_builder_worktrees(tmp_path: Path) 
         [sys.executable, str(SCRIPT), "worktrees", "--prune"], cwd=main, capture_output=True, text=True
     )
     assert res.returncode == 0, res.stderr
+    assert "keep agent-env: not clean: .env" in res.stdout
+    assert (main / ".worktrees/agent-env/.env").read_text() == "SECRET=1"
     assert not (main / ".worktrees/agent-merged").exists()
     branches = _git(main, "branch", "--format=%(refname:short)").split()
     assert "agent-merged" not in branches, "its branch goes with it (git branch -d)"
-    for kept in ("agent-unmerged", "agent-dirty", "keep-merged"):
+    for kept in ("agent-unmerged", "agent-dirty", "agent-env", "keep-merged"):
         assert (main / ".worktrees" / kept).is_dir() and kept in branches
+
+
+def test_worktrees_refuses_outside_an_adopted_repo_and_ignores_ambient_head(tmp_path: Path) -> None:
+    plain = tmp_path / "plain"
+    plain.mkdir()
+    _git(plain, "init", "-q", "-b", "master")
+    res = subprocess.run(
+        [sys.executable, str(SCRIPT), "worktrees", "--prune"], cwd=plain, capture_output=True, text=True
+    )
+    assert res.returncode == 2 and "sdlc.json" in res.stdout
+    # a builder worktree merged only into ITS OWN head (the ambient HEAD of a worktree cwd) is kept
+    main = tmp_path / "main"
+    main.mkdir()
+    _git(main, "init", "-q", "-b", "master")
+    for k, v in (("user.email", "a@b.c"), ("user.name", "t")):
+        _git(main, "config", k, v)
+    (main / "sdlc.json").write_text("{}")
+    _git(main, "add", ".")
+    _git(main, "commit", "-qm", "base")
+    wt = main / ".worktrees/agent-x"
+    _git(main, "worktree", "add", "-q", "-b", "agent-x", str(wt))
+    (wt / "f").write_text("1")
+    _git(wt, "add", ".")
+    _git(wt, "commit", "-qm", "x")
+    out = subprocess.run(
+        [sys.executable, str(SCRIPT), "worktrees", "--prune"], cwd=wt, capture_output=True, text=True
+    )
+    assert "removed" not in out.stdout and wt.is_dir()  # its own root has no .worktrees to scan
+    out = subprocess.run(
+        [sys.executable, str(SCRIPT), "worktrees", "--prune"], cwd=main, capture_output=True, text=True
+    )
+    assert "keep agent-x: not merged" in out.stdout and wt.is_dir()
