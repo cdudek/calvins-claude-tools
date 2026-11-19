@@ -1424,19 +1424,18 @@ def test_upgrade_dry_run_writes_nothing(tmp_path: Path) -> None:
 def test_upgrade_replace_shows_the_diff_and_applies_only_the_named_file(tmp_path: Path) -> None:
     repo = _upgrade_fixture(tmp_path)
     before = _tree(repo)
-    shown = _adopt(repo, "--upgrade", "--replace", "scripts/verify_gate.py", "--dry-run")
+    shown = _adopt(repo, "--upgrade", "--replace", "tests/sdlc.test.ts", "--dry-run")
     assert "the repo's own edit" in shown.stdout and "-#-#- DIFF -#-#-" in shown.stdout
     assert _tree(repo) == before
-    res = _adopt(repo, "--upgrade", "--apply", "--replace", "scripts/verify_gate.py")
+    res = _adopt(repo, "--upgrade", "--apply", "--replace", "tests/sdlc.test.ts")
     assert res.returncode == 0, res.stderr
-    kit = (ADOPT.parents[1] / "templates/scripts/verify_gate.py").read_bytes()
-    assert (repo / "scripts/verify_gate.py").read_bytes() == kit
+    assert "the repo's own edit" not in (repo / "tests/sdlc.test.ts").read_text()
     after = _tree(repo)
     changed = sorted(
         k for k in set(before) | set(after) if before.get(k, "gone") != after.get(k, "gone")
     )
-    assert changed == ["scripts/verify_gate.py", "sdlc.json"], changed
-    assert "verify_gate.py (replaced" in " ".join(_sections(res.stdout)["WROTE"])
+    assert changed == ["sdlc.json", "tests/sdlc.test.ts"], changed
+    assert "sdlc.test.ts (replaced" in " ".join(_sections(res.stdout)["WROTE"])
 
 
 def test_upgrade_refuses_a_repo_that_is_not_adopted(tmp_path: Path) -> None:
@@ -1768,53 +1767,6 @@ def test_the_plan_template_does_not_tell_the_closer_to_run_unit_and_e2e_beside_t
     assert "only runner of the full suite" in branch
 
 
-def _kit_marks_of_3_20_1() -> bytes:
-    """The marks.py the 3.20.1 kit shipped: a previous kit version, read from history."""
-    out = subprocess.run(
-        ["git", "show", "8ac4850:plugins/cct/skills/sdlc-run/templates/scripts/marks.py"],
-        cwd=ADOPT.parent, capture_output=True, env=_env(),
-    )  # fmt: skip
-    if out.returncode:
-        pytest.skip("history of the 3.20.1 kit is not in this checkout")
-    return out.stdout
-
-
-def test_replacing_the_gate_replaces_an_unmodified_marks_partner_too_F3(tmp_path: Path) -> None:
-    repo = _upgrade_fixture(tmp_path)
-    (repo / "scripts/marks.py").write_bytes(_kit_marks_of_3_20_1())  # a previous kit version
-    res = _adopt(repo, "--upgrade", "--apply", "--replace", "scripts/verify_gate.py")
-    assert res.returncode == 0, res.stderr
-    for name in ("verify_gate.py", "marks.py"):
-        kit = (ADOPT.parents[1] / "templates/scripts" / name).read_bytes()
-        assert (repo / "scripts" / name).read_bytes() == kit, name
-
-
-def test_replacing_the_gate_never_overwrites_a_customised_marks_M1(tmp_path: Path) -> None:
-    repo = _upgrade_fixture(tmp_path)
-    mine = "def sessions(change):\n    return []  # the repo's own\n"
-    (repo / "scripts/marks.py").write_text(mine)
-    kit = (ADOPT.parents[1] / "templates/scripts/verify_gate.py").read_bytes()
-    for extra in (["--dry-run"], []):  # the diff first, then the apply
-        res = _adopt(repo, "--upgrade", "--apply", "--replace", "scripts/verify_gate.py", *extra)
-        assert res.returncode == 0, res.stderr
-        assert (repo / "scripts/marks.py").read_text() == mine
-        manual = "\n".join(_sections(res.stdout)["MANUAL"])
-        assert "scripts/marks.py is customised" in manual and "scripts/verify_gate.py" in manual
-    assert (repo / "scripts/verify_gate.py").read_bytes() == kit
-
-
-def test_replacing_the_pr_hook_installs_its_pass_proof_dependency_M2(tmp_path: Path) -> None:
-    repo = _upgrade_fixture(tmp_path)
-    (repo / ".claude/hooks/pass_proof.py").unlink()  # a repo adopted before the helper existed
-    hook = repo / ".claude/hooks/pr-gate.sh"
-    hook.write_text(hook.read_text() + "\n# the repo's own edit\n")
-    res = _adopt(repo, "--upgrade", "--apply", "--replace", ".claude/hooks/pr-gate.sh")
-    assert res.returncode == 0, res.stderr
-    for name in ("pr-gate.sh", "pass_proof.py"):
-        kit = (ADOPT.parents[1] / "templates/hooks" / name).read_bytes()
-        assert (repo / ".claude/hooks" / name).read_bytes() == kit, name
-
-
 # 3.20.3: the lists of kit versions come from the history, so an unedited copy is never "customised".
 def _hashes_in_history(template: str) -> set[str]:
     """sha256[:16] of every blob `template` has at any commit reachable from HEAD. Not `git log -- path`:
@@ -1844,10 +1796,12 @@ def _listed(name: str) -> set[str]:
 @pytest.mark.parametrize(
     ("template", "name"),
     [
-        ("scripts/marks.py", "KIT_MARKS"),
-        ("scripts/verify_gate.py", "KIT_GATE"),
-        ("hooks/pr-gate.sh", "KIT_PR_GATE"),
-        ("hooks/pass_proof.py", "KIT_PASS_PROOF"),
+        ("scripts/spec.py", "KIT_SPEC"),
+        ("scripts/heavy.py", "KIT_HEAVY"),
+        ("scripts/db.py", "KIT_DB"),
+        ("scripts/evidence.py", "KIT_EVIDENCE"),
+        ("scripts/preflight.py", "KIT_PREFLIGHT"),
+        ("hooks/helper-guard.sh", "KIT_HELPER_GUARD"),
     ],
 )
 def test_the_kit_version_lists_cover_every_shipped_copy_C5(template: str, name: str) -> None:
@@ -1858,107 +1812,6 @@ def test_the_kit_version_lists_cover_every_shipped_copy_C5(template: str, name: 
     assert not missing, f"{name} lacks {sorted(missing)}: add them (and the next version's hash when {template} changes)"
     now = hashlib.sha256((ADOPT.parents[1] / "templates" / template).read_bytes()).hexdigest()[:16]
     assert now in listed, f"{name} lacks the current {template}: {now}"
-
-
-def test_replacing_the_gate_takes_a_stock_3_20_0_marks_along_C5(tmp_path: Path) -> None:
-    """The 3.20.0 copy (6c0c9f03e4eb5e80) is unedited: it must not read as customised and keep the weak gate."""
-    out = subprocess.run(
-        ["git", "show", "a21488a:plugins/cct/skills/sdlc-run/templates/scripts/marks.py"],
-        cwd=ADOPT.parent, capture_output=True, env=_env(),
-    )  # fmt: skip
-    if out.returncode:
-        pytest.skip("history of the 3.20.0 kit is not in this checkout")
-    repo = _upgrade_fixture(tmp_path)
-    (repo / "scripts/marks.py").write_bytes(out.stdout)
-    res = _adopt(repo, "--upgrade", "--apply", "--replace", "scripts/verify_gate.py")
-    assert res.returncode == 0, res.stderr
-    kit = (ADOPT.parents[1] / "templates/scripts/marks.py").read_bytes()
-    assert (repo / "scripts/marks.py").read_bytes() == kit
-    assert "customised" not in "\n".join(_sections(res.stdout)["MANUAL"])
-
-
-def test_replacing_the_pr_hook_never_overwrites_a_customised_pass_proof_C5(tmp_path: Path) -> None:
-    repo = _upgrade_fixture(tmp_path)
-    mine = "def proves(repo, changes_dir, gated, head):\n    return True  # the repo's own rule\n"
-    (repo / ".claude/hooks/pass_proof.py").write_text(mine)
-    hook = repo / ".claude/hooks/pr-gate.sh"
-    hook.write_text(hook.read_text() + "\n# the repo's own edit\n")
-    for extra in (["--dry-run"], []):
-        res = _adopt(repo, "--upgrade", "--apply", "--replace", ".claude/hooks/pr-gate.sh", *extra)
-        assert res.returncode == 0, res.stderr
-        assert (repo / ".claude/hooks/pass_proof.py").read_text() == mine
-        manual = "\n".join(_sections(res.stdout)["MANUAL"])
-        assert ".claude/hooks/pass_proof.py is customised" in manual and "proves(" in manual
-    kit = (ADOPT.parents[1] / "templates/hooks/pr-gate.sh").read_bytes()
-    assert hook.read_bytes() == kit
-
-
-def _kit_at(commit: str, rel: str) -> bytes:
-    """A previous kit version of a template, read from history."""
-    out = subprocess.run(
-        ["git", "show", f"{commit}:plugins/cct/skills/sdlc-run/templates/{rel}"],
-        cwd=ADOPT.parent, capture_output=True, env=_env(),
-    )  # fmt: skip
-    if out.returncode:
-        pytest.skip(f"history of {commit} is not in this checkout")
-    return out.stdout
-
-
-TRIO = {
-    "scripts/verify_gate.py": "scripts/verify_gate.py",
-    ".claude/hooks/pr-gate.sh": "hooks/pr-gate.sh",
-    ".claude/hooks/pass_proof.py": "hooks/pass_proof.py",
-}
-
-
-@pytest.mark.parametrize("replaced", sorted(TRIO))
-def test_replacing_one_of_the_gate_files_brings_the_other_two_to_the_same_version_3_20_5(
-    tmp_path: Path, replaced: str
-) -> None:
-    """3.20.4 copies of the gate, the hook and the helper read a pass another way than 3.20.5's:
-    the three must never be left at different versions."""
-    repo = _upgrade_fixture(tmp_path)
-    for rel, template in TRIO.items():  # an unedited 3.20.4 install
-        (repo / rel).write_bytes(_kit_at("cec0058", template))
-    res = _adopt(repo, "--upgrade", "--apply", "--replace", replaced)
-    assert res.returncode == 0, res.stderr
-    for rel, template in TRIO.items():
-        kit = (ADOPT.parents[1] / "templates" / template).read_bytes()
-        assert (repo / rel).read_bytes() == kit, rel
-
-
-def test_replacing_the_gate_leaves_an_edited_hook_and_names_it_3_20_5(tmp_path: Path) -> None:
-    repo = _upgrade_fixture(tmp_path)
-    hook = repo / ".claude/hooks/pr-gate.sh"
-    mine = hook.read_text() + "\n# the repo's own edit\n"
-    hook.write_text(mine)
-    res = _adopt(repo, "--upgrade", "--apply", "--replace", "scripts/verify_gate.py")
-    assert res.returncode == 0, res.stderr
-    assert hook.read_text() == mine
-    assert ".claude/hooks/pr-gate.sh is customised" in "\n".join(_sections(res.stdout)["MANUAL"])
-
-
-def _missing_hook_helpers(repo: Path) -> list[str]:
-    """Every `helper("<name>")` a hook in the repo imports that the repo does not hold."""
-    hooks = repo / ".claude/hooks"
-    gone = []
-    for sh in sorted(hooks.glob("*.sh")):
-        for name in re.findall(r'helper\("(\w+)"\)', sh.read_text()):
-            if not (hooks / f"{name}.py").exists():
-                gone.append(f"{sh.name} needs {name}.py")
-    return gone
-
-
-@pytest.mark.parametrize("replaced", ["scripts/verify_gate.py", ".claude/hooks/pr-gate.sh"])
-def test_a_selective_replace_brings_every_helper_the_hook_imports(tmp_path: Path, replaced: str) -> None:
-    repo = _upgrade_fixture(tmp_path)
-    for helper in ("goal_active.py", "pass_proof.py", "block_state.py"):
-        (repo / ".claude/hooks" / helper).unlink()  # a repo adopted before these helpers existed
-    hook = repo / ".claude/hooks/pr-gate.sh"
-    hook.write_text(hook.read_text() + "\n# the repo's own edit\n")
-    res = _adopt(repo, "--upgrade", "--apply", "--replace", replaced)
-    assert res.returncode == 0, res.stderr
-    assert _missing_hook_helpers(repo) == []
 
 
 def test_upgrade_reports_the_e2e_gap_and_the_old_review_sentence(tmp_path: Path) -> None:
@@ -1997,3 +1850,124 @@ def test_adopt_installs_spec_py_with_the_gate_scripts(tmp_path: Path) -> None:
     repo = _repo(tmp_path, "node")
     _adopt(repo)
     assert (repo / "scripts" / "spec.py").exists()
+
+
+NEW_KIT_PATHS = [
+    "scripts/spec.py",
+    "scripts/heavy.py",
+    "scripts/db.py",
+    "scripts/evidence.py",
+    "scripts/preflight.py",
+    ".claude/hooks/helper-guard.sh",
+]
+
+
+@pytest.mark.parametrize("rel", NEW_KIT_PATHS)
+def test_a_plain_adopt_never_overwrites_a_repos_own_file_at_a_new_kit_path_H2(tmp_path: Path, rel: str) -> None:
+    repo = _repo(tmp_path, "node")
+    mine = "# the repo's own, uncommitted\n"
+    (repo / rel).parent.mkdir(parents=True, exist_ok=True)
+    (repo / rel).write_text(mine)
+    res = _adopt(repo)
+    assert res.returncode == 0, res.stderr
+    assert (repo / rel).read_text() == mine
+    assert any(rel in m and "not overwritten" in m for m in _sections(res.stdout)["MANUAL"])
+    again = _adopt(repo)  # and the second run says the same, writes nothing there
+    assert (repo / rel).read_text() == mine
+    assert not any(w.startswith(rel) for w in _sections(again.stdout)["WROTE"])
+
+
+@pytest.mark.parametrize("rel", NEW_KIT_PATHS)
+def test_a_plain_adopt_writes_a_new_kit_path_when_free_or_an_unedited_kit_copy_H2(tmp_path: Path, rel: str) -> None:
+    repo = _repo(tmp_path, "node")
+    assert _adopt(repo).returncode == 0  # the path is free: written
+    kit = (ADOPT.parents[1] / "templates" / rel.replace(".claude/hooks/", "hooks/")).read_bytes()
+    assert (repo / rel).read_bytes() == kit
+    assert _adopt(repo).returncode == 0  # an unedited kit copy: still the kit's
+    assert (repo / rel).read_bytes() == kit
+
+
+# 3.21.0: `--migrate` is the one way across kit versions.
+def _fake_gh(tmp_path: Path, merged: str) -> dict[str, str]:
+    """A gh that reports a merged PR only for the change id `merged`."""
+    bin_dir = tmp_path / "bin"
+    bin_dir.mkdir()
+    (bin_dir / "gh").write_text(
+        f'#!/bin/sh\ncase "$*" in *{merged}*) echo \'[{{"number": 4}}]\' ;; *) echo "[]" ;; esac\n'
+    )
+    (bin_dir / "gh").chmod(0o755)
+    return {**_env(), "PATH": f"{bin_dir}{os.pathsep}{os.environ['PATH']}"}
+
+
+def _stamped_3_18(tmp_path: Path) -> Path:
+    repo = _repo(tmp_path, "node")
+    assert _adopt(repo).returncode == 0
+    fm = "---\nlinear: none\ntype: plan\nchange: %s\ndesign: null\nauthor: t@t\nstatus: approved\ncreated: %s\narchived_at: 2026-10-20\n---\n\n# Plan\n"
+    for name in ("2026-10-01-merged-one", "2026-10-02-unmerged-one"):
+        folder = repo / "changes" / "archive" / "2026" / "2026-10" / name
+        folder.mkdir(parents=True)
+        (folder / "plan.md").write_text(fm % (name, name[:10]))
+    live = repo / "changes" / "2026-11-01-inflight"
+    live.mkdir()
+    (live / "lock.json").write_text("{}")
+    (repo / "scripts/verify_gate.py").write_text("# a 3.18 gate\n")
+    (repo / "scripts/db.py").write_text("# the repo's own database helper\n")
+    cfg = json.loads((repo / "sdlc.json").read_text())
+    cfg["sdlcVersion"] = "3.18.0"
+    cfg["keep"] = [".claude/hooks/lint-on-edit.sh"]
+    (repo / "sdlc.json").write_text(json.dumps(cfg, indent=2) + "\n")
+    (repo / ".claude/hooks/lint-on-edit.sh").write_text("#!/bin/sh\n# the repo's own\n")
+    subprocess.run(["git", "add", "-A"], cwd=repo, check=True, env=_env())
+    subprocess.run(["git", "-c", "user.name=t", "-c", "user.email=t@t", "commit", "-qm", "3.18"], cwd=repo, check=True, env=_env())
+    return repo
+
+
+def test_migrate_brings_a_3_18_repo_to_this_kit_in_one_run(tmp_path: Path) -> None:
+    repo = _stamped_3_18(tmp_path)
+    env = _fake_gh(tmp_path, "2026-10-01-merged-one")
+    res = subprocess.run([sys.executable, str(ADOPT), "--migrate", "--tiers", "yes"], cwd=repo, capture_output=True, text=True, env=env)
+    assert res.returncode == 0, res.stderr
+    kit = ADOPT.parents[1] / "templates"
+    # every kit-owned file is the kit's copy, as one set
+    assert (repo / "scripts/verify_gate.py").read_bytes() == (kit / "scripts/verify_gate.py").read_bytes()
+    assert (repo / "scripts/spec.py").read_bytes() == (kit / "scripts/spec.py").read_bytes()
+    assert (repo / ".claude/hooks/pr-gate.sh").read_bytes() == (kit / "hooks/pr-gate.sh").read_bytes()
+    # a file the kit did not ship stays; the kit helper is installed beside it, and the run says so
+    assert (repo / "scripts/db.py").read_text() == "# the repo's own database helper\n"
+    assert (repo / "scripts/sdlc/db.py").read_bytes() == (kit / "scripts/db.py").read_bytes()
+    manual = "\n".join(_sections(res.stdout)["MANUAL"])
+    assert "scripts/db.py is a file of your own" in manual and "scripts/sdlc/db.py" in manual
+    # a `keep` file stays, with a line
+    assert "the repo's own" in (repo / ".claude/hooks/lint-on-edit.sh").read_text()
+    assert "lint-on-edit.sh is in sdlc.json `keep`" in manual
+    # the merged archive is gone, the one gh cannot confirm stays and is listed
+    assert not (repo / "changes/archive/2026/2026-10/2026-10-01-merged-one").exists()
+    assert (repo / "changes/archive/2026/2026-10/2026-10-02-unmerged-one").exists()
+    assert "2026-10-02-unmerged-one: kept, gh could not confirm" in manual
+    # the version is stamped and the in-flight change gets its one gate run, with the command
+    assert json.loads((repo / "sdlc.json").read_text())["sdlcVersion"] != "3.18.0"
+    assert "python3 scripts/verify_gate.py milestone 2026-11-01-inflight" in manual
+
+
+def test_migrate_keeps_every_archive_when_gh_is_missing(tmp_path: Path) -> None:
+    repo = _stamped_3_18(tmp_path)
+    bare = tmp_path / "nogh"
+    bare.mkdir()
+    for tool in ("git", "node"):  # a PATH that has git but no gh
+        if found := shutil.which(tool):
+            (bare / tool).symlink_to(found)
+    env = {**_env(), "PATH": str(bare)}
+    res = subprocess.run([sys.executable, str(ADOPT), "--migrate", "--tiers", "yes"], cwd=repo, capture_output=True, text=True, env=env)
+    assert res.returncode == 0, res.stderr
+    for name in ("2026-10-01-merged-one", "2026-10-02-unmerged-one"):
+        assert (repo / "changes/archive/2026/2026-10" / name).exists()
+        assert f"{name}: kept, gh could not confirm" in "\n".join(_sections(res.stdout)["MANUAL"])
+
+
+@pytest.mark.parametrize("gate_file", ["scripts/verify_gate.py", ".claude/hooks/pr-gate.sh", ".claude/hooks/pass_proof.py", "scripts/marks.py"])
+def test_replacing_one_gate_file_says_use_migrate_and_writes_nothing(tmp_path: Path, gate_file: str) -> None:
+    repo = _upgrade_fixture(tmp_path)
+    before = _tree(repo)
+    res = _adopt(repo, "--upgrade", "--apply", "--replace", gate_file)
+    assert res.returncode != 0 and "--migrate" in res.stderr
+    assert _tree(repo) == before

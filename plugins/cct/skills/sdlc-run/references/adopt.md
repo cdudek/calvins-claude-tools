@@ -106,10 +106,10 @@ table, which is what makes `F1` traceable from `facts.md` through the test to th
    folder. Every file that differs from the kit's copy (hooks, workflows, `scripts/*.py`,
    `docs/sdlc.md`, the guardrail test) is listed as `review diff`, with the changelog's manual
    migrations since the stamp. `adopt --upgrade --replace <file>` shows one file's diff;
-   `--apply --replace <file>` replaces it; replacing one of `verify_gate.py`, `pr-gate.sh` and `pass_proof.py`
-   takes the other two along (and `verify_gate.py` also `marks.py`) only when they are unedited
-   kit versions (an edited one is left and listed). "Unedited" means it matches a version in the kit's
-   git history. A plain `adopt` refreshes all the copies at once.
+   `--apply --replace <file>` replaces it, except a gate, hook or helper file (`scripts/`, `.claude/hooks/`):
+   those are one version, so the run says "use --migrate" and stops. `adopt.py --migrate` moves a repo across kit
+   versions in one run (all kit files as one set, merged archive folders removed, in-flight changes listed with the
+   gate run each needs); then re-run the milestone gate on the listed changes. A plain `adopt` refreshes all the copies at once.
 
 ## A repo that already ran the old `goals/` skill
 

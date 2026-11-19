@@ -1,13 +1,16 @@
 """Install the SDLC chain into the current repo from sdlc.json.
 
-    python3 adopt.py [--dry-run] [--upgrade] [--apply --replace FILE] [--preset node|python] [--ticket KEY-123] [--tiers yes|no]
+    python3 adopt.py [--dry-run] [--upgrade] [--apply --replace FILE] [--migrate] [--preset node|python] [--ticket KEY-123] [--tiers yes|no]
     python3 adopt.py --templates-hash        # what sdlc.json `kitTemplates` should say
 
 `--upgrade` is for a repo that already runs the chain, and it never overwrites or moves anything:
 it adds the missing sdlc.json keys with the stack's defaults (never changing a value), stamps
 `sdlcVersion`, and lists every file that differs from the kit's copy as `review diff` in MANUAL.
 `--upgrade --replace FILE` shows the diff of one kit-owned file; add `--apply` to replace it.
-`--dry-run` writes nothing at all. A plain `adopt` stamps too and still refreshes the copies.
+`--migrate` is the one way across kit versions: every kit-owned file replaced as one set (`keep` paths
+stay, with a MANUAL line), a file the repo owns at a kit path never overwritten (the kit's helper is
+installed under scripts/sdlc/), archive folders with a merged PR removed, `sdlcVersion` stamped, and the
+in-flight changes listed with the milestone gate run each needs. `--dry-run` writes nothing at all. A plain `adopt` stamps too and still refreshes the copies.
 
 `--tiers` writes the engineer's answer to "Use Ship/Show/Ask?" into sdlc.json `tiers`; the
 skill asks it on every adopt. Without the flag, a set `tiers` stays and a missing one means
@@ -75,6 +78,19 @@ APPLY = "--apply" in sys.argv
 REPLACE = [a for a in (sys.argv[i + 1 : i + 2] for i, v in enumerate(sys.argv) if v == "--replace")]
 REPLACE = [r[0] for r in REPLACE if r]
 DRY = DRY_RUN or UPGRADE
+# `--migrate` brings a repo to this kit in one run: every kit-owned file as one set, the merged
+# archive folders removed, the in-flight changes listed with the gate run each needs. A gate or
+# hook file is never replaced alone: a gate beside another version's hook or helper reads a pass
+# another way, so `--upgrade --replace` of one of them says "use --migrate" and stops.
+MIGRATE = "--migrate" in sys.argv
+if MIGRATE and (UPGRADE or APPLY or REPLACE):
+    sys.exit("--migrate takes no --upgrade, --apply or --replace: it replaces the whole kit set")
+if UPGRADE and any(r.startswith(("scripts/", ".claude/hooks/")) for r in REPLACE):
+    sys.exit(
+        "the gate, its hooks and helpers are one version: replacing one alone leaves the repo "
+        "with two. Use `python3 adopt.py --migrate`, then re-run the milestone gate on the "
+        "changes it lists."
+    )
 pending: dict[str, tuple[str, bool]] = {}  # file -> (the kit's text, executable) where it differs
 # Ship/Show/Ask when sdlc.json has no `tiers` and adopt got no --tiers. The skill's question
 # recommends the same value.
@@ -886,138 +902,67 @@ def apply_tiers_answer(cfg: dict) -> None:
         wrote.append(f"sdlc.json: tiers {str(cfg['tiers']).lower()} (Ship/Show/Ask: {answer})")
 
 
-# sha256[:16] of every copy of these files a kit ever shipped (every blob in the git history of the
-# template, merges and side branches included): a copy that matches one is unedited. A new version
-# of either file adds its hash here; test_adopt.py walks the history and fails on a missing one.
-KIT_MARKS = {
-    "0b01636d6dc4e428",
-    "141766b67443e974",
-    "1c753d2e8d90e632",
-    "1d7b567db399b3f8",
-    "2643204887c6e1be",
-    "4dc39753a72de141",
-    "54684d37d2b5435c",
-    "6c0c9f03e4eb5e80",
-    "71e01d1d701f6c28",
-    "8504021b39d2f3c4",
-    "9b9eb7671a9fee71",
-    "9e291aa9a4ca7939",
-    "a5be99c8d2b1e911",
-    "b35426f37e60f79f",
-    "b4861d544b8dcf5b",
-    "c31c115f84e2d0cb",
-    "cd4e3aee2c5f4e4c",
-    "d0b8c44c65ff9ef6",
-    "da489951ced4b597",
-    "e210db4d72bf4d37",
-    "e9511caf3de9934b",
-    "fd8848049fa7ca68",
+# The same lists for the files the kit added after 3.18 and the gate imports or a repo may own a
+# file of that name: adopt writes one of them over an existing file only when the file is one of
+# these (unedited kit copy). test_adopt.py walks the history and fails on a missing hash.
+KIT_SPEC = {
+    "132e4bf85fcacc3e",
+    "2371a851cf373336",
+    "52f000090cb648ad",
+    "6e76ac5977b05a94",
+    "6f3bdf69aec3a169",
+    "8958f5cfd24341dc",
+    "b317d0a123e1827a",
+    "c6542ee0d5796633",
+    "d493b854eb70d6ec",
 }
-KIT_GATE = {
-    "07797d2ae191453e",
-    "17c49f302fccaa95",
-    "1841658d833d2487",
-    "196e2c2c20e79328",
-    "1c17e460c91d2d3d",
-    "22d6de1fd42fa247",
-    "25ea5841fdd27c8c",
-    "3144bebd00196d11",
-    "3606423109411bd8",
-    "36b65017727d487e",
-    "3a8e8a1d346b8e35",
-    "4167750b2c5b09ca",
-    "4286aa2373d9aa3a",
-    "440df872f222401d",
-    "49c96180a9059469",
-    "4cd72bc3903a46ca",
-    "4cf1a016840c1594",
-    "5152ca52e4e6ae8b",
-    "51d17ecc782b117c",
-    "573aee9b45171a4c",
-    "5c300c4704011c2a",
-    "5db2d9afd43c85b5",
-    "5ef40ab7448e3b9b",
-    "642ef78693995803",
-    "676d2909f31301ab",
-    "73cc8e16eada8289",
-    "74917c7957b4d561",
-    "78ccf4afbefea074",
-    "96ef7a0baac1edad",
-    "a0ae1a0d71d1589a",
-    "a0b381c0b945ecdb",
-    "a16cf77a6ddfdc38",
-    "a3edd685b6a7a429",
-    "a4ed2049940e3c7c",
-    "a535103fadfface5",
-    "a7481173126f7752",
-    "a7f8ce1018174509",
-    "a872c162585a3302",
-    "b4724f2bc5e40f08",
-    "b9eb1981bd731186",
-    "bc17b21c814e7b87",
-    "bff25d03c74642b8",
-    "c53ff6ee7a8eb8d9",
-    "c7bf44c073864753",
-    "ca433e00cafb69b8",
-    "d1fecbcc9667465a",
-    "d9a7bdcc49c1e14a",
-    "dbe9a6d4a1e59972",
-    "dfbfa38f6cd4fec6",
-    "e4d8badd50ba224c",
-    "ea65197b82c3a545",
-    "f74bcd2c928e6244",
-    "f7c7ad9006898a5b",
-    "fb733e7ae3cac69d",
-    "fc6a42c9183280fb",
-}  # same, for scripts/verify_gate.py
-KIT_PR_GATE = {
-    "0a76b3d09e108c32",
-    "23f7c564f4bd72c8",
-    "27fac77913e73fb0",
-    "30b25985ad8654f5",
-    "32c64c35d3cbc40e",
-    "4fe0e4f49faa16aa",
-    "547e89c143f3b75d",
-    "5a07659427f3871f",
-    "65092fc7d927ee12",
-    "7a4751e7cea3d974",
-    "8170d3b4f4ccc09d",
-    "92b57c20f0ef9bb7",
-    "9de062c4a0c5258c",
-    "a7c80708a8719115",
-    "ab23e9a14b74d511",
-    "abf319ae6585aaa1",
-    "ae1f77d4f3ba75d0",
-    "bc4f5d381f088222",
-    "d2fe12eaec71434a",
-    "dcfc6bfc90098077",
-    "dea1af067e0edd92",
-    "e68483445418d666",
-    "e75851f8eacc7ec7",
-    "f87ce3102acb032d",
-    "f9f78cded1337388",
-    "fde723ac4ce5fc3f",
-}  # same, for .claude/hooks/pr-gate.sh
-KIT_PASS_PROOF = {
-    "06947c4c80aa6dbe",
-    "08655b8b92ba1cf3",
-    "4d6ad3677e893998",
-    "66d1b0004ebe5a4f",
-    "6b49e80785b08cd1",
-    "9aee72ceddbbe6da",
-    "9bf7560ec9b627d8",
-    "b4b862e421203b57",
-    "ca615d048d30845c",
-    "d6433992382fc890",
-    "dfd42c691cbeaf20",
-    "faa52678825431ca",
-}  # same, for .claude/hooks/pass_proof.py
+KIT_HEAVY = {
+    "7dfd1429b4f9cd2d",
+    "8b4f8c3dfa44073f",
+    "af2eb2673c676348",
+    "cc25027d60793b2b",
+    "f411b8feb66c33ed",
+}
+KIT_DB = {
+    "b34ea79ae0841fc5",
+}
+KIT_EVIDENCE = {
+    "6a317db378861d28",
+}
+KIT_PREFLIGHT = {
+    "848114ac6dd4a375",
+    "d5c15466ff9464be",
+}
+KIT_HELPER_GUARD = {
+    "ca26ffb8ad16e8b3",
+}
 KIT_PARTS = {
-    "scripts/marks.py": KIT_MARKS,
-    "scripts/verify_gate.py": KIT_GATE,
-    ".claude/hooks/pr-gate.sh": KIT_PR_GATE,
-    ".claude/hooks/pass_proof.py": KIT_PASS_PROOF,
+    "scripts/spec.py": KIT_SPEC,
+    "scripts/heavy.py": KIT_HEAVY,
+    "scripts/db.py": KIT_DB,
+    "scripts/evidence.py": KIT_EVIDENCE,
+    "scripts/preflight.py": KIT_PREFLIGHT,
+    ".claude/hooks/helper-guard.sh": KIT_HELPER_GUARD,
 }
+# Files a 3.18 kit did not ship: a repo may have its own file at the path.
+NEW_KIT_FILES = {
+    "scripts/spec.py",
+    "scripts/heavy.py",
+    "scripts/db.py",
+    "scripts/evidence.py",
+    "scripts/preflight.py",
+    ".claude/hooks/helper-guard.sh",
+}
+
+
+def own_file(path: Path, text: str) -> bool:
+    """True for a file adopt must not overwrite: one at a path the kit added later that is neither
+    the kit's text nor a version the kit shipped."""
+    rel = path.relative_to(ROOT).as_posix()
+    if rel not in NEW_KIT_FILES or not path.is_file():
+        return False
+    mine = path.read_bytes()
+    return mine != text.encode("utf-8") and hashlib.sha256(mine).hexdigest()[:16] not in KIT_PARTS[rel]
 
 
 def finish_upgrade() -> str:
@@ -1040,48 +985,8 @@ def finish_upgrade() -> str:
                 f"review: `{w}` is a layout migration or removal that --upgrade does not apply; run `adopt` to apply it"
             )
     out = []
-    # A file whose partners the replaced one needs: the gate blocks a milestone with design bundles
-    # unless marks.py has `bundles`, and verify_gate.py, pr-gate.sh and pass_proof.py are one
-    # version: a hook beside a different helper or gate judges a pass another way. Replacing one of
-    # the three takes the others along, and the gate takes marks.py, only when the partner is a kit
-    # version nobody edited (a customised copy stays, and a MANUAL line names it).
-    trio = ["scripts/verify_gate.py", ".claude/hooks/pr-gate.sh", ".claude/hooks/pass_proof.py"]
-    partner = {f: [t for t in trio if t != f] for f in trio}
-    partner["scripts/verify_gate.py"].append("scripts/marks.py")
-    PARTNER_NEEDS = {  # noqa: N806 -- what the replaced file cannot work without
-        "scripts/marks.py": "`bundles(change)`: the new gate blocks milestone gates with design bundles until it has it",
-        "scripts/verify_gate.py": "the same kit version (it and the hook read a pass the same way)",
-        ".claude/hooks/pr-gate.sh": "the same kit version (it and the gate read a pass the same way)",
-        ".claude/hooks/pass_proof.py": "the same kit version (`proves(...)`, the one rule for what a pass covers)",
-    }
     wanted = list(dict.fromkeys(REPLACE))
-    for rel in wanted:  # the list grows: a partner's own partners follow
-        for other in partner.get(rel, []):
-            if other not in pending or other in wanted:
-                continue  # it is the kit's copy already, or already on the list
-            mine = ROOT / other
-            if mine.exists() and hashlib.sha256(mine.read_bytes()).hexdigest()[:16] not in KIT_PARTS[other]:
-                manual.append(
-                    f"--replace {rel}: {other} is customised (it matches no kit version), so it was not "
-                    f"replaced with it. {rel} needs {PARTNER_NEEDS[other]}: merge your changes into the "
-                    f"kit's copy, then `adopt --upgrade --replace {other} --apply`"
-                )
-                continue
-            wanted.append(other)
-    # The helpers a hook imports (`helper("<name>")`) come with a replace when the repo lacks them: a
-    # hook beside a missing helper blocks every push or edit, the repo's own hooks included. A
-    # helper the repo has stays.
-    if wanted:
-        hooks = {f".claude/hooks/{p.name}": p.read_text(encoding="utf-8") for p in (ROOT / ".claude/hooks").glob("*.sh")}
-        hooks.update({rel: pending[rel][0] for rel in wanted if rel.endswith(".sh") and rel in pending})
-        for source in hooks.values():
-            for name in re.findall(r'helper\("(\w+)"\)', source):
-                dep = f".claude/hooks/{name}.py"
-                if dep in pending and not (ROOT / dep).exists() and dep not in wanted:
-                    wanted.append(dep)
     for rel in wanted:
-        if rel not in pending and rel not in REPLACE:
-            continue  # the partner is already the kit's copy
         if rel not in pending:
             manual.append(
                 f"--replace {rel}: nothing to replace (it is the kit's copy already, or not a file adopt owns)"
@@ -1105,6 +1010,43 @@ def finish_upgrade() -> str:
                 f"--replace {rel}: diff shown, nothing written; add --apply to replace it"
             )
     return "\n".join(out)
+
+
+def merged_pr(root: Path, change_id: str) -> bool:
+    """gh confirms a merged PR that names the change; False when it cannot say."""
+    try:
+        out = subprocess.run(
+            ["gh", "pr", "list", "--state", "merged", "--search", f"{change_id} in:body",
+             "--json", "number", "--limit", "1"],
+            cwd=root, capture_output=True, text=True, timeout=60,
+        )  # fmt: skip
+        return out.returncode == 0 and bool(json.loads(out.stdout or "[]"))
+    except (OSError, ValueError, subprocess.TimeoutExpired):
+        return False
+
+
+def migrate_report(cfg: dict) -> None:
+    """The rest of `--migrate`: archive folders whose PRs merged are removed (the owner's rule is no
+    archive), the others are listed, and every change still in flight gets the one gate run that
+    writes the new report."""
+    changes = ROOT / cfg.get("changesDir", "changes")
+    for folder in archived_changes(changes / "archive"):
+        if merged_pr(ROOT, folder.name):
+            wrote.append(f"{folder.relative_to(ROOT)} (removed: its PR merged, no archive)")
+            subprocess.run(["git", "rm", "-rqf", "--ignore-unmatch", str(folder)], cwd=ROOT, check=True)
+            shutil.rmtree(folder, ignore_errors=True)  # whatever git did not track
+        else:
+            manual.append(
+                f"{folder.relative_to(ROOT)}: kept, gh could not confirm a merged PR that names {folder.name}"
+            )
+    for folder in sorted(changes.glob("*")) if changes.is_dir() else ():
+        if folder.is_dir() and folder.name != "archive" and (
+            (folder / "lock.json").exists() or (folder / "state" / "lock.json").exists()
+        ):
+            manual.append(
+                f"{folder.name} is in flight: run `python3 scripts/verify_gate.py milestone {folder.name}` "
+                f"once on its milestone branch (it writes the report the new gate reads)"
+            )
 
 
 def main() -> int:
@@ -1250,6 +1192,27 @@ def main() -> int:
     def _write(path: Path, text: str, **kw: object) -> None:
         if str(path.relative_to(ROOT)) in keep_paths:
             kept.append(str(path.relative_to(ROOT)) + " (sdlc.json keep)")
+            if MIGRATE:
+                manual.append(
+                    f"{path.relative_to(ROOT)} is in sdlc.json `keep`, so it was not replaced: it may "
+                    f"belong to an older kit version; compare it with the kit's copy by hand"
+                )
+            return
+        if own_file(path, text) and MIGRATE and path.parent.name == "scripts" and path.name != "spec.py":
+            # the kit's standalone helper goes beside the repo's own, under scripts/sdlc/
+            moved = path.parent / "sdlc" / path.name
+            manual.append(
+                f"{path.relative_to(ROOT)} is a file of your own, so it stays; the kit's helper was "
+                f"installed as {moved.relative_to(ROOT)} (kit docs name it scripts/{path.name})"
+            )
+            write(moved, text, **kw)  # type: ignore[arg-type]
+            return
+        if own_file(path, text):  # a path the kit added after 3.18: the repo's own file stays
+            manual.append(
+                f"{path.relative_to(ROOT)}: a file of your own (it matches no kit version), not "
+                f"overwritten. The kit ships a {path.name} too and its scripts import it: merge the "
+                f"two, or move yours and run `adopt` again"
+            )
             return
         write(path, text, **kw)  # type: ignore[arg-type]
 
@@ -1774,6 +1737,8 @@ def main() -> int:
         "monthly job from references/ci-blueprint.md if you want it scheduled"
     )
     diffs = finish_upgrade() if UPGRADE else ""
+    if MIGRATE:
+        migrate_report(cfg)
     format_written()
 
     print("-#-#- WROTE -#-#-")
