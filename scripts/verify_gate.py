@@ -77,8 +77,10 @@ import os
 import re
 import shlex
 import shutil
+import signal
 import subprocess
 import sys
+import threading
 import time
 from pathlib import Path
 from urllib.parse import quote
@@ -963,18 +965,14 @@ def is_e2e(cmd: str) -> bool:
     return "playwright" in cmd or "test:e2e" in cmd
 
 
-def classify_e2e(cmd: str, repo: Path) -> str:
-    """Re-run only the failures of an E2E check: they reproduce (real) or they do not (flaky)."""
+def classify_e2e(cmd: str, repo: Path, rerun=None) -> str:
+    """Re-run only the failures of an E2E check: they reproduce (real) or they do not (flaky). `rerun`
+    runs the command the way the first run ran (same private env, timeout and group tracking)."""
     last = repo / "test-results" / ".last-run.json"
     if last.exists() and not json.loads(last.read_text(encoding="utf-8")).get("failedTests"):
         return ""  # nothing recorded as failed: --last-failed would run the whole suite
-    again = subprocess.run(
-        f"{cmd} --last-failed",
-        shell=True,
-        cwd=repo,
-        capture_output=True,
-        text=True,
-        stdin=subprocess.DEVNULL,
+    again = rerun(f"{cmd} --last-failed") if rerun else subprocess.run(
+        f"{cmd} --last-failed", shell=True, cwd=repo, capture_output=True, text=True, stdin=subprocess.DEVNULL
     )
     return "reproduced (real)" if again.returncode else "did not reproduce (flaky)"
 
@@ -1080,6 +1078,29 @@ def run_check(cmd: str, cwd: Path, limit: int, env: dict | None = None, on_start
     return subprocess.CompletedProcess(cmd, proc.returncode, out, err)
 
 
+LIVE_GROUPS: set[int] = set()  # process groups of the checks running now, for the signal handler
+
+
+def run_tracked(cmd: str, cwd: Path, limit: float, env: dict | None, hold=None) -> subprocess.CompletedProcess[str]:
+    """`run_check` that lists its group with the process (so a SIGTERM kills it) and on the close's
+    ticket (so the reaper can), and forgets it afterwards."""
+    started: list[int] = []
+
+    def on_start(pgid: int) -> None:
+        started.append(pgid)
+        LIVE_GROUPS.add(pgid)
+        if hold:
+            hold.track(pgid, True)
+
+    try:
+        return run_check(cmd, cwd, limit, env, on_start)
+    finally:
+        for pgid in started:
+            LIVE_GROUPS.discard(pgid)
+            if hold:
+                hold.track(pgid, False)
+
+
 # sha256[:16] of every heavy.py the kit shipped (adopt.py KIT_HEAVY lists the same). The gate runs each
 # check through heavy.py, so a heavy.py of the repo's own could report a pass for a check it never ran.
 KIT_HEAVY = {
@@ -1089,6 +1110,7 @@ KIT_HEAVY = {
     "af2eb2673c676348",
     "cc25027d60793b2b",
     "f411b8feb66c33ed",
+    "1bb86e7356aa80e0",
 }
 
 
@@ -1125,6 +1147,12 @@ class Hold:
         self.db_py = Path(__file__).with_name("db.py")
         test_db = (cfg.get("db") or {}).get("test") if isinstance(cfg.get("db"), dict) else None
         self.wants_db = bool(test_db) and self.db_py.is_file()
+        self.prep = float((test_db or {}).get("prepareTimeout", 600)) if isinstance(test_db, dict) else 600.0
+        if self.wants_db:  # a check that runs before the copy exists never gets the caller's database
+            self.env.pop("DATABASE_URL", None)
+        if self.inherited and self.hv and self.env.get("SDLC_HEAVY_TICKET"):
+            self.queue = self.hv.Queue(self.hv.queue_dir(), int(self.cfg["slots"]))
+            self.ticket = Path(self.env["SDLC_HEAVY_TICKET"])  # the wrapper's: its reaper reads our groups
 
     def heavy(self, cmd: str) -> bool:
         return bool(self.hv) and self.hv.is_heavy(["sh", "-c", cmd], self.cfg)
@@ -1150,22 +1178,28 @@ class Hold:
             )  # fmt: skip
         self.taken = True
         if self.wants_db:
-            self.db_create()
+            self.set_cap(self.prep)  # waiters see a deadline for the holder while it prepares
+            try:
+                self.db_create()
+            finally:
+                self.set_cap(0)
 
-    def on_start(self, pgid: int) -> None:
+    def set_cap(self, cap: float) -> None:
+        if self.queue and self.ticket and not self.inherited:
+            self.queue.update(self.ticket, lambda d: d.update(cap=cap, started=time.time()))
+
+    def track(self, pgid: int, on: bool) -> None:
         if self.queue and self.ticket:
-            self.queue.record_pgid(self.ticket, pgid)
+            self.queue.track_group(self.ticket, pgid, on)
 
     def _db(self, *args: str) -> str:
-        res = subprocess.run(
-            [sys.executable, str(self.db_py), "test", *args], cwd=self.repo, capture_output=True, text=True, env=self.env
-        )
+        res = run_tracked(shlex.join([sys.executable, str(self.db_py), "test", *args]), self.repo, self.prep, self.env, self)
         if res.returncode:
             raise HoldError(f"db.py test {' '.join(args)} failed:\n{(res.stdout + res.stderr).strip()}")
         return res.stdout
 
     def db_create(self, name: str | None = None) -> None:
-        out = self._db("create", *([name] if name else [])).strip().splitlines()
+        out = self._db("create", *([name] if name else []), "--owner-pid", str(os.getpid())).strip().splitlines()
         parts = out[-1].split() if out else []
         if len(parts) != 2:
             raise HoldError(f"db.py test create printed {out[-1:] or 'nothing'}, not `NAME URL`")
@@ -1183,9 +1217,9 @@ class Hold:
             if self.db_name:
                 self._db("drop", self.db_name)
         except HoldError as e:
-            print(f"WARN database {self.db_name} not dropped: {e}")
+            print(f"WARN database {self.db_name} not dropped: {e}", file=sys.stderr)  # the verdict stays the last stdout line
         finally:
-            if self.queue and self.ticket:
+            if self.queue and self.ticket and not self.inherited:  # a wrapper's ticket is the wrapper's
                 self.queue.leave(self.ticket)
 
 
@@ -1206,12 +1240,27 @@ def run(
         print(f"refused before any check runs: {heavy} is not a kit version, so it could record a pass for a check that never ran")
         return end("VERIFY BLOCKED reason=env", 3)
     hold = Hold(cfg, repo)  # only after the hash check: it runs heavy.py's code
+
+    def cancelled(signum, _frame) -> None:  # stop every running check, free the copy and the slot
+        for pgid in list(LIVE_GROUPS):
+            try:
+                os.killpg(pgid, signal.SIGKILL)
+            except OSError:
+                pass
+        hold.release()
+        sys.exit(128 + signum)
+
+    old = {}
+    if threading.current_thread() is threading.main_thread():
+        old = {s: signal.signal(s, cancelled) for s in (signal.SIGTERM, signal.SIGHUP, signal.SIGINT)}
     try:
         if hold.hv:
             hold.hv.prune_jobs()  # cheap: old job logs of earlier runs
         return run_close(scope, change, cfg, repo, hold, visual_check, visual_runs, keep_going)
     finally:
         hold.release()  # the slot and the database copy, whatever the verdict
+        for sig, handler in old.items():
+            signal.signal(sig, handler)
 
 
 def run_close(
@@ -1517,15 +1566,17 @@ def run_close(
     def limit_of(check: dict) -> int:
         return int(check.get("timeout") or cfg.get("checkTimeout") or CHECK_TIMEOUT)
 
-    def execute(check: dict, cmd: str, env: dict, on_start=None) -> tuple[subprocess.CompletedProcess[str], float]:
+    def execute(check: dict, cmd: str, env: dict) -> tuple[subprocess.CompletedProcess[str], float]:
         started = time.monotonic()
-        proc = run_check(cmd, repo, limit_of(check), env, on_start)
+        proc = run_tracked(cmd, repo, limit_of(check), env, hold)
         return proc, round(time.monotonic() - started, 1)
 
     # Light checks run side by side (3.22.0): a group is a run of neighbours that are light, not cached,
     # and not ordered behind one another; a `serial` check or a heavy one ends it. Each group starts when
     # the loop reaches its first member, so the order of the verdicts is still the order of the checks.
-    width = max(1, int(hold.cfg.get("lightParallel", 4))) if hold.hv else 1
+    # A lock from before 3.18.0 (declared order) runs every check one after the other: the order is the
+    # contract (a code generator before the type check), and parallel starts would break it.
+    width = max(1, int(hold.cfg.get("lightParallel", 4))) if hold.hv and not declared else 1
     groups: dict[int, list[int]] = {}
     if width > 1:
         run_of: list[int] = []
@@ -1533,7 +1584,7 @@ def run_close(
             if key in cache:
                 continue
             behind = {plan[j][0]["name"] for j in run_of} & set(check.get("after") or [])
-            if not (hold.heavy(cmd) or check.get("serial") or behind):
+            if not (hold.heavy(cmd) or check.get("serial") or check.get("resetDb") or behind):  # a reset is a boundary
                 run_of.append(i)
                 continue
             if len(run_of) > 1:
@@ -1563,7 +1614,7 @@ def run_close(
         else:
             heavy_check = hold.heavy(cmd)
             try:
-                if heavy_check:
+                if heavy_check or check.get("resetDb"):  # `resetDb: true` names a database check
                     hold.enter()  # the one slot of this close, held to the end
                 if hold.taken and (check.get("resetDb") or (heavy_check and check.get("resetDb") is None)):
                     hold.reset_db()
@@ -1573,7 +1624,7 @@ def run_close(
                     {"name": name, "run": cmd, "status": "fail", "exit": 75, "seconds": 0, "tail": str(err)[-2000:]}
                 )
                 return finish("VERIFY BLOCKED reason=env", 3)
-            proc, seconds = execute(check, cmd, hold.env, hold.on_start if hold.taken else None)
+            proc, seconds = execute(check, cmd, hold.env)
             hold.db_dirty = hold.taken and bool(hold.db_name)
         output = proc.stdout + proc.stderr
         tail = "\n".join(output.strip().splitlines()[-TAIL:])
@@ -1606,7 +1657,7 @@ def run_close(
                 continue
             return finish(f"VERIFY BLOCKED reason={reason}", 3)
         if is_e2e(cmd):
-            verdict = classify_e2e(cmd, repo)
+            verdict = classify_e2e(cmd, repo, lambda c, chk=check: run_tracked(c, repo, limit_of(chk), hold.env, hold))
             if verdict:
                 print(f"--last-failed re-run: the failures {verdict}")
                 report["checks"][-1]["rerun"] = verdict

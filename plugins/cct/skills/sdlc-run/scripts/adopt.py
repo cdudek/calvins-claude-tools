@@ -1020,11 +1020,13 @@ KIT_HEAVY = {
     "af2eb2673c676348",
     "cc25027d60793b2b",
     "f411b8feb66c33ed",
+    "1bb86e7356aa80e0",
 }
 KIT_DB = {
     "b34ea79ae0841fc5",
     "132fb5df36b3a3ca",
     "392a3cb2e1676489",
+    "473a8a34cad7f3e3",
 }
 KIT_EVIDENCE = {
     "6a317db378861d28",
@@ -1033,6 +1035,7 @@ KIT_PREFLIGHT = {
     "848114ac6dd4a375",
     "d5c15466ff9464be",
     "9e40826faba1db82",
+    "020f538fc743c5b0",
 }
 KIT_HELPER_GUARD = {
     "ca26ffb8ad16e8b3",

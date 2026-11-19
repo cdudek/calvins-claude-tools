@@ -1220,7 +1220,7 @@ def _git(cwd: Path, *args: str) -> str:
     return out.stdout
 
 
-def test_worktrees_prune_removes_clean_merged_builder_worktrees(tmp_path: Path) -> None:
+def _wt_repo(tmp_path: Path) -> Path:
     main = tmp_path / "main"
     main.mkdir()
     _git(main, "init", "-q", "-b", "master")
@@ -1230,68 +1230,85 @@ def test_worktrees_prune_removes_clean_merged_builder_worktrees(tmp_path: Path) 
     _git(main, "add", ".")
     _git(main, "commit", "-qm", "base")
     _git(main, "checkout", "-qb", "milestone/x-1")
-    (main / ".gitignore").write_text(".env\nnode_modules/\n")
+    (main / ".gitignore").write_text(".env\nnode_modules/\nbuild/\n")
     _git(main, "add", ".")
     _git(main, "commit", "-qm", "ignore")
-    for name in ("agent-merged", "agent-unmerged", "agent-dirty", "agent-env", "keep-merged"):
-        wt = main / ".worktrees" / name
-        _git(main, "worktree", "add", "-q", "-b", name, str(wt))
-        (wt / f"{name}.txt").write_text(name)
-        _git(wt, "add", ".")
-        _git(wt, "commit", "-qm", name)
-    for name in ("agent-merged", "agent-dirty", "agent-env", "keep-merged"):
+    return main
+
+
+def _builder(main: Path, name: str, merge: bool = True) -> Path:
+    wt = main / ".worktrees" / name
+    _git(main, "worktree", "add", "-q", "-b", name, str(wt))
+    (wt / f"{name}.txt").write_text(name)
+    _git(wt, "add", ".")
+    _git(wt, "commit", "-qm", name)
+    if merge:
         _git(main, "merge", "-q", "--no-ff", "-m", f"merge {name}", name)
-    (main / ".worktrees/agent-dirty/scratch.txt").write_text("uncommitted")
-    (main / ".worktrees/agent-env/.env").write_text("SECRET=1")  # ignored, not rebuildable
-    (main / ".worktrees/agent-merged/node_modules").mkdir()  # ignored, rebuildable: removable
-    (main / ".worktrees/agent-merged/node_modules/x.js").write_text("x")
-
-    listed = subprocess.run(
-        [sys.executable, str(SCRIPT), "worktrees"], cwd=main, capture_output=True, text=True
-    )
-    assert listed.returncode == 0 and (main / ".worktrees/agent-merged").is_dir(), "no --prune: no removal"
-    assert "agent-merged" in listed.stdout and "prune" in listed.stdout
-
-    res = subprocess.run(
-        [sys.executable, str(SCRIPT), "worktrees", "--prune"], cwd=main, capture_output=True, text=True
-    )
-    assert res.returncode == 0, res.stderr
-    assert "keep agent-env: not clean: .env" in res.stdout
-    assert (main / ".worktrees/agent-env/.env").read_text() == "SECRET=1"
-    assert not (main / ".worktrees/agent-merged").exists()
-    branches = _git(main, "branch", "--format=%(refname:short)").split()
-    assert "agent-merged" not in branches, "its branch goes with it (git branch -d)"
-    for kept in ("agent-unmerged", "agent-dirty", "agent-env", "keep-merged"):
-        assert (main / ".worktrees" / kept).is_dir() and kept in branches
+    return wt
 
 
-def test_worktrees_refuses_outside_an_adopted_repo_and_ignores_ambient_head(tmp_path: Path) -> None:
+def _remove(main: Path, wt: Path, into: str = "milestone/x-1", cwd: Path | None = None):
+    return subprocess.run(
+        [sys.executable, str(SCRIPT), "worktrees", "--remove", str(wt), "--into", into],
+        cwd=cwd or main, capture_output=True, text=True,
+    )  # fmt: skip
+
+
+def test_worktrees_remove_takes_one_checked_exact_path(tmp_path: Path) -> None:
+    main = _wt_repo(tmp_path)
+    names = ("agent-merged", "agent-dirty", "agent-env", "agent-build", "agent-live", "agent-dead")
+    wts = {n: _builder(main, n) for n in names}
+    unmerged = _builder(main, "agent-unmerged", merge=False)
+    (wts["agent-dirty"] / "scratch.txt").write_text("uncommitted")
+    (wts["agent-env"] / ".env").write_text("SECRET=1")  # ignored, not a cache
+    (wts["agent-build"] / "build").mkdir()  # ignored `build/` is no longer disposable
+    (wts["agent-build"] / "build/db.sqlite").write_text("data")
+    (wts["agent-merged"] / "node_modules").mkdir()  # an ignored cache directory: removable
+    (wts["agent-merged"] / "node_modules/x.js").write_text("x")
+    live = Path(_git(wts["agent-live"], "rev-parse", "--absolute-git-dir").strip())
+    (live / "codex-build.lock").write_text(str(os.getpid()))  # this test process: alive
+    dead = Path(_git(wts["agent-dead"], "rev-parse", "--absolute-git-dir").strip())
+    (dead / "codex-build.lock").write_text("999999")  # a stale lock does not hold it
+
+    listed = subprocess.run([sys.executable, str(SCRIPT), "worktrees"], cwd=main, capture_output=True, text=True)
+    assert listed.returncode == 0 and all(w.is_dir() for w in wts.values()), "no flag: it only lists"
+    assert "removable agent-merged" in listed.stdout and "keep agent-live: a codex build is running" in listed.stdout
+
+    ok = _remove(main, wts["agent-merged"])
+    assert ok.returncode == 0 and "removed agent-merged and branch agent-merged" in ok.stdout, ok.stdout
+    assert not wts["agent-merged"].exists()
+    assert "agent-merged" not in _git(main, "branch", "--format=%(refname:short)").split()
+    assert _remove(main, wts["agent-dead"]).returncode == 0
+    for kept, why in (("agent-env", "not clean: .env"), ("agent-build", "not clean: build/"),
+                      ("agent-dirty", "not clean"), ("agent-live", "a codex build is running")):  # fmt: skip
+        res = _remove(main, wts[kept])
+        assert res.returncode == 1 and why in res.stdout and wts[kept].is_dir(), (kept, res.stdout)
+    assert (wts["agent-env"] / ".env").read_text() == "SECRET=1"
+    assert (wts["agent-build"] / "build/db.sqlite").read_text() == "data"
+    res = _remove(main, unmerged)
+    assert res.returncode == 1 and "not merged into milestone/x-1" in res.stdout and unmerged.is_dir()
+    assert _remove(main, main / ".worktrees" / "nope").returncode == 1, "only a listed builder worktree"
+    assert _remove(main, main).returncode == 1, "never the main folder"
+    assert _remove(main, wts["agent-env"], into="no-such-branch").returncode == 1, "git error: keep"
+
+
+def test_worktrees_remove_reports_a_branch_that_git_keeps(tmp_path: Path) -> None:
+    main = _wt_repo(tmp_path)
+    wt = _builder(main, "agent-a", merge=False)
+    _git(main, "branch", "other", "milestone/x-1")
+    _git(main, "checkout", "-q", "other")
+    _git(main, "merge", "-q", "--no-ff", "-m", "m", "agent-a")  # merged into `other`, not the current HEAD
+    _git(main, "checkout", "-q", "milestone/x-1")
+    res = _remove(main, wt, into="other")
+    assert res.returncode == 0 and "branch agent-a retained" in res.stdout, res.stdout
+    assert not wt.exists() and "agent-a" in _git(main, "branch", "--format=%(refname:short)").split()
+
+
+def test_worktrees_refuses_outside_an_adopted_repo(tmp_path: Path) -> None:
     plain = tmp_path / "plain"
     plain.mkdir()
     _git(plain, "init", "-q", "-b", "master")
     res = subprocess.run(
-        [sys.executable, str(SCRIPT), "worktrees", "--prune"], cwd=plain, capture_output=True, text=True
+        [sys.executable, str(SCRIPT), "worktrees"], cwd=plain, capture_output=True, text=True
     )
     assert res.returncode == 2 and "sdlc.json" in res.stdout
-    # a builder worktree merged only into ITS OWN head (the ambient HEAD of a worktree cwd) is kept
-    main = tmp_path / "main"
-    main.mkdir()
-    _git(main, "init", "-q", "-b", "master")
-    for k, v in (("user.email", "a@b.c"), ("user.name", "t")):
-        _git(main, "config", k, v)
-    (main / "sdlc.json").write_text("{}")
-    _git(main, "add", ".")
-    _git(main, "commit", "-qm", "base")
-    wt = main / ".worktrees/agent-x"
-    _git(main, "worktree", "add", "-q", "-b", "agent-x", str(wt))
-    (wt / "f").write_text("1")
-    _git(wt, "add", ".")
-    _git(wt, "commit", "-qm", "x")
-    out = subprocess.run(
-        [sys.executable, str(SCRIPT), "worktrees", "--prune"], cwd=wt, capture_output=True, text=True
-    )
-    assert "removed" not in out.stdout and wt.is_dir()  # its own root has no .worktrees to scan
-    out = subprocess.run(
-        [sys.executable, str(SCRIPT), "worktrees", "--prune"], cwd=main, capture_output=True, text=True
-    )
-    assert "keep agent-x: not merged" in out.stdout and wt.is_dir()

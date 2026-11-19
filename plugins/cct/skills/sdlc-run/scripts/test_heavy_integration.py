@@ -234,10 +234,13 @@ def _gate_with_fake_db(tmp_path: Path, log: Path) -> Path:
     dest = tmp_path / "installed"
     shutil.copytree(SCRIPTS, dest, ignore=shutil.ignore_patterns("__pycache__"))
     (dest / "db.py").write_text(
-        "import sys\n"
-        f"open({str(log)!r}, 'a').write(' '.join(sys.argv[1:]) + '\\n')\n"
-        "if sys.argv[2] == 'create':\n"
-        "    name = sys.argv[3] if len(sys.argv) > 3 else 'copy1'\n"
+        "import os, sys\n"
+        "args = sys.argv[1:]\n"
+        "assert args[1] != 'create' or args[-2:-1] == ['--owner-pid'] and args[-1].isdigit() and int(args[-1]) != os.getpid(), args\n"
+        "if args[1] == 'create': args = args[:-2]  # the owner pid is the gate's, checked above\n"
+        f"open({str(log)!r}, 'a').write(' '.join(args) + '\\n')\n"
+        "if args[1] == 'create':\n"
+        "    name = args[2] if len(args) > 2 else 'copy1'\n"
         "    print(name, 'postgres://127.0.0.1/' + name)\n"
     )
     return dest / "verify_gate.py"
@@ -728,3 +731,113 @@ def test_the_guard_splits_on_newlines_and_checks_every_argv(tmp_path: Path) -> N
 def test_the_guard_reads_the_split_string_of_env(tmp_path: Path, command: str) -> None:
     assert _helper_guard(tmp_path, _bash_call(command, agent_id="a1")).returncode == 2, command
     assert _helper_guard(tmp_path, _bash_call("env -S 'pnpm lint'", agent_id="a1")).returncode == 0
+
+
+# ---------------------------------------------------------------- 3.22.0 fix round
+
+
+DBCFG = {"test": {"container": "c", "port": 1, "template": "t"}}
+
+
+def test_the_last_failed_rerun_gets_the_same_private_environment(tmp_path: Path) -> None:
+    log = tmp_path / "log"
+    repo = _milestone(
+        tmp_path,
+        [{"name": "e2e", "run": f"echo heavy-marker playwright $DATABASE_URL $SDLC_APP_PORT >> {log}; exit 1"}],
+        heavy=MARK, db=DBCFG,
+    )
+    r = _run_gate(repo, tmp_path / "queue", gate=_gate_with_fake_db(tmp_path, tmp_path / "dblog"), DATABASE_URL="postgres://caller/mine")
+    assert r.returncode == 1, r.stdout + r.stderr
+    lines = log.read_text().splitlines()
+    assert len(lines) == 2, lines  # the second is the --last-failed rerun
+    for line in lines:
+        assert "postgres://127.0.0.1/copy1" in line and " 4100" in line and "caller" not in line, line
+
+
+def test_a_database_check_is_a_serial_boundary(tmp_path: Path) -> None:
+    log = tmp_path / "log"
+    repo = _milestone(
+        tmp_path,
+        [{"name": "slow", "run": f"sleep 0.5; echo a >> {log}"}, {"name": "db", "run": f"echo b >> {log}", "resetDb": True}],
+        db=DBCFG,
+    )
+    r = _run_gate(repo, tmp_path / "queue", gate=_gate_with_fake_db(tmp_path, tmp_path / "dblog"))
+    assert _last(r).startswith("VERIFY PASS"), r.stdout + r.stderr
+    assert log.read_text().split() == ["a", "b"], "the reset check never started beside the one before it"
+
+
+def test_a_light_check_before_the_copy_never_sees_the_callers_database(tmp_path: Path) -> None:
+    log = tmp_path / "log"
+    repo = _milestone(
+        tmp_path,
+        [{"name": "lint", "run": f'echo "url=[$DATABASE_URL]" >> {log}'}, {"name": "suite", "run": "echo heavy-marker"}],
+        heavy=MARK, db=DBCFG,
+    )
+    r = _run_gate(repo, tmp_path / "queue", gate=_gate_with_fake_db(tmp_path, tmp_path / "dblog"), DATABASE_URL="postgres://caller/mine")
+    assert _last(r).startswith("VERIFY PASS"), r.stdout + r.stderr
+    assert log.read_text().strip() == "url=[]"
+
+
+def test_a_lock_without_cost_order_runs_every_check_in_declared_order(tmp_path: Path) -> None:
+    log = tmp_path / "log"
+    repo = _milestone(
+        tmp_path,
+        [{"name": "gen", "run": f"sleep 0.5; echo gen >> {log}"}, {"name": "types", "run": f"echo types >> {log}"}],
+    )
+    lock = next((repo / "changes").rglob("lock.json"))
+    data = json.loads(lock.read_text())
+    data.pop("order", None)  # an approval from before 3.18.0
+    lock.write_text(json.dumps(data))
+    _git(repo, "commit", "-qam", "legacy lock")
+    r = _run_gate(repo, tmp_path / "queue")
+    assert _last(r).startswith("VERIFY PASS"), r.stdout + r.stderr
+    assert log.read_text().split() == ["gen", "types"]
+
+
+def test_a_stuck_database_prepare_is_bounded_and_an_env_handoff(tmp_path: Path) -> None:
+    gate = _gate_with_fake_db(tmp_path, tmp_path / "dblog")
+    gate.with_name("db.py").write_text("import time\ntime.sleep(60)\n")
+    repo = _milestone(
+        tmp_path, [{"name": "suite", "run": "echo heavy-marker"}], heavy=MARK,
+        db={"test": {**DBCFG["test"], "prepareTimeout": 1}},
+    )
+    t0 = time.time()
+    r = _run_gate(repo, tmp_path / "queue", gate=gate)
+    assert r.returncode == 3 and _last(r) == "VERIFY BLOCKED reason=env" and time.time() - t0 < 30, r.stdout
+    assert list((tmp_path / "queue" / "tickets").glob("*.json")) == []
+
+
+def test_a_failed_cleanup_warns_on_stderr_and_the_verdict_stays_last(tmp_path: Path) -> None:
+    gate = _gate_with_fake_db(tmp_path, tmp_path / "dblog")
+    db = gate.with_name("db.py")
+    db.write_text(db.read_text().replace("import os, sys\n", "import os, sys\nif sys.argv[2] == 'drop': print('nope'); sys.exit(5)\n", 1))
+    repo = _milestone(tmp_path, [{"name": "suite", "run": "echo heavy-marker"}], heavy=MARK, db=DBCFG)
+    r = _run_gate(repo, tmp_path / "queue", gate=gate)
+    assert _last(r).startswith("VERIFY PASS"), r.stdout
+    assert "WARN database copy1 not dropped" in r.stderr and "WARN database" not in r.stdout
+
+
+def test_cancelling_the_gate_kills_its_running_check_and_frees_the_slot(tmp_path: Path) -> None:
+    pidfile = tmp_path / "pid"
+    repo = _milestone(tmp_path, [{"name": "suite", "run": f"echo $$ > {pidfile}; echo heavy-marker; sleep 60"}], heavy=MARK)
+    env = {**_env(), "SDLC_HEAVY_DIR": str(tmp_path / "queue"), "SDLC_HEAVY_SLOTS": "1", "SDLC_HEAVY_POLL": "0.1"}
+    gate = subprocess.Popen(
+        [sys.executable, str(SCRIPTS / "verify_gate.py"), "milestone", GID],
+        cwd=repo, env=env, stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True,
+    )  # fmt: skip
+    end = time.time() + 30
+    while time.time() < end and not (pidfile.exists() and pidfile.read_text().strip()):
+        time.sleep(0.1)
+    check = int(pidfile.read_text())
+    gate.terminate()
+    gate.wait(20)
+    time.sleep(0.3)
+    try:
+        import os
+
+        os.kill(check, 0)
+        alive = True
+    except OSError:
+        alive = False
+    assert not alive, "the check outlived the cancelled gate"
+    assert list((tmp_path / "queue" / "tickets").glob("*.json")) == []

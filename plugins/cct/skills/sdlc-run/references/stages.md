@@ -327,14 +327,19 @@ a change small enough for one milestone has one.
    commits its records, then dispatches each builder with a `Base: <milestone head sha>` line,
    and merges the builders' branches into the milestone branch locally, one at a time. Commits
    need Conventional Commit subjects: a merge commit keeps them, and the release reads them.
-   **Right after each merge, remove that builder's worktree and branch** (`git worktree remove
-   <path>` without `--force`, then `git branch -d <branch>`), not at Stage 7: every builder worktree
-   holds a full checkout with its installed dependencies and caches, and a milestone of eight builders
-   fills a disk. `python3 ${CLAUDE_SKILL_DIR}/scripts/sdlc_status.py worktrees --prune` removes the
-   clean `<repo root>/.worktrees/agent-*` worktrees whose branch is merged into the milestone branch
-   checked out at the root or into the default branch, and keeps the rest. It keeps a worktree with
-   uncommitted changes or with ignored files other than rebuildable caches (a `.env`, say), names
-   them, and fails closed on any git error. It runs only in an adopted repo (one with `sdlc.json`).
+   **Right after each merge, remove that builder's worktree and branch**, not at Stage 7: every builder
+   worktree holds a full checkout with its installed dependencies and caches, and a milestone of eight
+   builders fills a disk. Run `python3 ${CLAUDE_SKILL_DIR}/scripts/sdlc_status.py worktrees --remove
+   <builder worktree path> --into <milestone branch>` for THAT builder, and never a raw `git worktree
+   remove`. It removes exactly that one path, only when it is a `<repo root>/.worktrees/agent-*`
+   worktree of this repo, no codex build or git operation holds it, its branch is merged into the
+   milestone branch you name, and it is clean: it keeps a worktree with uncommitted changes or ignored
+   files other than the cache directories `node_modules`, `.next`, `.turbo`, `__pycache__`,
+   `.pytest_cache`, `.ruff_cache`, `.venv` and `coverage` (a `.env`, or a local file under `build/`,
+   is never deleted), names the reason, and fails closed on any git error (exit 1). It reports a branch
+   that `git branch -d` refused to delete as retained. Without flags `worktrees` only lists. It runs
+   only in an adopted repo (one with `sdlc.json`). A builder that is still running is never removed:
+   the lock, not a clean tree, decides.
 4. When every feature of the milestone is `done`, the supervisor hands the milestone's local
    pipeline to **one `cct:sdlc-feature-builder` subagent with `Mode: close`** and the head it runs on
    (the one fix round with targeted tests, then `verify_gate.py milestone`, the only runner of the

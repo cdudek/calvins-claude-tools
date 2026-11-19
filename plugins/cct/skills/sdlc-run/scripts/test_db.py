@@ -81,8 +81,10 @@ def test_each_job_gets_a_unique_copy_made_from_the_template(tmp_path: Path) -> N
     one = _db(repo, "test", "create", "--print").stdout
     two = _db(repo, "test", "create", "--print").stdout
     sql = [x for x in one.splitlines() if "TEMPLATE sdlc_tmpl" in x]
-    assert sql and "CREATE DATABASE sdlc_job_" in sql[0]
+    assert sql and "CREATE DATABASE sdlc_job_" in sql[0], "no owner: a name nothing sweeps on its own"
     assert one != two, "two jobs never share a database name"
+    owned = _db(repo, "test", "create", "--owner-pid", "4242", "--print").stdout
+    assert "CREATE DATABASE sdlc_own_4242_" in owned, "the owner's pid is in the name"
     assert "pg_terminate_backend" in one, "the template must have no connection when copied"
 
 
@@ -91,8 +93,8 @@ def test_test_run_creates_runs_and_drops_with_the_url_in_the_env(tmp_path: Path)
     assert out.returncode == 0, out.stderr
     lines = out.stdout.splitlines()
     job = next(x for x in lines if "pytest -q" in x)
-    assert "DATABASE_URL=postgresql://postgres@127.0.0.1:55432/sdlc_job_" in job
-    assert "DROP DATABASE IF EXISTS sdlc_job_" in lines[-1], "the copy goes away afterwards"
+    assert "DATABASE_URL=postgresql://postgres@127.0.0.1:55432/sdlc_own_" in job
+    assert "DROP DATABASE IF EXISTS sdlc_own_" in lines[-1], "the copy goes away afterwards"
 
 
 def test_names_are_validated_before_they_reach_sql(tmp_path: Path) -> None:
@@ -171,8 +173,10 @@ class Fake:
     dry = False
 
     def __init__(self, container: str = "absent", dbs: dict | None = None, path: Path | None = None,
-                 not_ready: int = 0, delay: float = 0.0) -> None:  # fmt: skip
+                 not_ready: int = 0, delay: float = 0.0, image: str = "postgres:17",
+                 hostport: int = 55432, start_fails: bool = False) -> None:  # fmt: skip
         self.path, self.delay, self.not_ready = path, delay, not_ready
+        self.image, self.hostport, self.start_fails = image, hostport, start_fails
         self.st = {"container": container, "dbs": dict(dbs or {}), "log": []}
         if path and not path.exists():
             self.save()
@@ -199,16 +203,23 @@ class Fake:
             return False
         return self.st["container"] == "running"
 
+
     def run(self, argv, env=None, check=True):
         self.load()
         out = ""
         rc = 0
         if argv[:2] == ["docker", "inspect"]:
+            ports = '{"5432/tcp":[{"HostIp":"127.0.0.1","HostPort":"' + str(self.hostport) + '"}]}'
             rc, out = (
                 (1, "")
                 if self.st["container"] == "absent"
-                else (0, "true" if self.st["container"] == "running" else "false")
+                else (0, f"{'true' if self.st['container'] == 'running' else 'false'}|{self.image}|{ports}")
             )
+        elif argv[:2] == ["docker", "start"]:
+            if self.start_fails:
+                return subprocess.CompletedProcess(argv, 1, "", "boom")
+            self.st["container"] = "running"
+            self.log("start")
         elif argv[:3] == ["docker", "rm", "-f"]:
             self.st["container"] = "absent"
             self.st["dbs"] = {}
@@ -323,18 +334,36 @@ def test_one_failed_probe_never_removes_a_running_container(
     assert stuck.events("rm") == []
 
 
-def test_a_stopped_container_is_replaced_and_an_absent_one_started(
+def test_a_stopped_container_is_started_never_removed_and_an_absent_one_run(
     tmp_path: Path, state: Path, monkeypatch
 ) -> None:
     stopped = Fake(container="stopped")
     _tdb(tmp_path, stopped, monkeypatch=monkeypatch).start_container()
-    assert stopped.events("rm") == ["rm"] and stopped.events("run") == ["run"]
+    assert stopped.events("rm") == [] and stopped.events("run") == []
+    assert stopped.events("start") == ["start"]
     absent = Fake()
     _tdb(tmp_path, absent, monkeypatch=monkeypatch).start_container()
     assert absent.events("rm") == [] and absent.events("run") == ["run"]
 
 
-def test_sweep_drops_dead_jobs_and_old_templates_only(
+@pytest.mark.parametrize(
+    "fake, why",
+    [
+        (Fake(container="stopped", image="redis:7"), "belongs to something else"),
+        (Fake(container="stopped", hostport=1234), "belongs to something else"),
+        (Fake(container="stopped", start_fails=True), "start` failed"),
+    ],
+)
+def test_a_stopped_container_that_differs_or_will_not_start_is_a_named_conflict(
+    tmp_path: Path, state: Path, monkeypatch, fake: Fake, why: str
+) -> None:
+    with pytest.raises(mod.ConfigError, match=why) as e:
+        _tdb(tmp_path, fake, monkeypatch=monkeypatch).start_container()
+    assert "sdlc-test-pg" in str(e.value), "the message names the container"
+    assert fake.events("rm") == [] and fake.events("run") == [], "never replaced"
+
+
+def test_sweep_drops_dead_owners_copies_and_old_templates_only(
     tmp_path: Path, state: Path, monkeypatch
 ) -> None:
     now = int(time.time())
@@ -342,10 +371,11 @@ def test_sweep_drops_dead_jobs_and_old_templates_only(
                               capture_output=True, text=True).stdout.strip()  # fmt: skip
     old = now - 7200
     fake = Fake(container="running", dbs={
-        f"sdlc_job_{dead_pid}_{old}_1": "",            # dead pid, past the grace: dropped
-        f"sdlc_job_{dead_pid}_{now}_2": "",            # dead pid but just made by `test create`: kept
-        f"sdlc_job_{os.getpid()}_{old}_3": "",         # live pid: kept
-        "sdlc_job_999999_1": "",                        # legacy name, dead pid: dropped
+        f"sdlc_own_{dead_pid}_{old}_1": "",            # owner dead, past the grace: dropped
+        f"sdlc_own_{dead_pid}_{now}_2": "",            # owner dead but copy just made: kept
+        f"sdlc_own_{os.getpid()}_{old}_3": "",         # owner alive: kept
+        "sdlc_job_999999_1": "",                        # 3.21 name, no owner marker: kept
+        f"sdlc_job_{dead_pid}_{old}_4": "",            # 3.21 name with a dead pid in it: kept
         "sdlc_tmpl_0123456789abcdef": "migrations:x",  # other hash, never seen: starts its clock
         "sdlc_tmpl_fedcba9876543210": "migrations:y",  # other hash, used 8 days ago: dropped
         "customers": "",                                # not ours: never touched
@@ -356,21 +386,37 @@ def test_sweep_drops_dead_jobs_and_old_templates_only(
         json.dumps({"sdlc_tmpl_fedcba9876543210": time.time() - 8 * 86400})
     )
     gone = db.sweep()
-    assert sorted(gone) == sorted([f"sdlc_job_{dead_pid}_{old}_1", "sdlc_job_999999_1",
-                                   "sdlc_tmpl_fedcba9876543210"])  # fmt: skip
+    assert sorted(gone) == sorted([f"sdlc_own_{dead_pid}_{old}_1", "sdlc_tmpl_fedcba9876543210"])
     kept = set(fake.st["dbs"])
-    assert {"customers", "sdlc_tmpl_0123456789abcdef", f"sdlc_job_{os.getpid()}_{old}_3",
-            f"sdlc_job_{dead_pid}_{now}_2"} <= kept  # fmt: skip
+    assert {"customers", "sdlc_tmpl_0123456789abcdef", f"sdlc_own_{os.getpid()}_{old}_3",
+            f"sdlc_own_{dead_pid}_{now}_2", "sdlc_job_999999_1", f"sdlc_job_{dead_pid}_{old}_4"} <= kept  # fmt: skip
     assert fake.events("run") == [], "sweep never starts a container"
+    assert sorted(db.sweep(all_unowned=True)) == sorted(["sdlc_job_999999_1", f"sdlc_job_{dead_pid}_{old}_4"])
+
+
+def test_a_long_template_prefix_gets_a_bounded_name_that_keeps_prefixes_apart(
+    tmp_path: Path, state: Path, monkeypatch
+) -> None:
+    fits = _tdb(tmp_path, Fake(), monkeypatch=monkeypatch)
+    assert fits.tmpl.startswith("sdlc_tmpl_") and len(fits.tmpl) <= 63
+    a, b = "a" * 47, "a" * 46 + "b"  # 47 + _ + 16 hash = 64: too long as it was
+    names = []
+    for prefix in (a, b):
+        d = _tdb(tmp_path, Fake(), monkeypatch=monkeypatch)
+        d.template = prefix
+        names.append(d.tmpl)
+    assert all(len(n) <= 63 and mod.NAME.match(n) for n in names) and names[0] != names[1]
 
 
 def test_prepare_sweeps_and_remembers_the_templates_last_use(
     tmp_path: Path, state: Path, monkeypatch
 ) -> None:
-    fake = Fake(container="running", dbs={"sdlc_job_999999_1": ""})
+    old = int(time.time()) - 7200
+    fake = Fake(container="running", dbs={f"sdlc_own_999999_{old}_1": "", "sdlc_job_999999_1": ""})
     db = _tdb(tmp_path, fake, monkeypatch=monkeypatch)
     db.prepare()
-    assert "sdlc_job_999999_1" not in fake.st["dbs"]
+    assert f"sdlc_own_999999_{old}_1" not in fake.st["dbs"]
+    assert "sdlc_job_999999_1" in fake.st["dbs"], "a copy with no owner is never swept by prepare"
     used = json.loads((state / "sdlc-test-pg.json").read_text())
     assert db.tmpl in used and time.time() - used[db.tmpl] < 60
 
@@ -382,7 +428,7 @@ def test_test_run_streams_and_keeps_the_exit_code(tmp_path: Path, state: Path, m
     monkeypatch.setattr(mod, "section", lambda *a: dict(TEST))
     assert mod.cmd_test(args, fake) == 7
     assert fake.events("stream") == ["stream pytest"]
-    assert fake.events("drop")[-1].startswith("drop sdlc_job_"), "the copy goes away afterwards"
+    assert fake.events("drop")[-1].startswith(f"drop sdlc_own_{os.getpid()}_"), "owned by the run itself, dropped after"
 
 
 def test_runner_stream_inherits_output_and_returns_the_status(capfd) -> None:

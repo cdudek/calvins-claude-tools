@@ -340,7 +340,7 @@ def test_the_queue_is_one_per_user_and_names_repo_worktree_and_job_group(tmp_pat
     state = home / ".local" / "state" / "sdlc" / "heavy" / "tickets"
     for extra, where in (({"HOME": str(home)}, state), ({"HOME": str(home), "XDG_STATE_HOME": str(tmp_path / "x")}, tmp_path / "x" / "sdlc" / "heavy" / "tickets")):
         e = {k: v for k, v in env.items() if k != "XDG_STATE_HOME"} | extra
-        res = _heavy(tmp_path, "run", "--", "sh", "-c", f"cat {where}/*.json", env=e)
+        res = _heavy(tmp_path, "run", "--", "sh", "-c", f"sleep 0.5; cat {where}/*.json", env=e)  # the wrapper lists the group just after the start
         ticket = json.loads(res.stdout)
         assert ticket["pid"] and ticket["pgid"] and ticket["repo"] and ticket["worktree"], res.stderr
         assert ticket["pgid"] != ticket["pid"], "the job's own group, not the wrapper's"
@@ -496,11 +496,139 @@ def test_the_hook_refuses_a_helpers_write_in_the_main_folder(tmp_path: Path) -> 
             payload["agent_id"] = agent
         return _guard(cwd, payload).returncode
 
-    assert call("pnpm lint", main) == 3, "a helper runs its work in its own worktree"
-    assert call("touch x.txt", main) == 3
-    assert "main working folder" in _guard(main, {"cwd": str(main), "agent_id": "a1", "tool_input": {"command": "touch x"}}).stderr
-    assert call("git status", main) == 0 and call("ls -la", main) == 0, "reading is fine anywhere"
-    assert call(f"cd {wt} && pnpm lint", main) == 0, "the shell starts in the main folder; a cd leaves it"
-    assert call("pnpm lint", wt) == 0
+    assert call("pnpm install", main) == 2, "a write in the main folder blocks (exit 2), it does not just warn"
+    assert call("touch x.txt", main) == 2
+    assert call("echo hi > x.txt", main) == 2 and call("cat x.txt 2>/dev/null", main) == 0
+    stderr = _guard(main, {"cwd": str(main), "agent_id": "a1", "tool_input": {"command": "touch x"}}).stderr
+    assert "main working folder" in stderr
+    for mutating in ("git commit -m x", "git add .", "git checkout -b y", "git stash", "git reset --hard",
+                     "git push", "git rebase main", "git worktree add ../z", "git branch -D feat", "sed -i s/a/b/ f"):  # fmt: skip
+        assert call(mutating, main) == 2, mutating
+    for reading in ("git status", "git log -3", "git diff", "git branch", "git worktree list", "ls -la",
+                    "pnpm lint", "grep -r x .", "git -C . show HEAD"):  # fmt: skip
+        assert call(reading, main) == 0, reading
+    assert call(f"cd {wt} && touch x", main) == 0, "the shell starts in the main folder; a cd leaves it"
+    assert call(f"touch x && cd {wt}", main) == 2, "a write before the cd is still in the main folder"
+    assert call("cd .. && touch x", main) == 0, "outside the main folder"
+    assert call(f"cd {main} && touch x", wt) == 2, "a cd back into the main folder counts"
+    assert call(f"git -C {wt} commit -m x", main) == 0 and call(f"git -C {main} commit -m x", wt) == 2
+    assert call("touch x.txt", wt) == 0
     assert call("pnpm lint", main, agent=None) == 0, "the owner's own session is never refused"
     assert call("pnpm build", main) == 2, "an unqueued heavy command is still refused first"
+    # the kit's self-queuing close is the one heavy command the hook lets through
+    for gate in ("python3 scripts/verify_gate.py milestone m-1", "scripts/verify_gate.py project p",
+                 "python3 /abs/x/scripts/verify_gate.py milestone m-1 --keep-going"):  # fmt: skip
+        assert call(gate, wt) == 0 and call(gate, main) == 0, gate
+    assert call("python3 scripts/verify_gate.py approve m-1", wt) == 0
+
+
+@pytest.mark.parametrize("cmd", [
+    "cargo build", "cargo +nightly test", "uv build", "yarn workspace app run build", "go build ./...", "go test ./...",
+    "mvn package", "./mvnw verify", "gradle build", "./gradlew test",
+])  # fmt: skip
+def test_real_build_and_test_commands_are_heavy(cmd: str) -> None:
+    assert _heavy_classify(cmd) == "heavy"
+
+
+@pytest.mark.parametrize("cmd", ["cargo fmt", "cargo clippy", "go vet ./...", "uv sync", "mvn -v", "yarn workspace app run lint"])
+def test_neighbouring_light_commands_stay_light(cmd: str) -> None:
+    assert _heavy_classify(cmd) == "light"
+
+
+def _heavy_classify(cmd: str) -> str:
+    import shlex
+
+    out = subprocess.run([sys.executable, str(HEAVY), "classify", "--", *shlex.split(cmd)], capture_output=True, text=True)
+    return out.stdout.strip()
+
+
+def test_a_late_publisher_never_crashes_the_allocator(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    """A ticket that sorts first but whose slot is already taken waits; it does not raise StopIteration."""
+    monkeypatch.setenv("SDLC_HEAVY_DIR", str(tmp_path))
+    mod = _module()
+    q = mod.Queue(tmp_path, 1)
+    t = tmp_path / "tickets"
+    base = {"pid": os.getpid(), "cmd": ["x"], "kind": "job", "since": time.time(), "cap": 0}
+    (t / "00000000000000000001-1.json").write_text(json.dumps({**base, "slot": None}))
+    (t / "00000000000000000002-1.json").write_text(json.dumps({**base, "slot": 0}))
+    slot, holders = q.try_take(t / "00000000000000000001-1.json")
+    assert slot is None and holders and holders[0]["slot"] == 0
+
+
+def test_the_arrival_name_is_made_under_the_publication_lock(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setenv("SDLC_HEAVY_DIR", str(tmp_path))
+    mod = _module()
+    q = mod.Queue(tmp_path, 1)
+    a = q.enter(["a"], "job")
+    b = q.enter(["b"], "job")
+    assert a.name < b.name
+
+
+def test_a_recycled_group_id_is_not_killed(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setenv("SDLC_HEAVY_DIR", str(tmp_path))
+    mod = _module()
+    victim = subprocess.Popen(["sleep", "30"], start_new_session=True)
+    try:
+        mod.kill_pgid(victim.pid, "Thu Jan  1 00:00:00 1970")  # recorded for another process: the id was recycled
+        assert victim.poll() is None, "a different start time means a different process"
+        mod.kill_pgid(victim.pid, mod.proc_start(victim.pid))
+        assert victim.wait(5) != 0
+    finally:
+        victim.kill()
+
+
+def test_leave_stops_every_group_the_ticket_lists(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setenv("SDLC_HEAVY_DIR", str(tmp_path))
+    mod = _module()
+    q = mod.Queue(tmp_path, 1)
+    ticket = q.enter(["gate"], "gate")
+    check = subprocess.Popen(["sleep", "30"], start_new_session=True)
+    q.track_group(ticket, check.pid)
+    other = subprocess.Popen(["sleep", "30"], start_new_session=True)
+    q.track_group(ticket, other.pid)
+    q.track_group(ticket, other.pid, on=False)  # finished checks are forgotten
+    try:
+        q.leave(ticket)
+        assert check.wait(5) != 0 and other.poll() is None
+    finally:
+        other.kill()
+        check.kill()
+
+
+def test_a_cancelled_wrapper_leaves_no_check_behind(tmp_path: Path) -> None:
+    """`heavy.py run -- <job that starts a session of its own and lists it on the ticket>`: SIGTERM to the wrapper."""
+    pidfile = tmp_path / "check.pid"
+    job = (
+        "import os, subprocess, sys; sys.path.insert(0, os.path.dirname(os.environ['H'])); import heavy; "
+        "q = heavy.Queue(heavy.queue_dir(), 1); "
+        f"p = subprocess.Popen(['sleep', '60'], start_new_session=True); open({str(pidfile)!r}, 'w').write(str(p.pid)); "
+        "q.track_group(__import__('pathlib').Path(os.environ['SDLC_HEAVY_TICKET']), p.pid); import time; time.sleep(60)"
+    )
+    wrapper = _popen(tmp_path, "run", "--", sys.executable, "-c", job, H=str(HEAVY))
+    _until(lambda: pidfile.exists() and pidfile.read_text(), "the check to start")
+    time.sleep(0.5)
+    check = int(pidfile.read_text())
+    assert _alive(check)
+    wrapper.terminate()
+    wrapper.wait(10)
+    _until(lambda: not _alive(check), "the check to die with the cancelled wrapper")
+
+
+def test_prune_never_removes_a_running_job_and_tolerates_a_vanished_one(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setenv("SDLC_HEAVY_DIR", str(tmp_path))
+    mod = _module()
+    running = tmp_path / "jobs" / "running"
+    running.mkdir(parents=True)
+    (running / "job.json").write_text(json.dumps({"pid": os.getpid()}))
+    os.utime(running, (time.time() - 30 * 86400,) * 2)
+    gone = tmp_path / "jobs" / "gone"
+    gone.mkdir()
+    real = Path.stat
+
+    def stat(self, *a, **k):  # another prune removed it between the listing and the stat
+        if self.name == "gone":
+            raise FileNotFoundError(self)
+        return real(self, *a, **k)
+
+    monkeypatch.setattr(Path, "stat", stat)
+    assert mod.prune_jobs() == 0 and running.exists()
