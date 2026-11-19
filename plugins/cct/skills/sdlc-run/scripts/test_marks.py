@@ -782,3 +782,37 @@ def test_a_source_folder_tracked_at_head_is_accepted(repo: Path) -> None:
     manifest["entries"][0]["sources"] = ["src"]
     rewrite(repo, manifest)
     assert run(repo, "check").returncode == 0, run(repo, "check").stdout
+
+
+# Security follow-ups: canonical literal sources; qa.md freshness whenever it exists.
+@pytest.mark.parametrize("source", ["src/*", "src/?.ts", "src/[ab].ts", "src\\a.ts", ":(top)src/a.ts", ":src/a.ts", "src/a.ts "])
+def test_a_source_with_glob_or_pathspec_syntax_is_rejected(repo: Path, source: str) -> None:
+    manifest = strict(repo)
+    manifest["entries"][0]["sources"] = [source]
+    rewrite(repo, manifest)
+    assert "is not a plain repo path tracked at HEAD" in run(repo, "check").stdout
+
+
+def test_the_staleness_check_watches_the_canonical_source_path(repo: Path) -> None:
+    manifest = strict(repo)
+    manifest["entries"][0]["sources"] = ["src/a.ts/"]  # a trailing slash is canonicalised, not raw
+    rewrite(repo, manifest)
+    assert run(repo, "check").returncode == 0, run(repo, "check").stdout
+    write(repo / "src/a.ts", "a2")
+    commit_all(repo, "fix a")
+    assert "src/a.ts changed since build" in run(repo, "check").stdout
+
+
+def test_a_stale_qa_md_fails_even_when_the_rows_look_non_visual(repo: Path) -> None:
+    strict(repo)
+    write(change(repo) / "marks.json", '{"rows": []}')  # rows edited away
+    write(change(repo) / "spec/qa.md", f"# QA\n\nBuild: {'1' * 40}\n")
+    out = run(repo, "check").stdout
+    assert "qa.md is stale" in out
+
+
+def test_a_missing_qa_md_fails_when_the_spec_folder_exists_even_without_visual_rows(repo: Path) -> None:
+    strict(repo)
+    write(change(repo) / "marks.json", '{"rows": []}')
+    (change(repo) / "spec/qa.md").unlink()
+    assert "qa.md is missing" in run(repo, "check").stdout

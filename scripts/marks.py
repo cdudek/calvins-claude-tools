@@ -390,13 +390,14 @@ def manifest_required(change: Path) -> bool:
 
 
 def qa_problems(change: Path, repo: Path, visual: bool) -> list[str]:
-    """`<spec>/qa.md` verified by its own recorded `Build: <sha>`, never by manifest metadata. A
-    change with visual work needs one even without a spec folder; other changes are exempt."""
-    if not visual:
-        return []
+    """`<spec>/qa.md` verified by its own recorded `Build: <sha>`, never by manifest metadata. It is
+    required when the change has visual rows or a spec folder (marks.json is editable, the spec
+    folder is not derived from it); and whenever it exists its build must be fresh."""
     qa = change / "spec" / "qa.md"
     if not qa.is_file():
-        return ["qa.md is missing: build QA has not been recorded for this change"]
+        if visual or (change / "spec").is_dir():
+            return ["qa.md is missing: build QA has not been recorded for this change"]
+        return []
     m = re.search(r"^Build:\s*`?(\S+?)`?\s*$", qa.read_text(encoding="utf-8"), re.M | re.I)
     if not m:
         return ["qa.md records no `Build: <sha>` line, so its inputs cannot be checked"]
@@ -405,21 +406,25 @@ def qa_problems(change: Path, repo: Path, visual: bool) -> list[str]:
     return []
 
 
-def tracked_source(repo: Path, source: object) -> bool:
-    """A declared source is a plain repo-relative path (no absolute path, `.`, `..` or empty
-    component) that names a file or folder tracked at HEAD, so a narrowed staleness check can
-    never be made to watch nothing."""
-    if not filled(source) or Path(str(source)).is_absolute():
-        return False
-    parts = str(source).strip().rstrip("/").split("/")
+def canonical_source(repo: Path, source: object) -> str | None:
+    """The canonical repo path of a declared source, or None. Plain only: relative, no `.`, `..` or
+    empty component, no glob or pathspec syntax (`* ? [ ] \\`, a leading `:`), no edge whitespace.
+    It must name a file or folder tracked at HEAD, matched literally, so a narrowed staleness
+    check can never watch nothing or something else."""
+    if not isinstance(source, str) or not source or source != source.strip():
+        return None
+    if Path(source).is_absolute() or source[0] == ":" or any(c in source for c in "*?[]\\"):
+        return None
+    parts = source.rstrip("/").split("/")
     if any(p in ("", ".", "..") for p in parts):
-        return False
+        return None
+    path = "/".join(parts)
     listed = subprocess.run(
-        ["git", "-C", str(repo), "ls-tree", "-r", "--name-only", "HEAD", "--", "/".join(parts)],
+        ["git", "-C", str(repo), "ls-tree", "-r", "--name-only", "HEAD", "--", f":(literal){path}"],
         capture_output=True,
         text=True,
     )
-    return listed.returncode == 0 and bool(listed.stdout.strip())
+    return path if listed.returncode == 0 and listed.stdout.strip() else None
 
 
 def manifest_problems(change: Path, rows: list[dict], repo: Path) -> list[str]:
@@ -449,7 +454,7 @@ def manifest_problems(change: Path, rows: list[dict], repo: Path) -> list[str]:
         problems += [
             f"capture manifest: shared dependency {x!r} is not a plain repo path tracked at HEAD"
             for x in shared
-            if not tracked_source(repo, x)
+            if canonical_source(repo, x) is None
         ]
     for entry in entries:
         mine = entry.get("sources")
@@ -458,12 +463,16 @@ def manifest_problems(change: Path, rows: list[dict], repo: Path) -> list[str]:
             if not (isinstance(mine, list) and mine and all(filled(x) for x in mine)):
                 problems.append(f"capture {entry.get('shot')}: must list the source files of its screen")
             else:
-                bad = [x for x in mine if not tracked_source(repo, x)]
+                canon = [canonical_source(repo, x) for x in mine]
                 problems += [
                     f"capture {entry.get('shot')}: source {x!r} is not a plain repo path tracked at HEAD"
-                    for x in bad
+                    for x, c in zip(mine, canon)
+                    if c is None
                 ]
-                paths = [*mine, *[x for x in shared if filled(x)]]
+                # only canonical, tracked paths narrow the check; a bad one fails the cell above
+                paths = [c for c in canon if c] + [
+                    c for x in shared if (c := canonical_source(repo, x))
+                ]
             ref = entry.get("reference")
             if not (isinstance(ref, str) and re.fullmatch(r"[0-9a-f]{64}", ref)):
                 problems.append(f"capture {entry.get('shot')}: reference digest is required (sha256)")
