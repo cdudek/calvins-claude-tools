@@ -355,6 +355,16 @@ def goal(
         # report.json holds the last gate run only: each planned milestone is done by its own
         # receipt (verify/milestone-<n>.json), whose gated head is in the project branch; the
         # branch merge is the fallback for a change gated before receipts existed
+        merged_in: list[str] | None = None  # the project history, listed once per poll
+
+        def brought_in(gated: str) -> str:
+            """The second parent of the oldest first-parent merge on the project branch that holds `gated`."""
+            nonlocal merged_in
+            if merged_in is None:
+                log = git(root, "log", "--first-parent", "--merges", "--reverse", "--format=%P", into)
+                merged_in = [p[1] for p in (line.split() for line in log.splitlines()) if len(p) > 1]
+            return next((p for p in merged_in if contains(root, gated, p)), "")
+
         if planned(change):
             for b in branches(change, read_json(change / "decisions.json"), scope, n, cfg):
                 i = b.rsplit("-", 1)[1]
@@ -366,7 +376,13 @@ def goal(
                     if not (ok and contains(root, str(receipt.get("sha", "")), into)):
                         missing.append(f"receipt-not-merged:{i}")
                         continue
-                    if not tip:  # the branch is gone: the receipt stands in for it
+                    if not tip:  # the branch is gone: the merge that brought it in stands in for it
+                        sha = str(receipt.get("sha", ""))
+                        second = brought_in(sha)
+                        if not second:  # a fast-forward leaves no merge commit to prove against
+                            missing.append(f"receipt-not-merged:{i}")
+                        elif not same_head(root, cfg, sha, second):
+                            missing.append(f"gate-sha-not-tip:{b}")  # the merge carried more than records
                         continue
                 if not contains(root, tip, into):  # no receipt, or the branch is still there
                     missing.append(f"merge-missing:{b}")

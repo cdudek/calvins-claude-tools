@@ -635,6 +635,12 @@ def _receipt(repo: Path, n: int, sha: str, verdict: str = "PASS", change: str = 
     (out / f"milestone-{n}.json").write_text(json.dumps(receipt))
 
 
+def _merge(repo: Path, branch: str, into: str = "project/big") -> None:
+    """A real merge commit of `branch` into `into` (what `git merge --no-ff` leaves; a fast-forward leaves none)."""
+    _sh(repo, "checkout", "-q", into)
+    _sh(repo, "merge", "--no-ff", "-q", "-m", f"merge {branch}", branch)
+
+
 def _two_milestones(repo: Path) -> tuple[str, str]:
     """M1 merged into project/big; M2 built on its own branch, not merged."""
     _local_project(repo)
@@ -645,7 +651,8 @@ def _two_milestones(repo: Path) -> tuple[str, str]:
     _sh(repo, "branch", "project/big")
     _sh(repo, "checkout", "-qb", "milestone/redesign-r2-1")
     m1 = _commit(repo, "m1.txt")
-    _sh(repo, "branch", "-f", "project/big", m1)
+    _merge(repo, "milestone/redesign-r2-1")
+    _sh(repo, "checkout", "-q", "milestone/redesign-r2-1")
     _sh(repo, "checkout", "-qb", "milestone/redesign-r2-2")
     return m1, _commit(repo, "m2.txt")
 
@@ -654,8 +661,7 @@ def test_goal_local_milestone_is_done_by_its_receipt_after_the_branch_is_deleted
     repo: Path,
 ) -> None:
     m1, m2 = _two_milestones(repo)
-    _sh(repo, "branch", "-f", "project/big", m2)
-    _sh(repo, "checkout", "-q", "project/big")
+    _merge(repo, "milestone/redesign-r2-2")
     _sh(repo, "branch", "-D", "milestone/redesign-r2-1", "milestone/redesign-r2-2")
     _receipt(repo, 1, m1)
     _receipt(repo, 2, m2)
@@ -686,8 +692,7 @@ def test_goal_local_receipt_whose_head_is_not_in_the_project_branch_is_open(repo
 
 def test_goal_local_receipt_copied_from_another_milestone_is_rejected(repo: Path) -> None:
     m1, m2 = _two_milestones(repo)
-    _sh(repo, "branch", "-f", "project/big", m2)
-    _sh(repo, "checkout", "-q", "project/big")
+    _merge(repo, "milestone/redesign-r2-2")
     _sh(repo, "branch", "-D", "milestone/redesign-r2-1", "milestone/redesign-r2-2")
     _receipt(repo, 1, m1)
     out = repo / "changes" / ID / "verify"
@@ -699,8 +704,7 @@ def test_goal_local_receipt_copied_from_another_milestone_is_rejected(repo: Path
 
 def test_goal_local_receipt_for_another_change_is_rejected(repo: Path) -> None:
     m1, m2 = _two_milestones(repo)
-    _sh(repo, "branch", "-f", "project/big", m2)
-    _sh(repo, "checkout", "-q", "project/big")
+    _merge(repo, "milestone/redesign-r2-2")
     _sh(repo, "branch", "-D", "milestone/redesign-r2-1", "milestone/redesign-r2-2")
     _receipt(repo, 1, m1)
     _receipt(repo, 2, m2, change="2026-01-01-other")
@@ -1151,3 +1155,51 @@ def test_the_bindings_are_required_when_the_installed_gate_writes_them(repo: Pat
     _repo_gate(repo, gate)
     _strip_bindings(repo)
     assert _goal(repo, {BRANCH: _pr()}) == (1, f"GOAL {ID} OPEN milestone-gate-pass")
+
+
+# --- a deleted milestone branch: the merge that brought it in is proven, not just contained ----
+
+
+def test_a_post_gate_edit_merged_with_a_deleted_milestone_is_not_done(repo: Path) -> None:
+    m1, m2 = _two_milestones(repo)  # M1 merged with a merge commit; M2 gated at m2
+    (repo / "late.txt").write_text("after the gate\n")  # a product edit after the gate...
+    _sh(repo, "add", ".")
+    _sh(repo, "commit", "-qm", "edit after the gate")
+    _merge(repo, "milestone/redesign-r2-2")  # ...merged with the milestone, the later of two merges
+    _sh(repo, "branch", "-D", "milestone/redesign-r2-1", "milestone/redesign-r2-2")
+    _receipt(repo, 1, m1)
+    _receipt(repo, 2, m2)
+    _gate(repo, f"VERIFY PASS milestone {ID} {m2}")
+    got = sdlc_status.goal(repo, repo / "changes" / ID, "milestone", None, gh=_no_gh)
+    assert got == (1, f"GOAL {ID} OPEN gate-sha-not-tip:milestone/redesign-r2-2")
+
+
+def test_a_fast_forward_leaves_no_merge_to_prove_and_is_not_merged(repo: Path) -> None:
+    m1, m2 = _two_milestones(repo)
+    _sh(repo, "branch", "-f", "project/big", m2)  # fast-forward: no merge commit
+    _sh(repo, "checkout", "-q", "project/big")
+    _sh(repo, "branch", "-D", "milestone/redesign-r2-1", "milestone/redesign-r2-2")
+    _receipt(repo, 1, m1)
+    _receipt(repo, 2, m2)
+    _gate(repo, f"VERIFY PASS milestone {ID} {m2}")
+    got = sdlc_status.goal(repo, repo / "changes" / ID, "milestone", None, gh=_no_gh)
+    assert got == (1, f"GOAL {ID} OPEN receipt-not-merged:1,receipt-not-merged:2")  # both lost their merge
+
+
+def test_the_project_history_is_listed_once_per_poll(repo: Path, monkeypatch) -> None:
+    m1, m2 = _two_milestones(repo)
+    _merge(repo, "milestone/redesign-r2-2")
+    _sh(repo, "branch", "-D", "milestone/redesign-r2-1", "milestone/redesign-r2-2")
+    _receipt(repo, 1, m1)
+    _receipt(repo, 2, m2)
+    _gate(repo, f"VERIFY PASS milestone {ID} {m2}")
+    logs: list[tuple] = []
+    real = sdlc_status.git
+
+    def spy(root, *args):
+        logs.append(args) if args[:1] == ("log",) else None
+        return real(root, *args)
+
+    monkeypatch.setattr(sdlc_status, "git", spy)
+    assert sdlc_status.goal(repo, repo / "changes" / ID, "milestone", None, gh=_no_gh)[0] == 0
+    assert len(logs) == 1, logs
