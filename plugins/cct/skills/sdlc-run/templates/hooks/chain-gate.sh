@@ -300,21 +300,30 @@ def authorized(target: str, change_id: str, change_dir: Path, decisions: dict) -
         lock_sha = ""
     gd = git_dir()
     used_path = gd / "sdlc-protected-used.json" if gd else None
-    try:
-        used = json.loads(used_path.read_text(encoding="utf-8")) if used_path and used_path.exists() else []
-    except (OSError, ValueError):
-        used = []
     spent = False
     for entry in entries:
         path, words, sha = (entry.get("path"), str(entry.get("words", "")), entry.get("sha")) if isinstance(entry, dict) else (None, str(entry), None)
         if not words.strip() or (path and path.lstrip("./") != target) or (sha and sha != lock_sha):
             continue
+        # a matching quote needs the ledger: one that cannot be found, read or written denies (fails closed)
+        try:
+            if used_path is None:
+                raise OSError("no git dir")
+            used = json.loads(used_path.read_text(encoding="utf-8")) if used_path.exists() else []
+            if not isinstance(used, list):
+                raise ValueError("not a list")
+        except (OSError, ValueError):
+            print(f"chain-gate: the protectedEdit ledger ({used_path or 'no git dir'}) is missing, unreadable or not a list; refusing the edit.", file=sys.stderr)
+            return False
         key = hashlib.sha256(f"{change_id}\0{path or '*'}\0{words}\0{lock_sha}".encode()).hexdigest()
         if key in used:
             spent = True
             continue
-        if used_path:
+        try:
             used_path.write_text(json.dumps([*used, key]), encoding="utf-8")
+        except OSError:
+            print(f"chain-gate: the protectedEdit ledger ({used_path}) is not writable; refusing the edit.", file=sys.stderr)
+            return False
         return True
     if spent:
         print(f"chain-gate: the protectedEdit quote for {target} is already used; ask the engineer again and record new words.", file=sys.stderr)
@@ -322,8 +331,20 @@ def authorized(target: str, change_id: str, change_dir: Path, decisions: dict) -
 
 
 def branch_change() -> tuple[str, Path, dict] | None:
-    if dispatched := dispatched_change():
-        return dispatched
+    """The change of the checked-out branch; the dispatch pointer only fills in when the branch names
+    none. When both name a change and they differ, the edit is refused: a pointer never overrides."""
+    named, pointed = change_of_branch(), dispatched_change()
+    if named and pointed and named[0] != pointed[0]:
+        deny(
+            f"the branch names change {named[0]} but the dispatch pointer (<git dir>/sdlc-change or SDLC_CHANGE) "
+            f"names {pointed[0]}: they disagree. Fix the pointer or the branch; a pointer never overrides the branch.",
+            source="the branch name and the dispatch pointer",
+            action="remove the wrong pointer, or work on the branch of the change",
+        )
+    return named or pointed
+
+
+def change_of_branch() -> tuple[str, Path, dict] | None:
     branch = branch_name()
     if not branch:
         return None

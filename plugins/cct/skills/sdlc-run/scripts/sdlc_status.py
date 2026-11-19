@@ -204,7 +204,7 @@ def milestone_map(s: dict) -> str:
 def side_notes(root: Path) -> list[str]:
     """What the map adds only when there is something to say: a stop whose verification failed (the
     stop hook lets a session end on an unchanged failing tree, which is not a pass) and who holds or
-    waits for a heavy slot (the repo's own scripts/heavy.py, so a waiting helper is visible)."""
+    waits for a heavy slot (the plugin's heavy.py run in the repo, so a waiting helper is visible)."""
     lines = []
     gitdir = git(root, "rev-parse", "--absolute-git-dir")
     try:
@@ -213,7 +213,7 @@ def side_notes(root: Path) -> list[str]:
         stop = {}
     if isinstance(stop, dict) and stop.get("status") == "failed":
         lines.append(f"  last stop  verify FAILED (`{stop.get('verify', '')}`): a stop is not a pass; the uncommitted source was never verified")
-    heavy = root / "scripts" / "heavy.py"
+    heavy = Path(__file__).resolve().parents[1] / "templates" / "scripts" / "heavy.py"  # the plugin's own copy: status never runs repo code
     if heavy.is_file():
         try:
             out = subprocess.run([sys.executable, str(heavy), "status"], capture_output=True, text=True, timeout=10, cwd=root).stdout

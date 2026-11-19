@@ -31,6 +31,7 @@ import fcntl
 import json
 import os
 import re
+import shlex
 import signal
 import subprocess
 import sys
@@ -329,21 +330,74 @@ def cmd_status() -> int:
     return 0
 
 
-READ_ONLY = {"git", "gh", "cat", "ls", "head", "tail", "grep", "rg", "echo", "find", "sed", "cd", "test", "wc"}
-QUEUED = r"heavy\.py\s+(run|submit)\b"
+READ_ONLY = {"git", "gh", "cat", "ls", "head", "tail", "grep", "rg", "echo", "sed", "cd", "test", "wc"}
+SEPARATORS = {";", "&&", "||", "|", "&", "(", ")", ";;"}
+OPTION_VALUES = {"xargs": {"-n", "-I", "-P", "-L", "-d", "-E", "-s"}, "nice": {"-n"}, "env": {"-u", "-C", "-S"}}
+
+
+def shell_segments(command: str) -> list[list[str]]:
+    """The command split into argv lists at ; && || | & and parentheses. A guard for a careless agent,
+    not a sandbox: an unparseable line is one segment of its plain words."""
+    lex = shlex.shlex(command, posix=True, punctuation_chars=True)
+    lex.whitespace_split, lex.commenters = True, "#"
+    try:
+        tokens = list(lex)
+    except ValueError:
+        return [command.split()]
+    out: list[list[str]] = [[]]
+    for token in tokens:
+        if token in SEPARATORS:
+            out.append([])
+        else:
+            out[-1].append(token)
+    return [seg for seg in out if seg]
+
+
+def inner_argv(argv: list[str]) -> list[list[str]]:
+    """The commands a segment really runs: wrappers (env, timeout, nice, nohup, time, command, exec,
+    xargs, sh -c, bash -c, find -exec) are looked through to their inner command."""
+    while argv and re.fullmatch(r"\w+=\S*", argv[0]):  # leading VAR=value
+        argv = argv[1:]
+    if not argv:
+        return []
+    first = os.path.basename(argv[0])
+    rest = argv[1:]
+    if first in ("sh", "bash", "zsh", "dash"):
+        for i, a in enumerate(rest):
+            if a.startswith("-") and "c" in a[1:] and i + 1 < len(rest):
+                return [seg for line in shell_segments(rest[i + 1]) for seg in inner_argv(line)]
+        return [argv]
+    if first == "find":
+        for i, a in enumerate(rest):
+            if a in ("-exec", "-execdir", "-ok", "-okdir"):
+                return inner_argv([t for t in rest[i + 1 :]][: next((j for j, t in enumerate(rest[i + 1 :]) if t in (";", "+")), None)])
+        return [argv]
+    if first in ("env", "timeout", "nice", "nohup", "time", "command", "exec", "xargs"):
+        values = OPTION_VALUES.get(first, set())
+        i = 0
+        while i < len(rest) and (rest[i].startswith("-") or re.fullmatch(r"\w+=\S*", rest[i])):
+            i += 2 if rest[i] in values else 1
+        if first == "timeout" and i < len(rest):
+            i += 1  # the duration
+        return inner_argv(rest[i:])
+    return [argv]
+
+
+def is_queued(argv: list[str]) -> bool:
+    """`heavy.py run|submit ...` as the segment's own argv (after an interpreter), never a word elsewhere."""
+    at = 1 if os.path.basename(argv[0]).startswith("python") else 0
+    return len(argv) > at + 1 and os.path.basename(argv[at]) == "heavy.py" and argv[at + 1] in ("run", "submit")
 
 
 def unqueued_heavy(command: str, cfg: dict) -> bool:
-    """A heavy shell command that does not go through the queue. A line is split into its segments;
-    reading and version-control tools are never heavy (a commit message may say "build")."""
-    if re.search(QUEUED, command):
-        return False
-    for segment in re.split(r"&&|\|\||[;|\n]", command):
-        words = segment.split()
-        while words and re.fullmatch(r"\w+=\S*", words[0]):  # leading VAR=value
-            words = words[1:]
-        if words and words[0] not in READ_ONLY and is_heavy([segment], cfg):
-            return True
+    """A heavy command in the line that does not go through the queue. Reading and version-control tools
+    are never heavy (a commit message may say "build")."""
+    for segment in shell_segments(command):
+        for argv in inner_argv(segment):
+            if os.path.basename(argv[0]) in READ_ONLY or is_queued(argv):
+                continue
+            if is_heavy([" ".join(argv)], cfg):
+                return True
     return False
 
 

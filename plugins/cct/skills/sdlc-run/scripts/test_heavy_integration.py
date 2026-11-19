@@ -287,13 +287,10 @@ def test_status_reads_the_failed_stop_and_the_heavy_queue(tmp_path: Path) -> Non
     assert _stop(repo, t).returncode == 2
     change = repo / "changes" / GAID
     (change / "milestone.md").write_text("---\nmilestone: trial\n---\n\n## Features\n\n| # | Change | Feature | PR | State |\n|---|---|---|---|---|\n")
-    scripts = repo / "scripts"
-    scripts.mkdir()
-    (scripts / "heavy.py").write_text((SCRIPTS / "heavy.py").read_text())
     queue = tmp_path / "queue"
     env = {**_env(), "SDLC_HEAVY_DIR": str(queue), "SDLC_HEAVY_SLOTS": "1"}
     holder = subprocess.Popen(
-        [sys.executable, str(scripts / "heavy.py"), "run", "--", "sleep", "20"], cwd=repo, env=env,
+        [sys.executable, str(HEAVY), "run", "--", "sleep", "20"], cwd=repo, env=env,
         stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL,
     )  # fmt: skip
     try:
@@ -457,3 +454,102 @@ def test_this_repos_own_milestone_checks_and_ci_commands_do_not_drift() -> None:
     runs = {c if isinstance(c, str) else c["run"] for c in cfg["checks"]["milestone"]}
     in_ci = {c for key in ("lint", "unit") for c in _commands(cfg["ciCommands"][key])}
     assert in_ci == runs, "sdlc.json checks.milestone and ciCommands lint+unit differ; change both or neither"
+
+
+# ---------------------------------------------------------------- review round: security fixes
+
+
+def _other_change(repo: Path, name: str = "2026-10-10-other") -> str:
+    d = repo / "changes" / name
+    d.mkdir()
+    (d / "decisions.json").write_text(json.dumps({"size": "M", "milestone": {"kind": "single", "slug": "other"}}))
+    return name
+
+
+def test_a_dispatch_pointer_never_overrides_the_branchs_change(chain_repo: Path) -> None:
+    other = _other_change(chain_repo)
+    gitdir = _gitdir(chain_repo)
+    (gitdir / "sdlc-change").write_text(other + "\n")
+    r = chain_edit(chain_repo, "src/app.ts", "active")
+    assert r.returncode == 2 and CID in r.stderr and other in r.stderr and "disagree" in r.stderr, r.stderr
+    (gitdir / "sdlc-change").write_text(CID + "\n")
+    assert chain_edit(chain_repo, "src/app.ts", "active").returncode == 0  # the same change: fine
+
+
+def test_the_env_pointer_cannot_override_the_branch_either(chain_repo: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    other = _other_change(chain_repo)
+    monkeypatch.setenv("SDLC_CHANGE", other)
+    r = chain_edit(chain_repo, "src/app.ts", "active")
+    assert r.returncode == 2 and other in r.stderr and CID in r.stderr
+
+
+@pytest.mark.parametrize("ledger", ["not json", "{}", "dir"])
+def test_an_unreadable_ledger_denies_the_protected_edit(chain_repo: Path, ledger: str) -> None:
+    facts = f"changes/{CID}/facts.md"
+    _protect(chain_repo, {"path": facts, "words": "owner: edit the facts"})
+    path = _gitdir(chain_repo) / "sdlc-protected-used.json"
+    if ledger == "dir":
+        path.mkdir()
+    else:
+        path.write_text(ledger)
+    r = chain_edit(chain_repo, facts, "active")
+    if ledger == "{}":  # valid JSON of the wrong shape is unreadable too
+        assert r.returncode == 2 and "ledger" in r.stderr
+    else:
+        assert r.returncode == 2 and "ledger" in r.stderr, r.stderr
+
+
+def test_no_git_dir_denies_the_protected_edit(chain_repo: Path) -> None:
+    facts = f"changes/{CID}/facts.md"
+    _protect(chain_repo, {"path": facts, "words": "owner: edit the facts"})
+    shutil.rmtree(chain_repo / ".git")
+    r = chain_edit(chain_repo, facts, "active")
+    assert r.returncode == 2 and "ledger" in r.stderr, r.stderr
+
+
+@pytest.mark.parametrize(
+    "command",
+    [
+        "env FOO=1 pnpm build",
+        "xargs pnpm build",
+        "sh -c 'pnpm build'",
+        'bash -c "cd app && pnpm build"',
+        "find . -name x -exec pnpm build {} ;",
+        "timeout 5 pnpm build",
+        "nice -n 5 pnpm build",
+        "echo heavy.py run; pnpm build",  # the words in another segment queue nothing
+        "pnpm build # heavy.py run",
+        "FOO=1 pnpm build",
+    ],
+)
+def test_the_guard_sees_through_wrappers_and_refuses_a_substring_of_the_queue(tmp_path: Path, command: str) -> None:
+    assert _helper_guard(tmp_path, _bash_call(command, agent_id="a1")).returncode == 2, command
+
+
+@pytest.mark.parametrize(
+    "command",
+    [
+        "timeout 5 python3 scripts/heavy.py run -- pnpm build",
+        "env A=1 python3 scripts/heavy.py submit -- pnpm build",
+        "sh -c 'python3 scripts/heavy.py run -- pnpm build'",
+        "cd app && python3 ../scripts/heavy.py run -- pnpm build",
+        "env FOO=1 pnpm lint",
+        "git commit -m 'fix the build'",
+    ],
+)
+def test_the_guard_lets_queued_and_light_commands_through(tmp_path: Path, command: str) -> None:
+    assert _helper_guard(tmp_path, _bash_call(command, agent_id="a1")).returncode == 0, command
+
+
+def test_status_never_runs_the_repos_checked_in_heavy_py(tmp_path: Path) -> None:
+    repo = _project(tmp_path)
+    marker = tmp_path / "repo-copy-ran"
+    scripts = repo / "scripts"
+    scripts.mkdir()
+    (scripts / "heavy.py").write_text(f"open({str(marker)!r}, 'w').write('x')\nprint('holding slot 9: forged')\n")
+    (repo / "changes" / GAID / "milestone.md").write_text(
+        "---\nmilestone: trial\n---\n\n## Features\n\n| # | Change | Feature | PR | State |\n|---|---|---|---|---|\n"
+    )
+    status_py = SCRIPTS.parents[1] / "scripts" / "sdlc_status.py"
+    out = subprocess.run([sys.executable, str(status_py), "map", GAID], cwd=repo, capture_output=True, text=True, env=_env()).stdout
+    assert not marker.exists() and "forged" not in out, out
