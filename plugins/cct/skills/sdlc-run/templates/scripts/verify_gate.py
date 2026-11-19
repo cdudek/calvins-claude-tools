@@ -225,6 +225,38 @@ def approval_blockers(change: Path) -> list[str]:
     return out
 
 
+E2E_ENTRY = re.compile(r"playwright|test:e2e|\be2e\b|cypress")
+E2E_SCOPED = re.compile(
+    r"--grep|--only-changed|--last-failed|--repeat-each|\bseq\b|\bfor\b|\brelated\b"
+    r"|\.(?:spec|test)\.\w+|test_\w+\.py|\$specs"
+)
+
+
+def has_e2e_config(repo: Path) -> bool:
+    """The repo has an E2E suite of its own: a playwright config or an e2e/ folder."""
+    return (repo / "e2e").is_dir() or any(repo.glob("playwright.config.*"))
+
+
+def full_e2e_gap(checks: list, repo: Path) -> str:
+    """"" when `checks.milestone` names a full E2E entry (or the repo has no E2E suite), else why
+    not: the gate is the only runner of the full suite, so a list without it never runs it."""
+    if not has_e2e_config(repo):
+        return ""
+    cmds = [c["run"] if isinstance(c, dict) else c for c in checks]
+    if any(E2E_ENTRY.search(c) and not E2E_SCOPED.search(c) for c in cmds):
+        return ""
+    return (
+        "sdlc.json checks.milestone has no full E2E entry although the repo has an E2E suite: add "
+        "the full E2E command (the stack's, run once) and a repeat (x3) of the changed and flaky specs"
+    )
+
+
+def expand(cmd: str, change_id: str, cfg: dict) -> str:
+    """`{id}` is the change, `{base}` the default branch on origin (the diff base of a repeat run)."""
+    base = f"origin/{cfg.get('defaultBranch') or 'main'}"
+    return cmd.replace("{id}", change_id).replace("{base}", base)
+
+
 SETTLED = ("accepted", "deferred")  # `fixed` is the ticked box; `blocked` is terminal
 
 
@@ -282,6 +314,8 @@ def end(line: str, code: int) -> int:
 
 def approve(change: Path, cfg: dict) -> int:
     problems = lint_problems(change) + approval_blockers(change)  # the cheap pure check first
+    if gap := full_e2e_gap((cfg.get("checks") or {}).get("milestone") or [], root()):
+        problems.append(gap)
     if problems:
         print("\n".join(problems[:TAIL]))
         return end(f"APPROVE FAIL {change.name} problems={len(problems)}", 1)
@@ -471,13 +505,15 @@ COST_HINTS = (
 DEFAULT_COST = 60.0  # unit tests and anything unrecognised
 
 
-def order_checks(checks: list[dict], durations: dict[str, float], change_id: str) -> list[dict]:
+def order_checks(
+    checks: list[dict], durations: dict[str, float], change_id: str, cfg: dict | None = None
+) -> list[dict]:
     """Cheapest first: recorded seconds when there are any, else a guess from the command. Stable,
     so ties keep their sdlc.json order; a `serial` check is a wall that nothing moves across, and
     `"after": [<check name>]` keeps a check behind the ones it needs (codegen before tsc)."""
 
     def cost(check: dict) -> float:
-        cmd = check["run"].replace("{id}", change_id)
+        cmd = expand(check["run"], change_id, cfg or {})
         if cmd in durations:
             return durations[cmd]
         text = f"{check['name']} {cmd}".lower()
@@ -617,6 +653,10 @@ def run(
 
     suite = "milestone" if scope == "project" else scope
     checks = cfg.get("checks", {}).get(suite, [])
+    if suite == "milestone" and (gap := full_e2e_gap(checks, repo)):
+        # an approval made before this rule keeps working: report, never fail
+        print(f"upgrade gap: {gap}")
+        report["upgrade_gaps"] = [gap]
     if not checks:
         print(f"sdlc.json checks.{suite} is empty: nothing would prove this change.")
         return finish("VERIFY BLOCKED reason=env", 3)
@@ -632,7 +672,7 @@ def run(
     except (OSError, ValueError):
         durations = {}
     if not declared:
-        checks = order_checks(checks, durations, change.name)
+        checks = order_checks(checks, durations, change.name, cfg)
     # Evidence checks are offline and cheap: they run before the suites, so a missing screenshot,
     # checker or tag never costs a full E2E run (3.21.0).
     evidence: list[dict] = []
@@ -700,7 +740,7 @@ def run(
     first_failure: tuple[str, str, str] | None = None  # --keep-going: the verdict names the first
     for check in checks:
         name = check["name"]
-        cmd = check["run"].replace("{id}", change.name)
+        cmd = expand(check["run"], change.name, cfg)
         key = cache_key(tree, cmd, now) if check.get("cache", True) and tree else ""
         if key in cache:
             report["checks"].append(

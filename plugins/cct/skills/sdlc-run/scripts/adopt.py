@@ -765,6 +765,16 @@ def adopt_ci(cfg: dict, preset: str) -> None:
     )
 
 
+E2E_SCOPED = re.compile(
+    r"--grep|--only-changed|--last-failed|--repeat-each|\bseq\b|\bfor\b|\brelated\b"
+    r"|\.(?:spec|test)\.\w+|test_\w+\.py|\$specs"
+)  # keep equal to verify_gate.E2E_SCOPED
+
+
+def has_e2e_config() -> bool:
+    return (ROOT / "e2e").is_dir() or any(ROOT.glob("playwright.config.*"))
+
+
 def migrate_test_cost(cfg: dict, preset: str) -> None:
     """Bring an adopted repo's test cost in line with the preset (measured in leadhub: a
     `--repeat-each 3` over the whole suite took 59-71 min per gate, and the Stop hook fell back
@@ -789,7 +799,9 @@ def migrate_test_cost(cfg: dict, preset: str) -> None:
         cfg["verifyStop"] = npm
         wrote.append(f"sdlc.json: verifyStop `{stop}` -> `{npm}` (this repo uses npm)")
     preset_e2e = " ".join(
-        c for c in base.get("checks", {}).get("milestone", []) if E2E_CMD.search(c)
+        run
+        for c in base.get("checks", {}).get("milestone", [])
+        if E2E_CMD.search(run := c["run"] if isinstance(c, dict) else c)
     )
     found = MAX_FAILURES.search(preset_e2e)
     fail_fast = found.group(0) if found else "--max-failures=10"
@@ -797,7 +809,12 @@ def migrate_test_cost(cfg: dict, preset: str) -> None:
     moved = False
     for i, check in enumerate(milestone):
         cmd = check["run"] if isinstance(check, dict) else check
-        if not WHOLE_SUITE_REPEAT.search(cmd) or "--only-changed" in cmd or "--grep" in cmd:
+        if (
+            not WHOLE_SUITE_REPEAT.search(cmd)
+            or "--only-changed" in cmd
+            or "--grep" in cmd
+            or "flaky-specs" in cmd  # the preset's repeat of changed and flaky specs: leave it
+        ):
             continue
         new = WHOLE_SUITE_REPEAT.sub("", cmd)
         if not MAX_FAILURES.search(new):
@@ -808,6 +825,16 @@ def migrate_test_cost(cfg: dict, preset: str) -> None:
             milestone[i] = new
         wrote.append(f"sdlc.json: checks.milestone `{cmd}` -> `{new}`")
         moved = True
+    if has_e2e_config() and not any(
+        E2E_CMD.search(run := c["run"] if isinstance(c, dict) else c) and not E2E_SCOPED.search(run)
+        for c in milestone
+    ):
+        manual.append(
+            "sdlc.json checks.milestone has no full E2E entry although the repo has an E2E suite: "
+            "add the full E2E command and a repeat (x3) of the changed and flaky specs "
+            "(the preset's `e2e` and `e2e-repeat` entries); the engineer approves the change "
+            "again, adopt never re-locks (an older lock only reports an upgrade gap)"
+        )
     if not moved:
         return
     changes = ROOT / cfg.get("changesDir", "changes")

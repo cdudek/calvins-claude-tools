@@ -1699,3 +1699,29 @@ def test_adopt_removes_a_generated_decision4_workflow_only(tmp_path: Path) -> No
     wf.write_text("name: Decision4\njobs:\n  mine:\n    runs-on: ubuntu-latest\n")
     assert _adopt(repo).returncode == 0
     assert wf.exists(), "a repo's own workflow is not ours to delete"
+
+
+def test_adopt_reports_a_milestone_list_without_the_full_e2e_and_keeps_the_presets_repeat(
+    tmp_path: Path,
+) -> None:
+    """Review finding 1: a repo with an E2E suite and no full E2E entry gets a MANUAL line (adopt
+    never re-locks), and the preset's own x3 repeat is not rewritten as a whole-suite repeat."""
+    repo = _upgrade_fixture(tmp_path)
+    (repo / "e2e").mkdir()
+    (repo / "e2e" / "a.spec.ts").write_text("x")
+    preset = json.loads((SCRIPTS.parent / "templates/presets/node.json").read_text())
+    repeat = next(
+        c for c in preset["checks"]["milestone"] if isinstance(c, dict) and c["name"] == "e2e-repeat"
+    )
+    cfg = json.loads((repo / "sdlc.json").read_text())
+    cfg["checks"]["milestone"] = ["pnpm test", repeat]
+    (repo / "sdlc.json").write_text(json.dumps(cfg, indent=2) + "\n")
+    res = _adopt(repo)
+    assert res.returncode == 0, res.stderr
+    assert any("no full E2E entry" in m for m in _sections(res.stdout)["MANUAL"])
+    assert json.loads((repo / "sdlc.json").read_text())["checks"]["milestone"][1] == repeat
+
+
+def test_the_scoped_e2e_pattern_is_the_same_in_adopt_and_the_gate() -> None:
+    find = lambda path: re.search(r"^E2E_SCOPED = re\.compile\(\n(.*?)\n\)", path.read_text(), re.M | re.S).group(1)  # noqa: E731
+    assert find(ADOPT) == find(SCRIPTS.parent / "templates/scripts/verify_gate.py")

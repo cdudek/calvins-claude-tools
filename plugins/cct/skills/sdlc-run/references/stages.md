@@ -563,6 +563,11 @@ person's own browser session. Never use Claude in Chrome or any tool driving tha
    visual checkers, required tags), then the suites cheapest first, so a missing screenshot or
    checker costs seconds, not a full E2E run; on `FAIL` use the targeted local failure loop, then the full gate once until `VERIFY PASS` (passed
    checks on an unchanged tree are cached; the third failed run blocks with `reason=attempts`).
+   `sdlc.json` `checks.milestone` names the full suite and the full E2E explicitly, plus a repeat
+   (×3) of the changed and flaky specs (the presets carry both; `{base}` in a check is the default
+   branch on origin). `verify_gate.py approve` refuses a list with no full E2E entry when the repo
+   has a Playwright config or an `e2e/` folder; an older lock gets an `upgrade gap` line in the gate
+   output and report, never a failure.
    Repeat `--visual-run` for every required current UX run; failures enter
    `verify/report.json` and `report.md` as failed checks. Resolve the checker from the installed
    cct UX skill, never a cross-plugin relative path. Omit visual flags only for explicitly

@@ -237,3 +237,9 @@ def test_the_run_root_is_chosen_once_per_mode_and_base_ref_stays_the_git_ref() -
     assert 'run_root="${TMPDIR:-/tmp}/cct/review/local-<repo>-<head sha, 12 characters>"' in resolve
     assert 'base_ref=<base>' in resolve or "`base_ref`" in resolve
     assert '"$base"' not in resolve  # no line reads the directory as `base`
+
+
+# Review fix 1: the approved checks name the full suite and the full E2E
+def test_stages_say_the_milestone_checks_name_the_full_e2e_and_old_locks_get_a_gap_line() -> None:
+    assert "`checks.milestone` names the full suite and the full E2E explicitly" in STAGES
+    assert "an older lock gets an `upgrade gap` line" in STAGES

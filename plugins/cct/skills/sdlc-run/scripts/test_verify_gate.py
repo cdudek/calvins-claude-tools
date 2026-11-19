@@ -1428,3 +1428,71 @@ def test_keep_going_reports_a_first_blocked_verdict_after_running_the_rest_F23(
     r = _gate(repo, "feature", ID, "--keep-going")
     assert _last(r) == "VERIFY BLOCKED reason=env" and r.returncode == 3
     assert _order(repo) == ["lint", "unit", "e2e"]
+
+
+# --- Review finding 1: the milestone checks name the full suite and the full E2E -------------
+
+
+def _e2e_repo(tmp_path: Path, milestone: list, config: str | None = "playwright.config.ts") -> Path:
+    repo = _repo(tmp_path, ["true"])
+    cfg = json.loads((repo / "sdlc.json").read_text())
+    (repo / "sdlc.json").write_text(json.dumps({**cfg, "checks": {"milestone": milestone}}))
+    if config:
+        (repo / config).parent.mkdir(parents=True, exist_ok=True)
+        (repo / config).write_text("x")
+    _git(repo, "add", ".")
+    _git(repo, "commit", "-qm", "e2e config")
+    return repo
+
+
+@pytest.mark.parametrize("config", ["playwright.config.ts", "e2e/test_login.py"])
+@pytest.mark.parametrize(
+    "milestone",
+    [["pytest -q"], ["pnpm test"], ["pnpm test:e2e --grep @x"], ["pnpm exec playwright test e2e/a.spec.ts"]],
+)
+def test_approve_refuses_a_milestone_check_list_without_the_full_e2e(
+    tmp_path: Path, milestone: list, config: str
+) -> None:
+    repo = _e2e_repo(tmp_path, milestone, config)
+    r = _gate(repo, "approve", ID)
+    assert r.returncode == 1 and "checks.milestone" in r.stdout and "full E2E" in r.stdout
+    assert _last(r).startswith("APPROVE FAIL")
+    assert not (repo / "changes" / ID / "lock.json").exists()
+
+
+@pytest.mark.parametrize(
+    "milestone", [["pytest -q", "pnpm test:e2e --max-failures=10"], ["pytest -q", "uv run pytest e2e -q"]]
+)
+def test_approve_accepts_a_named_full_e2e_entry(tmp_path: Path, milestone: list) -> None:
+    repo = _e2e_repo(tmp_path, milestone)
+    assert _gate(repo, "approve", ID).returncode == 0
+
+
+def test_a_repo_without_an_e2e_config_needs_no_e2e_entry(tmp_path: Path) -> None:
+    repo = _e2e_repo(tmp_path, ["pytest -q"], config=None)
+    assert _gate(repo, "approve", ID).returncode == 0
+
+
+def test_an_old_lock_reports_an_upgrade_gap_and_still_runs(tmp_path: Path) -> None:
+    """An approval made before the rule keeps working: the gate says what is missing, never fails."""
+    repo = _e2e_repo(tmp_path, ["true"], config=None)
+    assert _gate(repo, "approve", ID).returncode == 0
+    (repo / "e2e").mkdir()
+    (repo / "e2e" / "a.spec.ts").write_text("x")
+    _git(repo, "add", ".")
+    _git(repo, "commit", "-qm", "e2e appears")
+    _commit_files(repo, validation_md="| F1 | x | y | z | met |\n")
+    r = _gate(repo, "milestone", ID)
+    assert "upgrade gap" in r.stdout and _last(r).startswith(f"VERIFY PASS milestone {ID}")
+    report = json.loads((repo / "changes" / ID / "verify" / "report.json").read_text())
+    assert any("full E2E" in g for g in report["upgrade_gaps"])
+
+
+@pytest.mark.parametrize("name", ["node", "python"])
+def test_the_presets_run_the_full_e2e_and_repeat_changed_and_flaky_specs_three_times(name: str) -> None:
+    preset = json.loads((SKILL / "templates" / "presets" / f"{name}.json").read_text())
+    milestone = " ".join(c if isinstance(c, str) else c["run"] for c in preset["checks"]["milestone"])
+    assert "e2e" in milestone
+    assert "flaky-specs.txt" in milestone
+    assert "--repeat-each=3" in milestone or "seq 3" in milestone or "1 2 3" in milestone
+    assert "git diff --name-only" in milestone and "{base}" in milestone
