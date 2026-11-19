@@ -262,3 +262,87 @@ def test_the_pass_rule_the_hook_and_the_lock_hash_agree_on_the_locked_documents(
         (repo / "changes" / ID / name).touch()
         r = edit(repo, f"changes/{ID}/{name}")
         assert r.returncode == 2 and "protectedEdit" in r.stderr, name
+
+
+# ------------------------------------------------------------------ what a tick may and may not change
+
+TICK_DOC = "# t\n\n## Tasks\n\n| Task | State |\n|---|---|\n| T1 build | todo |\n\n## Milestones\n\n| M | Facts |\n|---|---|\n| M1 | F1 |\n"
+
+
+def _commit_all(repo: Path, msg: str = "edit") -> str:
+    _git(repo, "add", ".")
+    _git(repo, "commit", "-qm", msg)
+    return _git(repo, "rev-parse", "HEAD")
+
+
+def _gated_files(repo: Path, files: dict[str, str]) -> str:
+    c = repo / "changes" / ID
+    for name, text in files.items():
+        (c / name).parent.mkdir(parents=True, exist_ok=True)
+        (c / name).write_text(text)
+    _git(repo, "init", "-q", "-b", "main")
+    return _commit_all(repo, "gated")
+
+
+@pytest.mark.parametrize(
+    ("name", "old", "new"),
+    [
+        ("asks/session/tasks.md", "notes\n", "other notes\n"),  # evidence that is named tasks.md is still evidence
+        ("tasks.md", TICK_DOC, TICK_DOC.replace("## Tasks", "## Handover")),  # approval no longer sees the rows
+        ("tasks.md", TICK_DOC, TICK_DOC.replace("| T1 build | todo |\n", "")),
+        ("tasks.md", TICK_DOC, TICK_DOC.replace("| M1 | F1 |", "| M1 | F1, F2 |")),  # the milestone allocation
+        ("tasks.md", TICK_DOC, TICK_DOC.replace("## Milestones", "## Plan")),
+    ],
+)
+def test_only_a_tick_of_the_top_level_task_rows_keeps_the_pass(tmp_path: Path, name: str, old: str, new: str) -> None:
+    gated = _gated_files(tmp_path, {"spec.md": "# s\n", "tasks.md": TICK_DOC, name: old})
+    (tmp_path / "changes" / ID / name).write_text(new)
+    assert not pass_proof.proves(tmp_path, "changes", gated, _commit_all(tmp_path))
+
+
+def test_a_tick_and_a_handover_edit_keep_the_pass(tmp_path: Path) -> None:
+    gated = _gated_files(tmp_path, {"spec.md": "# s\n", "tasks.md": TICK_DOC})
+    edited = TICK_DOC.replace("todo", "done abc123") + "\n## Handover\n\nresume at T2\n"
+    (tmp_path / "changes" / ID / "tasks.md").write_text(edited)
+    assert pass_proof.proves(tmp_path, "changes", gated, _commit_all(tmp_path))
+
+
+def test_the_tick_rule_reads_the_rows_the_lock_hash_reads(tmp_path: Path) -> None:
+    c = tmp_path / "changes" / ID
+    c.mkdir(parents=True)
+    (c / "spec.md").write_text("# s\n")
+    for text in (TICK_DOC, TICK_DOC.replace("## Tasks", "## Handover"), TICK_DOC.replace("todo", "done x")):
+        (c / "tasks.md").write_text(text)
+        assert pass_proof.tasks_lock(text) == verify_gate.spec.lock_inputs(c)["tasks.md"]
+
+
+def _lock(*keys: str) -> str:
+    return json.dumps({"criteria": {k: "x" for k in keys}})
+
+
+PLAN = "# p\n\n## Milestones\n\n| M | Facts |\n|---|---|\n| M1 | F1 |\n\n## Notes\n\nfree\n"
+
+
+@pytest.mark.parametrize(
+    ("file", "old", "new", "keys", "holds"),
+    [
+        ("plan.md", PLAN, PLAN.replace("| M1 | F1 |", "| M1 | F1, F2 |"), ("plan.milestones",), False),
+        ("plan.md", PLAN, PLAN.replace("free", "still free"), ("plan.milestones",), True),
+        ("plan.md", PLAN, PLAN.replace("| M1 | F1 |", "| M1 | F1, F2 |"), (), True),  # an older lock never locked it
+        ("decisions.json", '{"size": "M"}', '{"size": "S"}', ("decisions.routing",), False),
+        ("decisions.json", '{"size": "M"}', '{"size": "M", "visualSource": "x"}', ("decisions.routing",), False),
+        ("decisions.json", '{"size": "M"}', '{"size": "M", "note": "x"}', ("decisions.routing",), True),
+        ("decisions.json", '{"size": "M"}', '{"size": "S"}', (), True),
+        ("state/intake.json", '{"size": "M"}', '{"size": "S"}', ("decisions.routing",), False),
+    ],
+)
+def test_the_pass_compares_what_the_lock_hashes_beyond_the_locked_files(
+    tmp_path: Path, file: str, old: str, new: str, keys: tuple[str, ...], holds: bool
+) -> None:
+    gated = _gated_files(tmp_path, {"facts.md": "# f\n", "lock.json": _lock(*keys), file: old})
+    (tmp_path / "changes" / ID / file).write_text(new)
+    assert pass_proof.proves(tmp_path, "changes", gated, _commit_all(tmp_path)) is holds
+
+
+def test_the_routing_fields_are_the_gates(tmp_path: Path) -> None:
+    assert pass_proof.ROUTING == verify_gate.ROUTING

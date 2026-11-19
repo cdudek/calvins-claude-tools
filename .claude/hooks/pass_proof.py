@@ -209,29 +209,72 @@ def _only_archived_at(repo: Path, old: tuple[str, str], new: tuple[str, str]) ->
     return re.fullmatch(r"\d{4}-\d{2}-\d{2}", value) is not None
 
 
-def _task_rows(text: str) -> list[list[str]]:
-    """The table rows of a tasks.md without their State column (the lock hashes the same)."""
-    rows: list[list[str]] = []
-    state: int | None = None
-    head = True
-    for line in text.splitlines():
-        if not line.strip().startswith("|"):
-            head = True
-            continue
-        cells = [c.strip() for c in line.strip().strip("|").split("|")]
-        if head:
-            state = next((i for i, c in enumerate(cells) if c.lower() == "state"), None)
-            head = False
-        rows.append([c for i, c in enumerate(cells) if i != state])
-    return rows
+def _section(text: str, name: str) -> str:
+    """spec.py `section`: the body of a `##`-`####` heading, up to the next heading of its level or above."""
+    m = re.search(rf"^(#{{2,4}})\s+{re.escape(name)}\b.*$", text, re.M | re.I)
+    if not m:
+        return ""
+    rest = text[m.end() :]
+    stop = re.search(rf"^#{{2,{len(m.group(1))}}}\s", rest, re.M)
+    return rest[: stop.start()] if stop else rest
+
+
+def tasks_lock(text: str) -> str:
+    """What approval hashes of a tasks.md: the rows of its `## Tasks` and `## Milestones` tables without
+    the State column (spec.py `lock_inputs`, the one reader; test_sdd_hooks keeps the two equal). A tick or
+    a handover edit never moves it; renaming or emptying a section does."""
+    keep = []
+    for name in ("Tasks", "Milestones"):
+        rows = [
+            [c.strip() for c in ln.strip().strip("|").split("|")]
+            for ln in _section(text, name).splitlines()
+            if ln.strip().startswith("|")
+        ]
+        rows = [r for r in rows if not all(re.fullmatch(r":?-{2,}:?", c) for c in r)]
+        head = [h.lower() for h in rows[0]] if rows else []
+        keep += ["|".join(v for k, v in dict(zip(head, r)).items() if k != "state") for r in rows[1:]]
+    return "\n".join(keep)
+
+
+def _text(repo: Path, entry: tuple[str, str] | None) -> str:
+    return _git(repo, "cat-file", "blob", entry[0]).stdout.decode("utf-8", "replace") if entry else ""
 
 
 def _only_ticks(repo: Path, old: tuple[str, str], new: tuple[str, str]) -> bool:
-    """`new` differs from `old` only outside the task rows or in their State column."""
-    before, after = (
-        _git(repo, "cat-file", "blob", blob).stdout.decode("utf-8", "replace") for blob in (old[0], new[0])
-    )
-    return _task_rows(before) == _task_rows(after)
+    """`new` differs from `old` only outside the locked rows of the change's own tasks.md, or in their State column."""
+    return tasks_lock(_text(repo, old)) == tasks_lock(_text(repo, new))
+
+
+ROUTING = ("size", "visualSource")  # the decisions.json fields the lock hashes (verify_gate.ROUTING; test_sdd_hooks)
+
+
+def _routing(repo: Path, tree: dict[str, tuple[str, str]]) -> object:
+    """verify_gate.routing: the routing fields, `state/intake.json` first; a missing or unreadable file is itself."""
+    entry = tree.get("state/intake.json") or tree.get("decisions.json")
+    if not entry:
+        return {"missing": True}
+    try:
+        data = json.loads(_text(repo, entry))
+    except ValueError:
+        return {"unreadable": True}
+    return {k: data.get(k) for k in ROUTING} if isinstance(data, dict) else {"unreadable": True}
+
+
+def _plan_milestones(repo: Path, tree: dict[str, tuple[str, str]]) -> str:
+    """verify_gate `section(plan.md, "Milestones")`: the layout 3 allocation the lock hashes."""
+    m = re.search(r"^#{2,3} Milestones\s*$(.*?)(?=^#{1,3} |\Z)", _text(repo, tree.get("plan.md")), re.M | re.S)
+    return m.group(1) if m else ""
+
+
+def _lock_keys(repo: Path, tree: dict[str, tuple[str, str]]) -> set[str]:
+    """The `criteria` keys the gated lock hashed: an older lock lacks plan.milestones and decisions.routing,
+    which then stay free to edit, as the gate treats them."""
+    try:
+        data = json.loads(_text(repo, tree.get("state/lock.json") or tree.get("lock.json")))
+    except ValueError:
+        return set()
+    criteria = data.get("criteria") if isinstance(data, dict) else None
+    return set(criteria) if isinstance(criteria, dict) else set()
 
 
 def proves(repo: Path, changes_dir: str, gated: str, head: str) -> bool:
@@ -249,12 +292,22 @@ def proves(repo: Path, changes_dir: str, gated: str, head: str) -> bool:
     before, after = _tree(repo, rel, gated), _tree(repo, rel, head)
     if before is None or after is None:
         return False
-    for key in {k for k in before.keys() | after.keys() if (before.get(k) or ("",))[0] != (after.get(k) or ("",))[0]}:
+    changed = {k for k in before.keys() | after.keys() if (before.get(k) or ("",))[0] != (after.get(k) or ("",))[0]}
+    for key in changed:  # `<change id>/<path inside it>`
         parts = key.split("/")
+        if parts[-1] in EVIDENCE_FILES or EVIDENCE_DIRS & set(parts[1:-1]):  # first: evidence is never a task list
+            return False
         if parts[-1] == "facts.md" and key in before and key in after and _only_archived_at(repo, before[key], after[key]):
             continue
-        if parts[-1] in TICKED_FILES and key in before and key in after and _only_ticks(repo, before[key], after[key]):
+        if len(parts) == 2 and parts[1] in TICKED_FILES and key in before and key in after and _only_ticks(repo, before[key], after[key]):
             continue
-        if parts[-1] in LOCKED | EVIDENCE_FILES or EVIDENCE_DIRS & set(parts[:-1]):
+        if parts[-1] in LOCKED:
+            return False
+    for cid in {k.split("/", 1)[0] for k in changed}:  # what the lock hashes beyond the locked files
+        mine = [{k.split("/", 1)[1]: v for k, v in tree.items() if k.startswith(cid + "/")} for tree in (before, after)]
+        keys = _lock_keys(repo, mine[0])
+        if "decisions.routing" in keys and _routing(repo, mine[0]) != _routing(repo, mine[1]):
+            return False
+        if "plan.milestones" in keys and _plan_milestones(repo, mine[0]) != _plan_milestones(repo, mine[1]):
             return False
     return True
