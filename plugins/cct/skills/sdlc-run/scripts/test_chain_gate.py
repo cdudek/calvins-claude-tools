@@ -321,7 +321,9 @@ def test_a_visual_change_allows_its_own_folders_and_existing_pages(repo: Path) -
     assert _edit(repo, "src/app/page.tsx", "active").returncode == 0
     assert _edit(repo, "src/components/button.tsx", "active").returncode == 0
     assert _edit(repo, "src/components/author.tsx", "active").returncode == 0  # not auth
-    assert _edit(repo, "src/components/LoginButton.tsx", "active").returncode == 0  # a restyle, not the login flow
+    assert _edit(repo, "src/components/authorList.tsx", "active").returncode == 0
+    for name in ("LoginForm.tsx", "authGuard.ts", "useSession.ts", "permissions/x.ts"):
+        assert _edit(repo, f"src/{name}", "active").returncode == 2, name
 
 
 def _commit(repo: Path) -> str:

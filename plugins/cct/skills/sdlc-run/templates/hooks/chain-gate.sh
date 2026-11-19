@@ -564,7 +564,7 @@ def strings(value: object) -> list[str]:
 SCOPE_GUARD = [  # at any depth: a monorepo keeps its migrations under packages/<x>/
     "**/migrations/**", "**/drizzle/**", "**/prisma/**", "**/db/migrate/**", "**/alembic/**",
 ]
-# auth names count as whole words (path segments or filename parts), so `author.tsx` is not auth
+# auth names count as whole words (split on punctuation and camelCase), so `author.tsx` is not auth; a restyle exemption is scopeGuard.allow
 AUTH_WORDS = {"auth", "oauth", "authn", "authz", "authentication", "authorization", "login", "session", "sessions",
               "permission", "permissions", "rbac", "acl"}
 ROUTE_EXT = ("tsx", "jsx", "ts", "js", "mjs", "mts", "cjs")
@@ -573,7 +573,8 @@ ROUTE_FILES = [f"**/{n}.{e}" for n in ("page", "route", "layout") for e in ROUTE
 
 def auth_path(path: str) -> bool:
     for part in path.split("/"):
-        if any(w.lower() in AUTH_WORDS for w in re.split(r"[^A-Za-z0-9]+", part)):
+        words = re.split(r"[^A-Za-z0-9]+", re.sub(r"([a-z0-9])([A-Z])", r"\1 \2", part))
+        if any(w.lower() in AUTH_WORDS for w in words):
             return True
     return False
 

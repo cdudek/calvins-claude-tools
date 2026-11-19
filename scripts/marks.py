@@ -563,11 +563,15 @@ def screen_ids(change: Path, sources: list[dict] | None = None) -> list[str]:
     """The screens the approved inputs hold, one canonical id each: a note and a loose reference are
     their own row id, a design bundle is one `<bundle id>/<page>` per html page (the gallery is not
     one; a bundle with no page stays one id). evidence.py names the record file from the id.
-    A rendered image of a bundle page (`<page>--desktop@2x.png`, what render.sh writes) is that page,
-    not a screen of its own. shortcut: matched by the page path at the end of the image path, fine
-    for render.sh's output; a renamed render folder with other names counts as loose references."""
+    A rendered image of a bundle page is that page, not a screen of its own, only when it sits in the
+    folder the bundle's marks.json row names as `rendered` and its name (render.sh's
+    `<page>--desktop@2x.png`) is exactly one of the bundle's pages. Any other image is a reference."""
     rows = sources if sources is not None else inventory(change)
-    ids, pages = [], set()
+    try:
+        ledger = {r["id"]: r for r in read_rows(change / "marks.json")} if (change / "marks.json").exists() else {}
+    except (OSError, ValueError):
+        ledger = {}
+    ids, renders = [], []  # renders: (rendered folder, that bundle's pages)
     for row in rows:
         if row["kind"] != "bundle":
             continue
@@ -577,16 +581,17 @@ def screen_ids(change: Path, sources: list[dict] | None = None) -> list[str]:
             for h in folder.rglob("*.html")
             if h.name != "gallery.html" and not any(part in SKIP for part in h.relative_to(folder).parts)
         )
-        pages.update(found)
         ids += [f"{row['id']}/{page}" for page in found] or [row["id"]]
+        if filled(rendered := ledger.get(row["id"], {}).get("rendered")):
+            renders.append((Path(rendered), set(found)))
     for row in rows:
         if row["kind"] == "bundle":
             continue
-        image = row.get("image", "")
-        if row["kind"] == "reference" and RENDERED.search(Path(image).stem):
-            name = shot_screen(Path(image))
-            if any(name == page or name.endswith("/" + page) for page in pages):
-                continue
+        image = Path(row.get("image", ""))
+        if row["kind"] == "reference" and RENDERED.search(image.stem) and any(
+            image.is_relative_to(root) and shot_screen(image.relative_to(root)) in pages for root, pages in renders
+        ):
+            continue
         ids.append(row["id"])
     return ids
 

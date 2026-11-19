@@ -417,7 +417,11 @@ def test_an_imported_send_back_is_not_imported_again_after_regeneration(repo: Pa
 def test_rendered_images_of_a_bundle_are_not_screens_of_their_own(repo: Path) -> None:
     asks(repo, "export/index.html", "export/settings/index.html", "rendered/index--desktop@2x.png",
          "rendered/settings/index--desktop@2x.png")  # fmt: skip
+    asks(repo, "other/index--desktop@2x.png")  # not in the rendered folder: nothing hides behind a page name
     sys.path.insert(0, str(TPL))
     import marks
 
-    assert len(marks.screen_ids(change(repo))) == 2, marks.screen_ids(change(repo))
+    assert len(marks.screen_ids(change(repo))) == 5  # no ledger names a render folder yet
+    (change(repo) / "marks.json").write_text(json.dumps({"rows": [{"id": "bundle:asks/export", "kind": "bundle", "rendered": "asks/rendered"}]}))
+    assert marks.screen_ids(change(repo)) == ["bundle:asks/export/index", "bundle:asks/export/settings/index",
+                                              "ref:asks/other/index--desktop@2x.png"]  # fmt: skip
