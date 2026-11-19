@@ -195,8 +195,9 @@ before any check or push: it owns local iteration, failures and the final full c
   builders yourself, never through a closer agent that spawns its own.
 - **One milestone** (`/goal` from `templates/goal/milestone.txt`): close it per `milestone.md`.
   Sync first, one fix round, diagnose locally with failing tests and affected suites until green,
-  then the full suite once before the push: unit, E2E (changed and flaky specs ×3) and
-  `python3 scripts/verify_gate.py milestone {{CHANGE}}`, output pasted. Then one push and PR. Records and
+  then `python3 scripts/verify_gate.py milestone {{CHANGE}}`, output pasted: it is the only runner
+  of the full suite and the full E2E (its checks hold the changed and flaky specs ×3); never a
+  separate unit or E2E run of the whole suite beside it. Then one push and PR. Records and
   repairs are commits there, never separate PRs.
 - **Feature PRs** (`delivery: "feature-prs"`): each feature is its own `/goal` from
   `templates/goal/feature.txt`: `cct:sdlc-feature-builder`, or `codex-build.sh` when `builders` is

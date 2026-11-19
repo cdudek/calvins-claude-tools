@@ -1018,6 +1018,22 @@ def main() -> int:
                 review_md.read_text(encoding="utf-8").replace(".changes/", changes_dir + "/"),
                 encoding="utf-8",
             )
+    # The one known template sentence that sent the closer to `review-fix-run` (a second review):
+    # replaced in place; every custom rule of the repo's REVIEW.md stays.
+    old_review = re.compile(
+        r"The review \(`cct:review-code-run` with one `review-fix-run` round\) runs once per milestone,"
+    )
+    if not UPGRADE and review_md.exists() and old_review.search(review_md.read_text(encoding="utf-8")):
+        wrote.append("REVIEW.md: review-fix-run sentence -> review-code-run changes, then one fix round")
+        if not DRY:
+            review_md.write_text(
+                old_review.sub(
+                    "The review (`cct:review-code-run changes <parent> --codex`, then one fix round "
+                    "on its findings) runs once per milestone,",
+                    review_md.read_text(encoding="utf-8"),
+                ),
+                encoding="utf-8",
+            )
     docs = cfg.get("docs", "docs/sdlc.md")
     today = dt.date.today().isoformat()
     keep_paths = set(cfg.get("keep", []))
