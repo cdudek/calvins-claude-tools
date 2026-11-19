@@ -6,7 +6,7 @@ slot; everything else runs without one.
     python3 scripts/heavy.py wait JOB [--timeout S]            # exit code of the job; 75 on the deadline
     python3 scripts/heavy.py status                            # who holds a slot, who waits
     python3 scripts/heavy.py classify -- CMD...                # heavy or light
-    python3 scripts/heavy.py guard-main [--hook]               # refuse helper commands in the main folder
+    python3 scripts/heavy.py guard-main [--hook]               # main folder refusal; as a hook: a helper's unqueued heavy call
 
 One heavy job at a time per machine by default (`sdlc.json` `heavy.slots`, env SDLC_HEAVY_SLOTS or
 `--slots`). Tickets live in `<git common dir>/sdlc-heavy/`, so every worktree of a repo shares one
@@ -329,28 +329,55 @@ def cmd_status() -> int:
     return 0
 
 
+READ_ONLY = {"git", "gh", "cat", "ls", "head", "tail", "grep", "rg", "echo", "find", "sed", "cd", "test", "wc"}
+QUEUED = r"heavy\.py\s+(run|submit)\b"
+
+
+def unqueued_heavy(command: str, cfg: dict) -> bool:
+    """A heavy shell command that does not go through the queue. A line is split into its segments;
+    reading and version-control tools are never heavy (a commit message may say "build")."""
+    if re.search(QUEUED, command):
+        return False
+    for segment in re.split(r"&&|\|\||[;|\n]", command):
+        words = segment.split()
+        while words and re.fullmatch(r"\w+=\S*", words[0]):  # leading VAR=value
+            words = words[1:]
+        if words and words[0] not in READ_ONLY and is_heavy([segment], cfg):
+            return True
+    return False
+
+
 def cmd_guard(args) -> int:
-    """Helper commands never run in the main working folder: a helper's cwd is its own worktree.
-    With --hook, read a PreToolUse payload and refuse only a subagent's call (agent_id present)."""
-    cwd = os.getcwd()
-    if args.hook:
-        try:
-            payload = json.load(sys.stdin)
-        except ValueError:
-            return 0
-        if not payload.get("agent_id"):
-            return 0  # the owner's own session works where it likes
-        cwd = payload.get("cwd") or cwd
-    gitdir = git_out("rev-parse", "--path-format=absolute", "--absolute-git-dir", cwd=cwd)
-    common = git_out("rev-parse", "--path-format=absolute", "--git-common-dir", cwd=cwd)
-    if gitdir and gitdir == common:
-        print(
-            f"heavy: {cwd} is the main working folder. A helper works in its own worktree: "
-            "run `git worktree list`, `cd` into the one your prompt names and repeat the command.",
-            file=sys.stderr,
-        )
-        return 2 if args.hook else GUARD_REFUSED
-    return 0
+    """Without --hook: helper commands never run in the main working folder (exit 3). With --hook, a
+    PreToolUse payload on stdin: refuse (exit 2) only a subagent's heavy command that does not go
+    through the queue. A subagent's call carries `agent_id`; every field is read defensively, since
+    the owner's own session may omit it, and anything unreadable is allowed."""
+    if not args.hook:
+        cwd = os.getcwd()
+        gitdir = git_out("rev-parse", "--path-format=absolute", "--absolute-git-dir", cwd=cwd)
+        common = git_out("rev-parse", "--path-format=absolute", "--git-common-dir", cwd=cwd)
+        if gitdir and gitdir == common:
+            print(
+                f"heavy: {cwd} is the main working folder. A helper works in its own worktree: "
+                "run `git worktree list`, `cd` into the one your prompt names and repeat the command.",
+                file=sys.stderr,
+            )
+            return GUARD_REFUSED
+        return 0
+    try:
+        payload = json.load(sys.stdin)
+        agent = payload.get("agent_id")
+        command = (payload.get("tool_input") or {}).get("command")
+    except (ValueError, AttributeError):
+        return 0
+    if not agent or not isinstance(command, str) or not unqueued_heavy(command, config()):
+        return 0
+    print(
+        "heavy: a helper's heavy command goes through the queue, one at a time per machine. "
+        f"Run it as `python3 scripts/heavy.py run -- {command.strip()}` (or `submit`, then `wait`).",
+        file=sys.stderr,
+    )
+    return 2
 
 
 def main(argv: list[str]) -> int:

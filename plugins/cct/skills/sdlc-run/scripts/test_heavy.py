@@ -257,9 +257,13 @@ def test_guard_refuses_helper_commands_in_the_main_folder(tmp_path: Path) -> Non
     assert _guard(main).returncode == 3 and "main working folder" in _guard(main).stderr
     assert _guard(wt).returncode == 0
     # as a PreToolUse hook: only a subagent's call is refused, the owner's session is not
-    assert _guard(main, {"cwd": str(main), "agent_id": "a1"}).returncode == 2
-    assert _guard(main, {"cwd": str(main)}).returncode == 0
-    assert _guard(wt, {"cwd": str(wt), "agent_id": "a1"}).returncode == 0
+    # a read-only helper (a reviewer, an explorer) works in the main folder: the hook refuses only a
+    # subagent's heavy call outside the queue, wherever it stands
+    call = {"cwd": str(main), "agent_id": "a1", "tool_input": {"command": "pnpm build"}}
+    assert _guard(main, call).returncode == 2
+    assert _guard(main, {**call, "tool_input": {"command": "git status"}}).returncode == 0
+    assert _guard(main, {"cwd": str(main), "tool_input": {"command": "pnpm build"}}).returncode == 0
+    assert _guard(wt, {**call, "cwd": str(wt)}).returncode == 2
 
 
 def _evidence(*args: str) -> subprocess.CompletedProcess[str]:

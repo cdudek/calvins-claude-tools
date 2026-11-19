@@ -1254,7 +1254,7 @@ def main() -> int:
                 )
                 if old.exists():
                     old.unlink()
-    # A LIST, not a dict keyed by event: PreToolUse carries two entries -- gate-bash.sh for
+    # A LIST, not a dict keyed by event: PreToolUse carries several entries -- gate-bash.sh for
     # what sdlc.json blocks, chain-gate.sh for the chain's own gates -- and a dict silently
     # kept only the last one.
     spec = [
@@ -1263,6 +1263,7 @@ def main() -> int:
         ("PermissionRequest", "ExitPlanMode", "plan-gate.sh", 345600),
         ("PreToolUse", "Bash", "gate-bash.sh", 5),
         ("PreToolUse", "Bash", "pr-gate.sh", 20),
+        ("PreToolUse", "Bash", "helper-guard.sh", 5),
         ("PreToolUse", "Edit|Write", "chain-gate.sh", 5),
         ("PostToolUse", "Edit|Write", "lint-on-edit.sh", 30),
         ("Stop", None, "verify-on-stop.sh", 300),

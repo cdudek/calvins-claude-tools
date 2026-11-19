@@ -78,6 +78,7 @@ GENERATED = [
     ".claude/hooks/sdlc-config.sh",
     ".claude/hooks/chain-gate.sh",
     ".claude/hooks/gate-bash.sh",
+    ".claude/hooks/helper-guard.sh",
     ".claude/hooks/lint-on-edit.sh",
     ".claude/hooks/plan-gate.sh",
     ".claude/hooks/pr-gate.sh",
@@ -163,12 +164,13 @@ def test_pretooluse_keeps_every_hook(tmp_path: Path) -> None:
     assert any("gate-bash.sh" in c for c in pre), pre
     assert any("chain-gate.sh" in c for c in pre), pre
     assert any("pr-gate.sh" in c for c in pre), pre
+    assert any("helper-guard.sh" in c for c in pre), pre  # a helper's heavy call outside the queue
     matchers = {g.get("matcher") for g in settings["hooks"]["PreToolUse"]}
     assert matchers == {"Bash", "Edit|Write"}, matchers
     # And a second adopt does not append them again.
     _adopt(repo)
     again = json.loads((repo / ".claude" / "settings.json").read_text(encoding="utf-8"))
-    assert len([h for g in again["hooks"]["PreToolUse"] for h in g["hooks"]]) == 3
+    assert len([h for g in again["hooks"]["PreToolUse"] for h in g["hooks"]]) == len(pre)
 
 
 def test_dry_run_touches_nothing(tmp_path: Path) -> None:
