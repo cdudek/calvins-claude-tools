@@ -983,6 +983,17 @@ def finish_upgrade() -> str:
                 )
                 continue
             wanted.append(other)
+    # The helpers a hook imports (`helper("<name>")`) come with a replace when the repo lacks them: a
+    # hook beside a missing helper blocks every push or edit, the repo's own hooks included. A
+    # helper the repo has stays.
+    if wanted:
+        hooks = {f".claude/hooks/{p.name}": p.read_text(encoding="utf-8") for p in (ROOT / ".claude/hooks").glob("*.sh")}
+        hooks.update({rel: pending[rel][0] for rel in wanted if rel.endswith(".sh") and rel in pending})
+        for source in hooks.values():
+            for name in re.findall(r'helper\("(\w+)"\)', source):
+                dep = f".claude/hooks/{name}.py"
+                if dep in pending and not (ROOT / dep).exists() and dep not in wanted:
+                    wanted.append(dep)
     for rel in wanted:
         if rel not in pending and rel not in REPLACE:
             continue  # the partner is already the kit's copy

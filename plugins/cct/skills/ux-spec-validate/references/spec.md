@@ -91,7 +91,9 @@ Write `<spec>/readiness.md`.
 
 **Mirror it for an older hook.** While `<spec>/validation.md` exists (a folder written before the
 rename), or the repo's `.claude/hooks/chain-gate.sh` does not mention `readiness.md` (an
-`adopt --upgrade` left the hook in place), write the same content to `<spec>/validation.md` on
+`adopt --upgrade` left the hook in place), or the repo's guardrail test (`tests/test_sdlc.py`
+or `tests/sdlc.test.ts`) does not mention `readiness.md` (a selective replace upgraded the hook and
+kept the old guardrail test, which still requires `validation.md` in CI), write the same content to `<spec>/validation.md` on
 every write, loop pass and gate pass alike. The old hook reads only `validation.md`, the new one
 prefers `readiness.md` and reads identical content, so no hook version accepts a stale verdict or
 rejects a fresh one.

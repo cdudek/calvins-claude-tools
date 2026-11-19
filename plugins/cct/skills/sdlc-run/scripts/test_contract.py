@@ -10,6 +10,7 @@ from __future__ import annotations
 
 import importlib.util
 import re
+import subprocess
 import sys
 from pathlib import Path
 
@@ -354,3 +355,27 @@ def test_the_gate_and_the_hook_number_a_milestone_branch_the_same_way_3_20_5(tmp
     assert pass_proof.milestone_of("milestone/big-thing", "milestone/", "big-thing") == 1
     assert pass_proof.milestone_of("milestone/big-thing-7", "milestone/", "big-thing") == 7
     assert pass_proof.milestone_of("ms/big-thing-7", "milestone/", "big-thing") is None
+
+
+def test_the_readme_never_links_a_gitignored_path(tmp_path: Path) -> None:
+    import change_docs
+
+    subprocess.run(["git", "init", "-q"], cwd=tmp_path, check=True)
+    (tmp_path / ".gitignore").write_text("verify/\n")
+    (tmp_path / "verify").mkdir()
+    (tmp_path / "verify" / "report.json").write_text("{}")
+    (tmp_path / "asks").mkdir()
+    (tmp_path / "asks" / "a.md").write_text("x")
+    text = change_docs.readme(tmp_path, "5/7 Build")
+    assert "](verify/)" not in text and "(verify/)" not in text
+    assert "verify/" in text  # still named, as plain text
+    assert "[asks/](asks/)" in text  # a tracked folder is still linked
+
+
+def test_the_readiness_writer_also_checks_the_installed_guardrail_test() -> None:
+    """A repo that kept its old guardrail test still requires validation.md in CI: the mirror
+    decision reads the hook and the test."""
+    spec = (SKILL.parent / "ux-spec-validate/references/spec.md").read_text()
+    mirror = " ".join(spec.split("**Mirror it for an older hook.**", 1)[1].split("```markdown", 1)[0].split())
+    assert "tests/test_sdlc.py" in mirror and "tests/sdlc.test.ts" in mirror
+    assert "guardrail test" in mirror

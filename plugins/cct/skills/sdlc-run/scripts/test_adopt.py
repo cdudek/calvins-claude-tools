@@ -1926,3 +1926,26 @@ def test_replacing_the_gate_leaves_an_edited_hook_and_names_it_3_20_5(tmp_path: 
     assert res.returncode == 0, res.stderr
     assert hook.read_text() == mine
     assert ".claude/hooks/pr-gate.sh is customised" in "\n".join(_sections(res.stdout)["MANUAL"])
+
+
+def _missing_hook_helpers(repo: Path) -> list[str]:
+    """Every `helper("<name>")` a hook in the repo imports that the repo does not hold."""
+    hooks = repo / ".claude/hooks"
+    gone = []
+    for sh in sorted(hooks.glob("*.sh")):
+        for name in re.findall(r'helper\("(\w+)"\)', sh.read_text()):
+            if not (hooks / f"{name}.py").exists():
+                gone.append(f"{sh.name} needs {name}.py")
+    return gone
+
+
+@pytest.mark.parametrize("replaced", ["scripts/verify_gate.py", ".claude/hooks/pr-gate.sh"])
+def test_a_selective_replace_brings_every_helper_the_hook_imports(tmp_path: Path, replaced: str) -> None:
+    repo = _upgrade_fixture(tmp_path)
+    for helper in ("goal_active.py", "pass_proof.py", "block_state.py"):
+        (repo / ".claude/hooks" / helper).unlink()  # a repo adopted before these helpers existed
+    hook = repo / ".claude/hooks/pr-gate.sh"
+    hook.write_text(hook.read_text() + "\n# the repo's own edit\n")
+    res = _adopt(repo, "--upgrade", "--apply", "--replace", replaced)
+    assert res.returncode == 0, res.stderr
+    assert _missing_hook_helpers(repo) == []

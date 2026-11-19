@@ -7,6 +7,7 @@ Nothing here touches git or the network; `readme` is the only thing that writes,
 from __future__ import annotations
 
 import re
+import subprocess
 from pathlib import Path
 
 # family letter -> (what it is, the file that decides it); the same letters verify_gate.py lints
@@ -199,10 +200,22 @@ FOR_AGENTS = (
 LEGACY = {"spec/readiness.md": "spec/validation.md"}  # written before the rename
 
 
+def _ignored(change: Path, rel: str) -> bool:
+    """Git ignores this path (the gate's verify/ folder, scratch): a README link to it fails in a clean checkout."""
+    if rel.split("/")[0] == "verify":
+        return True
+    try:
+        return subprocess.run(["git", "-C", str(change), "check-ignore", "-q", "--", rel], capture_output=True).returncode == 0
+    except OSError:
+        return False
+
+
 def _name(change: Path, rel: str) -> str:
     if not (change / rel).exists() and (change / LEGACY.get(rel, rel)).exists():
         rel = LEGACY[rel]
-    return f"[{rel}]({rel})" if (change / rel).exists() else f"{rel} (not written yet)"
+    if not (change / rel).exists():
+        return f"{rel} (not written yet)"
+    return rel if _ignored(change, rel) else f"[{rel}]({rel})"  # never link an ignored path
 
 
 def latest_handover(change: Path) -> Path | None:
@@ -232,7 +245,7 @@ def others(change: Path) -> list[str]:
             continue
         if p.name.startswith(".") or p.name.startswith("handover") or rel.startswith(
             tuple(f"{d}/" for d in KNOWN_DIRS)
-        ):
+        ) or _ignored(change, rel):
             continue
         out.append(rel)
     return out
