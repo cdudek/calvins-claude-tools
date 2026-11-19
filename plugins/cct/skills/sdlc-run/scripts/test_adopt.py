@@ -1776,7 +1776,12 @@ def _listed(name: str) -> set[str]:
 
 @pytest.mark.parametrize(
     ("template", "name"),
-    [("scripts/marks.py", "KIT_MARKS"), ("hooks/pass_proof.py", "KIT_PASS_PROOF")],
+    [
+        ("scripts/marks.py", "KIT_MARKS"),
+        ("scripts/verify_gate.py", "KIT_GATE"),
+        ("hooks/pr-gate.sh", "KIT_PR_GATE"),
+        ("hooks/pass_proof.py", "KIT_PASS_PROOF"),
+    ],
 )
 def test_the_kit_version_lists_cover_every_shipped_copy_C5(template: str, name: str) -> None:
     import hashlib
@@ -1816,6 +1821,51 @@ def test_replacing_the_pr_hook_never_overwrites_a_customised_pass_proof_C5(tmp_p
         assert res.returncode == 0, res.stderr
         assert (repo / ".claude/hooks/pass_proof.py").read_text() == mine
         manual = "\n".join(_sections(res.stdout)["MANUAL"])
-        assert ".claude/hooks/pass_proof.py is customised" in manual and "holds(" in manual
+        assert ".claude/hooks/pass_proof.py is customised" in manual and "proves(" in manual
     kit = (ADOPT.parents[1] / "templates/hooks/pr-gate.sh").read_bytes()
     assert hook.read_bytes() == kit
+
+
+def _kit_at(commit: str, rel: str) -> bytes:
+    """A previous kit version of a template, read from history."""
+    out = subprocess.run(
+        ["git", "show", f"{commit}:plugins/cct/skills/sdlc-run/templates/{rel}"],
+        cwd=ADOPT.parent, capture_output=True, env=_env(),
+    )  # fmt: skip
+    if out.returncode:
+        pytest.skip(f"history of {commit} is not in this checkout")
+    return out.stdout
+
+
+TRIO = {
+    "scripts/verify_gate.py": "scripts/verify_gate.py",
+    ".claude/hooks/pr-gate.sh": "hooks/pr-gate.sh",
+    ".claude/hooks/pass_proof.py": "hooks/pass_proof.py",
+}
+
+
+@pytest.mark.parametrize("replaced", sorted(TRIO))
+def test_replacing_one_of_the_gate_files_brings_the_other_two_to_the_same_version_3_20_5(
+    tmp_path: Path, replaced: str
+) -> None:
+    """3.20.4 copies of the gate, the hook and the helper read a pass another way than 3.20.5's:
+    the three must never be left at different versions."""
+    repo = _upgrade_fixture(tmp_path)
+    for rel, template in TRIO.items():  # an unedited 3.20.4 install
+        (repo / rel).write_bytes(_kit_at("cec0058", template))
+    res = _adopt(repo, "--upgrade", "--apply", "--replace", replaced)
+    assert res.returncode == 0, res.stderr
+    for rel, template in TRIO.items():
+        kit = (ADOPT.parents[1] / "templates" / template).read_bytes()
+        assert (repo / rel).read_bytes() == kit, rel
+
+
+def test_replacing_the_gate_leaves_an_edited_hook_and_names_it_3_20_5(tmp_path: Path) -> None:
+    repo = _upgrade_fixture(tmp_path)
+    hook = repo / ".claude/hooks/pr-gate.sh"
+    mine = hook.read_text() + "\n# the repo's own edit\n"
+    hook.write_text(mine)
+    res = _adopt(repo, "--upgrade", "--apply", "--replace", "scripts/verify_gate.py")
+    assert res.returncode == 0, res.stderr
+    assert hook.read_text() == mine
+    assert ".claude/hooks/pr-gate.sh is customised" in "\n".join(_sections(res.stdout)["MANUAL"])

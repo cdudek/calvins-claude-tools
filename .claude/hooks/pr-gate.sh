@@ -106,7 +106,7 @@ def goal_active() -> bool:
 
 
 def proof(name: str):
-    """What pass_proof.py defines (the one key, the one reader), shared with sdlc_status.py and verify_gate.py."""
+    """What pass_proof.py defines (`proves`), shared with sdlc_status.py."""
     try:
         return getattr(helper("pass_proof"), name)
     except Exception:  # a gate that cannot read the rule blocks
@@ -169,7 +169,6 @@ class Repo:
         return [f for changes in self.change_dirs() for pat in patterns for f in changes.glob(pat)]
 
     def reports(self, scope: str, slug: str) -> list[Path]:
-        """The report.json files the LEGACY rule reads (pass_proof.holds): a change without receipts."""
         if scope == "project":  # verify_gate.py project: one record in the common git dir
             common = git(self.dir, "rev-parse", "--path-format=absolute", "--git-common-dir")
             return [Path(common) / "sdlc" / "projects" / slug / "verify" / "report.json"] if common else []
@@ -216,34 +215,32 @@ class Repo:
         """The change(s) a milestone branch belongs to."""
         return {i for i, _ in self.matching(milestone, *refs)}
 
-    def pass_sha(
-        self, sha: str, scope: str = "milestone", slug: str = "", branch: str = "", owner: str | None = None
-    ) -> str:
+    def pass_sha(self, sha: str, scope: str = "milestone", slug: str = "", branch: str = "") -> str:
         """The gated commit of a PASS of this scope for the change that owns `branch` (the project
         `slug`) that still holds at `sha`, or "". A pass holds on its own commit or on a descendant
-        that only records followed: writing the gate line into milestone.md must not need a second
-        full gate. Another change's pass never counts; a milestone's receipt counts only for its
-        own key (pass_proof.key: the branch's -<n>, 1 for the unnumbered milestone/<slug>; M1's never
-        admits M2), and only for the `owner` (the project branch) it was gated for when the caller
-        names one. pass_proof.holds decides."""
+        that only records followed (pass_proof.proves): writing the gate line into milestone.md
+        must not need a second full gate. Another change's pass never counts."""
         if not sha:
             return ""
-        if scope == "project":
-            subjects, owner = [(slug, "")], ""  # a project record is issued for no other project
-        else:
-            subjects = [(i, (d.get("milestone") or {}).get("slug", "")) for i, d in self.matching(branch, sha)]
+        subjects = {slug} if scope == "project" else {i for i, _ in self.matching(branch, sha)}
         rel = self.changes.relative_to(self.top).as_posix()
-        legacy = self.reports(scope, slug)
-        for subject, named in sorted(s for s in subjects if s[0]):
-            record = proof("key")(scope, branch, None, self.m, named)
-            if record and (gated := proof("holds")(self.dir, rel, subject, record, sha, owner, legacy)):
+        for report in self.reports(scope, slug):
+            try:
+                data = json.loads(report.read_text(encoding="utf-8"))
+            except (OSError, ValueError):
+                continue
+            gated = data.get("sha") or ""
+            result = str(data.get("result", ""))
+            if not gated or data.get("scope", scope) != scope:
+                continue
+            if not any(result.startswith(f"VERIFY PASS {scope} {s} ") for s in subjects if s):
+                continue
+            if proof("proves")(self.dir, rel, gated, sha):
                 return str(gated)
         return ""
 
-    def passed(
-        self, sha: str, scope: str = "milestone", slug: str = "", branch: str = "", owner: str | None = None
-    ) -> bool:
-        return bool(self.pass_sha(sha, scope, slug, branch, owner))
+    def passed(self, sha: str, scope: str = "milestone", slug: str = "", branch: str = "") -> bool:
+        return bool(self.pass_sha(sha, scope, slug, branch))
 
     def owners(self, milestone: str, *refs: str, live: bool = True) -> set[str]:
         """The project branch each matching change record names for this milestone branch: "" for
@@ -339,7 +336,7 @@ def check_push(repo: Repo, args: list[str]) -> None:
         if dst.startswith(repo.m):
             if repo.local and (project := repo.project_of(dst)):
                 block(f"a push of {dst} in local milestones mode.", local_merge_route(project, dst))
-            if not repo.feature_prs and not repo.passed(sha, branch=dst, owner=repo.project_of(dst, sha)):
+            if not repo.feature_prs and not repo.passed(sha, branch=dst):
                 block(f"a push of {dst} at {sha[:12] or src} without a passing milestone gate.", CLOSE, "verify/report.json")
             continue
         if dst.startswith(repo.p):
@@ -387,7 +384,7 @@ def check_pr(repo: Repo, args: list[str]) -> None:
         parent = repo.project_of(head, sha) if sha else ""
         if parent and base != parent:  # GitHub picks the default branch when --base is left out
             block(f"a PR from {head} into {base}: its project is {parent}.", f"Pass `--base {parent}`.")
-        if sha and not repo.passed(sha, branch=head, owner=parent):
+        if sha and not repo.passed(sha, branch=head):
             block(f"a PR from {head} at {sha[:12]} without a passing milestone gate.", CLOSE, "verify/report.json")
         return
     if head.startswith(repo.p):
@@ -438,7 +435,7 @@ def check_merge(repo: Repo, args: list[str], current: str = "") -> None:
         if not a.startswith("-") and ref.startswith(repo.m):
             sha = repo.sha(ref)
             into = current if current.startswith(repo.p) else real
-            gated = repo.pass_sha(sha, branch=ref, owner=into)  # a pass gated for another project is no pass
+            gated = repo.pass_sha(sha, branch=ref)
             if not gated:
                 block(f"a merge of {ref} into {current} without a passing milestone gate.", CLOSE, "verify/report.json")
             tip = repo.sha(into)

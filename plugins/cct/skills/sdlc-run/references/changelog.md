@@ -5,7 +5,21 @@ version warning, the **Mechanical** lines are what `adopt` does for you (it adds
 with the stack's defaults and never overwrites a value), the **Manual** lines are printed for
 the engineer. A version with no migration lines needs nothing but a re-run of `adopt`.
 
+## 3.20.5 — Pass records withdrawn from 3.20.x; they return in a later release
+
+Pass records (shared receipts under `<git common dir>/sdlc/receipts/`, and everything that wrote or read them) were withdrawn from 3.20.x. Four review rounds kept finding regressions in that layer, all on the upgrade path: `sdlc_status.py` ships in the plugin and updates for everyone, while `verify_gate.py`, `pr-gate.sh` and `pass_proof.py` are per-repo copies that change only when someone runs `adopt`. Pass records come back in their own release.
+
+- **A pass is read as 3.20.0 read it:** from the gate's report in the checkout (`verify/report.json`, a project's report in the git common dir, and a milestone's `verify/milestone-<n>.json`). The gate no longer writes a receipt, no gate or hook reads one, and `--milestone` and `RECEIPT_FORMAT` are gone. A receipt file already in a git dir is ignored, never an error; delete the `sdlc/receipts/` folder whenever you like.
+- **What a pass covers is unchanged from 3.20.1:** `pass_proof.proves()` stays, the one rule for what a pass proves at a later head (a post-gate edit to `facts.md`, `done.json`, `lock.json` or evidence voids it; the archive move with a valid `archived_at` date is allowed; a live and an archive copy of one path void it).
+- **The owner is read from the change record at the gated commit**, not from the branch tip.
+- **Kept from 3.20.1 to 3.20.4:** PR `--base` hints and the wrong-base remedy first; tier-aware auto-merge advice; hotfix retarget to the default branch; the gate loads `marks.py` only where needed; `adopt --replace` takes partners only when they are unedited kit copies; the readiness fallback and mirror; the marks ledger migration, bundle screens matched by relative path, and the legacy `marks.py` block only with bundle inputs; a `[NEEDS CLARIFICATION]` marker in a Gherkin fence blocks; build QA follows `decisions.json` skips with size as the default; templates pass their own lint; no `__pycache__` from hooks; the PR hook reads each change record once per command.
+- **`adopt --replace` keeps the three gate files at one version.** Replacing `verify_gate.py`, `pr-gate.sh` or `pass_proof.py` takes the other two along when they are unedited kit copies (a copy that matches a version in the kit's git history); an edited one is left and listed.
+- Mechanical: re-running `adopt` refreshes `verify_gate.py`, `pr-gate.sh`, `pass_proof.py` and `marks.py`.
+- Manual: a repo that keeps its own `pass_proof.py` must give it `proves(repo, changes_dir, gated, head)` (or take the kit's copy). A repo that took 3.20.1 to 3.20.4 files by hand should run `adopt --upgrade --apply --replace scripts/verify_gate.py` so the gate, the hook and the helper match.
+
 ## 3.20.4 — Fourth review round: one key, one reader, and a reader that follows the installed gate
+
+_Pass records were withdrawn in 3.20.5 (see above); the receipt parts of this entry no longer apply._
 
 The earlier rounds fixed findings one at a time. This one makes three things true, each with a test that fails if it breaks.
 
@@ -18,9 +32,11 @@ The earlier rounds fixed findings one at a time. This one makes three things tru
 - **The PR hook reads each change record once** per command, not twice.
 - **Build QA follows the owner's record.** An activity is skipped when `decisions.json` `skips` lists it, so a restored preset skip is checked and a waived activity is not failed. The size is only the default.
 - Mechanical: re-running `adopt` refreshes `verify_gate.py`, `pass_proof.py` and `pr-gate.sh`. `--replace scripts/verify_gate.py` now takes `pass_proof.py` along when it is an unedited kit copy.
-- Manual: a repo that keeps its own `pass_proof.py` must give it `key(...)`, `write_record(...)` and `holds(...)` (or take the kit's copy) before it takes the new `verify_gate.py`. Until a repo replaces its gate it stays on the old reader, so a goal finished by the old gate is read the old way.
+- Manual: none that still applies; 3.20.5 withdrew the pass records.
 
 ## 3.20.3 — Third review round: one record of a pass, read in one place
+
+_Pass records were withdrawn in 3.20.5 (see above); the receipt parts of this entry no longer apply._
 
 - **Every gate run writes one receipt, and only the receipt is proof.** A passed, failed or blocked run writes `<git common dir>/sdlc/receipts/<change>/<scope>-<n>.json`: the verdict, the one commit the run started on, the scope, the milestone number, the project that owns the change, the time and the checks. It is written in one piece, and the `PASS` line names the same commit. `verify/report.json` stays as something to read and counts for nothing.
 - **One reader, three callers.** The PR hook, `sdlc_status.py goal` and the stop check all ask `pass_proof.holds()`. The newest run of a change, scope and number wins, whichever worktree ran it. A later failed run now ends a pass, and M1's pass can no longer admit M2.
@@ -36,9 +52,11 @@ The earlier rounds fixed findings one at a time. This one makes three things tru
 - **Build QA fails on a missing required UX file.** `ia.md` and `interaction.md` may be absent only for the sizes whose preset skips them (S skips both, M skips `ia`). For size L a missing `interaction.md` is a QA failure.
 - **A goal poll is cheaper.** The git directory is resolved once and each receipt is read once.
 - Mechanical: re-running `adopt` refreshes `pr-gate.sh`, `pass_proof.py`, `verify_gate.py` and `marks.py`.
-- Manual: a repo that keeps its own `pass_proof.py` must give it `holds(...)` (or take the kit's copy), or the PR hook blocks every push and merge. A repo that runs the milestone gate in a detached worktree passes `--milestone <n>`.
+- Manual: none that still applies; 3.20.5 withdrew the pass records.
 
 ## 3.20.2 — Second review round: archive keeps its pass, no wrong merges, no silent skips
+
+_Pass records were withdrawn in 3.20.5 (see above); the receipt parts of this entry no longer apply._
 
 - **The archive commit keeps its pass.** Stage 7 adds `archived_at` to `facts.md`. That one added line, in a commit that moves the change into the archive, no longer voids the milestone pass. Any other edit to `facts.md`, `done.json` or the evidence still does.
 - **A failed or blocked gate can no longer read as done.** The newest receipt of a milestone wins, so a later failed run is not hidden by an older pass. `goal <id>` without a number reads every milestone's own receipt, so it still works after the builder worktree is gone.
@@ -55,6 +73,8 @@ The earlier rounds fixed findings one at a time. This one makes three things tru
 
 ## 3.20.1 — Review fixes: PR bases, receipts that survive, upgrades in either order
 
+_Pass records were withdrawn in 3.20.5 (see above); the receipt parts of this entry no longer apply._
+
 - **A PR opens against its real parent.** A feature goes into its milestone branch, a milestone into its project branch (or the default branch when there is none), a project into the default branch. The missing-PR hint now says `--base`, the hook refuses a milestone PR whose base is not its project, and `goal` is not DONE on any other base.
 - **Recovery hints read the tier.** An unarmed `ask` PR names the human decision when `askGatesMerge` is on and is never told to arm auto-merge. A PR into the default branch is left to the workflow. Milestone and project PRs keep `--merge`.
 - **Old and new files can sit side by side.** The gate loads `marks.py` only where it needs it, so an old `marks.py` never breaks `approve`, `audit` or `lint`. Replacing `verify_gate.py` or `marks.py` with `adopt --upgrade --apply --replace` replaces both. When the repo's `verify_gate.py` has no `--pr-body`, the PR skill lints with the plugin's own copy.
@@ -67,7 +87,7 @@ The earlier rounds fixed findings one at a time. This one makes three things tru
 - **Build QA resolves size and skips first.** A supplied visual source with a recorded spec-validation skip is authorised by the intent approval, so it never loops back to `validate spec`.
 - **Hooks leave no `__pycache__`.** They run Python with bytecode writes off, as does the gate.
 - Mechanical: re-running `adopt` refreshes the hooks (new file `pass_proof.py` beside `pr-gate.sh`), `verify_gate.py` and `marks.py`.
-- Manual: a repo that replaces `pr-gate.sh` by hand must also take `pass_proof.py`; without it the hook blocks and says so. A receipt written before this version stays where it is and is still read.
+- Manual: a repo that replaces `pr-gate.sh` by hand must also take `pass_proof.py`; without it the hook blocks and says so.
 
 ## 3.20.0 — UI review rounds that end
 

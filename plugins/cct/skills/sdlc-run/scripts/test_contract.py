@@ -325,3 +325,15 @@ def test_build_qa_waives_only_the_files_the_size_preset_skips_M6_C10() -> None:
     for line in build.splitlines():
         if re.search(r"ia\.md|interaction\.md", line) and not line.startswith("- `<spec>/screens.md`"):
             assert not re.search(r"\bexists?\b", line, re.I), f"a check conditional on the file existing: {line}"
+
+
+# 3.20.5: pass records were withdrawn; a pass is the gate's report in the checkout.
+def test_no_shipped_script_or_hook_reads_or_writes_receipts() -> None:
+    shipped = [
+        p
+        for root in (SKILL / "scripts", SKILL / "templates", SKILL.parents[1] / "blueprint")
+        for p in root.rglob("*")
+        if p.is_file() and p.suffix in {".py", ".sh"} and "__pycache__" not in p.parts and not p.name.startswith("test_")
+    ]
+    assert len(shipped) > 10
+    assert not [str(p) for p in shipped if "receipts/" in p.read_text(encoding="utf-8")]

@@ -843,28 +843,66 @@ def apply_tiers_answer(cfg: dict) -> None:
 KIT_MARKS = {
     "0b01636d6dc4e428",
     "1d7b567db399b3f8",
-    "4dc39753a72de141",
-    "54684d37d2b5435c",
     "6c0c9f03e4eb5e80",
     "71e01d1d701f6c28",
-    "8504021b39d2f3c4",
     "9b9eb7671a9fee71",
-    "9e291aa9a4ca7939",
-    "a5be99c8d2b1e911",
-    "b35426f37e60f79f",
     "c31c115f84e2d0cb",
     "d0b8c44c65ff9ef6",
     "da489951ced4b597",
-    "e9511caf3de9934b",
 }
+KIT_GATE = {
+    "07797d2ae191453e",
+    "1c17e460c91d2d3d",
+    "25ea5841fdd27c8c",
+    "3606423109411bd8",
+    "36b65017727d487e",
+    "49c96180a9059469",
+    "4cf1a016840c1594",
+    "5152ca52e4e6ae8b",
+    "573aee9b45171a4c",
+    "642ef78693995803",
+    "96ef7a0baac1edad",
+    "a0b381c0b945ecdb",
+    "a7481173126f7752",
+    "a872c162585a3302",
+    "b4724f2bc5e40f08",
+    "bff25d03c74642b8",
+    "c53ff6ee7a8eb8d9",
+    "dfbfa38f6cd4fec6",
+    "f74bcd2c928e6244",
+}  # same, for scripts/verify_gate.py
+KIT_PR_GATE = {
+    "0a76b3d09e108c32",
+    "23f7c564f4bd72c8",
+    "27fac77913e73fb0",
+    "30b25985ad8654f5",
+    "32c64c35d3cbc40e",
+    "4fe0e4f49faa16aa",
+    "547e89c143f3b75d",
+    "5a07659427f3871f",
+    "7a4751e7cea3d974",
+    "8170d3b4f4ccc09d",
+    "a7c80708a8719115",
+    "ab23e9a14b74d511",
+    "dcfc6bfc90098077",
+    "e68483445418d666",
+    "e75851f8eacc7ec7",
+    "f9f78cded1337388",
+}  # same, for .claude/hooks/pr-gate.sh
 KIT_PASS_PROOF = {
-    "66d1b0004ebe5a4f",
     "08655b8b92ba1cf3",
+    "66d1b0004ebe5a4f",
     "6b49e80785b08cd1",
     "9bf7560ec9b627d8",
+    "dfd42c691cbeaf20",
     "faa52678825431ca",
+}  # same, for .claude/hooks/pass_proof.py
+KIT_PARTS = {
+    "scripts/marks.py": KIT_MARKS,
+    "scripts/verify_gate.py": KIT_GATE,
+    ".claude/hooks/pr-gate.sh": KIT_PR_GATE,
+    ".claude/hooks/pass_proof.py": KIT_PASS_PROOF,
 }
-KIT_PARTS = {"scripts/marks.py": KIT_MARKS, ".claude/hooks/pass_proof.py": KIT_PASS_PROOF}
 
 
 def finish_upgrade() -> str:
@@ -887,22 +925,22 @@ def finish_upgrade() -> str:
                 f"review: `{w}` is a layout migration or removal that --upgrade does not apply; run `adopt` to apply it"
             )
     out = []
-    # A file whose partner the replaced one needs: the new gate blocks a milestone without
-    # marks.py's `bundles` and writes its records through pass_proof.py's `key`, and pr-gate.sh
-    # loads pass_proof.py. Replacing either takes its partners
-    # along only when the partner is a kit version nobody edited (sdlc.json `keep` and a customised
-    # copy stay, and a MANUAL line names it); a replaced marks.py alone is safe, the older gate
-    # imports the same names.
-    partner = {
-        "scripts/verify_gate.py": ["scripts/marks.py", ".claude/hooks/pass_proof.py"],
-        ".claude/hooks/pr-gate.sh": [".claude/hooks/pass_proof.py"],
-    }
+    # A file whose partners the replaced one needs: the gate blocks a milestone with design bundles
+    # unless marks.py has `bundles`, and verify_gate.py, pr-gate.sh and pass_proof.py are one
+    # version: a hook beside a different helper or gate judges a pass another way. Replacing one of
+    # the three takes the others along, and the gate takes marks.py, only when the partner is a kit
+    # version nobody edited (a customised copy stays, and a MANUAL line names it).
+    trio = ["scripts/verify_gate.py", ".claude/hooks/pr-gate.sh", ".claude/hooks/pass_proof.py"]
+    partner = {f: [t for t in trio if t != f] for f in trio}
+    partner["scripts/verify_gate.py"].append("scripts/marks.py")
     PARTNER_NEEDS = {  # noqa: N806 -- what the replaced file cannot work without
         "scripts/marks.py": "`bundles(change)`: the new gate blocks milestone gates with design bundles until it has it",
-        ".claude/hooks/pass_proof.py": "`key(...)`, `write_record(...)` and `holds(...)` (the one key, writer and reader of the gate's records): the new gate refuses to run and the new hook blocks every push and merge without it",
+        "scripts/verify_gate.py": "the same kit version (it and the hook read a pass the same way)",
+        ".claude/hooks/pr-gate.sh": "the same kit version (it and the gate read a pass the same way)",
+        ".claude/hooks/pass_proof.py": "the same kit version (`proves(...)`, the one rule for what a pass covers)",
     }
     wanted = list(dict.fromkeys(REPLACE))
-    for rel in REPLACE:
+    for rel in wanted:  # the list grows: a partner's own partners follow
         for other in partner.get(rel, []):
             if other not in pending or other in wanted:
                 continue  # it is the kit's copy already, or already on the list

@@ -716,23 +716,6 @@ def test_local_merge_refuses_a_milestone_without_one_owner_F7(repo: Path) -> Non
     assert r.returncode == 2 and "no single owner" in r.stderr
 
 
-def test_local_merge_sees_the_receipt_after_the_milestone_worktree_is_gone_F5(
-    repo: Path, tmp_path: Path
-) -> None:
-    _local(repo)
-    sha = _git(repo, "rev-parse", "HEAD")
-    common = Path(_git(repo, "rev-parse", "--path-format=absolute", "--git-common-dir"))
-    out = common / "sdlc" / "receipts" / ID
-    out.mkdir(parents=True)
-    result = f"VERIFY PASS milestone {ID} {sha}"
-    receipt = {"scope": "milestone", "milestone": 1, "change": ID, "result": result, "sha": sha}
-    (out / "milestone-1.json").write_text(json.dumps(receipt))
-    other = tmp_path / "project-wt"
-    _git(repo, "worktree", "add", "-q", str(other), "project/trial")
-    assert not (repo / "changes" / ID / "verify").exists()  # no report.json anywhere
-    assert _run_in(other, repo, "git merge --no-ff milestone/trial-1").returncode == 0
-
-
 def test_a_milestone_pr_names_its_project_as_the_base_F1(repo: Path) -> None:
     _local(repo, None)  # PR mode, the change belongs to project/trial
     _pass(repo)
@@ -758,30 +741,6 @@ def test_a_hook_run_leaves_a_clean_checkout_clean_F13(repo: Path) -> None:
     )  # fmt: skip
     assert r.returncode == 2
     assert _git(repo, "status", "--porcelain") == ""
-
-
-# 3.20.2: round-2 review (H4, F7, F1).
-def _receipt(repo: Path, n: int, sha: str | None = None) -> None:
-    sha = sha or _git(repo, "rev-parse", "HEAD")
-    common = Path(_git(repo, "rev-parse", "--path-format=absolute", "--git-common-dir"))
-    out = common / "sdlc" / "receipts" / ID
-    out.mkdir(parents=True, exist_ok=True)
-    receipt = {
-        "scope": "milestone", "milestone": n, "change": ID, "sha": sha,
-        "result": f"VERIFY PASS milestone {ID} {sha}",
-    }  # fmt: skip
-    (out / f"milestone-{n}.json").write_text(json.dumps(receipt))
-
-
-def test_the_receipt_of_milestone_1_never_admits_milestone_2_H4(repo: Path) -> None:
-    _receipt(repo, 1)
-    assert _push(repo) == 0
-    _git(repo, "checkout", "-qb", "milestone/trial-2")  # cut at milestone 1's tip
-    r = _run(repo, "git push -u origin milestone/trial-2")
-    assert r.returncode == 2 and "without a passing milestone gate" in r.stderr
-    assert _run(repo, "gh pr create --base master --title t --body x").returncode == 2
-    _receipt(repo, 2)
-    assert _run(repo, "git push -u origin milestone/trial-2").returncode == 0
 
 
 def test_local_merge_reads_the_owner_at_the_gated_sha_not_the_tip_F7(repo: Path) -> None:
@@ -811,77 +770,6 @@ def test_a_pr_create_naming_the_same_repo_is_still_gated_F1(repo: Path) -> None:
     assert _run(repo, wrong).returncode == 2
 
 
-# 3.20.3: one authority (pass_proof.holds reads the receipts; report.json is only the legacy path).
-def _owned(repo: Path, owner: str, n: int = 1, verdict: str = "pass") -> str:
-    """A record as the 3.20.4 gate writes it (and that gate installed: RECEIPT_FORMAT, kept out of the
-    tree), for the head and `owner`."""
-    (repo / "scripts").mkdir(exist_ok=True)
-    (repo / "scripts" / "verify_gate.py").write_text("RECEIPT_FORMAT = 2\n")
-    with open(repo / ".git" / "info" / "exclude", "a", encoding="utf-8") as exclude:
-        exclude.write("/scripts/\n")
-    sha = _git(repo, "rev-parse", "HEAD")
-    common = Path(_git(repo, "rev-parse", "--path-format=absolute", "--git-common-dir"))
-    out = common / "sdlc" / "receipts" / ID
-    out.mkdir(parents=True, exist_ok=True)
-    result = {"pass": f"VERIFY PASS milestone {ID} {sha}", "fail": f"VERIFY FAIL milestone {ID} check=unit"}[verdict]
-    receipt = {
-        "scope": "milestone", "milestone": n, "change": ID, "sha": sha, "result": result,
-        "verdict": verdict, "owner": owner, "time": "2026-11-19T00:00:00+00:00", "key": f"milestone-{n}",
-    }  # fmt: skip
-    (out / f"milestone-{n}.json").write_text(json.dumps(receipt))
-    return sha
-
-
-def test_a_report_json_never_admits_a_milestone_once_a_receipt_exists_C1(repo: Path) -> None:
-    """High 4: the gate's report names no milestone, so M1's report admitted M2 at the same sha."""
-    _pass(repo)  # the ordinary report.json
-    assert _push(repo) == 0  # LEGACY RULE: no receipt yet, the report counts
-    _owned(repo, "", 1)
-    _git(repo, "checkout", "-qb", "milestone/trial-2")
-    r = _run(repo, "git push -u origin milestone/trial-2")
-    assert r.returncode == 2 and "without a passing milestone gate" in r.stderr
-    assert _run(repo, "gh pr create --base master --title t --body x").returncode == 2
-
-
-def test_the_newest_run_wins_a_failed_receipt_beats_an_older_report_pass_C1(repo: Path) -> None:
-    _pass(repo)
-    _owned(repo, "", 1, "fail")
-    assert _push(repo) == 2
-    _owned(repo, "", 1)
-    assert _push(repo) == 0
-
-
-def test_a_receipt_for_another_owner_is_no_pass_for_this_pr_base_C1(repo: Path) -> None:
-    _local(repo, None)  # PR mode, the change belongs to project/trial
-    _owned(repo, "project/other")
-    pr = "gh pr create --base project/trial --title t --body x"
-    r = _run(repo, pr)
-    assert r.returncode == 2 and "without a passing milestone gate" in r.stderr
-    _owned(repo, "project/trial")
-    assert _run(repo, pr).returncode == 0
-
-
-def test_an_older_pass_for_the_former_owner_loses_to_a_newer_pass_for_the_new_owner_C1(
-    repo: Path,
-) -> None:
-    """The change moves from project A to B and is gated again for B: A's older pass, kept in
-    another worktree's report.json or an earlier receipt, no longer lets the merge into A through."""
-    _local(repo)
-    _pass(repo)  # A's report.json, in the checkout that gated it
-    _owned(repo, "project/trial")  # A's receipt
-    decisions = repo / "changes" / ID / "decisions.json"
-    data = json.loads(decisions.read_text())
-    decisions.write_text(json.dumps({**data, "project": {"slug": "other", "branch": True}}))
-    _git(repo, "commit", "-qam", "the change moves to project/other")
-    _git(repo, "branch", "project/other", "project/trial")
-    _owned(repo, "project/other")  # the fresh gate run, for B: the newest receipt
-    _git(repo, "checkout", "-q", "project/trial")
-    r = _run(repo, "git merge --no-ff milestone/trial-1")
-    assert r.returncode == 2 and "without a passing milestone gate" in r.stderr
-    _git(repo, "checkout", "-q", "project/other")
-    assert _run(repo, "git merge --no-ff milestone/trial-1").returncode == 0
-
-
 @pytest.mark.parametrize("value", ["not-a-date", "2026-13-45", "'2026-11-19'", "2026-1-9", "2026-11-19T10:00:00"])
 def test_the_archive_commit_voids_the_pass_unless_archived_at_is_a_real_date_C8(
     repo: Path, value: str
@@ -892,36 +780,6 @@ def test_the_archive_commit_voids_the_pass_unless_archived_at_is_a_real_date_C8(
     assert _push(repo) == 2
 
 
-def test_the_hook_and_the_status_check_ask_the_same_reader_C1(repo: Path) -> None:
-    sys.path.insert(0, str(HOOKS))
-    from pass_proof import holds
-
-    sha = _owned(repo, "project/trial")
-    assert holds(repo, "changes", ID, "milestone-1", sha, "project/trial") == sha
-    assert holds(repo, "changes", ID, "milestone-1", sha, "project/other") == ""
-    assert holds(repo, "changes", ID, "milestone-2", sha, None) == ""  # M1's record, asked for M2
-    assert holds(repo, "changes", ID, "milestone-0", sha, None) == ""  # no number, no milestone pass
-
-
-# 3.20.4: one key (the unnumbered feature-PR milestone branch is milestone 1), one scan of the records.
-def test_the_unnumbered_milestone_branch_closes_with_a_milestone_1_record_K1(repo: Path) -> None:
-    """The documented feature-PR flow has `milestone/<slug>`: the gate keys it 1, the hook must ask for 1."""
-    _git(repo, "checkout", "-q", "-B", "milestone/trial")
-    r = _run(repo, "git push -u origin milestone/trial")
-    assert r.returncode == 2 and "without a passing milestone gate" in r.stderr
-    _owned(repo, "", 1)
-    assert _run(repo, "git push -u origin milestone/trial").returncode == 0
-    assert _run(repo, "gh pr create --base master --title t --body x").returncode == 0
-
-
-def test_a_slug_ending_in_digits_is_not_a_milestone_number_K1(repo: Path) -> None:
-    (repo / "changes" / ID / "decisions.json").write_text(json.dumps({"milestone": {"slug": "q4-2026"}}))
-    _git(repo, "commit", "-qam", "slug")
-    _git(repo, "checkout", "-q", "-B", "milestone/q4-2026")
-    _owned(repo, "", 1)  # milestone 1, not milestone 2026
-    assert _run(repo, "git push -u origin milestone/q4-2026").returncode == 0
-
-
 def test_the_hook_reads_each_change_record_once_per_command_M1(repo: Path, tmp_path: Path) -> None:
     log = tmp_path / "git.log"
     bin_dir = tmp_path / "bin"
@@ -929,7 +787,7 @@ def test_the_hook_reads_each_change_record_once_per_command_M1(repo: Path, tmp_p
     real = shutil.which("git")
     (bin_dir / "git").write_text(f'#!/bin/sh\necho "$@" >> {log}\nexec {real} "$@"\n')
     (bin_dir / "git").chmod(0o755)
-    _owned(repo, "", 1)
+    _pass(repo)
     transcript = repo.parent / "t.jsonl"
     transcript.write_text("")
     payload = {"tool_input": {"command": "git push -u origin milestone/trial-1"}, "cwd": str(repo), "transcript_path": str(transcript)}
@@ -940,3 +798,17 @@ def test_the_hook_reads_each_change_record_once_per_command_M1(repo: Path, tmp_p
     assert r.returncode == 0, r.stderr
     shows = [line for line in log.read_text().splitlines() if " show " in line and "decisions.json" in line]
     assert len(shows) == len(set(shows)), shows  # no record read twice
+
+
+def test_a_receipt_file_in_the_git_dir_admits_nothing_3_20_5(repo: Path) -> None:
+    """Pass records were withdrawn: the hook reads the gate's report in the checkout only."""
+    sha = _git(repo, "rev-parse", "HEAD")
+    common = Path(_git(repo, "rev-parse", "--path-format=absolute", "--git-common-dir"))
+    out = common / "sdlc" / "receipts" / ID
+    out.mkdir(parents=True)
+    record = {"scope": "milestone", "milestone": 1, "change": ID, "sha": sha, "verdict": "pass", "owner": ""}
+    (out / "milestone-1.json").write_text(json.dumps({**record, "result": f"VERIFY PASS milestone {ID} {sha}"}))
+    (out / "garbage.json").write_text("not json")
+    assert _push(repo) == 2
+    _pass(repo)
+    assert _push(repo) == 0

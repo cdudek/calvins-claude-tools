@@ -84,7 +84,7 @@
     ]
   },
   "product": "",
-  "kitTemplates": "eecd84bbda00",
+  "kitTemplates": "6b43cc45c791",
   "tiers": false,
   "ciPaths": {
     "docs": [
@@ -209,7 +209,7 @@
     "e2e": "true",
     "e2eTouched": "true"
   },
-  "sdlcVersion": "3.20.4",
+  "sdlcVersion": "3.20.5",
   "tracker": {
     "kind": "beads"
   }

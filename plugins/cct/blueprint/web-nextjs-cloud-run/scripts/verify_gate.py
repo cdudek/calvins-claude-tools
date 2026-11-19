@@ -30,16 +30,7 @@ origin's default branch, or project/<slug> in a project, has commits HEAD lacks:
 locally first. With `milestones.merge: "local"` the local project/<slug> must also be an ancestor
 of HEAD, so a milestone cannot skip an earlier one merged locally. Then it runs the checks cheapest first and the first
 failure stops the run (`--keep-going` runs them all and reports the first failure's verdict), and
-writes <changesDir>/<id>/verify/report.json + report.md, which are for people. Every run, passed,
-failed or blocked, also writes its record in the git common dir, through hooks/pass_proof.py
-(its key, `pass_proof.key()`: milestone-<n> from branch milestone/<slug>-<n>, from the unnumbered
-milestone/<slug> (1) or from `--milestone <n>`; feature-<branch>; project-0): verdict, the one sha
-the run started on, scope, key, number, the owning project, time and the checks. The record is the
-only proof `pr-gate.sh`, `sdlc_status.py goal` and the stop hook accept (hooks/pass_proof.py, the
-only reader); the newest run of a key replaces the one before. A milestone or feature run on a
-detached HEAD (a milestone without `--milestone`) is refused (`reason=env`), and so is a repo whose
-hooks/pass_proof.py is too old to name the key. RECEIPT_FORMAT below tells the readers this
-gate writes bound records.
+writes <changesDir>/<id>/verify/report.json + report.md (a milestone on branch milestone/<slug>-<n> also milestone-<n>.json, never overwritten by another scope).
 
 Cheapest first: a check that passed takes its seconds into verify/durations.json (keyed by command)
 and the next run sorts by them; a check with no record yet sorts by a static guess from its
@@ -78,7 +69,6 @@ from __future__ import annotations
 
 import argparse
 import datetime as dt
-import functools
 import hashlib
 import json
 import os
@@ -92,8 +82,6 @@ from pathlib import Path
 
 sys.dont_write_bytecode = True  # imports of marks and sdlc_version must not leave __pycache__
 from sdlc_version import kit_version, message  # noqa: E402
-
-RECEIPT_FORMAT = 2  # read as text by hooks/pass_proof.py: a gate without it is an older writer
 
 REASONS = {
     "not-approved",  # no lock.json: the plan gate has not run
@@ -160,43 +148,12 @@ def merges_locally(cfg: dict) -> bool:
     return (cfg.get("milestones") or {}).get("merge") == "local"
 
 
-@functools.cache
-def _common(repo: str) -> str:
-    return sh("git", "-C", repo, "rev-parse", "--path-format=absolute", "--git-common-dir")
-
-
-def common_dir(repo: Path | None = None) -> Path:
-    """The git dir every worktree of the repo shares, resolved once per process."""
-    return Path(_common(str(repo or ".")) or ".git")
-
-
 def project_record(slug: str, repo: Path | None = None) -> Path:
     """Where `project <slug>` writes its report: the common git dir, shared by all worktrees."""
-    return common_dir(repo) / "sdlc" / "projects" / slug
-
-
-def load_pass_proof():
-    """hooks/pass_proof.py: the repo's copy (.claude/hooks) or the kit's (templates/hooks), the one
-    place that names a gate run's key and stores its record. None when it is missing or too old to
-    have `key` and `write_record`: the gate then refuses rather than invent a key of its own."""
-    top = Path(__file__).resolve().parent.parent
-    for folder in (top / ".claude" / "hooks", top / "hooks"):
-        if (folder / "pass_proof.py").is_file():
-            sys.path.insert(0, str(folder))
-            break
-    try:
-        import pass_proof
-    except ImportError:
-        return None
-    return pass_proof if hasattr(pass_proof, "key") and hasattr(pass_proof, "write_record") else None
-
-
-def write_atomic(path: Path, text: str) -> None:
-    """Never a half-written file: a reader sees the old record or the whole new one."""
-    path.parent.mkdir(parents=True, exist_ok=True)
-    tmp = path.with_name(f".{path.name}.{os.getpid()}.tmp")
-    tmp.write_text(text, encoding="utf-8")
-    os.replace(tmp, path)
+    common = sh(
+        "git", "-C", str(repo or "."), "rev-parse", "--path-format=absolute", "--git-common-dir"
+    )
+    return Path(common or ".git") / "sdlc" / "projects" / slug
 
 
 def has_bundle_inputs(change: Path) -> bool:
@@ -560,9 +517,7 @@ def run(
     visual_check: str | None = None,
     visual_runs: list[str] | None = None,
     keep_going: bool = False,
-    milestone: int | None = None,
 ) -> int:
-    head = sh("git", "rev-parse", "HEAD")  # read once: the receipt, the report and the PASS line name it
     out_dir = change / "verify"
     out_dir.mkdir(exist_ok=True)
     report: dict = {"scope": scope, "id": change.name, "checks": []}
@@ -576,34 +531,19 @@ def run(
     if notice:
         print(f"WARN {notice}")  # never blocks; the last line stays the verdict
 
-    proof = load_pass_proof()
-    slot: str | None = None  # the record's key (pass_proof.key); None writes no record
-
     def finish(line: str, code: int) -> int:
         report["result"] = line
-        report["sha"] = head
-        report["key"] = slot
-        report["time"] = dt.datetime.now(dt.timezone.utc).isoformat(timespec="seconds")  # noqa: UP017 -- runs on macOS python3 3.9
+        report["sha"] = sh("git", "rev-parse", "HEAD")
         report["metrics"] = metrics(change, report, retries, started_run)
         text = json.dumps(report, indent=2) + "\n"
         (out_dir / "report.json").write_text(text, encoding="utf-8")
-        # report.json is a readable artifact of the last run in this checkout and proves nothing.
-        # Every run also writes its record, the one proof hooks/pass_proof.py reads: a failed or
-        # blocked run replaces an older pass. A run no key names (refused above) writes none.
-        if slot is not None and proof is not None:
-            verdict = "pass" if code == 0 else "blocked" if code == 3 else "fail"
-            proof.write_record(
-                repo,
-                change.name,
-                slot,
-                {
-                    **report,
-                    "verdict": verdict,
-                    "change": change.name,
-                    "key": slot,
-                    "owner": project_branch(change, cfg) if scope != "project" else "",
-                    **({"milestone": int(slot.split("-", 1)[1])} if scope == "milestone" else {}),
-                },
+        # report.json holds the last scope run only: a milestone also keeps its own receipt, which
+        # `sdlc_status.py goal` reads, so a deleted merged branch does not undo a finished milestone
+        on = re.fullmatch(r"milestone/.+-(\d+)", sh("git", "rev-parse", "--abbrev-ref", "HEAD"))
+        if scope == "milestone" and on:
+            bound = {**report, "milestone": int(on[1]), "change": change.name}  # bound to its subject
+            (out_dir / f"milestone-{on[1]}.json").write_text(
+                json.dumps(bound, indent=2) + "\n", encoding="utf-8"
             )
         rows = "\n".join(
             f"| {c['name']} | {c['status']} | {c['seconds']} |" for c in report["checks"]
@@ -619,34 +559,6 @@ def run(
         if code == 0:
             (out_dir / "state.json").unlink(missing_ok=True)
         return end(line, code)
-
-    if proof is None:
-        print("hooks/pass_proof.py is missing or older than this gate (it has no `key` and `write_record`).")
-        print("Run `adopt --upgrade --replace .claude/hooks/pass_proof.py --apply` (or restore the kit's copy).")
-        return finish("VERIFY BLOCKED reason=env", 3)
-    prefix = (cfg.get("milestones") or {}).get("branchPrefix", "milestone/")
-    branch = sh("git", "symbolic-ref", "--short", "-q", "HEAD")
-    try:
-        slug = (json.loads((change / "decisions.json").read_text(encoding="utf-8")).get("milestone") or {}).get("slug", "")
-    except (OSError, ValueError, AttributeError):
-        slug = ""
-    slug = slug or proof.slug_of(change.name)
-    if scope in ("milestone", "feature"):
-        slot = proof.key(scope, branch, milestone if scope == "milestone" else None, prefix, slug)
-        named = proof.key(scope, branch, None, prefix, slug) if scope == "milestone" and branch else None
-        if scope == "milestone" and milestone is not None and named and named not in (slot, "milestone-0"):
-            print(f"--milestone {milestone} but {branch} is milestone {named.split('-', 1)[1]}.")
-            slot = None
-            return finish("VERIFY BLOCKED reason=env", 3)
-        if slot is None:  # a record with no subject would prove nothing
-            print(
-                "detached HEAD or a branch that is not the scope's: "
-                + ("name the milestone, `verify_gate.py milestone <id> --milestone <n>`." if scope == "milestone"
-                   else "run the feature gate on the feature's own branch.")
-            )
-            return finish("VERIFY BLOCKED reason=env", 3)
-    elif scope == "project":
-        slot = proof.key("project")
 
     declared = False  # an approval from before 3.18.0 keeps the order its checks were written in
     now: dict[str, str] = {}  # a project has no lock: its checks are the milestones' locked ones
@@ -744,10 +656,10 @@ def run(
                 ),
             }
         )
-    for i, visual_run in enumerate(visual_runs or [], 1):
+    for number, visual_run in enumerate(visual_runs or [], 1):
         checks.append(
             {
-                "name": f"ux-visual-{i}",
+                "name": f"ux-visual-{number}",
                 "cache": False,
                 "run": shlex.join(
                     [
@@ -764,6 +676,7 @@ def run(
     cache_path = out_dir / "cache.json"
     cache = json.loads(cache_path.read_text()) if cache_path.exists() else {}
     tree = sh("git", "rev-parse", "HEAD^{tree}")
+    head = sh("git", "rev-parse", "HEAD")
 
     def failed(name: str, output: str) -> int:
         """The breaker and the attempt count, for the run's first failing check."""
@@ -1042,7 +955,6 @@ def main(argv: list[str]) -> int:
         help="run every check, not only up to the first failure",
     )
     parser.add_argument("--pr-body", metavar="FILE", help="lint: check this PR body ('-' = stdin)")
-    parser.add_argument("--milestone", type=int, help="milestone: its number, when the branch does not say")
     parser.add_argument("--visual-check")
     parser.add_argument("--visual-run", action="append", default=[])
     args = parser.parse_args(argv[1:])
@@ -1071,7 +983,7 @@ def main(argv: list[str]) -> int:
         if args.pr_body:
             body = sys.stdin.read() if args.pr_body == "-" else Path(args.pr_body).read_text("utf-8")
         return lint(change, body)
-    return run(args.scope, change, cfg, repo, args.visual_check, args.visual_run, args.keep_going, args.milestone)
+    return run(args.scope, change, cfg, repo, args.visual_check, args.visual_run, args.keep_going)
 
 
 if __name__ == "__main__":
