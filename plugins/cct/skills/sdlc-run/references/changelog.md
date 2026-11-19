@@ -5,6 +5,17 @@ version warning, the **Mechanical** lines are what `adopt` does for you (it adds
 with the stack's defaults and never overwrites a value), the **Manual** lines are printed for
 the engineer. A version with no migration lines needs nothing but a re-run of `adopt`.
 
+## 3.24.0 — a lighter front: layout 4 by default, small changes skip the extra passes, one PR per change
+
+- **Layout 4 is the default for new adoptions.** Three documents per change (`spec.md`, `design.md`, `tasks.md`) and one file per rule. A repo that already has a `layout` keeps it; `adopt --upgrade` offers the switch once.
+- **A layout-4 edit after the gate voids the pass.** One list of locked documents per layout, shared by the pass rule and the edit hook, with a contract test that the lock hash covers the same files. Ticking a task row does not void it.
+- **Size S skips the extra passes:** no UX stage, no checklist reviewer, no analyze or challenge pass, and the code review is the one reviewer at the close (add the others for visual work, auth or data).
+- **One PR per change.** The change folder is removed as the last milestone branch's last commit, after the gate passed and the PR body was written; the goal reads DONE once that PR is merged or armed. No records-only second PR.
+- **One delivery mode.** Per-feature PRs are gone; the project branch for work over several milestones stays.
+- **One description of the close fix round:** parallel fix parts first, then the close builder runs the gate only. Stage 6 is numbered once and the enforcement audit runs before the fix round. The capture and visual rules are collected in `references/visual-work.md`.
+- Mechanical: re-running `adopt` replaces `pass_proof.py`, `chain-gate.sh`, `pr-gate.sh`, `verify_gate.py` and `preflight.py`, and removes the per-feature goal templates.
+- Manual: a repo with `"delivery": "feature-prs"` now delivers one milestone PR; remove the key. To move an existing repo to the three-document layout, add `"layout": 4` to `sdlc.json` between changes, never with a change in flight.
+
 ## 3.23.0 — screens mode: one record per screen, enforced rounds, a frozen design system, status in screens, a scope guard for visual changes
 
 - **One record per screen.** `evidence.py screen|review|round|status|sheet` keeps `<change>/verify/screens/<id>.json`: status, the frozen defect list, fix rounds in the current design-system release and the capture hashes. One writer per file, so parallel helpers never conflict.
