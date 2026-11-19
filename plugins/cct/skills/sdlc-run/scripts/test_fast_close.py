@@ -220,3 +220,9 @@ def test_the_close_reuses_matching_evidence_and_exercises_only_the_rest() -> Non
 def test_the_criteria_auditor_gets_an_explicit_criteria_input() -> None:
     assert "verify/ac.json" in STAGE6
     assert "ac.json" in AUDITOR
+
+
+def test_the_threat_model_is_written_down() -> None:
+    assert "protects against a careless or over-eager agent" in CONVERGENCE
+    assert "someone with a shell" in CONVERGENCE and "out of scope" in CONVERGENCE
+    assert "one whole sentence" in CONVERGENCE and "names the item id" in CONVERGENCE

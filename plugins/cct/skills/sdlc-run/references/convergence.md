@@ -60,11 +60,16 @@ There are two budgets, for two different moments, and they do not add up.
 After the one round, each residual finding gets one durable disposition, a row in `findings.md`
 under `## Dispositions`: `| item | disposition | owner | reason | quote |`. `fixed` is the ticked
 box. `accepted` or `deferred` needs a named owner (the one authorised to take it), a reason of a
-few words and a quote: the engineer's own words, verbatim, at least eight words, which the gate finds inside
-one genuine user message of the session transcript (read only from Claude Code's folder for the
-repo, never from a path anyone names) and that message also names the item id; words only the
+few words and a quote: the engineer's own words, verbatim, at least eight words, which must equal one whole
+sentence of one genuine user message of the session transcript, and that sentence names the item
+id (the transcript is read only from Claude Code's folder for the repo, never from a path anyone
+names, never through a link, and only files you own; hooks refuse any Write, Edit or shell write
+into `~/.claude/projects`); words only the
 agent wrote never count, nor do tool results, hook or command wrappers, reminders or attachments. The table is not locked at approval, because it
-is written after it; the quote is the binding. A deferral names the milestone that builds it. `blocked` is terminal: the gate stops with
+is written after it; the quote is the binding. A deferral names the milestone that builds it.
+
+**Threat model.** This protects against a careless or over-eager agent settling a finding without
+the owner. It does not stop someone with a shell who edits files by hand; that is out of scope. `blocked` is terminal: the gate stops with
 `findings-blocked`. A `partly` or `not met` fact in `validation.md` is never cleared this way;
 that needs a scope change with a new approval, or the milestone is held. `verify_gate.py
 milestone` reads this table.

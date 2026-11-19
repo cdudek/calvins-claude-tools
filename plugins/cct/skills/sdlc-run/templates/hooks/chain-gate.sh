@@ -57,6 +57,17 @@ except (OSError, ValueError, KeyError, TypeError):
     sys.exit(0)
 if not file_arg:
     sys.exit(0)
+# The session transcripts are the evidence for an owner quote (verify_gate.py reads them): no
+# Write or Edit may touch them, in any repo, with or without a goal.
+_target = os.path.realpath(os.path.expanduser(os.path.expandvars(file_arg)))
+_evidence = os.path.realpath(os.path.expanduser("~/.claude/projects"))
+if _target == _evidence or _target.startswith(_evidence + os.sep):
+    print(
+        "BLOCKED: ~/.claude/projects holds the session transcripts, the evidence of what the "
+        "engineer said. They are never written or edited; ask the engineer to say it in the session.",
+        file=sys.stderr,
+    )
+    sys.exit(2)
 transcript = payload.get("transcript_path") or ""
 # the two fields block_state.py keys on
 block_ctx = {k: payload.get(k) for k in ("session_id", "cwd")}

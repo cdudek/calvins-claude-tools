@@ -240,3 +240,20 @@ def test_status_reads_the_verdict_under_either_name(
         env={**os.environ, "CLAUDE_PROJECT_DIR": str(repo)},
     ).stdout
     assert stage in out.split("templates=")[1], out
+
+
+def test_writing_into_the_session_transcripts_is_refused(repo: Path, tmp_path: Path) -> None:
+    """3.21.0: the transcript is the evidence for an owner quote, so no Write or Edit may touch
+    ~/.claude/projects, whatever the repo or the goal."""
+    home = tmp_path / "home"
+    target = home / ".claude/projects/some-repo/session.jsonl"
+    for file in (str(target), "~/.claude/projects/x.jsonl", str(home / ".claude/projects/../projects/a")):
+        payload = {"tool_input": {"file_path": file}, "transcript_path": ""}
+        r = subprocess.run(
+            ["bash", str(repo / ".claude" / "hooks" / "chain-gate.sh")],
+            input=json.dumps(payload),
+            capture_output=True,
+            text=True,
+            env={**os.environ, "CLAUDE_PROJECT_DIR": str(repo), "HOME": str(home)},
+        )
+        assert r.returncode == 2 and "session transcripts" in r.stderr, file

@@ -558,8 +558,8 @@ person's own browser session. Never use Claude in Chrome or any tool driving tha
    ticked box; `accepted` or `deferred` needs a named owner, a reason of a few words (a deferral
    names the milestone that builds it) and `quote`, the engineer's own words copied verbatim from
    the session; `blocked` is terminal and the gate answers `findings-blocked`. The gate clears an
-   open item only when the quote (at least eight words) sits inside one user message of the
-   session transcript that also names the item id (never an agent message, tool output or a
+   open item only when the quote (at least eight words) equals one whole sentence of one user
+   message of the session transcript, and that sentence names the item id (never an agent message, tool output or a
    hook wrapper), the item has an explicit bold id (`**B2**`) that no other open
    item shares, and no cell is empty or a `<placeholder>`; the agent cannot accept its own finding. A fact that is `partly`
    or `not met` in `validation.md` is never cleared by a disposition: change the scope with a new

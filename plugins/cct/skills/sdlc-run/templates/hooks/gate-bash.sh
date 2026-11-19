@@ -13,6 +13,34 @@ set -uo pipefail
 : "${SDLC_PY:=python3}" # an older sdlc-config.sh (one-file upgrade) does not set it
 
 payload=$(cat)
+
+# The session transcripts (~/.claude/projects) are the evidence for an owner quote: any Bash that
+# writes there (redirect, tee, cp, mv, sed -i, an interpreter, a cd into it) is refused, with or
+# without `blocked[]` rules. Reading stays allowed.
+case "$payload" in
+  *.claude/projects* | *.claude\\/projects*)
+    if printf '%s' "$payload" | "$SDLC_PY" -c '
+import json, re, sys
+try:
+    cmd = (json.load(sys.stdin).get("tool_input") or {}).get("command") or ""
+except (ValueError, AttributeError):
+    sys.exit(1)
+HOME = r"\.claude(/|\\/)projects"
+WRITES = (
+    r">>?\s*\S*" + HOME,
+    r"(^|[\s;&|(])(tee|cp|mv|dd|install|ln|truncate|rm|touch|chmod|rsync)\b",
+    r"\bsed\b[^|;&]*\s-\w*i",
+    r"\b(python3?|perl|ruby|node)\b",
+    r"\bcd\b[^;&|]*" + HOME,
+)
+sys.exit(0 if re.search(HOME, cmd) and any(re.search(w, cmd) for w in WRITES) else 1)
+'; then
+      echo 'BLOCKED: ~/.claude/projects holds the session transcripts, the evidence of what the engineer said. They are never written from a shell; ask the engineer to say it in the session.' >&2
+      exit 2
+    fi
+    ;;
+esac
+
 fields=()
 while IFS= read -r -d '' f; do fields+=("$f"); done < <(
   printf '%s' "$payload" | "$SDLC_PY" -c '

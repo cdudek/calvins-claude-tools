@@ -240,22 +240,27 @@ def item_id(item: str) -> str:
 # Text Claude Code or a hook injects into a user turn; never the engineer's own words.
 NOT_OWNER = (
     "<system-reminder", "<task-notification", "<local-command", "<command-name",
-    "<command-message", "<command-args", "[Image", "[Pasted",
+    "<command-message", "<command-args", "<user-prompt-submit-hook", "<session-start-hook",
+    "<post-tool-use", "<ide_", "[Image", "[Pasted",
 )  # fmt: skip
+TAG_WRAPPER = re.compile(r"<[A-Za-z_][\w-]*[\s>/]")  # any other tag: not a plain typed message
 
 
 def owner_messages(repo: Path) -> list[str]:
-    """The engineer's genuine messages in this session, one string each, whitespace-normalised.
+    """The engineer's genuine messages in this session, one string each.
     Only `~/.claude/projects/<repo slug>/*.jsonl` is read (never a path a caller names, and a
     symlink out of it is skipped). A message counts only if it is a user turn that is not
     sidechain or meta, holds plain text only (a tool result or attachment block drops it), and
     carries none of the NOT_OWNER wrappers. None readable gives [], so nothing settles."""
-    base = Path.home() / ".claude/projects" / re.sub(r"[^A-Za-z0-9]", "-", str(repo.resolve()))
+    home = Path.home()
+    base = home / ".claude/projects" / re.sub(r"[^A-Za-z0-9]", "-", str(repo.resolve()))
+    if any(p.is_symlink() for p in (base, base.parent, base.parent.parent)):
+        return []  # a link could point at a folder the agent wrote
     root = base.resolve()
     said: list[str] = []
     for path in sorted(base.glob("*.jsonl")) if base.is_dir() else []:
         try:
-            if not path.resolve().is_relative_to(root):
+            if not path.resolve().is_relative_to(root) or path.stat().st_uid != os.getuid():
                 continue
             lines = path.read_text(encoding="utf-8").splitlines()
         except (OSError, ValueError):
@@ -279,9 +284,25 @@ def owner_messages(repo: Path) -> list[str]:
                 if any(not (isinstance(b, dict) and b.get("type") == "text") for b in content):
                     continue
                 content = " ".join(b.get("text", "") for b in content)
-            if isinstance(content, str) and not any(w in content for w in NOT_OWNER):
-                said.append(" ".join(content.split()))
+            if (
+                isinstance(content, str)
+                and not any(w in content for w in NOT_OWNER)
+                and not TAG_WRAPPER.search(content)
+            ):
+                said.append(content)
     return said
+
+
+def said_it(said: list[str], quote: str, key: str) -> bool:
+    """The quote equals one whole sentence (spaces, case and end punctuation aside) of one
+    message, and that same sentence names the item id."""
+    want = " ".join(quote.split()).strip(" .!?").lower()
+    for text in said:
+        for sentence in re.split(r"(?<=[.!?])\s+|\n+", text):
+            plain = " ".join(sentence.split()).strip(" .!?").lower()
+            if plain == want and re.search(rf"\b{key}\b", sentence):
+                return True
+    return False
 
 
 def placeholder(cell: str) -> bool:
@@ -312,10 +333,7 @@ def dispositions(findings: str, said: list[str]) -> dict[str, str]:
             and not any(placeholder(c) for c in (owner, reason, quote))
             and len(reason.split()) >= REASON_WORDS
             and len(quote.split()) >= QUOTE_WORDS
-            and any(
-                " ".join(quote.split()).lower() in m.lower() and re.search(rf"\b{key}\b", m)
-                for m in said
-            )
+            and said_it(said, quote, key)
         ):
             out[key] = kind
     return out
