@@ -3,7 +3,8 @@
 #
 #   status.sh            open changes: id · linear · state · PR
 #   status.sh --current  the change for the checked-out branch (slug match), or "none"
-#   status.sh --shipped [n]  the archive, newest SHIPPED first (default 20)
+#   status.sh --shipped [n]  shipped changes, newest first (default 20): the archive of an older
+#                            repo, and `.sdlc/outcomes/` for a change whose folder was removed
 #   status.sh <id>       one change, plus `git log --follow` of its plan.md (the revision history)
 #
 # Every run first says whether this repo's copied hooks, workflows and guardrail test still
@@ -37,12 +38,19 @@ mode="${1:-}"
 # never renames it", which is what keeps `git log --follow` readable across the boundary.
 if [ "$mode" = "--shipped" ]; then
   limit="${2:-20}"
-  find "$root/$changes/archive" -mindepth 1 -name plan.md -print 2>/dev/null | while read -r plan; do
-    d=$(dirname "$plan")
-    shipped=$(sed -n 's/^archived_at: *//p' "$plan" | head -1)
-    linear=$(sed -n 's/^linear: *//p' "$plan" | head -1)
-    printf '%s\t%s\tlinear=%s\n' "${shipped:-0000-00-00}" "$(basename "$d")" "${linear:-none}"
-  done | sort -r | head -n "$limit" | while IFS=$'\t' read -r shipped id lin; do
+  {
+    find "$root/$changes/archive" -mindepth 1 -name plan.md -print 2>/dev/null | while read -r plan; do
+      d=$(dirname "$plan")
+      shipped=$(sed -n 's/^archived_at: *//p' "$plan" | head -1)
+      linear=$(sed -n 's/^linear: *//p' "$plan" | head -1)
+      printf '%s\t%s\tlinear=%s\n' "${shipped:-0000-00-00}" "$(basename "$d")" "${linear:-none}"
+    done
+    # No archive: a merged change leaves only its outcome record (`spec.py outcome write`), listed by its due date.
+    for o in "$root"/.sdlc/outcomes/*.json; do
+      [ -f "$o" ] || continue
+      printf 'due:%s\t%s\tlinear=none\n' "$(sed -n 's/.*"due": *"\([^"]*\)".*/\1/p' "$o" | head -1)" "$(basename "$o" .json)"
+    done
+  } | sort -r | head -n "$limit" | while IFS=$'\t' read -r shipped id lin; do
     printf 'shipped=%s\t%s\t%s\n' "$shipped" "$id" "$lin"
   done
   exit 0

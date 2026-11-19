@@ -4,7 +4,8 @@ sdlc_status.py (the goal check). stdlib only.
 A pass proves the head the gate ran on. A later head counts as the same pass only when the gated
 head is its ancestor and nothing but the change records moved: a file outside the changes folder,
 a locked input (facts.md, done.json, lock.json; the checks live in sdlc.json, outside the folder)
-or evidence (marks.json and anything under asks/, evidence/, shots/) moved. An archive
+or evidence (marks.json and anything under asks/, evidence/, shots/) moved. A record under
+.sdlc/outcomes/ is a change record too. An archive
 move (changes/<id> -> changes/archive/<id> or archive/<year>/<year-month>/<id>) is not a change
 when every file keeps its content, except that facts.md may gain one `archived_at:` frontmatter
 line: Stage 7 requires it in that same commit, and its value must be a real date written the way
@@ -21,6 +22,7 @@ from pathlib import Path
 LOCKED = {"facts.md", "done.json", "lock.json"}
 EVIDENCE_FILES = {"marks.json"}
 EVIDENCE_DIRS = {"asks", "evidence", "shots"}
+OUTCOMES = ".sdlc/outcomes/"  # a record of the success measure (spec.py outcome write): records only
 
 
 # Where a change folder lives: live, flat archive, archive/<year>/<year-month>. One list for the PR
@@ -133,7 +135,7 @@ def proves(repo: Path, changes_dir: str, gated: str, head: str) -> bool:
         return False
     rel = changes_dir.rstrip("/")
     moved = _git(repo, "diff", "--name-only", "--no-renames", "-z", gated, head).stdout
-    if any(not p.startswith(rel + "/") for p in moved.decode("utf-8", "replace").split("\0") if p):
+    if any(not p.startswith((rel + "/", OUTCOMES)) for p in moved.decode("utf-8", "replace").split("\0") if p):
         return False
     before, after = _tree(repo, rel, gated), _tree(repo, rel, head)
     if before is None or after is None:
