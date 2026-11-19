@@ -9,6 +9,8 @@ read_when: you wire the gate, status or the hooks to the three-document layout a
 
 # Integration points for the gate stream
 
+**Status (3.21.0):** every item below is done with its commit, or filed with its reason. The sections keep the reasoning.
+
 The spec stream added `templates/scripts/spec.py` (stdlib, no import side effects) and touched none
 of `verify_gate.py`, `sdlc_status.py`, `marks.py`, `pr-gate.sh`, `pass_proof.py`. Everything below
 is for the integrator. A change is on layout 4 when `spec.applies(change_dir)` is true; every call
@@ -59,42 +61,42 @@ spec.qa_applicability(change)   # (True | False | None, reason); None = unrecord
 
 ## Left for the integrator, with the exact call site
 
-1. **R / V lint (verify_gate.py).** The id-family letters are hard-coded (`OWNER_FILES`, the lint
+1. **Done (931e897).** **R / V lint (verify_gate.py).** The id-family letters are hard-coded (`OWNER_FILES`, the lint
    regex `[ABFHJNQRX]`). One change: `fams = spec.id_families(change)`; build the regex from
    `"".join(fams)`; for layout 4 skip the bare-id check for `R<n>` inside the Requirements table of
    `spec.md` and in `tasks.md` Rules column (they are the table's key), and keep it for prose. Review
    findings written by the converge pass in a layout-4 change use `V<n>`, not `R<n>`.
-2. **`state/` move and `intake.json`.** Not built: every machine file keeps its path. If the
+2. **Done (358518f) for the `state/` reader; `intake.json` filed: not needed, every machine file keeps one name and the reader already finds both places.** **`state/` move and `intake.json`.** Not built: every machine file keeps its path. If the
    integrator wants it, move behind one resolver (`state_path(change, name)`: new place first, old
    place second) used by `verify_gate.py`, `sdlc_status.py`, `marks.py`, the hooks and `ux-*` skills,
    shipped before any writer moves a file; `decisions.json` keeps its place as the format pin.
-3. **Capability `decisions/` folders.** `marks.py` rejects decision evidence outside `designsDir`
+3. **Done (ed28ddd).** **Capability `decisions/` folders.** `marks.py` rejects decision evidence outside `designsDir`
    (`marks.py`, the evidence check) and `design_index.py` scans only that tree. To support
    `specs/<capability>/decisions/`: accept that prefix in the marks evidence check and add it to the
    index's scan roots. Nothing in `spec.py` needs it.
-4. **Archive removal.** `git rm -r changes/archive/<id>` per change once its change is complete,
+4. **Done (a1c12ec, d17ddf2) for new work: no archive, Stage 7 removes the folder after the outcome record. Filed: removing the existing `changes/archive/<id>` folders, because the status, audit and pr-gate readers still scan them and a repo does it per change when it is ready.** **Archive removal.** `git rm -r changes/archive/<id>` per change once its change is complete,
    after `status --shipped`, the audit's "executed" evidence and pr-gate's report scan read
    `.sdlc/receipts/` instead of `changes/archive/*/verify/report.json`. New work is never archived.
-5. **`adopt.py` `specs/` move guard** (the blocker below): in the migration loop `for old, new in
+5. **Done (a428d5e).** **`adopt.py` `specs/` move guard** (the blocker below): in the migration loop `for old, new in
    ((ROOT / ".changes", ...), (ROOT / "specs", ROOT / designs_dir))`, skip the second pair when
    `(ROOT / "specs").glob("*/rules")` or `(ROOT / "specs").glob("*/manifest.yaml")` matches.
-6. **Gate wiring.** The calls above, in `verify_gate.py approve` and `milestone`, `sdlc_status.py`,
+6. **Done (63226ee approve, d1785df milestone, d15ff86 status, 23a5db9 chain-gate, 358518f pr-gate and chain-gate readers).** **Gate wiring.** The calls above, in `verify_gate.py approve` and `milestone`, `sdlc_status.py`,
    `chain-gate.sh` and `pr-gate.sh`; nothing in this stream edits them.
 
 ## Blockers and hazards to know
 
-- **BLOCKER to enabling layout 4 in any repo: `adopt.py` (the `specs/` to `designs_dir` migration, near line 945)** moves a root `specs/` folder into
+- **Done (a428d5e).** **BLOCKER to enabling layout 4 in any repo: `adopt.py` (the `specs/` to `designs_dir` migration, near line 945)** moves a root `specs/` folder into
   `docs/designs/` when that folder does not exist yet. With living specs that moves the user's
   rules. This stream was told to add only install lines, so it is not fixed: guard it (skip when
   `specs/` holds a `rules/` folder or a `manifest.yaml`) before any repo enables layout 4.
 - **`sdlc.json` keys.** `layout: 4` opts a repo in (adopt never sets it); `livingSpecs` renames the
   folder. `specsDir` is the old key for designs and is not reused.
-- **Pass records are not touched.** `spec.py` reads no receipt. The `.sdlc/outcomes/` folder is new
+- **Done (d17ddf2 for `.sdlc/outcomes/` as records-only in the hook and status; pass records are a separate feature of this release).** **Pass records are not touched.** `spec.py` reads no receipt. The `.sdlc/outcomes/` folder is new
   and records-only; add it to the records-only allow-list of the push hook and status.
 - **`.sdlc/last-rule-id`** is a floor, written by `spec.py last-id --write` at milestone close only.
-- **`kitTemplates`** in `sdlc.json` changes with these templates; the three streams will collide on
+- **Done at release (0ec0083, 1990f84 list the copies; the hash is recomputed last).** **`kitTemplates`** in `sdlc.json` changes with these templates; the three streams will collide on
   that line. Recompute with `python3 plugins/cct/skills/sdlc-run/scripts/adopt.py --templates-hash`
   after merging them.
-- **Not built:** back-fill of `specs/`, and a reviewer-labelled 100-case fixture (this repo's own
+- **Filed: back-fill of `specs/` is not built (a repo writes rules for what it changes, no bulk migration is wanted), and the labelled 100-case fixture is replaced by the 57-case fixture of 263c0eb.** **Not built:** back-fill of `specs/`, and a reviewer-labelled 100-case fixture (this repo's own
   57-case fixture is in `tests/eval/`; see `living-spec.md`). The rest of the not-built list is the
   integrator section above.
