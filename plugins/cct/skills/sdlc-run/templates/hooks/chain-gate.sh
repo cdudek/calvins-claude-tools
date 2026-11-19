@@ -561,21 +561,42 @@ def strings(value: object) -> list[str]:
 
 
 # a visual change restyles what exists: no data, no auth, no new pages (those start a linked change)
-SCOPE_GUARD = [
-    "**/migrations/**", "drizzle/**", "prisma/**", "db/migrate/**", "alembic/**",
-    "**/auth/**", "**/permissions/**", *(f"**/*auth*.{e}" for e in ("ts", "tsx", "js", "py", "rb")),
+SCOPE_GUARD = [  # at any depth: a monorepo keeps its migrations under packages/<x>/
+    "**/migrations/**", "**/drizzle/**", "**/prisma/**", "**/db/migrate/**", "**/alembic/**",
 ]
+# auth names count as whole words (path segments or filename parts), so `author.tsx` is not auth
+AUTH_WORDS = {"auth", "oauth", "authn", "authz", "authentication", "authorization", "login", "session", "sessions",
+              "permission", "permissions", "rbac", "acl"}
 ROUTE_EXT = ("tsx", "jsx", "ts", "js", "mjs", "mts", "cjs")
 ROUTE_FILES = [f"**/{n}.{e}" for n in ("page", "route", "layout") for e in ROUTE_EXT] + ["**/pages/**", "**/routes/**"]
 
 
-def tracked(path: str) -> bool:
-    return subprocess.run(["git", "-C", str(root), "ls-files", "--error-unmatch", "--", path], capture_output=True).returncode == 0
+def auth_path(path: str) -> bool:
+    for part in path.split("/"):
+        words = re.split(r"[^A-Za-z0-9]+", re.sub(r"([a-z0-9])([A-Z])", r"\1 \2", part))
+        if any(w.lower() in AUTH_WORDS for w in words):
+            return True
+    return False
+
+
+def at_approval(path: str, lock: dict | None) -> bool:
+    """The file exists at the commit the plan was approved at (the lock's `sha`; HEAD for a lock from
+    before it was kept). A literal path, so a route staged or written since approval is still new."""
+    sha = (lock or {}).get("sha")
+    ref = sha if isinstance(sha, str) and re.fullmatch(r"[0-9a-f]{7,40}", sha) else "HEAD"
+    return subprocess.run(["git", "-C", str(root), "cat-file", "-e", f"{ref}:{path}"], capture_output=True).returncode == 0
+
+
+def has_visual_source(value: object) -> bool:
+    """decisions.json `visualSource` names a design: not absent, empty or `none` (verify_gate.py holds the same rule)."""
+    if isinstance(value, dict):
+        return bool(value) and str(value.get("kind", "")).strip().lower() != "none"
+    return isinstance(value, str) and value.strip().lower() not in ("", "none")
 
 
 def scope_guard() -> None:
     lock = lock_state()
-    if lock is not None and not (decisions.get("visualSource") or lock.get("screens") == "required"):
+    if lock is not None and not (has_visual_source(decisions.get("visualSource")) or lock.get("screens") == "required"):
         return
     sg = cfg.get("scopeGuard")
     sg = sg if isinstance(sg, dict) else {}
@@ -583,8 +604,8 @@ def scope_guard() -> None:
         return
     # the plan's folders are the snapshot approval locked, never the plan.md an edit can change
     folders = [f.strip("/") for f in strings((lock or {}).get("scopeFolders")) if ".." not in f.split("/") and f.strip("/")]
-    new_route = match_any(rel, strings(sg.get("routes")) or ROUTE_FILES) and not tracked(rel) and not any(rel == f or rel.startswith(f + "/") for f in folders)
-    if lock is None or match_any(rel, SCOPE_GUARD) or new_route:
+    new_route = match_any(rel, strings(sg.get("routes")) or ROUTE_FILES) and not at_approval(rel, lock) and not any(rel == f or rel.startswith(f + "/") for f in folders)
+    if lock is None or match_any(rel, SCOPE_GUARD) or auth_path(rel) or new_route:
         deny(
             f"{rel}: a visual change does not add data, auth or new pages: start a linked change "
             "(`sdlc-run` new change) for it. A repo allows a path with sdlc.json `scopeGuard.allow`."

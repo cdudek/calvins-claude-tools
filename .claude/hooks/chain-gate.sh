@@ -544,6 +544,82 @@ if v3 and decisions.get("kind") == "bug" and decisions.get("testLocked") is True
             source=f"{changes}/{change_id}/decisions.json"
         )
 
+def lock_state() -> dict | None:
+    """lock.json as a dict, {} without one, None when it exists but cannot be read (fails closed)."""
+    path = state_file(change_dir, "lock.json")
+    if not path.exists():
+        return {}
+    try:
+        data = json.loads(path.read_text(encoding="utf-8"))
+        return data if isinstance(data, dict) else None
+    except (OSError, ValueError):
+        return None
+
+
+def strings(value: object) -> list[str]:
+    return [v for v in value if isinstance(v, str) and v] if isinstance(value, list) else []
+
+
+# a visual change restyles what exists: no data, no auth, no new pages (those start a linked change)
+SCOPE_GUARD = [  # at any depth: a monorepo keeps its migrations under packages/<x>/
+    "**/migrations/**", "**/drizzle/**", "**/prisma/**", "**/db/migrate/**", "**/alembic/**",
+]
+# auth names count as whole words (path segments or filename parts), so `author.tsx` is not auth
+AUTH_WORDS = {"auth", "oauth", "authn", "authz", "authentication", "authorization", "login", "session", "sessions",
+              "permission", "permissions", "rbac", "acl"}
+ROUTE_EXT = ("tsx", "jsx", "ts", "js", "mjs", "mts", "cjs")
+ROUTE_FILES = [f"**/{n}.{e}" for n in ("page", "route", "layout") for e in ROUTE_EXT] + ["**/pages/**", "**/routes/**"]
+
+
+def auth_path(path: str) -> bool:
+    for part in path.split("/"):
+        words = re.split(r"[^A-Za-z0-9]+", re.sub(r"([a-z0-9])([A-Z])", r"\1 \2", part))
+        if any(w.lower() in AUTH_WORDS for w in words):
+            return True
+    return False
+
+
+def at_approval(path: str, lock: dict | None) -> bool:
+    """The file exists at the commit the plan was approved at (the lock's `sha`; HEAD for a lock from
+    before it was kept). A literal path, so a route staged or written since approval is still new."""
+    sha = (lock or {}).get("sha")
+    ref = sha if isinstance(sha, str) and re.fullmatch(r"[0-9a-f]{7,40}", sha) else "HEAD"
+    return subprocess.run(["git", "-C", str(root), "cat-file", "-e", f"{ref}:{path}"], capture_output=True).returncode == 0
+
+
+def has_visual_source(value: object) -> bool:
+    """decisions.json `visualSource` names a design: not absent, empty or `none` (verify_gate.py holds the same rule)."""
+    if isinstance(value, dict):
+        return bool(value) and str(value.get("kind", "")).strip().lower() != "none"
+    return isinstance(value, str) and value.strip().lower() not in ("", "none")
+
+
+def scope_guard() -> None:
+    lock = lock_state()
+    if lock is not None and not (has_visual_source(decisions.get("visualSource")) or lock.get("screens") == "required"):
+        return
+    sg = cfg.get("scopeGuard")
+    sg = sg if isinstance(sg, dict) else {}
+    if match_any(rel, strings(sg.get("allow"))):
+        return
+    # the plan's folders are the snapshot approval locked, never the plan.md an edit can change
+    folders = [f.strip("/") for f in strings((lock or {}).get("scopeFolders")) if ".." not in f.split("/") and f.strip("/")]
+    new_route = match_any(rel, strings(sg.get("routes")) or ROUTE_FILES) and not at_approval(rel, lock) and not any(rel == f or rel.startswith(f + "/") for f in folders)
+    if lock is None or match_any(rel, SCOPE_GUARD) or auth_path(rel) or new_route:
+        deny(
+            f"{rel}: a visual change does not add data, auth or new pages: start a linked change "
+            "(`sdlc-run` new change) for it. A repo allows a path with sdlc.json `scopeGuard.allow`."
+            + (" lock.json cannot be read, so the guard refuses." if lock is None else ""),
+            source=f"{changes}/{change_id}/lock.json and decisions.json",
+            action="start a linked change for the data, auth or page work",
+        )
+
+
+try:
+    scope_guard()
+except Exception as err:  # a guard that cannot decide refuses (SystemExit from deny passes through)
+    deny(f"the visual scope guard failed ({type(err).__name__}); refusing {rel}. Fix sdlc.json scopeGuard.", source="sdlc.json scopeGuard")
+
 if v3 and not skipped(decisions, "prototype") and not (state_file(change_dir, "lock.json")).exists():  # design only
     for proto in cfg.get("prototypeDirs", []):
         p = proto.rstrip("/")

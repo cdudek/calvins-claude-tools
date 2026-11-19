@@ -8,6 +8,7 @@ import json
 import os
 import shutil
 import subprocess
+import sys
 from pathlib import Path
 
 import pytest
@@ -295,6 +296,12 @@ def _visual(repo: Path, allow: list[str] | None = None) -> None:
         "src/lib/oauth_helper.py",
         "src/permissions/roles.ts",
         "src/app/settings/page.tsx",
+        "packages/db/drizzle/0001.sql",
+        "services/api/prisma/migrations/1/migration.sql",
+        "src/lib/authService.ts",
+        "src/login.tsx",
+        "src/lib/rbac.ts",
+        "src/components/acl-list.tsx",
     ],
 )
 def test_a_visual_change_refuses_data_auth_and_new_pages(repo: Path, file: str) -> None:
@@ -310,9 +317,61 @@ def test_a_visual_change_allows_its_own_folders_and_existing_pages(repo: Path) -
     assert _edit(repo, "src/screens/settings/page.tsx", "active").returncode == 0
     (repo / "src/app").mkdir(parents=True)
     (repo / "src/app/page.tsx").write_text("x")  # an existing route is a restyle, not a new page
-    subprocess.run(["git", "-C", str(repo), "add", "src/app/page.tsx"], check=True)
+    _commit(repo)
     assert _edit(repo, "src/app/page.tsx", "active").returncode == 0
     assert _edit(repo, "src/components/button.tsx", "active").returncode == 0
+    assert _edit(repo, "src/components/author.tsx", "active").returncode == 0  # not auth
+
+
+def _commit(repo: Path) -> str:
+    env = {k: v for k, v in os.environ.items() if not k.startswith("GIT_")}
+    git = ["git", "-C", str(repo), "-c", "user.name=t", "-c", "user.email=t@t"]
+    subprocess.run([*git, "add", "-A"], check=True, env=env)
+    subprocess.run([*git, "commit", "-qm", "c"], check=True, env=env)
+    return subprocess.run([*git, "rev-parse", "HEAD"], check=True, env=env, capture_output=True, text=True).stdout.strip()
+
+
+def test_a_route_staged_after_approval_is_still_new(repo: Path) -> None:
+    _visual(repo)
+    (repo / "src").mkdir()
+    (repo / "src/seed.txt").write_text("x")
+    approved = _commit(repo)
+    (repo / "changes" / ID / "lock.json").write_text(json.dumps({"screens": "required", "scopeFolders": [], "sha": approved}))
+    (repo / "src/app").mkdir(parents=True)
+    (repo / "src/app/page.tsx").write_text("x")
+    env = {k: v for k, v in os.environ.items() if not k.startswith("GIT_")}
+    subprocess.run(["git", "-C", str(repo), "add", "src/app/page.tsx"], check=True, env=env)
+    assert _edit(repo, "src/app/page.tsx", "active").returncode == 2  # staged by a scaffolder
+    _commit(repo)
+    assert _edit(repo, "src/app/page.tsx", "active").returncode == 2  # committed since approval: still new
+
+
+def test_a_route_that_existed_at_the_approval_commit_is_a_restyle(repo: Path) -> None:
+    (repo / "src/app").mkdir(parents=True)
+    (repo / "src/app/page.tsx").write_text("x")
+    approved = _commit(repo)
+    _visual(repo)
+    (repo / "changes" / ID / "lock.json").write_text(json.dumps({"screens": "required", "sha": approved}))
+    assert _edit(repo, "src/app/page.tsx", "active").returncode == 0
+
+
+@pytest.mark.parametrize("source", ["none", {"kind": "none"}, ""])
+def test_a_visual_source_of_none_is_not_visual_work(repo: Path, source: object) -> None:
+    (repo / "changes" / ID / "decisions.json").write_text(json.dumps({"size": "M", "kind": "feature", "milestone": {"kind": "single", "slug": "trial"}, "visualSource": source}))
+    assert _edit(repo, "db/migrations/0001.sql", "active").returncode == 0
+
+
+def test_the_hook_and_the_gate_agree_on_what_a_visual_source_is() -> None:
+    import re as _re
+
+    sys.path.insert(0, str(HOOKS.parent / "scripts"))
+    import verify_gate
+
+    src = (HOOKS / "chain-gate.sh").read_text()
+    ns: dict = {}
+    exec(_re.search(r"(def has_visual_source.*?)\n\n\n", src, _re.S)[1], ns)  # noqa: S102
+    for v in (None, "", "none", " None ", {}, {"kind": "none"}, "x", {"kind": "images", "path": "a"}, {"path": "a"}, 5):
+        assert ns["has_visual_source"](v) == verify_gate.has_visual_source(v), v
 
 
 def test_the_scope_guard_allow_list_lets_a_path_through(repo: Path) -> None:
@@ -372,4 +431,6 @@ def test_routes_are_configurable_and_untracked_means_new(repo: Path) -> None:
     assert _edit(repo, "src/app/page.tsx", "active").returncode == 2
     env = {k: v for k, v in os.environ.items() if not k.startswith("GIT_")}
     subprocess.run(["git", "-C", str(repo), "add", "src/app/page.tsx"], check=True, env=env)
+    assert _edit(repo, "src/app/page.tsx", "active").returncode == 2  # staged is not committed
+    _commit(repo)
     assert _edit(repo, "src/app/page.tsx", "active").returncode == 0
