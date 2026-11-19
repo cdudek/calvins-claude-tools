@@ -1076,6 +1076,17 @@ def run_check(cmd: str, cwd: Path, limit: int) -> subprocess.CompletedProcess[st
     return subprocess.CompletedProcess(cmd, proc.returncode, out, err)
 
 
+# sha256[:16] of every heavy.py the kit shipped (adopt.py KIT_HEAVY lists the same). The gate runs each
+# check through heavy.py, so a heavy.py of the repo's own could report a pass for a check it never ran.
+KIT_HEAVY = {
+    "7dfd1429b4f9cd2d",
+    "8b4f8c3dfa44073f",
+    "af2eb2673c676348",
+    "cc25027d60793b2b",
+    "f411b8feb66c33ed",
+}
+
+
 def queued(cmd: str, limit: int, cfg: dict) -> tuple[str, int]:
     """The command the check loop starts and its outer deadline. With heavy.py beside the gate, a heavy
     check takes a slot and a light one passes straight through (`--auto`); a gate already inside a
@@ -1102,6 +1113,10 @@ def run(
 ) -> int:
     if why := unsafe_substitutions(change.name, cfg):
         print(f"refused before any check runs: {why}.")  # the id and branch reach a shell line
+        return end("VERIFY BLOCKED reason=env", 3)
+    heavy = Path(__file__).with_name("heavy.py")
+    if heavy.is_file() and hashlib.sha256(heavy.read_bytes()).hexdigest()[:16] not in KIT_HEAVY:
+        print(f"refused before any check runs: {heavy} is not a kit version, so it could record a pass for a check that never ran")
         return end("VERIFY BLOCKED reason=env", 3)
     out_dir = change / "verify"
     out_dir.mkdir(exist_ok=True)
