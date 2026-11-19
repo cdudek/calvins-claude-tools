@@ -1285,6 +1285,12 @@ def main() -> int:
                 'local milestones, or milestones.merge "pr" with feature PRs.'
             )
         kept.append("sdlc.json")
+        if UPGRADE and "layout" not in cfg:  # never a silent switch: new changes of this repo stay on layout 3
+            manual.append(
+                'layout: new changes use the three-document layout (spec.md, design.md, tasks.md) when '
+                'sdlc.json has `"layout": 4`; this repo has no `layout`, so new changes keep intent, facts and plan. '
+                "Add it to switch (a change already in flight finishes on the layout it started with)"
+            )
         plan = migrate_plan(cfg) if MIGRATE else {}
         if not UPGRADE:
             cfg["kitTemplates"] = templates_hash()
@@ -1292,6 +1298,7 @@ def main() -> int:
     else:
         cfg = json.loads((TPL / "presets" / f"{preset}.json").read_text(encoding="utf-8"))
         cfg["defaultBranch"] = default_branch()
+        cfg["layout"] = 4  # a new adoption starts on the three-document layout
         cfg["kitTemplates"] = templates_hash()
         apply_tiers_answer(cfg)
         add_ci_paths(cfg, preset)

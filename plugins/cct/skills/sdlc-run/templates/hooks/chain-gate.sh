@@ -195,14 +195,23 @@ def is_v4(change_dir: Path, decisions: dict) -> bool:
 
 
 def protected_files(change_dir: Path, decisions: dict) -> tuple[str, ...]:
-    """What a locked change protects: its layout's files, or both layouts' when the lock names none."""
+    """What a locked change protects: its layout's locked documents (pass_proof.LOCKED_FILES, the one
+    list) minus the ones that take ticks, or both layouts' when the lock names none."""
+    try:
+        proof = helper("pass_proof")
+    except Exception:  # missing or broken: a gate that cannot read the list blocks
+        deny(
+            "pass_proof.py is missing or broken beside chain-gate.sh; run `sdlc-run adopt` to restore it.",
+            source="pass_proof.py beside chain-gate.sh",
+            action="run `sdlc-run adopt`",
+        )
     if lock_layout(change_dir) is None and (state_file(change_dir, "lock.json")).exists():
-        return tuple(dict.fromkeys(PROTECTED_FILES + V4_PROTECTED_FILES))
-    return V4_PROTECTED_FILES if is_v4(change_dir, decisions) else PROTECTED_FILES
+        names = [n for files in proof.LOCKED_FILES.values() for n in files]
+    else:
+        names = proof.LOCKED_FILES[4 if is_v4(change_dir, decisions) else 3]
+    return tuple(dict.fromkeys(n for n in names if n not in proof.TICKED_FILES))
 
 
-PROTECTED_FILES = ("facts.md", "done.json", "lock.json")
-V4_PROTECTED_FILES = ("spec.md", "design.md", "done.json", "lock.json")  # tasks.md takes ticks
 PROTECTED_GLOBS = ["sdlc.json", "**/*-snapshots/**", "**/__screenshots__/**", "**/*allowlist*"]
 
 
@@ -433,7 +442,7 @@ if len(parts) >= 3 and parts[0] == changes:
                 "success measure) and have the engineer confirm it first.",
                 source=f"{changes}/{change_id}/intent.md"
             )
-        if base == "facts.md" and decisions.get("size") != "none" and cfg.get("ux", "on") != "off":
+        if base == "facts.md" and decisions.get("size") not in ("none", "S") and cfg.get("ux", "on") != "off":
             needed = ["conformance"] + (["validation"] if decisions.get("size") in ("M", "L") else [])
             missing = [a for a in needed if not activity_done(change_dir, decisions, a)]
             if missing:

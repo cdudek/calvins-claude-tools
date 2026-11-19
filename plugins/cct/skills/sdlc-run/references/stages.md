@@ -49,8 +49,8 @@ transcript, `/loop` when time passes, a Stop hook when a script decides.
 
 ## Layout 4: three documents, a living spec
 
-A change pinned to layout 4 (`"layout": 4` in `decisions.json`, written at intake only in a repo
-whose `sdlc.json` opted in) has three documents instead of intent, facts, plan, checklist, analyze,
+A change pinned to layout 4 (`"layout": 4` in `decisions.json`, written at intake in a repo
+whose `sdlc.json` has `"layout": 4`, the default of a new adoption) has three documents instead of intent, facts, plan, checklist, analyze,
 challenge, milestone and the reading map: `spec.md`, `design.md`, `tasks.md`. What differs by
 stage; every stage not named here is unchanged. Full rules: [change-folder](change-folder.md) and
 [living-spec](living-spec.md). A change on the old layout finishes on the old stages below; nothing
@@ -67,7 +67,7 @@ here blocks it.
   agent also drafts the requirements: `spec.py new <capability> "<summary>"` per rule, one EARS
   sentence each, and the requirements table. The owner's first confirmation covers that file; on
   scope S and M it is the only gate.
-- **2 UX plan, single pass.** The UX validation (`cct:ux-spec-validate`) runs once, as a **draft**
+- **2 UX plan, single pass.** Size S has no UX stage (one printed line). The UX validation (`cct:ux-spec-validate`) runs once, as a **draft**
   against `spec.md`, with no goal of its own. An in-scope ask may be `pending` (its rule is not
   written yet); the verdict lists those. Write `prototype: required` or `prototype: none` into
   `spec.md` before anything else in this stage, and before build QA ever asks for a readiness file:
@@ -204,10 +204,12 @@ Worktree lifecycle commands follow the [shared worktree policy](../../../referen
 
 ## Stage 2 — UX plan
 
-Skipped for size `none` and for `sdlc.json` `ux: off`, with one printed line.
+Skipped for size `none`, size `S` and for `sdlc.json` `ux: off`, with one printed line. A size S change
+(words or visuals on a screen that exists) gets no UX stage and no UX validation; the build and the
+close still check the screen.
 
 - **Steps:**
-  1. `cct:ux-design-run <change>`: brief, IA, interaction, screens into `spec/`. Size S skips to 3.
+  1. `cct:ux-design-run <change>`: brief, IA, interaction, screens into `spec/`.
   2. `cct:ux-sitemap-create diff <change>`: the sitemap change this makes.
   3. `cct:ux-rules-validate spec <change>`: the component table — exists / adapt / new, with paths.
   4. `cct:ux-copy-write`: every changed word, in every language in `sdlc.json` `languages`.
@@ -238,7 +240,8 @@ Skipped for size `none` and for `sdlc.json` `ux: off`, with one printed line.
      the checklist reviewer is dispatched**: a pure file check is cheaper than a reviewer pass.
   6. A reviewer in a fresh context writes `checklist.md`: items that test how the facts are
      written (Gap, Ambiguity, Conflict, Assumption), never the behaviour. The agent answers each
-     in the facts, and the reviewer ticks it.
+     in the facts, and the reviewer ticks it. **Size S skips this step** (print one line): the lint
+     in step 5 is its whole check.
 - **Gate:** none; `chain-gate.sh` refuses `facts.md` before the UX plan is done or skipped.
 
 ## Stage 4 — Tech plan and the one gate
@@ -276,10 +279,10 @@ package), `tracking-apply` (the success-measure events). Each result lands in th
 
 0. **Lint first.** `python3 scripts/verify_gate.py lint <id>` on the drafts, before either reviewer
    is dispatched; fix every line it names. Run it again right before the owner gate (step 1).
-0a. **Analyze pass**, read-only (`references/quality-passes.md`): six passes over intent, facts,
+0a. **Analyze pass** (not on size S), read-only (`references/quality-passes.md`): six passes over intent, facts,
    plan and `spec/`, findings into `analyze.md`. Fix every CRITICAL in its source file and mark it
    `fixed`; mention open HIGH findings in the five lines below.
-0b. **Challenge pass** (`references/quality-passes.md`): a reviewer in a fresh context argues
+0b. **Challenge pass** (not on size S; `references/quality-passes.md`): a reviewer in a fresh context argues
    against the change (existence, simpler alternative, failure assumptions, implicit choices, who
    else is affected) into `challenge.md`. Answer every CRITICAL in the plan or facts and mark it
    `answered`, or take it to the engineer for `accepted`. The strongest open challenge goes into
@@ -604,7 +607,8 @@ person's own browser session. Never use Claude in Chrome or any tool driving tha
    close: six layers, one frozen defect list per screen, capture from one pinned commit;
    [convergence](convergence.md)) runs inside the assessment for a change with a spec folder, and
    only when its `qa.md` is missing or stale. Run the `cct:test-behavior-verifier` and `cct:review-criteria-auditor` agents for job
-   stories and facts. `cct:review-security-run` runs at every milestone close when auth, money or
+   stories and facts (size S: the code review is the one reviewer; add them only when the change
+   has visual work or touches auth or data). `cct:review-security-run` runs at every milestone close when auth, money or
    consent is touched in the goal so far, on the diff from the goal's recorded start:
    `git diff $(python3 ${CLAUDE_SKILL_DIR}/scripts/sdlc_status.py base <id>)...milestone/<slug>-<n>`.
    `base` prints the `sha` that `verify_gate.py approve` wrote into `lock.json`, so an earlier
