@@ -199,17 +199,18 @@ def protected_files(change_dir: Path, decisions: dict) -> tuple[str, ...]:
     list) minus the ones that take ticks, or both layouts' when the lock names none."""
     try:
         proof = helper("pass_proof")
-    except Exception:  # missing or broken: a gate that cannot read the list blocks
+        locked, ticked = proof.LOCKED_FILES, proof.TICKED_FILES
+    except Exception:  # missing, broken or from before the shared lists: a gate that cannot read them blocks
         deny(
             "pass_proof.py is missing or broken beside chain-gate.sh; run `sdlc-run adopt` to restore it.",
             source="pass_proof.py beside chain-gate.sh",
             action="run `sdlc-run adopt`",
         )
     if lock_layout(change_dir) is None and (state_file(change_dir, "lock.json")).exists():
-        names = [n for files in proof.LOCKED_FILES.values() for n in files]
+        names = [n for files in locked.values() for n in files]
     else:
-        names = proof.LOCKED_FILES[4 if is_v4(change_dir, decisions) else 3]
-    return tuple(dict.fromkeys(n for n in names if n not in proof.TICKED_FILES))
+        names = locked[4 if is_v4(change_dir, decisions) else 3]
+    return tuple(dict.fromkeys(n for n in names if n not in ticked))
 
 
 PROTECTED_GLOBS = ["sdlc.json", "**/*-snapshots/**", "**/__screenshots__/**", "**/*allowlist*"]

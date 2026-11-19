@@ -110,6 +110,14 @@ def test_protected_paths_are_refused_after_approval(repo: Path, file: str) -> No
     assert _edit(repo, file, "active").returncode == 0
 
 
+def test_a_pass_proof_from_before_the_shared_lists_blocks_instead_of_crashing(repo: Path) -> None:
+    """One-file upgrade: the new hook beside the old pass_proof.py must still refuse (exit 2), never fail open."""
+    hook = repo / ".claude" / "hooks" / "pass_proof.py"
+    hook.write_text(hook.read_text().replace("LOCKED_FILES", "OLD_LOCKED").replace("TICKED_FILES", "OLD_TICKED"))
+    r = _edit(repo, f"changes/{ID}/facts.md", "active")
+    assert r.returncode == 2 and "sdlc-run adopt" in r.stderr
+
+
 def test_facts_wait_for_the_confirmed_intent(repo: Path) -> None:
     (repo / "changes" / ID / "intent.md").write_text("---\nstatus: draft\n---\n")
     (repo / "changes" / ID / "lock.json").unlink()
