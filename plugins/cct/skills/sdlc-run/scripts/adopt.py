@@ -861,6 +861,31 @@ def e2e_gap_note(milestone: list) -> None:
         )
 
 
+MIGRATIONS_PATH = re.compile(r"(?:^|/)(?:migrations|migrate)/|^(?:drizzle|alembic)/")
+
+
+def db_gap_note(cfg: dict) -> None:
+    """MANUAL line when tracked files look like database migrations and sdlc.json has no `db.test`:
+    without it every database test pays for a full migration run instead of a template copy."""
+    if (cfg.get("db") or {}).get("test"):
+        return
+    tracked = subprocess.run(["git", "ls-files"], cwd=ROOT, capture_output=True, text=True).stdout
+    found = [
+        f
+        for f in tracked.splitlines()
+        if MIGRATIONS_PATH.search(f) and "node_modules/" not in f and "vendor/" not in f
+    ]
+    if found:
+        folder = re.match(r"(.*?(?:migrations|migrate)|drizzle|alembic)/", found[0]).group(1)
+        manual.append(
+            f"sdlc.json has no db.test although the repo has migrations ({folder}/): add "
+            '`"db": {"test": {"container", "port", "template", "migrate", "migrations"}}` '
+            f'with `migrations` set to a glob such as "{folder}/**" (a change rebuilds the '
+            "template, one copy per job) and `python3 scripts/db.py test run -- <tests>` "
+            "(references/heavy-work.md, Databases)"
+        )
+
+
 def migrate_test_cost(cfg: dict, preset: str) -> None:
     """Bring an adopted repo's test cost in line with the preset (measured in leadhub: a
     `--repeat-each 3` over the whole suite took 59-71 min per gate, and the Stop hook fell back
@@ -1908,6 +1933,7 @@ def main() -> int:
         ]
     )
 
+    db_gap_note(cfg)
     manual.append(
         "audit: run `python3 scripts/verify_gate.py audit` once the gate has run (it reports "
         "which declared gates are installed, configured, executed and required); add the "
