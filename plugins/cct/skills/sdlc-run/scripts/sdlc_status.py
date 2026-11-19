@@ -52,6 +52,7 @@ from change_docs import MARKER, ids, readme
 for _sub in ("scripts", "hooks"):
     sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "templates" / _sub))
 
+import spec  # noqa: E402
 from pass_proof import bound, change_paths, proves  # noqa: E402
 
 STAGES = ("Intent", "UX plan", "Facts", "Tech plan", "Build", "Milestone", "Outcome")
@@ -138,7 +139,10 @@ def initiative(change: Path, root: Path, decisions: dict) -> tuple[str, int, int
 
 
 def features(change: Path, root: Path, cfg: dict, decisions: dict) -> list[dict]:
-    """Rows of the milestone's Features table: [{id, feature, state}]."""
+    """Rows of the milestone's Features table: [{id, feature, state}]. In layout 4 the tasks of
+    tasks.md are the rows."""
+    if spec.applies(change):
+        return [{"id": t, "feature": m, "state": st} for t, st, m in spec.task_states(change)]
     milestone = change / "milestone.md"
     slug = decisions.get("milestone", {}).get("slug", "")
     if not milestone.exists() and slug:
@@ -162,8 +166,10 @@ def stage_of(change: Path, rows: list[dict]) -> int:
         return 7
     if (change / "lock.json").exists():
         return 6 if rows and all(r["state"].startswith(("merged", "done")) for r in rows) else 5
-    if (change / "plan.md").exists():
+    if (change / "plan.md").exists() or (change / "tasks.md").exists():
         return 4
+    if frontmatter(change / "spec.md", "status") == "approved":
+        return 3
     if (change / "facts.md").exists():
         return 3
     return 2 if frontmatter(change / "intent.md", "status") == "approved" else 1
@@ -221,7 +227,9 @@ def same_head(root: Path, cfg: dict, gated: str, head: str) -> bool:
 
 
 def planned(change: Path) -> int:
-    """How many milestones plan.md lists."""
+    """How many milestones plan.md lists (the distinct milestones of tasks.md in layout 4)."""
+    if spec.applies(change):
+        return len({m for _, _, m in spec.task_states(change) if m})
     plan = (change / "plan.md").read_text(encoding="utf-8") if (change / "plan.md").exists() else ""
     return sum(1 for line in section(plan, "Milestones") if re.match(r"\|\s*M\d+\b", line))
 

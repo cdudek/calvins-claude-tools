@@ -122,3 +122,23 @@ def test_milestone_fails_on_spec_drift_a_changed_rule_without_its_test(tmp_path:
     tfile(repo, "test_retry.py", "# @R1", "def test_retry(): assert True")
     commit(repo)
     assert last(gate(repo, "milestone", ID)).startswith(f"VERIFY PASS milestone {ID}")
+
+
+# ------------------------------------------------------------------ status
+
+STATUS = SKILL / "scripts" / "sdlc_status.py"
+
+
+def status(repo: Path, *args: str) -> subprocess.CompletedProcess[str]:
+    return subprocess.run(
+        [sys.executable, str(STATUS), *args], cwd=repo, capture_output=True, text=True, env=_env()
+    )
+
+
+def test_status_reads_task_states_from_tasks_md_in_layout_4(tmp_path: Path) -> None:
+    repo = base_repo(tmp_path)
+    c = v4(repo)
+    (c / "tasks.md").write_text(TASKS.replace("| todo |", "| done |", 1))
+    out = status(repo, "map", ID).stdout
+    assert "this milestone  1 of 2 merged" in out and "T1" in out and "T2" in out
+    assert "stage  4/7" in out  # tasks.md is the plan
