@@ -65,7 +65,7 @@ SKIP = ("node_modules", ".git", ".worktrees")
 BUNDLE_FILLED = {"rendered": ""}
 
 # One grammar for a finding id, shared by the producer (findings.md items, marks rows) and the parser.
-FINDING_ID = r"[A-Z]\d+"
+FINDING_ID = r"[A-Z][A-Z0-9]*-?\d+"  # B2, C1, PR7 and a specialist's RC-1
 ASKED = re.compile(r"\AChange (\S+), finding (\S+): ")  # "Change <id>, finding B2: ..."
 # The fixed options of an owner dialog; the selected label is the decision.
 OWNER_LABELS = {

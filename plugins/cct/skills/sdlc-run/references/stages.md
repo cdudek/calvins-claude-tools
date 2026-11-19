@@ -480,7 +480,9 @@ disappear.
 ## Stage 6 — Milestone, inside /goal
 
 Scope: `git diff <parent>...milestone/<slug>` only, where `<parent>` is
-`origin/project/<slug>` when the project has a branch and `origin/<defaultBranch>` otherwise.
+`origin/project/<slug>` when the project has a branch and `origin/<defaultBranch>` otherwise; in
+local mode (`milestones.merge: local`) the project branch exists only locally until 6p, so
+`<parent>` is the local `project/<slug>` and both local reviews and the gate's `{base}` use it.
 Diffing a project's milestone against the trunk pulls in the sibling milestones already
 merged into the project branch, and reviews them again.
 
@@ -555,7 +557,7 @@ person's own browser session. Never use Claude in Chrome or any tool driving tha
    converge): the visual and build QA passes at the close are report-only. The supervisor hands
    remediation the joined findings (the blocking and converge items of `findings.md`, visual
    items included) and the code review's state directory from step 2, so the fix consumes the
-   review that already ran. First merge the visual and converge items into that directory's fix input, ids kept: `python3 ${CLAUDE_SKILL_DIR}/scripts/close_findings.py <state directory> changes/<id>/findings.md --change <id>` (the triager reads only `findings.json` and `verdicts.json`, so without it a clean code review leaves the fix set empty). Then `cct:review-fixset-triager <state directory>` (bounded rechecks run
+   review that already ran. First merge the visual and converge items into that directory's fix input, ids kept (`B2`, `C1`, a specialist's `RC-1`; an item with no label gets `U<position>`): `python3 ${CLAUDE_SKILL_DIR}/scripts/close_findings.py <state directory> changes/<id>/findings.md --change <id>` (the triager reads only `findings.json` and `verdicts.json`, so without it a clean code review leaves the fix set empty). Then `cct:review-fixset-triager <state directory>` (bounded rechecks run
    concurrently), then `cct:review-feedback-run fix-set <state directory>`. It never starts a
    fresh review: no `cct:review-fix-run` (it opens with a review of its own) and no second
    `cct:review-code-run`. Split into parallel parts by the files they touch, one builder and

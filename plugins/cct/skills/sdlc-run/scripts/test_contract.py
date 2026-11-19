@@ -379,3 +379,16 @@ def test_the_readiness_writer_also_checks_the_installed_guardrail_test() -> None
     mirror = " ".join(spec.split("**Mirror it for an older hook.**", 1)[1].split("```markdown", 1)[0].split())
     assert "tests/test_sdlc.py" in mirror and "tests/sdlc.test.ts" in mirror
     assert "guardrail test" in mirror
+
+
+def test_stage_6_uses_the_local_project_ref_in_local_mode_and_names_every_id_form() -> None:
+    stages = " ".join((SKILL / "references/stages.md").read_text().split())
+    assert "the local `project/<slug>` and both local reviews and the gate's `{base}` use it" in stages
+    assert "`RC-1`" in stages and "`U<position>`" in stages
+
+
+def test_build_qa_writes_qa_md_for_a_visual_change_with_no_spec_folder() -> None:
+    """The gate requires spec/qa.md for any visual change; its producer must not stop before writing it."""
+    text = " ".join((SKILL.parent / "ux-build-validate/SKILL.md").read_text().split())
+    assert "create `<change folder>/spec/` holding only `qa.md`" in text
+    assert "a `Build commit` column" in " ".join((SKILL.parent / "ux-build-validate/references/build.md").read_text().split()) or "Build commit" in (SKILL.parent / "ux-build-validate/references/build.md").read_text()

@@ -78,3 +78,18 @@ def test_existing_code_review_findings_are_kept(tmp_path: Path) -> None:
     md.write_text(FINDINGS)
     run(state, md, tmp_path / "home")
     assert [f["id"] for f in fix_now(state)] == [4, "B2", "V1", "C1"]
+
+
+def test_a_specialist_id_and_an_unlabelled_blocker_reach_the_fix_set(tmp_path: Path) -> None:
+    state = tmp_path / "state"
+    state.mkdir()
+    (state / "findings.json").write_text(json.dumps({"findings": []}))
+    (state / "verdicts.json").write_text("[]")
+    md = tmp_path / "findings.md"
+    md.write_text(
+        "## Blocking\n\n- [ ] **RC-1** the card overflows at 320 - src/card.tsx:9\n"
+        "- [ ] the footer clips at 320\n- [x] **B1** done\n\n## Advisory\n\n- [ ] **A1** rename\n"
+    )
+    run(state, md, tmp_path / "home")
+    got = [f["id"] for f in fix_now(state)]
+    assert got == ["RC-1", "U2"], got  # U<position among the open items>

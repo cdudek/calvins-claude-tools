@@ -5,7 +5,7 @@ Usage: python3 close_findings.py <review state dir> <findings.md> --change <chan
 `cct:review-fixset-triager` reads only `findings.json` and `verdicts.json` of the code review's
 state directory, so a clean code review plus a blocking visual or convergence finding would give
 an empty fix set. This appends every open, non-advisory item of `findings.md` (id kept: B2, V1,
-C1) to `findings.json` as a high-severity finding and to `verdicts.json` as confirmed, skipping
+C1, RC-1; an unlabelled item gets U<its position>) to `findings.json` as a high-severity finding and to `verdicts.json` as confirmed, skipping
 ids already there and items the owner already settled (`Accept as is`, `Defer to milestone <n>`).
 Prints how many it added. stdlib only; reads marks.py from the plugin's templates.
 """
@@ -20,7 +20,8 @@ from pathlib import Path
 sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "templates" / "scripts"))
 from marks import FINDING_ID, owner_decisions  # noqa: E402
 
-ITEM = re.compile(rf"^\s*[-*] \[ \] \*\*({FINDING_ID})\*\*\s*(.*)$", re.M)
+ITEM = re.compile(r"^\s*[-*] \[ \] (.*)$", re.M)
+LABEL = re.compile(rf"\*\*({FINDING_ID})\*\*\s*(.*)$")
 LOCATION = re.compile(r"([\w./-]+\.\w+):(\d+)")
 
 
@@ -35,7 +36,11 @@ def main(argv: list[str]) -> int:
         return 2
     state, md, change = Path(argv[1]), Path(argv[2]), argv[4]
     text = md.read_text(encoding="utf-8")
-    items = ITEM.findall(text.replace(advisory(text), ""))
+    items = []
+    for n, line in enumerate(ITEM.findall(text.replace(advisory(text), "")), 1):
+        label = LABEL.match(line.strip())
+        # an item with no explicit label still blocks the close: it gets a stable id of its own
+        items.append((label[1], label[2]) if label else (f"U{n}", line.strip()))
     settled = {
         k for k, (kind, _) in owner_decisions(Path.cwd(), change, md, "**{}**").items()
         if kind in ("accepted", "deferred")
