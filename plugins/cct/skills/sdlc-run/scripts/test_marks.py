@@ -535,6 +535,7 @@ def with_manifest(repo: Path, **tweak: object) -> dict:
                 "screen": f"s{i}", "state": "open", "width": 1280, "zoom": 100,
             }
         )  # fmt: skip
+        entries.append({**entries[-1], "zoom": 150})  # the required matrix has both zooms
     manifest = {"entries": entries, "qa": {"build": sha}} | tweak
     write(change(repo) / "verify/shots/manifest.json", json.dumps(manifest))
     return manifest

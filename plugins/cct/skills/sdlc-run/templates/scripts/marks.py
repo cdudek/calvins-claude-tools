@@ -110,17 +110,126 @@ def transcript_dirs(repo: Path) -> list[Path]:
 
 
 def first_seen(repo: Path, record: Path, needle: str) -> dt.datetime | None:
-    """When `needle` first appeared in `record`: its first commit, else the file's mtime."""
-    out = subprocess.run(
-        ["git", "-C", str(repo), "log", f"-S{needle}", "--reverse", "--format=%cI", "--", str(record)],
+    """When the current incarnation of `needle` began in `record`: the newest commit that took it
+    from absent to present, else the file's mtime (an uncommitted or untracked finding). An id that
+    was removed and reused later is a new finding: an answer to the old one is older than this."""
+    rel = record.resolve().relative_to(repo.resolve()).as_posix() if record.exists() else str(record)
+
+    def has(rev: str) -> bool:
+        out = subprocess.run(["git", "-C", str(repo), "show", f"{rev}:{rel}"], capture_output=True, text=True)
+        return out.returncode == 0 and needle in out.stdout
+
+    worktree = record.exists() and needle in record.read_text(encoding="utf-8", errors="ignore")
+    if worktree and not has("HEAD"):
+        return dt.datetime.fromtimestamp(record.stat().st_mtime, dt.timezone.utc)  # noqa: UP017
+    log = subprocess.run(
+        ["git", "-C", str(repo), "log", f"-S{needle}", "--format=%H %cI", "--", rel],
         capture_output=True,
         text=True,
-    ).stdout.split()
-    if out:
-        return when(out[0])
+    ).stdout.splitlines()
+    for line in log:  # newest first
+        sha, _, stamp = line.partition(" ")
+        if has(sha) and not has(f"{sha}^"):
+            return when(stamp)
     if record.exists():
         return dt.datetime.fromtimestamp(record.stat().st_mtime, dt.timezone.utc)  # noqa: UP017
     return None
+
+
+_ANSWERS: dict[tuple[str, str], list[tuple[str, tuple[str, str], dt.datetime]]] = {}
+
+
+def change_born(repo: Path, change_id: str) -> dt.datetime | None:
+    """When the change folder came to exist: its first commit, else the folder's mtime. No session
+    file last written before then can hold an answer about it."""
+    try:
+        changes = json.loads((repo / "sdlc.json").read_text(encoding="utf-8")).get("changesDir", "changes")
+    except (OSError, ValueError, AttributeError):
+        changes = "changes"
+    folder = repo / changes / change_id
+    first = subprocess.run(
+        ["git", "-C", str(repo), "log", "--reverse", "--format=%cI", "--", f"{changes}/{change_id}"],
+        capture_output=True,
+        text=True,
+    ).stdout.split()
+    if first:
+        return when(first[0])
+    if folder.exists():
+        return dt.datetime.fromtimestamp(folder.stat().st_mtime, dt.timezone.utc)  # noqa: UP017
+    return None
+
+
+def answers(repo: Path, change_id: str) -> list[tuple[str, tuple[str, str], dt.datetime]]:
+    """Every owner answer about `change_id` in the transcripts, as (finding id, kind, time), parsed
+    once per process and only from sessions written since the change folder was born."""
+    key = (str(repo.resolve()), change_id)
+    if key in _ANSWERS:
+        return _ANSWERS[key]
+    out: list[tuple[str, tuple[str, str], dt.datetime]] = []
+    born = change_born(repo, change_id)
+    for base in transcript_dirs(repo):
+        for path in sorted(base.glob("*.jsonl")):
+            try:
+                info = path.stat()
+                if path.is_symlink() or info.st_uid != os.getuid():
+                    continue
+                if born and dt.datetime.fromtimestamp(info.st_mtime, dt.timezone.utc) < born:  # noqa: UP017
+                    continue
+                lines = path.read_text(encoding="utf-8").splitlines()
+            except (OSError, ValueError):
+                continue
+            out += _answers_in(lines, change_id)
+    _ANSWERS[key] = out
+    return out
+
+
+def _label(label: object) -> str:
+    """The option's meaning: lowercase, without a trailing `(Recommended)` the skill adds."""
+    return re.sub(r"\s*\(recommended\)\s*$", "", str(label).strip(), flags=re.I).lower()
+
+
+def _answers_in(lines: list[str], change_id: str) -> list[tuple[str, tuple[str, str], dt.datetime]]:
+    out = []
+    asked: dict[str, dict[str, list]] = {}
+    for line in lines:
+        try:
+            entry = json.loads(line)
+        except ValueError:
+            continue
+        message = entry.get("message") if isinstance(entry, dict) else None
+        content = message.get("content") if isinstance(message, dict) else None
+        if not isinstance(content, list) or entry.get("isSidechain"):
+            continue
+        blocks = [b for b in content if isinstance(b, dict)]
+        if entry.get("type") == "assistant":
+            for b in blocks:
+                if b.get("type") == "tool_use" and b.get("name") == "AskUserQuestion":
+                    qs = (b.get("input") or {}).get("questions")
+                    asked[str(b.get("id"))] = {
+                        q["question"]: [o.get("label") for o in q.get("options") or [] if isinstance(o, dict)]
+                        for q in qs or []
+                        if isinstance(q, dict) and isinstance(q.get("question"), str)
+                    }
+            continue
+        result = entry.get("toolUseResult")
+        given = result.get("answers") if isinstance(result, dict) else None
+        stamp = when(entry.get("timestamp"))
+        if entry.get("type") != "user" or not isinstance(given, dict) or not stamp:
+            continue
+        for b in blocks:
+            options = asked.get(str(b.get("tool_use_id")))
+            if b.get("type") != "tool_result" or b.get("is_error") or options is None:
+                continue
+            for question, label in given.items():
+                m = ASKED.match(question) if isinstance(question, str) else None
+                if not m or m[1] != change_id or label not in options.get(question, []):
+                    continue
+                name = _label(label)
+                defer = DEFER.fullmatch(name)
+                kind = ("deferred", defer[1]) if defer else (OWNER_LABELS.get(name), "")
+                if kind[0]:
+                    out.append((m[2], kind, stamp))
+    return out
 
 
 def owner_decisions(
@@ -128,7 +237,7 @@ def owner_decisions(
 ) -> dict[str, tuple[str, str]]:
     """finding id -> (kind, detail) from the owner's answers to AskUserQuestion dialogs whose
     question starts `Change <change id>, finding <id>: ` and whose options include the selected
-    label. kind is fix | accepted | deferred (detail: the milestone) | blocked | hold. Only the
+    label (a trailing `(Recommended)` is ignored). kind is fix | accepted | deferred (detail: the milestone) | blocked | hold. Only the
     structured tool result counts: typed text, an agent message or a subagent never does. The
     latest answer wins; an answer older than the finding's first appearance in `record` is ignored
     (`needle` formats the id into the text searched for). No readable transcript gives {}.
@@ -136,64 +245,13 @@ def owner_decisions(
     with a shell; the transcript folder is read from the calling process's home."""
     found: dict[str, tuple[tuple[dt.datetime, int], tuple[str, str]]] = {}
     seen: dict[str, dt.datetime | None] = {}
-    order = 0
-    for base in transcript_dirs(repo):
-        for path in sorted(base.glob("*.jsonl")):
-            try:
-                if path.is_symlink() or path.stat().st_uid != os.getuid():
-                    continue
-                lines = path.read_text(encoding="utf-8").splitlines()
-            except (OSError, ValueError):
-                continue
-            asked: dict[str, dict[str, list]] = {}
-            for line in lines:
-                try:
-                    entry = json.loads(line)
-                except ValueError:
-                    continue
-                message = entry.get("message") if isinstance(entry, dict) else None
-                content = message.get("content") if isinstance(message, dict) else None
-                if not isinstance(content, list) or entry.get("isSidechain"):
-                    continue
-                blocks = [b for b in content if isinstance(b, dict)]
-                if entry.get("type") == "assistant":
-                    for b in blocks:
-                        if b.get("type") == "tool_use" and b.get("name") == "AskUserQuestion":
-                            qs = (b.get("input") or {}).get("questions")
-                            asked[str(b.get("id"))] = {
-                                q["question"]: [
-                                    o.get("label") for o in q.get("options") or [] if isinstance(o, dict)
-                                ]
-                                for q in qs or []
-                                if isinstance(q, dict) and isinstance(q.get("question"), str)
-                            }
-                    continue
-                result = entry.get("toolUseResult")
-                answers = result.get("answers") if isinstance(result, dict) else None
-                stamp = when(entry.get("timestamp"))
-                if entry.get("type") != "user" or not isinstance(answers, dict) or not stamp:
-                    continue
-                for b in blocks:
-                    options = asked.get(str(b.get("tool_use_id")))
-                    if b.get("type") != "tool_result" or b.get("is_error") or options is None:
-                        continue
-                    for question, label in answers.items():
-                        m = ASKED.match(question) if isinstance(question, str) else None
-                        if not m or m[1] != change_id or label not in options.get(question, []):
-                            continue
-                        name = str(label).strip().lower()
-                        defer = DEFER.fullmatch(name)
-                        kind = ("deferred", defer[1]) if defer else (OWNER_LABELS.get(name), "")
-                        if not kind[0]:
-                            continue
-                        fid = m[2]
-                        if record is not None and fid not in seen:
-                            seen[fid] = first_seen(repo, record, needle.format(fid))
-                        if record is not None and (seen[fid] is None or stamp < seen[fid]):
-                            continue  # said before the finding existed
-                        order += 1
-                        if fid not in found or (stamp, order) > found[fid][0]:
-                            found[fid] = ((stamp, order), kind)
+    for order, (fid, kind, stamp) in enumerate(answers(repo, change_id)):
+        if record is not None and fid not in seen:
+            seen[fid] = first_seen(repo, record, needle.format(fid))
+        if record is not None and (seen[fid] is None or stamp < seen[fid]):
+            continue  # said before this incarnation of the finding existed
+        if fid not in found or (stamp, order) > found[fid][0]:
+            found[fid] = ((stamp, order), kind)
     return {fid: kind for fid, (_, kind) in found.items()}
 
 
@@ -408,13 +466,13 @@ def stale_build(
         return f"build {str(build)[:12]} is not a commit here"
     records = change.parent.relative_to(repo.resolve()).as_posix()
     done = subprocess.run(
-        ["git", "-C", str(repo), "diff", "--name-only", build, "HEAD", "--", ".", f":!{records}"],
+        ["git", "-C", str(repo), "diff", "-z", "--name-only", build, "HEAD", "--", ".", f":!{records}"],
         capture_output=True,
         text=True,
     )
     if done.returncode:
         return f"build {str(build)[:12]} is not a commit here"
-    files = done.stdout.split()
+    files = [f for f in done.stdout.split("\0") if f]  # -z: a name may hold spaces
     if paths is not None:
         roots = [p.rstrip("/") for p in paths]
         files = [f for f in files if any(f == r or f.startswith(r + "/") for r in roots)]
@@ -445,11 +503,23 @@ def qa_problems(change: Path, repo: Path, visual: bool) -> list[str]:
         if visual or (change / "spec").is_dir():
             return ["qa.md is missing: build QA has not been recorded for this change"]
         return []
-    m = re.search(r"^Build:\s*`?(\S+?)`?\s*$", qa.read_text(encoding="utf-8"), re.M | re.I)
-    if not m:
-        return ["qa.md records no `Build: <sha>` line, so its inputs cannot be checked"]
-    if why := stale_build(repo, change, m[1], strict=True):
-        return [f"qa.md is stale: {why}"]
+    text = qa.read_text(encoding="utf-8")
+    builds = [m[1] for m in re.finditer(r"^Build:\s*`?(\S+?)`?\s*$", text, re.M | re.I)]
+    rows: list[list[str]] = []
+    for line in text.splitlines():  # the first table only (the header table), never the coverage matrix
+        if line.lstrip().startswith("|"):
+            rows.append([c.strip(" `") for c in line.strip().strip("|").split("|")])
+        elif rows:
+            break
+    head = [c.lower() for c in rows[0]] if rows else []
+    if "build commit" in head:  # the build QA template's table: one commit column
+        at = head.index("build commit")
+        builds += [r[at] for r in rows[1:] if len(r) > at and re.fullmatch(r"[0-9A-Za-z]{7,40}", r[at])]
+    if not builds:
+        return ["qa.md records no `Build: <sha>` line or `Build commit` column, so its inputs cannot be checked"]
+    for build in dict.fromkeys(builds):
+        if why := stale_build(repo, change, build, strict=True):
+            return [f"qa.md is stale: {why}"]
     return []
 
 
@@ -472,6 +542,28 @@ def canonical_source(repo: Path, source: object) -> str | None:
         text=True,
     )
     return path if listed.returncode == 0 and listed.stdout.strip() else None
+
+
+ZOOMS = (100, 150)  # the build QA looks at every state at 100 and 150 percent
+
+
+def matrix_problems(entries: list[dict]) -> list[str]:
+    """The required capture matrix: every entry names its screen, state, width and zoom, and each
+    screen-state-width it shows has a capture at every zoom of ZOOMS."""
+    problems = []
+    for e in entries:
+        missing = [k for k in ("screen", "state", "width", "zoom") if e.get(k) in (None, "")]
+        if missing:
+            problems.append(f"capture {e.get('shot')}: cell lacks {', '.join(missing)}")
+    seen: dict[tuple, set] = {}
+    for e in entries:
+        if all(e.get(k) not in (None, "") for k in ("screen", "state", "width", "zoom")):
+            seen.setdefault((e["screen"], e["state"], e["width"]), set()).add(str(e["zoom"]).rstrip("%"))
+    for cell, zooms in sorted(seen.items(), key=str):
+        gone = [z for z in ZOOMS if str(z) not in zooms]
+        if gone:
+            problems.append(f"capture matrix: {cell} lacks zoom {', '.join(map(str, gone))}")
+    return problems
 
 
 def manifest_problems(change: Path, rows: list[dict], repo: Path) -> list[str]:
@@ -498,6 +590,7 @@ def manifest_problems(change: Path, rows: list[dict], repo: Path) -> list[str]:
         c for c in cells if cells.count(c) > 1), key=str)]  # fmt: skip
     shared = data.get("shared") if isinstance(data.get("shared"), list) else []
     if strict:
+        problems += matrix_problems(entries)
         problems += [
             f"capture manifest: shared dependency {x!r} is not a plain repo path tracked at HEAD"
             for x in shared
