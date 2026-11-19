@@ -386,7 +386,6 @@ def goal_records(root: Path, change: Path, scope: str, n: int | None, gh) -> tup
             return 3, f"{name} BLOCKED reason={m.group(1)}"
     gate_missing: list[str] = []
     pr_missing: list[str] = []
-    first = next((h.first for h in held.values() if h.first), "")
     last = ""  # the gated head the DONE line names
     if not units:
         pr_missing.append("no-project-branch" if scope == "project" else f"no-branch-for-{scope}-{n}")
