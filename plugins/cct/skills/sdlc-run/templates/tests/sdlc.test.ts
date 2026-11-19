@@ -69,6 +69,7 @@ const INTENT_SECTIONS = [
 ];
 const PLAN_SECTIONS = ["## Order of work", "## Done", "## Revisions"];
 const V3_SIZES = new Set(["none", "S", "M", "L"]);
+const NO_UX_STAGE = new Set(["none", "S"]); // sizes with no UX stage: every activity is skipped (spec.py NO_UX_STAGE)
 const V3_KINDS = new Set(["feature", "bug", "refactor", "docs", "chore"]);
 const V3_ACTIVITIES = ["brief", "ia", "interaction", "screens", "prototype", "conformance", "validation"];
 // <created>-<KEY>-<slug>, and <created>-<slug> when the change has no Linear issue.
@@ -369,10 +370,10 @@ function checkChange(parent: string, id: string, archived: boolean) {
       validation: verdictFile,
     };
     for (const activity of V3_ACTIVITIES) {
-      const skipped = String(skips[activity] ?? "").startsWith("skip");
+      const skipped = NO_UX_STAGE.has(decisions.size ?? "") || String(skips[activity] ?? "").startsWith("skip");
       expect(skipped || existsSync(files[activity]), `${id}: ${activity}`).toBe(true);
     }
-    if (!String(skips.validation ?? "").startsWith("skip")) {
+    if (!NO_UX_STAGE.has(decisions.size ?? "") && !String(skips.validation ?? "").startsWith("skip")) {
       const fm = frontmatter(verdictFile);
       expect(fm.verdict).toBe("ready");
       expect(fm.status).toBe("approved");

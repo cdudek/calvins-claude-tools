@@ -416,6 +416,17 @@ def test_s1_build_qa_is_decided_before_any_readiness_file_is_asked_for(repo: Pat
     assert spec.qa_applicability(c)[0] is None  # not recorded: neither run nor skip
 
 
+def test_ux_size_s_has_no_ux_stage_so_nothing_asks_for_a_prototype_or_a_qa_run(repo: Path) -> None:
+    """3.24.0: size S joins `none`: the approval needs no prototype decision and build QA does not apply."""
+    c = _change(repo)
+    s = (c / "spec.md").read_text().replace("ux: none", "ux: S")
+    (c / "spec.md").write_text(s)
+    assert not any("prototype" in e for e in spec.consistency(c, "draft"))
+    assert spec.qa_applicability(c) == (False, "no UX stage (ux: S)")
+    (c / "spec.md").write_text(s.replace("ux: S", "ux: M"))  # M still records its prototype decision
+    assert any("prototype" in e for e in spec.consistency(c, "draft"))
+
+
 def test_s1_the_qa_command_exits_0_to_run_3_to_skip_and_2_when_unrecorded(
     repo: Path, monkeypatch
 ) -> None:

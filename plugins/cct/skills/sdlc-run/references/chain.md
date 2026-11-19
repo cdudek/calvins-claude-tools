@@ -98,7 +98,7 @@ working.
 | Size | Meaning | Preset skips |
 |---|---|---|
 | `none` | no interface change | all seven design activities, reason `skip -- no interface change` |
-| `S` | words or visuals on an existing screen; no new state, route or control | `brief`, `ia`, `interaction`, `prototype`, `validation`; runs `screens` and `conformance` on the delta |
+| `S` | words or visuals on an existing screen; no new state, route or control | all seven design activities, reason `skip -- S: no UX stage` (the build and the close still check the screen) |
 | `M` | one screen's behaviour, or one flow | `ia`, reason `skip -- M: no route, object or name changes` |
 | `L` | a new screen, flow or feature | none |
 
