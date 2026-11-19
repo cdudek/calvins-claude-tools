@@ -1007,6 +1007,7 @@ KIT_SPEC = {
     "b317d0a123e1827a",
     "c6542ee0d5796633",
     "d493b854eb70d6ec",
+    "be0765bdcddad6b6",
 }
 KIT_HEAVY = {
     "5deaa2eb45d65844",
@@ -1277,6 +1278,16 @@ def main() -> int:
         cfg = json.loads(cfg_path.read_text(encoding="utf-8"))
         cfg_before = json.dumps(cfg, sort_keys=True)
         if cfg.get("delivery") == "feature-prs":
+            open_changes = ROOT / cfg.get("changesDir", "changes")
+            approved = [  # a lock is the approval; a merged change's folder is already gone
+                d.name for d in sorted(open_changes.iterdir())
+                if d.is_dir() and d.name != "archive" and any((d / n).exists() for n in ("lock.json", "state/lock.json"))
+            ] if open_changes.is_dir() else []  # fmt: skip
+            if approved:
+                sys.exit(
+                    f"{', '.join(approved)} was approved with per-feature PR delivery and is not merged: "
+                    "sdlc-run 3.24.0 removed that mode: finish or re-approve it as one milestone PR first, then run adopt again."
+                )
             manual.append(
                 'sdlc.json: delivery "feature-prs" is gone (sdlc-run 3.24.0): every change now delivers one '
                 'milestone PR, features are commits on its branch. Set "delivery": "one-go" to silence this'
@@ -1942,11 +1953,23 @@ def main() -> int:
             "VERIFY": cfg["verify"],
             **delivery_values(cfg),
         }
-        for name in ("intent.md", "facts.md", "plan.md"):
-            write(first / name, render((TPL / "change" / name).read_text(encoding="utf-8"), cvals))
-        manual.append(
-            f"{first.relative_to(ROOT)}/ is the first change: fill intent/facts/plan from this adoption, gate the plan, archive it when the PR is green"
-        )
+        if cfg.get("layout") == 4:  # the configured layout: one spec.md (scope S, no UX), pinned in decisions.json
+            text = render((TPL / "change" / "spec.md").read_text(encoding="utf-8"), cvals)
+            text = re.sub(r"^scope: .*$", "scope: S", text, count=1, flags=re.M)
+            text = re.sub(r"^ux: .*$", "ux: none", text, count=1, flags=re.M)
+            text = re.sub(r"^prototype: .*\n", "", text, count=1, flags=re.M)
+            write(first / "spec.md", text)
+            write(first / "decisions.json", json.dumps({"layout": 4}) + "\n")
+            manual.append(
+                f"{first.relative_to(ROOT)}/ is the first change: fill spec.md from this adoption, gate it; "
+                "the next change removes its folder once the PR merged (`sdlc_status.py sweep-merged`)"
+            )
+        else:
+            for name in ("intent.md", "facts.md", "plan.md"):
+                write(first / name, render((TPL / "change" / name).read_text(encoding="utf-8"), cvals))
+            manual.append(
+                f"{first.relative_to(ROOT)}/ is the first change: fill intent/facts/plan from this adoption, gate the plan, archive it when the PR is green"
+            )
     (archive).mkdir(parents=True, exist_ok=True) if not DRY else None
     gitkeep = archive / ".gitkeep"
     if not DRY and not any(archive.iterdir()):

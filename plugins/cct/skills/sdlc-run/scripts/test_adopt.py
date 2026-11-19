@@ -114,11 +114,13 @@ def test_adopt_renders_everything_without_leftover_tokens(
     changes = [p for p in (repo / "changes").iterdir() if p.is_dir() and p.name != "archive"]
     first = f"{dt.date.today().isoformat()}-adopt-sdlc"
     assert [c.name for c in changes] == [first]
-    assert "## Problem" in (changes[0] / "intent.md").read_text()
-    plan = (changes[0] / "plan.md").read_text()
-    for section in ("## Order of work", "## Done", "## Revisions", "## Design changes"):
-        assert section in plan, section
-    assert f"change: {first}" in plan and "linear: none" in plan
+    # a fresh adoption is on layout 4 (sdlc.json says so), so its first change is too: one spec.md, pinned
+    assert sorted(p.name for p in changes[0].iterdir()) == ["decisions.json", "spec.md"]
+    assert json.loads((changes[0] / "decisions.json").read_text()) == {"layout": 4}
+    spec_md = (changes[0] / "spec.md").read_text()
+    assert "## Asks" in spec_md and "## Requirements" in spec_md
+    assert f"change: {first}" in spec_md and "linear: none" in spec_md
+    assert "scope: S" in spec_md and "ux: none" in spec_md and "<S |" not in spec_md
     assert (
         "/goal" in (repo / "CLAUDE.md").read_text()
         and "sdlc-run" in (repo / "CLAUDE.md").read_text()
@@ -404,8 +406,8 @@ def test_ticket_names_the_first_change(tmp_path: Path) -> None:
     repo = _repo(tmp_path, "node")
     _adopt(repo, "--ticket", "REV-947")
     first = repo / "changes" / f"{dt.date.today().isoformat()}-REV-947-adopt-sdlc"
-    assert (first / "plan.md").exists()
-    assert "linear: REV-947" in (first / "facts.md").read_text()
+    assert (first / "spec.md").exists() and not (first / "plan.md").exists()
+    assert "linear: REV-947" in (first / "spec.md").read_text()
 
 
 def test_migrates_goals_and_claude_plans(tmp_path: Path) -> None:
@@ -468,6 +470,22 @@ def test_upgrade_tells_a_feature_prs_repo_it_now_delivers_one_milestone_pr(tmp_p
     assert res.returncode == 0, res.stderr
     notes = [m for m in _sections(res.stdout)["MANUAL"] if "feature-prs" in m]
     assert len(notes) == 1 and "one milestone PR" in notes[0]
+
+
+def test_upgrade_refuses_while_a_feature_prs_change_is_approved_and_unmerged(tmp_path: Path) -> None:
+    repo = _repo(tmp_path, "node")
+    _adopt(repo)
+    cfg = json.loads((repo / "sdlc.json").read_text())
+    (repo / "sdlc.json").write_text(json.dumps({**cfg, "delivery": "feature-prs"}))
+    change = next((repo / "changes").glob("*-adopt-sdlc"))
+    (change / "lock.json").write_text("{}\n")  # approved, its folder not removed: not merged
+    before = (repo / "sdlc.json").read_text()
+    res = _adopt(repo, "--upgrade")
+    assert res.returncode != 0 and change.name in res.stderr
+    assert "finish or re-approve it as one milestone PR first" in res.stderr
+    assert (repo / "sdlc.json").read_text() == before
+    (change / "lock.json").unlink()  # nothing approved is in flight: only the note
+    assert _adopt(repo, "--upgrade").returncode == 0
 
 
 def test_change_templates_name_the_local_route_F12() -> None:

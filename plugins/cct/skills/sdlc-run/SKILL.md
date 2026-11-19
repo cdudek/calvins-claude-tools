@@ -30,7 +30,7 @@ Verification and every push follow the [local-first contract](references/local-f
      ▼                                       questions ─▶ questions.md, never blocking
 6 Milestone: checks + E2E once, validation against the facts, one fix round ─▶ PR, release
      │  (next milestone, cut from this one, builds meanwhile)
-7 Outcome: remove the folder after merge (no archive), read the success measure after release
+7 Outcome: the next change removes the merged folder (no archive), read the success measure after release
 
 Branches: <default> ─ [project/<slug>] ─ milestone/<slug> ─ features
           only the PR into <default> is reviewed and tiered
@@ -275,7 +275,7 @@ head needs `VERIFY PASS milestone` before it is pushed). Commands:
   `AskUserQuestion` (`Change <id>, finding <finding id>: ...`; Fix it now, Accept as is, Defer to milestone <n>, Block the close); the gate reads it.
 - Put a local path in any tracker (`scripts/linear-safe.py`); keep a plan in `.claude/plans/`.
 - Open a PR or push for anything but a milestone close (the folder removal of Stage 7 is the
-  last commit of the milestone PR): records, fixes, test repairs and merges
+  next change's first commit): records, fixes, test repairs and merges
   from the default branch are commits on the milestone branch; a fix for a merged milestone goes
   into the next one. Push a milestone head only after `VERIFY PASS milestone` on it, once.
   `pr-gate.sh` refuses the rest; never work around it. Never wait on a PR your code does not
