@@ -34,12 +34,17 @@ def _key(path: str, rel: str) -> str:
     return "/".join(parts)
 
 
-def _tree(repo: Path, rel: str, ref: str) -> dict[str, str]:
+def _tree(repo: Path, rel: str, ref: str) -> dict[str, str] | None:
+    """Blob per change path; None when two paths fold onto one key (a live file and an archive
+    copy of it), because then one of them could hide an edit to the other."""
     out = _git(repo, "ls-tree", "-rz", ref, "--", rel + "/").stdout.decode("utf-8", "replace")
-    files = {}
+    files: dict[str, str] = {}
     for entry in filter(None, out.split("\0")):
         meta, _, path = entry.partition("\t")
-        files[_key(path, rel)] = meta.split()[2]
+        key = _key(path, rel)
+        if key in files:
+            return None
+        files[key] = meta.split()[2]
     return files
 
 
@@ -56,6 +61,8 @@ def proves(repo: Path, changes_dir: str, gated: str, head: str) -> bool:
     if any(not p.startswith(rel + "/") for p in moved.decode("utf-8", "replace").split("\0") if p):
         return False
     before, after = _tree(repo, rel, gated), _tree(repo, rel, head)
+    if before is None or after is None:
+        return False
     for key in {k for k in before.keys() | after.keys() if before.get(k) != after.get(k)}:
         parts = key.split("/")
         if parts[-1] in LOCKED | EVIDENCE_FILES or EVIDENCE_DIRS & set(parts[:-1]):

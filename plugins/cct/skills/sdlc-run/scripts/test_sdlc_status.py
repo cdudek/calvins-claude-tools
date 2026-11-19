@@ -917,3 +917,20 @@ def test_goal_refuses_a_locked_input_edited_after_the_gate_F6(repo: Path) -> Non
     (repo / "changes" / ID / "facts.md").write_text("F1 something easier\n")
     head = _commit(repo, f"changes/{ID}/handover.md")
     assert _goal(repo, {BRANCH: _pr(head=head)}) == (1, f"GOAL {ID} OPEN gate-sha-not-pr-7-head")
+
+
+def test_a_live_file_and_its_archive_copy_void_the_pass(repo: Path) -> None:
+    # changes/<id>/facts.md and changes/archive/<id>/facts.md fold onto one key. Before the fix the
+    # unchanged archive copy overwrote the live one, so an edit to the locked live file went unseen.
+    sys.path.insert(0, str(SCRIPT.parent.parent / "templates" / "hooks"))
+    import pass_proof
+
+    archived = repo / "changes" / "archive" / ID / "facts.md"
+    archived.parent.mkdir(parents=True)
+    for f in (repo / "changes" / ID / "facts.md", archived):
+        f.write_text("F1 the first\n")
+    _commit(repo, f"changes/archive/{ID}/facts.md")
+    gated = _commit(repo, "code.txt")
+    (repo / "changes" / ID / "facts.md").write_text("F1 something easier\n")
+    head = _commit(repo, f"changes/{ID}/facts.md")
+    assert pass_proof.proves(repo, "changes", gated, head) is False
