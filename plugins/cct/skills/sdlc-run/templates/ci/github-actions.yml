@@ -11,15 +11,22 @@
 #      of the stacks you do not use (cosmetic: they are skipped anyway).
 #   5. Fill in the DEPLOY hook or leave it: with no ciCommands.deploy it prints a notice and succeeds.
 #   6. Make `check` the only required status (ruleset A6 in references/ci-blueprint.md).
+#   7. Optional: set ciCommands.buildOutput (the paths the build writes, space separated) and `build` uploads them
+#      once; every E2E shard downloads them instead of building again (five builds became one).
 #
 # How it decides what runs (A1, A5), from sdlc.json `ciPaths`, shell globs where * also crosses /:
-#   - a file in `docs` or neither in `code` nor `config` (Markdown, images, .claude/, plans, notes) runs NOTHING;
-#   - a file in `all` (CI workflows, sdlc.json, lockfiles) runs every step;
+#   - a file in `docs` or neither in `code` nor `config` (Markdown, images, .claude/ notes, plans) runs NOTHING;
+#   - a file in `all` (CI workflows, sdlc.json, lockfiles, the installed hooks .claude/hooks/* and
+#     .claude/settings.json) runs every step. `all` is checked BEFORE `docs`, so executable hooks are code even
+#     though the rest of .claude/ is notes;
 #   - any other code or config file runs the steps whose include matches it and whose exclude does not
 #     (test/ -> lint and unit; e2e/ -> lint and the touched specs; *.css -> lint and e2e; migrations -> unit, e2e, deploy);
 #   - safety net: a push to the default branch runs every step, and a PR into the default branch or `project/*`
 #     (or from `milestone/*`) that changes any code or config runs every step and the whole E2E suite in SHARDS shards.
 #     Every other PR runs the E2E specs it touches (`ciPaths.specs`).
+# Fail fast: `preflight` (config conflicts, seconds) gates every expensive job, `lint` gates the E2E shards, and one
+# failing shard cancels its siblings, so a typo never leaves browsers running toward their timeout. `check` needs
+# every job, so a skipped chain can never report green.
 # Unavoidable cost of a PR that changes nothing runnable: the `changes` job (about 10 seconds) and `check`,
 # because a required status that never reports leaves the PR unmergeable. Do not use workflow-level `paths-ignore`.
 #
@@ -110,8 +117,8 @@ jobs:
             files=$(gh pr diff "$PR" --name-only) # a failure (a diff too large to list) stops the job: fails closed
             while IFS= read -r f; do
               [ -n "$f" ] || continue
-              hit "$f" "$IGNORE" && continue
               if hit "$f" "$ALL"; then everything; touched=true; continue; fi
+              hit "$f" "$IGNORE" && continue
               hit "$f" "$CODE" || continue # neither code nor config: runs nothing
               touched=true
               known=false
@@ -154,9 +161,27 @@ jobs:
           } >> "${GITHUB_STEP_SUMMARY:-/dev/null}"
           # <<< changes-script
 
+  # Seconds, no install: sdlc.json config conflicts (scripts/preflight.py --config). Without the script (a repo that
+  # has not adopted it) the job prints a notice and passes.
+  preflight:
+    name: Preflight
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+          sparse-checkout: |
+            sdlc.json
+            scripts
+          sparse-checkout-cone-mode: false
+      - run: |
+          if [ ! -f scripts/preflight.py ]; then echo "::notice::no scripts/preflight.py: run sdlc-run adopt"; exit 0; fi
+          python3 scripts/preflight.py --config
+
   lint:
     name: Lint and types
-    needs: changes
+    needs: [changes, preflight]
     if: needs.changes.outputs.lint == 'true'
     runs-on: ubuntu-latest
     timeout-minutes: 20
@@ -212,7 +237,7 @@ jobs:
 
   unit:
     name: Unit tests
-    needs: changes
+    needs: [changes, preflight]
     if: needs.changes.outputs.unit == 'true'
     runs-on: ubuntu-latest
     timeout-minutes: 20
@@ -282,7 +307,7 @@ jobs:
 
   build:
     name: Production build
-    needs: changes
+    needs: [changes, preflight]
     if: needs.changes.outputs.build == 'true'
     runs-on: ubuntu-latest
     timeout-minutes: 20
@@ -335,18 +360,35 @@ jobs:
           cmd=$(jq -r '.ciCommands.build // empty' sdlc.json)
           if [ -z "$cmd" ]; then echo "::error::sdlc.json has no ciCommands.build; set it (to true if this repo has no such step)"; exit 1; fi
           echo "+ $cmd"; bash -eo pipefail -c "$cmd"
+      - name: Which paths to share with the E2E shards (ciCommands.buildOutput)
+        id: out
+        run: |
+          paths=$(jq -r '.ciCommands.buildOutput // empty' sdlc.json)
+          { echo "paths<<EOF"; for p in $paths; do echo "$p"; done; echo "EOF"; } >> "$GITHUB_OUTPUT"
+          echo "present=$([ -n "$paths" ] && echo true || echo false)" >> "$GITHUB_OUTPUT"
+      - if: steps.out.outputs.present == 'true'
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with:
+          name: build-output
+          path: ${{ steps.out.outputs.paths }}
+          retention-days: 1
+          if-no-files-found: error
 
   # One matrix leg per entry of the `changes` matrix: the shards of the full suite, or one leg with the touched specs,
-  # or no leg at all. Each leg has its own database and builds the production artifact itself (A2, A3): E2E never
-  # runs against a dev server.
+  # or no leg at all. Each leg has its own database and runs the production artifact (A2, A3): E2E never runs against
+  # a dev server. The artifact comes from `build` when ciCommands.buildOutput is set; otherwise (or when `build` did
+  # not run) the leg builds it itself. A failed preflight, lint or build skips every leg; one failing leg cancels the
+  # others (the run is red either way, and browsers cost the most).
   e2e:
     name: E2E ${{ matrix.name }}
-    needs: changes
-    if: needs.changes.outputs.matrix != '[]'
+    needs: [changes, preflight, lint, build]
+    if: >-
+      !cancelled() && needs.changes.outputs.matrix != '[]' && needs.preflight.result == 'success' &&
+      needs.lint.result != 'failure' && needs.build.result != 'failure'
     runs-on: ubuntu-latest
     timeout-minutes: 45
     strategy:
-      fail-fast: false
+      fail-fast: true
       matrix:
         include: ${{ fromJSON(needs.changes.outputs.matrix) }}
     env:
@@ -411,7 +453,18 @@ jobs:
           cmd=$(jq -r '.ciCommands.install // empty' sdlc.json)
           if [ -z "$cmd" ]; then echo "no ciCommands.install: nothing to install"; exit 0; fi
           echo "+ $cmd"; bash -eo pipefail -c "$cmd"
+      - name: Shared build available?
+        id: shared
+        run: echo "use=$([ "$BUILD_RESULT" = success ] && [ -n "$(jq -r '.ciCommands.buildOutput // empty' sdlc.json)" ] && echo true || echo false)" >> "$GITHUB_OUTPUT"
+        env:
+          BUILD_RESULT: ${{ needs.build.result }}
+      - if: steps.shared.outputs.use == 'true'
+        uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
+        with:
+          name: build-output
+          path: .
       - name: Build the production artifact (ciCommands.build)
+        if: steps.shared.outputs.use != 'true'
         run: |
           cmd=$(jq -r '.ciCommands.build // empty' sdlc.json)
           if [ -z "$cmd" ]; then echo "::error::sdlc.json has no ciCommands.build"; exit 1; fi
@@ -461,7 +514,7 @@ jobs:
   check:
     name: check
     if: always()
-    needs: [changes, lint, unit, build, e2e, deploy]
+    needs: [changes, preflight, lint, unit, build, e2e, deploy]
     runs-on: ubuntu-latest
     timeout-minutes: 5
     steps:

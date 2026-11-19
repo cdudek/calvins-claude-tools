@@ -95,6 +95,16 @@ jobs:
           done
           gh pr edit "$PR" --add-label "$TIER"
 
+      # A bot PR is labelled ship but never armed: the arm job mints the App token for human PRs only.
+      # Without this step a green bot PR waits for nobody. Name the merger instead of leaving it silent.
+      - name: Say who merges a bot PR
+        if: github.event.pull_request.user.type == 'Bot'
+        run: |
+          set -euo pipefail
+          echo "::notice::bot PR labelled ship: this workflow does not arm it. A person merges it on green, or the repo's own bot-merge automation does (references/tiers.md)."
+          gh label create needs-merge --color 5319E7 --description "bot PR: green checks alone do not merge it; a person or the repo's bot-merge automation does" --force
+          gh pr edit "$PR" --add-label needs-merge
+
   # Separate job, NO checkout: the `tier` job executes PR-authored code
   # (scripts/ship_show_ask.py from the PR's merge ref), and a PR could rewrite PATH from
   # there. The App token is a ruleset-bypass identity; it must never be minted where

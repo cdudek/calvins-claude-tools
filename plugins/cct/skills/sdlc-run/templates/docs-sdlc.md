@@ -70,6 +70,7 @@ none.
 | `ciCommands` | stack commands for the required checks and any other remote jobs: `install`, `lint`, `unit`, `build`, `e2e` (`{shard}`, `{total}`), `e2eTouched` (`{files}`), optional `deploy` |
 | `sdlcVersion` | the sdlc-run version the repo was last adopted or upgraded with; the skill warns when the kit is newer (`adopt --upgrade`) |
 | `protected` | paths refused after approval |
+| `heavy`, `db`, `preflight` | the heavy-job queue (`slots`, `waitTimeout`, `runTimeout`, `portBase`, `patterns`), the local test database and the personal cloud database, and the preflight checks (`tools`, `auth`, `docker`): `references/heavy-work.md` in the kit |
 | `verify`, `verifyStop` | full command before PR; fast Stop hook command (skipped inside a `/goal` and when nothing changed since its last pass) |
 | `planGate` | `owner` or `self`; self is barred for data safety, irreversible writes, security or money |
 | `testGlobs`, `prototypeDirs`, `feedback` | locked tests, prototype paths, owner-words files |

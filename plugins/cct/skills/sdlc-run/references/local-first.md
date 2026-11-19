@@ -3,7 +3,15 @@
 This is the verification contract for builders, milestone close, review fixes, flaky tests,
 E2E work, PR creation and copied project instructions. Iterate locally; the merge gate is
 the repository's required GitHub Actions checks. No local receipt, hook or script stands in
-for them, and nothing blocks a push or a PR on a local receipt.
+for them. One local hook, `pr-gate.sh`, enforces branch order rather than quality: a milestone
+head is pushed only with `VERIFY PASS milestone` recorded on it (see "Local milestones", item 4).
+Run the gate first; it is not a substitute for CI and CI is not a substitute for it.
+
+## Heavy jobs
+
+Builds, app servers, browser tests, captures and the full suite run through the queue
+(`python3 scripts/heavy.py run -- <command>`, [heavy work](heavy-work.md)); lint, types and unit
+tests of touched files do not wait for it. The full suite runs once, inside the milestone gate.
 
 ## Before a push
 

@@ -39,6 +39,9 @@ M=milestone/x # a feature PR into a milestone branch: no full run
 run_case "docs only"                 $M f/a "false false false false none" docs/guide.md README.md changes/2026-x/plan.md
 run_case "image and md only"         $M f/a "false false false false none" docs/img/diagram.png README.md
 run_case "unknown non-code file"     $M f/a "false false false false none" notes.csv .claude/plans/a.json
+run_case "installed hook only"       $M f/a "true true true true none"     .claude/hooks/chain-gate.sh
+run_case "hook settings only"        $M f/a "true true true true none"     .claude/settings.json
+run_case "hook helper next to notes" $M f/a "true true true true none"     .claude/hooks/block_state.py docs/a.md
 run_case "src change"                $M f/a "true true true true none"     src/lib/a.ts
 run_case "test change"               $M f/a "true true false false none"   test/a.test.ts
 run_case "e2e spec change"           $M f/a "true false false false touched" e2e/login.spec.ts

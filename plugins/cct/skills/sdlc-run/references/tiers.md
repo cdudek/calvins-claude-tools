@@ -34,6 +34,13 @@ with no CI run and no deploy. The arm job has no checkout:
 the App token is a bypass identity and must never be minted where PR-authored code has
 run. `ask` never auto-merges. Bot PRs are `ship`.
 
+**A bot PR has no merger in this workflow.** It is labelled `ship`, but the arm job serves human PRs
+only (the App token is a bypass identity and a bot PR's workflow run cannot read the App secrets), so
+green checks alone merge nothing. The `tier` job therefore adds the `needs-merge` label and prints a
+notice. Name the merger once per repo: a person merges `needs-merge` PRs on green, or the repo runs its
+own bot-merge automation (for example the bot's native auto-merge, enabled on its own PRs). A repo that
+has neither has bot PRs that wait forever; say which one it is in `docs/sdlc.md`, "Repo-specific".
+
 ## CODEOWNERS
 
 CODEOWNERS is a team-repo choice, never installer-managed. Adopt never creates, edits or

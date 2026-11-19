@@ -1357,6 +1357,10 @@ def main() -> int:
         "marks.py",
         "sdlc_version.py",
         "spec.py",
+        "heavy.py",
+        "db.py",
+        "evidence.py",
+        "preflight.py",
     ):
         _write(ROOT / "scripts" / script, (TPL / "scripts" / script).read_text(encoding="utf-8"))
     # sdlc_status.py runs from the plugin now and is never copied into a repo.

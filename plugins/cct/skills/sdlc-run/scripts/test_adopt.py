@@ -1128,6 +1128,14 @@ def test_adopt_copies_marks_script_verbatim(tmp_path: Path) -> None:
     assert (repo / "scripts/marks.py").read_bytes() == source.read_bytes()
 
 
+def test_adopt_copies_the_heavy_work_scripts_verbatim(tmp_path: Path) -> None:
+    repo = _repo(tmp_path, "python")
+    assert _adopt(repo).returncode == 0
+    for name in ("heavy.py", "db.py", "evidence.py", "preflight.py"):
+        source = ADOPT.parents[1] / "templates/scripts" / name
+        assert (repo / "scripts" / name).read_bytes() == source.read_bytes(), name
+
+
 def test_template_tests_commit_with_an_identity() -> None:
     """2026-10-27: a guardrail test ran `git commit` with no identity and failed on every CI
     runner of every repo refreshed to that kit, while passing on every laptop."""
