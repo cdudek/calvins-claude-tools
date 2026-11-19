@@ -21,7 +21,8 @@
 #     though the rest of .claude/ is notes;
 #   - any other code or config file runs the steps whose include matches it and whose exclude does not
 #     (test/ -> lint and unit; e2e/ -> lint and the touched specs; *.css -> lint and e2e; migrations -> unit, e2e, deploy);
-#   - safety net: a push to the default branch runs every step, and a PR into the default branch or `project/*`
+#   - safety net: a push to the default branch runs every step when the files it brought in changed any code or
+#     config (a docs-only PR that merged runs nothing again; an unknown range runs everything), and a PR into the default branch or `project/*`
 #     (or from `milestone/*`) that changes any code or config runs every step and the whole E2E suite in SHARDS shards.
 #     Every other PR runs the E2E specs it touches (`ciPaths.specs`).
 # Fail fast: `preflight` (config conflicts, seconds) gates every expensive job, `lint` gates the E2E shards, and one
@@ -69,6 +70,7 @@ jobs:
       unit: ${{ steps.f.outputs.unit }}
       build: ${{ steps.f.outputs.build }}
       deploy: ${{ steps.f.outputs.deploy }}
+      deploy_ok: ${{ steps.f.outputs.deploy_ok }}
       full: ${{ steps.f.outputs.full }}
       matrix: ${{ steps.f.outputs.matrix }}
     steps:
@@ -85,6 +87,10 @@ jobs:
           BASE: ${{ github.base_ref }}
           HEAD: ${{ github.head_ref }}
           DEFAULT: ${{ github.event.repository.default_branch }}
+          BEFORE: ${{ github.event.before }}
+          SHA: ${{ github.sha }}
+          IS_FORK: ${{ github.event.pull_request.head.repo.fork }}
+          IS_DRAFT: ${{ github.event.pull_request.draft }}
         run: |
           # >>> changes-script (scripts/test_ci_changes.sh runs exactly these lines)
           set -eu
@@ -109,12 +115,24 @@ jobs:
             esac
           fi
           specs=""
-          touched=false # did the PR change any code or config at all?
+          touched=false # did the PR (or the push) change any code or config at all?
+          # A push to the default branch lists the files it brought in, so a docs-only PR that merged does not
+          # run the whole pipeline again. An unknown range (a new branch, a failed or capped comparison) runs everything.
           if [ -z "$PR" ]; then
-            everything
-            touched=true
+            files=""
+            case "$BEFORE" in ""|*[!0-9a-f]*|0000000000000000000000000000000000000000) BEFORE="" ;; esac
+            if [ -n "$BEFORE" ] && files=$(gh api --paginate "repos/$GH_REPO/compare/$BEFORE...$SHA" --jq '.files[].filename') \
+              && [ "$(printf '%s\n' "$files" | grep -c .)" -lt 300 ]; then
+              :
+            else
+              everything
+              touched=true
+              files=""
+            fi
           else
             files=$(gh pr diff "$PR" --name-only) # a failure (a diff too large to list) stops the job: fails closed
+          fi
+          if [ -n "$files" ]; then
             while IFS= read -r f; do
               [ -n "$f" ] || continue
               if hit "$f" "$ALL"; then everything; touched=true; continue; fi
@@ -136,9 +154,9 @@ jobs:
                 esac
               fi
             done <<< "$files"
-            # safety net: where the full suite runs, any code or config change runs every step
-            if [ "$touched" = true ] && [ "$full" = true ]; then everything; fi
           fi
+          # safety net: where the full suite runs, any code or config change runs every step
+          if [ "$touched" = true ] && [ "$full" = true ]; then everything; fi
           if [ "$e2e" != true ]; then
             matrix='[]'
           elif [ "$full" = true ]; then
@@ -148,8 +166,13 @@ jobs:
           else
             matrix='[]' # e2e code changed but no spec did: lint and unit cover it; the full run is on the way to main
           fi
+          # Deploy eligibility is the event's, not the paths': a push to the default branch, or a PR from this
+          # repository that is not a draft (a fork has no secrets). `deploy` says deployable code changed.
+          deploy_ok=true
+          if [ -n "$PR" ] && { [ "$IS_FORK" = true ] || [ "$IS_DRAFT" = true ]; }; then deploy_ok=false; fi
           {
             for s in lint unit build deploy; do eval "echo $s=\$$s"; done
+            echo "deploy_ok=$deploy_ok"
             echo "full=$full"
             echo "matrix=$matrix"
           } >> "$GITHUB_OUTPUT"
@@ -507,15 +530,15 @@ jobs:
   # A preview or staging deploy costs minutes and money, so it runs only when `changes` says deployable code changed.
   # Put your deploy here: either set sdlc.json ciCommands.deploy, or replace the step below with your own steps
   # (cloud auth with Workload Identity Federation, `permissions: id-token: write` on this job, a deploy action).
-  # A pull request from a fork has no secrets: guard the job with
-  #   github.event.pull_request.head.repo.full_name == github.repository
+  # Two questions, answered apart: `deploy` (paths: did deployable code change?) and `deploy_ok` (the event: a push
+  # to the default branch, or a same-repository, non-draft PR; a fork has no secrets). Both must be true.
   # It needs only `changes`, so it starts in parallel with the checks; add lint, unit, build to `needs` to deploy
   # only after they pass (then give the job `if: always() && ...` or a skipped need skips the deploy too).
   # ==========================================================================================================
   deploy:
     name: Deploy
     needs: changes
-    if: needs.changes.outputs.deploy == 'true'
+    if: needs.changes.outputs.deploy == 'true' && needs.changes.outputs.deploy_ok == 'true'
     runs-on: ubuntu-latest
     timeout-minutes: 30
     steps:
