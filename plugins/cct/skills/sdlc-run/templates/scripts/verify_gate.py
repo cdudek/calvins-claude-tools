@@ -69,6 +69,7 @@ from __future__ import annotations
 
 import argparse
 import datetime as dt
+import functools
 import hashlib
 import json
 import os
@@ -81,6 +82,7 @@ import time
 from pathlib import Path
 
 sys.dont_write_bytecode = True  # imports of marks and sdlc_version must not leave __pycache__
+import spec  # noqa: E402  (layout 4: the three documents, the rules, the id families)
 from sdlc_version import kit_version, message  # noqa: E402
 
 REASONS = {
@@ -113,15 +115,30 @@ SENTENCE_WORDS = 25
 OWNER_FILES = ("intent.md", "plan.md", "milestone.md", "questions.md", "pr-body.md")
 # The id families the chain defines: asks, bugs, facts, challenge findings, job stories,
 # non-functional facts, questions, review findings, analyze findings (`references/readability.md`).
-ID_TOKEN = r"[ABFHJNQRX]\d+"
-BARE_ID = re.compile(rf"(?<![\w@/.#-]){ID_TOKEN}\b")
-# A definition label opens a line: `**F3**`, `**F3:**`, `**Q1 (date) the question?**`. The id then
-# stands alone; `**B19 blocks the build.**` is a sentence, not a label.
-LABEL = re.compile(
-    rf"^\s*(?:>\s*)?(?:(?:[-*]|\d+\.)\s+(?:\[[ x]\]\s+)?)?\*\*({ID_TOKEN})(?=\*\*|:|\s*\(|\s*$)"
-)
-TABLE_ID = re.compile(rf"^\s*\|\s*({ID_TOKEN})\s*\|")
-IDS_ONLY = re.compile(rf"[\s,;/&+-]*(?:{ID_TOKEN}[\s,;/&+-]*)*")
+LEGACY_LETTERS = "ABFHJNQRX"
+
+
+@functools.lru_cache(maxsize=None)
+def id_patterns(letters: str = LEGACY_LETTERS) -> tuple[re.Pattern, re.Pattern, re.Pattern, re.Pattern]:
+    """(bare id, definition label, table-row id, ids-only cell) for one set of family letters. The
+    letter R is a review finding before layout 4 and a rule in it, where a finding is V."""
+    token = rf"[{letters}]\d+"
+    return (
+        re.compile(rf"(?<![\w@/.#-]){token}\b"),
+        # A definition label opens a line: `**F3**`, `**F3:**`, `**Q1 (date) the question?**`. The id
+        # then stands alone; `**B19 blocks the build.**` is a sentence, not a label.
+        re.compile(
+            rf"^\s*(?:>\s*)?(?:(?:[-*]|\d+\.)\s+(?:\[[ x]\]\s+)?)?\*\*({token})(?=\*\*|:|\s*\(|\s*$)"
+        ),
+        re.compile(rf"^\s*\|\s*({token})\s*\|"),
+        re.compile(rf"[\s,;/&+-]*(?:{token}[\s,;/&+-]*)*"),
+    )
+
+
+def letters_of(change: Path) -> str:
+    return "".join(sorted(spec.id_families(change)))
+
+
 PLACEHOLDER = re.compile(r"\[NEEDS CLARIFICATION: (?:<question>|\.\.\.)\]")  # the template's own words, no other
 BRACKETS = re.compile(r"\([^()]*\)|\[[^\[\]]*\]")  # may span a line wrap, never a blank line
 
@@ -700,21 +717,23 @@ def prose(text: str) -> list[str]:
 def defined_ids(change: Path) -> set[str]:
     """The ids this change defines: a table row that opens with the id, or a definition label.
     An id defined nowhere ("Press F5", "before Q4") is ordinary text and never flagged."""
+    _, label, table_id, _ = id_patterns(letters_of(change))
     found = set()
     for path in change.rglob("*.md"):
         if path.name == "README.md" or {"asks", "verify"} & set(path.relative_to(change).parts):
             continue
         for line in path.read_text(encoding="utf-8").splitlines():
-            if m := TABLE_ID.match(line) or LABEL.match(line):
+            if m := table_id.match(line) or label.match(line):
                 found.add(m.group(1))
     return found
 
 
-def bare_ids(text: str, defined: set[str]) -> list[tuple[str, str]]:
+def bare_ids(text: str, defined: set[str], letters: str = LEGACY_LETTERS) -> list[tuple[str, str]]:
     """(id, context) for every defined id in running text that is not inside brackets: "plain words
     first, the id in brackets after". Headings, code, the first cell of a table row, a cell that
     holds only ids, a definition label and the verbatim Words column of the intent's Asks table are
     structure; every other table cell is prose."""
+    bare, label, _, ids_only = id_patterns(letters)
     text = re.sub(r"\A---\n.*?\n---\n", "", text, flags=re.S)
     text = re.sub(r"```.*?```|<!--.*?-->", "", text, flags=re.S)
     found: list[tuple[str, str]] = []
@@ -726,7 +745,7 @@ def bare_ids(text: str, defined: set[str]) -> list[tuple[str, str]]:
         para.clear()
         for _ in range(3):  # nested brackets: (A1; see [F2])
             body = BRACKETS.sub("", body)
-        for m in BARE_ID.finditer(body):
+        for m in bare.finditer(body):
             if m.group(0) in defined:
                 around = " ".join(body[max(0, m.start() - 30) : m.end() + 30].split())
                 found.append((m.group(0), around))
@@ -744,13 +763,13 @@ def bare_ids(text: str, defined: set[str]) -> list[tuple[str, str]]:
             header = header or [c.lower() for c in cells]
             for i, cell in enumerate(cells[1:], 1):
                 verbatim = heading == "asks" and header[i : i + 1] == ["words"]
-                if not verbatim and not IDS_ONLY.fullmatch(cell):
+                if not verbatim and not ids_only.fullmatch(cell):
                     para.append(cell)
                     flush()
         else:
             if re.match(r"(?:[-*]|\d+\.)\s", s):
                 flush()  # a new list item never shares a bracket with the one before
-            para.append(re.sub(r"`[^`]*`", "", LABEL.sub("", line)))
+            para.append(re.sub(r"`[^`]*`", "", label.sub("", line)))
     flush()
     return found
 
@@ -759,19 +778,21 @@ def lint_problems(change: Path, body: str | None = None) -> list[str]:
     """Plain language: no sentence over SENTENCE_WORDS words, no leftover template prompts, and
     in the files the owner reads no id outside brackets. With `body`, only that text (the PR body
     about to be published) is checked, for ids. Pure file reads."""
-    defined = defined_ids(change)
+    defined, letters = defined_ids(change), letters_of(change)
     if body is not None:
         return [
             f"pr-body: id {bare} outside brackets, words first: {ctx}"
-            for bare, ctx in bare_ids(body, defined)
+            for bare, ctx in bare_ids(body, defined, letters)
         ]
     problems = []
-    for name in OWNER_FILES:
+    v4 = spec.applies(change)
+    docs = spec.documents(change)  # the three documents in layout 4, intent/facts/plan before
+    for name in (*docs, "questions.md", "pr-body.md") if v4 else OWNER_FILES:
         path = change / name
         if path.exists():
-            for bare, ctx in bare_ids(path.read_text(encoding="utf-8"), defined):
+            for bare, ctx in bare_ids(path.read_text(encoding="utf-8"), defined, letters):
                 problems.append(f"{name}: id {bare} outside brackets, words first: {ctx}")
-    for name in ("intent.md", "facts.md", "plan.md"):
+    for name in docs if v4 else ("intent.md", "facts.md", "plan.md"):
         path = change / name
         if not path.exists():
             continue

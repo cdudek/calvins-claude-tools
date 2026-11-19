@@ -1916,7 +1916,7 @@ def test_the_gate_and_every_hook_keep_a_clean_tree_clean_F13(tmp_path: Path) -> 
     repo = _local_repo(tmp_path)
     scripts = repo / "scripts"
     scripts.mkdir()
-    for name in ("verify_gate.py", "marks.py", "sdlc_version.py"):
+    for name in ("verify_gate.py", "marks.py", "sdlc_version.py", "spec.py"):
         (scripts / name).write_text((GATE.parent / name).read_text())
     (repo / ".gitignore").write_text("/changes/*/verify/\n")
     _git(repo, "add", ".")
