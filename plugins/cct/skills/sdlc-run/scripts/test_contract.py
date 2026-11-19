@@ -337,3 +337,20 @@ def test_no_shipped_script_or_hook_reads_or_writes_receipts() -> None:
     ]
     assert len(shipped) > 10
     assert not [str(p) for p in shipped if "receipts/" in p.read_text(encoding="utf-8")]
+
+
+def test_the_gate_and_the_hook_number_a_milestone_branch_the_same_way_3_20_5(tmp_path: Path) -> None:
+    sys.path[:0] = [str(SKILL / "templates" / "scripts"), str(SKILL / "templates" / "hooks")]
+    import pass_proof
+    import verify_gate
+
+    change = tmp_path / "2026-01-01-ABC-1-big-thing"
+    change.mkdir()
+    (change / "decisions.json").write_text('{"milestone": {"slug": "big-thing"}}')
+    for prefix in ("milestone/", "ms/"):
+        cfg = {"milestones": {"branchPrefix": prefix}}
+        for branch in (f"{prefix}big-thing", f"{prefix}big-thing-2", f"{prefix}big-thing-x", f"{prefix}other-3", "main", ""):
+            assert verify_gate.milestone_number(change, cfg, branch) == pass_proof.milestone_of(branch, prefix, "big-thing"), branch
+    assert pass_proof.milestone_of("milestone/big-thing", "milestone/", "big-thing") == 1
+    assert pass_proof.milestone_of("milestone/big-thing-7", "milestone/", "big-thing") == 7
+    assert pass_proof.milestone_of("ms/big-thing-7", "milestone/", "big-thing") is None

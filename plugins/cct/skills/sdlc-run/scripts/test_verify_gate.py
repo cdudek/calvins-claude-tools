@@ -1307,3 +1307,34 @@ def test_an_open_question_with_angle_brackets_is_not_the_placeholder_M5(tmp_path
     assert _gate(repo, "lint", ID).returncode == 0  # the template's own two placeholders stay free
 
 
+
+
+# 3.20.5: the report binds a pass to its change, milestone number and owning project.
+@pytest.mark.parametrize(
+    ("branch", "prefix", "number"),
+    [("milestone/trial-2", "milestone/", 2), ("milestone/trial", "milestone/", 1), ("ms/trial-3", "ms/", 3)],
+)
+def test_a_milestone_report_names_its_change_milestone_and_owner_3_20_5(
+    tmp_path: Path, branch: str, prefix: str, number: int
+) -> None:
+    repo = _repo(tmp_path, ["true"])
+    cfg = json.loads((repo / "sdlc.json").read_text())
+    cfg = {**cfg, "checks": {"milestone": ["true"]}, "milestones": {"branchPrefix": prefix}}
+    (repo / "sdlc.json").write_text(json.dumps(cfg))
+    _git(repo, "commit", "-qam", "milestone checks")
+    _git(repo, "checkout", "-qb", branch)
+    _approve(repo)
+    r = _gate(repo, "milestone", ID)
+    assert _last(r).startswith(f"VERIFY PASS milestone {ID}"), r.stdout
+    verify = repo / "changes" / ID / "verify"
+    for name in ("report.json", f"milestone-{number}.json"):
+        data = json.loads((verify / name).read_text())
+        assert (data["change"], data["milestone"], data["owner"]) == (ID, number, ""), name
+
+
+def test_a_feature_report_names_its_change_and_a_project_report_none_3_20_5(tmp_path: Path) -> None:
+    repo = _repo(tmp_path, ["true"])
+    _approve(repo)
+    assert _last(_gate(repo, "feature", ID)).startswith("VERIFY PASS")
+    data = json.loads((repo / "changes" / ID / "verify" / "report.json").read_text())
+    assert data["change"] == ID and "milestone" not in data

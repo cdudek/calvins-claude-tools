@@ -5,6 +5,7 @@ have opened instead."""
 from __future__ import annotations
 
 import json
+import re
 import os
 import shutil
 import subprocess
@@ -62,12 +63,26 @@ def repo(tmp_path: Path) -> Path:
     return repo
 
 
-def _pass(repo: Path, sha: str | None = None) -> None:
+def _pass(
+    repo: Path, sha: str | None = None, milestone: int | None = None, owner: str | None = None, change: str = ID
+) -> None:
+    """The report the gate writes: it names the change, the milestone number and the owning project."""
     verify = repo / "changes" / ID / "verify"
     verify.mkdir(exist_ok=True)
     sha = sha or _git(repo, "rev-parse", "HEAD")
+    if milestone is None:  # the number the current branch is
+        found = re.search(r"-(\d+)$", _git(repo, "rev-parse", "--abbrev-ref", "HEAD"))
+        milestone = int(found[1]) if found else 1
+    if owner is None:  # the owner the change record names now, as the gate reads it
+        project = json.loads((repo / "changes" / ID / "decisions.json").read_text()).get("project") or {}
+        owner = f"project/{project['slug']}" if project.get("slug") and project.get("branch", True) else ""
     (verify / "report.json").write_text(
-        json.dumps({"sha": sha, "result": f"VERIFY PASS milestone {ID} {sha}"})
+        json.dumps(
+            {
+                "scope": "milestone", "sha": sha, "result": f"VERIFY PASS milestone {change} {sha}",
+                "change": change, "milestone": milestone, "owner": owner,
+            }  # fmt: skip
+        )
     )
 
 
@@ -812,3 +827,56 @@ def test_a_receipt_file_in_the_git_dir_admits_nothing_3_20_5(repo: Path) -> None
     assert _push(repo) == 2
     _pass(repo)
     assert _push(repo) == 0
+
+
+# 3.20.5: the report binds a pass to its change, milestone number and owning project.
+def test_m1s_pass_does_not_admit_milestone_2_push(repo: Path) -> None:
+    _git(repo, "checkout", "-q", "-b", "milestone/trial-2")
+    _pass(repo, milestone=1)  # gated as M1
+    r = _run(repo, "git push -u origin milestone/trial-2")
+    assert r.returncode == 2 and "without a passing milestone gate" in r.stderr
+    _pass(repo)  # gated as M2
+    assert _run(repo, "git push -u origin milestone/trial-2").returncode == 0
+
+
+def test_a_report_without_change_and_milestone_is_no_pass_for_a_numbered_milestone(repo: Path) -> None:
+    _pass(repo)
+    path = repo / "changes" / ID / "verify" / "report.json"
+    full = json.loads(path.read_text())
+    assert _push(repo) == 0
+    for dropped in ("milestone", "change"):
+        path.write_text(json.dumps({k: v for k, v in full.items() if k != dropped}))
+        assert _push(repo) == 2, dropped
+
+
+def test_the_unnumbered_branch_is_milestone_1_and_the_prefix_is_the_configured_one(repo: Path) -> None:
+    cfg = json.loads((repo / "sdlc.json").read_text())
+    (repo / "sdlc.json").write_text(json.dumps({**cfg, "milestones": {"branchPrefix": "ms/"}}))
+    _git(repo, "commit", "-qam", "prefix")
+    _git(repo, "checkout", "-q", "-b", "ms/trial")
+    _pass(repo, milestone=1)
+    assert _run(repo, "git push -u origin ms/trial").returncode == 0
+    _git(repo, "checkout", "-q", "-b", "ms/trial-2")
+    assert _run(repo, "git push -u origin ms/trial-2").returncode == 2  # the report says M1
+
+
+def test_a_pass_gated_for_another_project_is_refused_on_push_pr_and_merge(repo: Path) -> None:
+    _local(repo, None)  # PR mode; the change belongs to project/trial
+    _pass(repo, owner="project/elsewhere")
+    assert _push(repo) == 2
+    r = _run(repo, "gh pr create --base project/trial --title t --body x")
+    assert r.returncode == 2 and "without a passing milestone gate" in r.stderr
+    _pass(repo)
+    assert _push(repo) == 0
+
+
+def test_a_local_merge_refuses_a_pass_whose_report_names_another_project(repo: Path) -> None:
+    _local(repo)
+    _pass(repo, owner="project/elsewhere")
+    _git(repo, "checkout", "-q", "project/trial")
+    r = _run(repo, "git merge --no-ff milestone/trial-1")
+    assert r.returncode == 2 and "gated for another project" in r.stderr
+    _git(repo, "checkout", "-q", "milestone/trial-1")
+    _pass(repo)
+    _git(repo, "checkout", "-q", "project/trial")
+    assert _run(repo, "git merge --no-ff milestone/trial-1").returncode == 0

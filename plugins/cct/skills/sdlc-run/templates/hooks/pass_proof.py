@@ -23,6 +23,32 @@ EVIDENCE_FILES = {"marks.json"}
 EVIDENCE_DIRS = {"asks", "evidence", "shots"}
 
 
+def milestone_of(branch: str, prefix: str, slug: str) -> int | None:
+    """The milestone a branch is: `<prefix><slug>-<n>` is n, the unnumbered `<prefix><slug>` is 1,
+    any other branch none. `prefix` is sdlc.json `milestones.branchPrefix`. verify_gate.py writes the
+    number into its report with the same rule (test_contract keeps the two equal)."""
+    name = branch[len(prefix) :] if branch.startswith(prefix) else ""
+    if not slug or not name:
+        return None
+    if name == slug:
+        return 1
+    found = re.fullmatch(re.escape(slug) + r"-(\d+)", name)
+    return int(found[1]) if found else None
+
+
+def bound(data: dict, scope: str, subject: str, number: int | None = None, owner: str | None = None) -> bool:
+    """A gate report is a pass for this subject: `VERIFY PASS <scope> <subject> <sha>` naming the
+    sha it records, and for a milestone the change and the number it was gated as (an unnumbered
+    branch is 1; a report with no number is a pass for no numbered milestone). `owner`, when given,
+    is the project branch the caller needs: the report must name the same one."""
+    result, sha = str(data.get("result", "")), data.get("sha")
+    if not sha or data.get("scope", scope) != scope or result != f"VERIFY PASS {scope} {subject} {sha}":
+        return False
+    if scope == "milestone" and (data.get("change") != subject or number is None or data.get("milestone") != number):
+        return False
+    return owner is None or scope == "project" or data.get("owner") == owner
+
+
 def _git(repo: Path, *args: str) -> subprocess.CompletedProcess[bytes]:
     return subprocess.run(["git", "-C", str(repo), *args], capture_output=True)
 

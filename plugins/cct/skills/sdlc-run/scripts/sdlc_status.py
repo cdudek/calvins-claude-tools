@@ -52,7 +52,7 @@ from change_docs import MARKER, ids, readme
 for _sub in ("scripts", "hooks"):
     sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "templates" / _sub))
 
-from pass_proof import proves  # noqa: E402
+from pass_proof import bound, proves  # noqa: E402
 
 STAGES = ("Intent", "UX plan", "Facts", "Tech plan", "Build", "Milestone", "Outcome")
 
@@ -294,6 +294,11 @@ def goal(
     if blocked:
         return 3, f"{name} BLOCKED reason={blocked.group(1)}"
     passed = re.fullmatch(rf"VERIFY PASS {scope} {re.escape(subject)} (\w+)", result)
+    # a pass counts for the milestone it was gated as (the goal's last one without --milestone) and
+    # the project the change belongs to: M1's pass never finishes M2, nor another project's
+    number = (n or max(planned(change), 1)) if scope == "milestone" else None
+    if passed and scope != "project" and not bound(report, scope, subject, number, project):
+        passed = None
     missing = [] if passed else [f"{scope}-gate-pass"]
     local = scope == "milestone" and project and merges_locally(cfg)
     if local:  # no PR: the gated head must be merged into the local project branch
@@ -311,15 +316,7 @@ def goal(
                 tip = git(root, "rev-parse", "--verify", "--quiet", f"{b}^{{commit}}")
                 if receipt:
                     # a receipt counts only for its own milestone and change, never a copy
-                    ok = (
-                        receipt.get("scope") == "milestone"
-                        and str(receipt.get("milestone")) == i
-                        and receipt.get("change") == change.name
-                        and re.fullmatch(
-                            rf"VERIFY PASS milestone {re.escape(change.name)} \w+",
-                            str(receipt.get("result", "")),
-                        )
-                    )
+                    ok = bound(receipt, "milestone", change.name, int(i), project)
                     if not (ok and contains(root, str(receipt.get("sha", "")), into)):
                         missing.append(f"receipt-not-merged:{i}")
                         continue
@@ -327,6 +324,8 @@ def goal(
                         continue
                 if not contains(root, tip, into):  # no receipt, or the branch is still there
                     missing.append(f"merge-missing:{b}")
+                elif receipt and not same_head(root, cfg, str(receipt.get("sha", "")), tip):
+                    missing.append(f"gate-sha-not-tip:{b}")  # code, criteria or evidence moved after the gate
     elif scope == "project":
         names = [project] if project else []
         if not names:
@@ -436,6 +435,12 @@ BLOCKS = {
         "the agent",
         "on branch milestone/<slug>-{n}: python3 scripts/verify_gate.py milestone {id}, then merge it",
     ),
+    "gate-sha-not-tip:": (
+        "the milestone branch {n} moved past its gate in more than records",
+        "code, facts.md, done.json or evidence changed after its gate receipt",
+        "the agent",
+        "on {n}: python3 scripts/verify_gate.py milestone {id} (writes a new receipt)",
+    ),
     "no-branch-for-": (
         "the plan names no branch for {n}",
         "plan.md has no matching row",
@@ -536,7 +541,7 @@ def blocker(subject: str, line: str, scope: str = "milestone", base: str = "") -
     for key, (what, why, who, step) in BLOCKS.items():
         if key_of == key or (key.endswith(("-", ":")) and first.startswith(key)):
             n = re.sub(
-                r"^no-pr:|^no-branch-for-|^merge-missing:|^receipt-not-merged:|^gate-sha-not-pr-|-head$",
+                r"^no-pr:|^no-branch-for-|^merge-missing:|^receipt-not-merged:|^gate-sha-not-tip:|^gate-sha-not-pr-|-head$",
                 "",
                 first,
             )

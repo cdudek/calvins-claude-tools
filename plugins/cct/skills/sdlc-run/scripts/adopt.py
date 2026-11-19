@@ -856,6 +856,7 @@ KIT_GATE = {
     "25ea5841fdd27c8c",
     "3606423109411bd8",
     "36b65017727d487e",
+    "440df872f222401d",
     "49c96180a9059469",
     "4cf1a016840c1594",
     "5152ca52e4e6ae8b",
@@ -885,6 +886,7 @@ KIT_PR_GATE = {
     "a7c80708a8719115",
     "ab23e9a14b74d511",
     "dcfc6bfc90098077",
+    "dea1af067e0edd92",
     "e68483445418d666",
     "e75851f8eacc7ec7",
     "f9f78cded1337388",
@@ -894,6 +896,7 @@ KIT_PASS_PROOF = {
     "66d1b0004ebe5a4f",
     "6b49e80785b08cd1",
     "9bf7560ec9b627d8",
+    "ca615d048d30845c",
     "dfd42c691cbeaf20",
     "faa52678825431ca",
 }  # same, for .claude/hooks/pass_proof.py

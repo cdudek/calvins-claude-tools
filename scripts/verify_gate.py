@@ -169,6 +169,24 @@ def has_bundle_inputs(change: Path) -> bool:
         return False
 
 
+def milestone_number(change: Path, cfg: dict, branch: str) -> int | None:
+    """The milestone `branch` is (`<prefix><slug>-<n>` is n, `<prefix><slug>` is 1), else None; the
+    rule of hooks/pass_proof.py `milestone_of`, kept equal by test_contract."""
+    prefix = (cfg.get("milestones") or {}).get("branchPrefix", "milestone/")
+    try:
+        slug = (json.loads((change / "decisions.json").read_text(encoding="utf-8")).get("milestone") or {}).get("slug")
+    except (OSError, ValueError, AttributeError):
+        slug = None
+    slug = slug or re.sub(r"^[A-Z][A-Z0-9]+-\d+-", "", re.sub(r"^\d{4}-\d{2}-\d{2}-", "", change.name))
+    name = branch[len(prefix) :] if branch.startswith(prefix) else ""
+    if not name:
+        return None
+    if name == slug:
+        return 1
+    found = re.fullmatch(re.escape(slug) + r"-(\d+)", name)
+    return int(found[1]) if found else None
+
+
 def project_branch(change: Path, cfg: dict) -> str:
     """project/<slug> of the change's project when it has a branch, else "". A project without
     `branch: true` is planning only (3.7.0), but one written before 3.7.0 has no `branch` key
@@ -531,20 +549,22 @@ def run(
     if notice:
         print(f"WARN {notice}")  # never blocks; the last line stays the verdict
 
+    number = milestone_number(change, cfg, sh("git", "symbolic-ref", "--short", "-q", "HEAD")) if scope == "milestone" else None
+
     def finish(line: str, code: int) -> int:
         report["result"] = line
         report["sha"] = sh("git", "rev-parse", "HEAD")
+        if scope != "project":  # what the hook and the goal check bind a pass to
+            report["change"], report["owner"] = change.name, project_branch(change, cfg)
+        if scope == "milestone":
+            report["milestone"] = number
         report["metrics"] = metrics(change, report, retries, started_run)
         text = json.dumps(report, indent=2) + "\n"
         (out_dir / "report.json").write_text(text, encoding="utf-8")
         # report.json holds the last scope run only: a milestone also keeps its own receipt, which
         # `sdlc_status.py goal` reads, so a deleted merged branch does not undo a finished milestone
-        on = re.fullmatch(r"milestone/.+-(\d+)", sh("git", "rev-parse", "--abbrev-ref", "HEAD"))
-        if scope == "milestone" and on:
-            bound = {**report, "milestone": int(on[1]), "change": change.name}  # bound to its subject
-            (out_dir / f"milestone-{on[1]}.json").write_text(
-                json.dumps(bound, indent=2) + "\n", encoding="utf-8"
-            )
+        if scope == "milestone" and number:
+            (out_dir / f"milestone-{number}.json").write_text(text, encoding="utf-8")
         rows = "\n".join(
             f"| {c['name']} | {c['status']} | {c['seconds']} |" for c in report["checks"]
         )
