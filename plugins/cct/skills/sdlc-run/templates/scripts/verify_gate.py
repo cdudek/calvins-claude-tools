@@ -743,6 +743,7 @@ def approve(change: Path, cfg: dict) -> int:
         "order": "cost",  # a lock without this key keeps the declared order (before 3.18.0)
         "manifest": "required",  # from 3.21.0 visual work needs verify/shots/manifest.json
         "format": LOCK_FORMAT,  # strict validation rows and records apply to this lock and later ones
+        "layout": 4 if v4 else 3,  # the hooks read the layout here, not from files an edit can change
     }
     (change / "lock.json").write_text(json.dumps(lock, indent=2) + "\n", encoding="utf-8")
     print(f"locked {', '.join(lock['criteria'])} in {change.name}/lock.json -- commit it")

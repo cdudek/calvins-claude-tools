@@ -166,12 +166,32 @@ def is_milestone(decisions: dict) -> bool:
     return "milestone" in decisions
 
 
+def lock_layout(change_dir: Path) -> int | None:
+    """The layout `approve` recorded in lock.json: None for a lock without one (an older lock) or
+    an unreadable one. Once a lock exists it, not an editable file, says which layout applies."""
+    try:
+        value = json.loads((change_dir / "lock.json").read_text(encoding="utf-8")).get("layout")
+    except (OSError, ValueError, AttributeError):
+        return None
+    return value if isinstance(value, int) else None
+
+
 def is_v4(change_dir: Path, decisions: dict) -> bool:
     """Layout 4 (spec.py `applies`, which a hook cannot import): pinned in decisions.json, or a
-    spec.md with no facts.md. It has three documents and a living spec, not intent/facts/plan."""
+    spec.md with no facts.md. It has three documents and a living spec, not intent/facts/plan.
+    After approval the lock decides, and a lock with no layout is an older, three-file one."""
+    if (change_dir / "lock.json").exists():
+        return lock_layout(change_dir) == 4
     return decisions.get("layout") == 4 or (
         (change_dir / "spec.md").exists() and not (change_dir / "facts.md").exists()
     )
+
+
+def protected_files(change_dir: Path, decisions: dict) -> tuple[str, ...]:
+    """What a locked change protects: its layout's files, or both layouts' when the lock names none."""
+    if lock_layout(change_dir) is None and (change_dir / "lock.json").exists():
+        return tuple(dict.fromkeys(PROTECTED_FILES + V4_PROTECTED_FILES))
+    return V4_PROTECTED_FILES if is_v4(change_dir, decisions) else PROTECTED_FILES
 
 
 PROTECTED_FILES = ("facts.md", "done.json", "lock.json")
@@ -273,6 +293,26 @@ if len(parts) >= 3 and parts[0] == changes:
     inside = "/".join(parts[2:])
 
     if base == "decisions.json":
+        lock = change_dir / "lock.json"
+        if lock.exists() and (change_dir / "decisions.json").exists():
+            # `layout` decides which files the lock protects: changing it after approval is a protected edit
+            tool = payload.get("tool_input") or {}
+            now = (change_dir / "decisions.json").read_text(encoding="utf-8")
+            new = tool["content"] if "content" in tool else now.replace(
+                str(tool.get("old_string", "")), str(tool.get("new_string", "")), 1 if tool.get("old_string") else 0
+            )
+            def layout_of(text: str) -> object:
+                try:
+                    return json.loads(text).get("layout", "none")
+                except (ValueError, AttributeError):
+                    return "unreadable"
+            if layout_of(new) != layout_of(now) and not load_decisions(change_dir).get("protectedEdit"):
+                deny(
+                    f"{changes}/{change_id}/decisions.json `layout` is locked since the engineer approved the "
+                    "change. Stop and ask; record their words as `protectedEdit` first.",
+                    source=f"{changes}/{change_id}/lock.json and decisions.json",
+                    action="stop and ask the engineer; their words go in decisions.json as protectedEdit",
+                )
         sys.exit(0)
     if not (change_dir / "decisions.json").exists():
         deny(
@@ -287,7 +327,7 @@ if len(parts) >= 3 and parts[0] == changes:
     v4 = is_v4(change_dir, decisions)
 
     if is_milestone(decisions) or v4:
-        if inside in (V4_PROTECTED_FILES if v4 else PROTECTED_FILES) and (change_dir / "lock.json").exists():
+        if inside in protected_files(change_dir, decisions) and (change_dir / "lock.json").exists():
             if decisions.get("protectedEdit"):
                 sys.exit(0)
             deny(

@@ -68,6 +68,7 @@ def test_approve_locks_the_spec_documents_and_derives_done_json_from_the_rules(t
     assert r.returncode == 0, r.stdout
     crit = json.loads((c / "lock.json").read_text())["criteria"]
     assert {"spec.md", "tasks.md", "checks"} <= set(crit) and "facts.md" not in crit
+    assert json.loads((c / "lock.json").read_text())["layout"] == 4
     facts = json.loads((c / "done.json").read_text())["facts"]
     assert [(f["id"], f["tag"]) for f in facts] == [("R1", "@R1")]
 

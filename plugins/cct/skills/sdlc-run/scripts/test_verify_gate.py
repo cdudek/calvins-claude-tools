@@ -2046,3 +2046,9 @@ def test_a_feature_report_names_its_change_and_a_project_report_none_3_20_5(tmp_
     assert _last(_gate(repo, "feature", ID)).startswith("VERIFY PASS")
     data = json.loads((repo / "changes" / ID / "verify" / "report.json").read_text())
     assert data["change"] == ID and "milestone" not in data
+
+
+def test_approve_records_the_layout_in_the_lock(tmp_path: Path) -> None:
+    repo = _repo(tmp_path, ["true"])
+    _approve(repo)
+    assert json.loads((repo / "changes" / ID / "lock.json").read_text())["layout"] == 3

@@ -37,7 +37,7 @@ def make(tmp_path: Path, v4: bool = True) -> Path:
         (c / "intent.md").write_text(APPROVED)
         (c / "facts.md").write_text(APPROVED)
         (c / "plan.md").write_text(APPROVED + "\n## Goal handover\n\nDeliver.\n")
-    (c / "lock.json").write_text("{}\n")
+    (c / "lock.json").write_text(json.dumps({"layout": 4 if v4 else 3}))
     env = {k: v for k, v in os.environ.items() if not k.startswith("GIT_")}
     subprocess.run(["git", "init", "-q", "-b", "feat/retry"], cwd=repo, check=True, env=env)
     return repo
@@ -69,6 +69,33 @@ def test_rule_files_the_floor_and_the_spec_are_protected_after_approval(
     p = repo / "changes" / ID / "decisions.json"
     p.write_text(json.dumps({**json.loads(p.read_text()), "protectedEdit": "owner: change it"}))
     assert edit(repo, file).returncode == 0
+
+
+def _write_decisions(repo: Path, **d: object) -> subprocess.CompletedProcess[str]:
+    return edit(repo, f"changes/{ID}/decisions.json", content=json.dumps(d))
+
+
+def test_the_layout_comes_from_the_lock_not_from_decisions_json_or_file_presence(tmp_path: Path) -> None:
+    repo = make(tmp_path)
+    c = repo / "changes" / ID
+    cur = json.loads((c / "decisions.json").read_text())
+    r = _write_decisions(repo, **{k: v for k, v in cur.items() if k != "layout"})
+    assert r.returncode == 2 and "protectedEdit" in r.stderr
+    assert _write_decisions(repo, **cur, other="fine").returncode == 0  # layout unchanged
+    old = {"old_string": '"layout": 4', "new_string": '"layout": 3'}
+    assert edit(repo, f"changes/{ID}/decisions.json", **old).returncode == 2
+    (c / "facts.md").write_text(APPROVED)  # file presence cannot switch it either
+    assert edit(repo, f"changes/{ID}/spec.md").returncode == 2
+    (c / "decisions.json").write_text(json.dumps({**cur, "protectedEdit": "owner: switch it"}))
+    assert _write_decisions(repo, **{**cur, "layout": 3, "protectedEdit": "owner: switch it"}).returncode == 0
+
+
+@pytest.mark.parametrize("v4", [True, False])
+def test_a_lock_without_a_layout_protects_the_files_of_both_layouts(tmp_path: Path, v4: bool) -> None:
+    repo = make(tmp_path, v4=v4)
+    (repo / "changes" / ID / "lock.json").write_text("{}\n")
+    for f in ("spec.md", "facts.md", "design.md", "done.json"):
+        assert edit(repo, f"changes/{ID}/{f}").returncode == 2, f
 
 
 def test_a_status_flip_of_a_rule_and_a_task_tick_stay_open(tmp_path: Path) -> None:
@@ -104,3 +131,48 @@ def test_the_layout_4_plan_gate_is_approved_status_on_the_three_documents(tmp_pa
     (repo / "changes" / ID / "spec.md").write_text("---\nstatus: draft\n---\n")
     r = edit(repo, "src/app.py")
     assert r.returncode == 2 and "spec.md" in r.stderr
+
+
+# ------------------------------------------------------------------ outcomes ride along a pass
+
+import sys  # noqa: E402
+
+sys.path.insert(0, str(HOOKS))
+import pass_proof  # noqa: E402
+
+
+def _git(repo: Path, *args: str) -> str:
+    return subprocess.run(
+        ["git", "-c", "user.name=t", "-c", "user.email=t@t", *args],
+        cwd=repo, check=True, capture_output=True, text=True,
+    ).stdout.strip()  # fmt: skip
+
+
+def test_an_outcome_record_after_the_gate_keeps_the_pass_but_source_does_not(tmp_path: Path) -> None:
+    _git(tmp_path, "init", "-q", "-b", "main")
+    (tmp_path / "changes" / ID).mkdir(parents=True)
+    (tmp_path / "changes" / ID / "lock.json").write_text("{}\n")
+    _git(tmp_path, "add", ".")
+    _git(tmp_path, "commit", "-qm", "gated")
+    gated = _git(tmp_path, "rev-parse", "HEAD")
+    (tmp_path / ".sdlc" / "outcomes").mkdir(parents=True)
+    (tmp_path / ".sdlc" / "outcomes" / f"{ID}.json").write_text("{}\n")
+    _git(tmp_path, "add", ".")
+    _git(tmp_path, "commit", "-qm", "outcome")
+    assert pass_proof.proves(tmp_path, "changes", gated, _git(tmp_path, "rev-parse", "HEAD"))
+    (tmp_path / "src.py").write_text("x = 1\n")
+    _git(tmp_path, "add", ".")
+    _git(tmp_path, "commit", "-qm", "source")
+    assert not pass_proof.proves(tmp_path, "changes", gated, _git(tmp_path, "rev-parse", "HEAD"))
+
+
+def test_readers_do_not_fail_when_a_change_folder_was_removed_after_merge(tmp_path: Path) -> None:
+    assert pass_proof.change_paths(tmp_path / "changes", ID) == []
+    (tmp_path / "sdlc.json").write_text("{}")
+    (tmp_path / ".sdlc" / "outcomes").mkdir(parents=True)
+    (tmp_path / ".sdlc" / "outcomes" / f"{ID}.json").write_text(json.dumps({"change": ID, "due": "2026-12-04"}))
+    r = subprocess.run(
+        ["bash", str(HOOKS.parents[1] / "scripts" / "status.sh"), "--shipped"],
+        capture_output=True, text=True, env={**os.environ, "CLAUDE_PROJECT_DIR": str(tmp_path)},
+    )  # fmt: skip
+    assert r.returncode == 0 and ID in r.stdout, r.stderr

@@ -938,7 +938,7 @@ def layout(change: Path) -> str:
     try:
         if json.loads((change / "decisions.json").read_text()).get("layout") == 4:
             return "v4"
-    except (OSError, ValueError):
+    except (OSError, ValueError, AttributeError):
         pass
     if (change / "spec.md").exists() and not (change / "facts.md").exists():
         return "v4"
