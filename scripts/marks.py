@@ -15,6 +15,10 @@ like any other. Generated mockups (spec/prototype) are advisory and never rows.
 `retired` (advisory now; the whole row is kept), and a `ref:` row for an image inside a bundle is
 folded into the bundle row's `folded` list with its owner decisions. Neither is an orphan.
 
+When the lock says `"screens": "required"` (from 3.23.0), check also needs one record per approved
+screen in changes/<id>/screens/ (written by evidence.py), whether or not marks.json exists: a note
+and a loose reference are their own id, a bundle is one id per html page (`screen_ids`).
+
 marks.json holds {"rows": [...]}. Source paths and shots are change-relative; decision
 paths are repo-relative. IDs use the session folder relative to asks, or ref:<image path>.
 A fixed note names its proof in `test` (a tag such as @F1) found in a testGlobs file.
@@ -525,20 +529,76 @@ def manifest_required(change: Path) -> bool:
     return not isinstance(data, dict) or data.get("manifest") == "required"
 
 
-def screens_required(change: Path) -> bool:
-    """A change approved from 3.23.0 has `"screens": "required"` in its lock: the per-screen records
-    in verify/screens/ are its source of truth. Absent (or an unreadable lock) is lenient here."""
-    try:
-        return json.loads(state_path(change, "lock.json").read_text(encoding="utf-8")).get("screens") == "required"
-    except (OSError, ValueError, AttributeError):
-        return False
-
-
-def screens_problems(change: Path) -> list[str]:
+def _evidence():
     sys.path.insert(0, str(Path(__file__).resolve().parent))  # evidence.py sits beside this file
     import evidence
 
-    return evidence.screens_problems(change)
+    return evidence
+
+
+def lock_data(change: Path) -> dict | None:
+    """lock.json as a dict, {} when absent, None when it exists but cannot be read as an object."""
+    path = state_path(change, "lock.json")
+    if not path.exists():
+        return {}
+    try:
+        data = json.loads(path.read_text(encoding="utf-8"))
+    except (OSError, ValueError):
+        return None
+    return data if isinstance(data, dict) else None
+
+
+def screens_required(change: Path) -> bool:
+    """A change approved from 3.23.0 has `"screens": "required"` in its lock: the per-screen records
+    in changes/<id>/screens/ are its source of truth. Absent is lenient; a lock that exists but cannot
+    be read is strict (check also reports it)."""
+    data = lock_data(change)
+    return data is None or data.get("screens") == "required"
+
+
+RENDERED = re.compile(r"--(?:desktop|mobile|zoom150)@2x$")
+
+
+def screen_ids(change: Path, sources: list[dict] | None = None) -> list[str]:
+    """The screens the approved inputs hold, one canonical id each: a note and a loose reference are
+    their own row id, a design bundle is one `<bundle id>/<page>` per html page (the gallery is not
+    one; a bundle with no page stays one id). evidence.py names the record file from the id.
+    A rendered image of a bundle page is that page, not a screen of its own, only when it sits in the
+    folder the bundle's marks.json row names as `rendered` and its name (render.sh's
+    `<page>--desktop@2x.png`) is exactly one of the bundle's pages. Any other image is a reference."""
+    rows = sources if sources is not None else inventory(change)
+    try:
+        ledger = {r["id"]: r for r in read_rows(change / "marks.json")} if (change / "marks.json").exists() else {}
+    except (OSError, ValueError):
+        ledger = {}
+    ids, renders = [], []  # renders: (rendered folder, that bundle's pages)
+    for row in rows:
+        if row["kind"] != "bundle":
+            continue
+        folder = change / row["path"]
+        found = sorted(
+            h.relative_to(folder).with_suffix("").as_posix()
+            for h in folder.rglob("*.html")
+            if h.name != "gallery.html" and not any(part in SKIP for part in h.relative_to(folder).parts)
+        )
+        ids += [f"{row['id']}/{page}" for page in found] or [row["id"]]
+        if filled(rendered := ledger.get(row["id"], {}).get("rendered")):
+            renders.append((Path(rendered), set(found)))
+    for row in rows:
+        if row["kind"] == "bundle":
+            continue
+        image = Path(row.get("image", ""))
+        if row["kind"] == "reference" and RENDERED.search(image.stem) and any(
+            image.is_relative_to(root) and shot_screen(image.relative_to(root)) in pages for root, pages in renders
+        ):
+            continue
+        ids.append(row["id"])
+    return ids
+
+
+def screens_check(change: Path, sources: list[dict]) -> list[str]:
+    """Every approved screen has a record, and each record is reviewed, current and consistent."""
+    return _evidence().screens_problems(change, screen_ids(change, sources))
 
 
 def qa_problems(change: Path, repo: Path, visual: bool) -> list[str]:
@@ -779,14 +839,12 @@ def check(change: Path, sources: list[dict], repo: Path, designs: Path, globs: l
         if status in ("fixed", "match") and row.get("differs") not in (None, ""):
             problem("fixed/match must have no differs")
     problems += manifest_problems(change, rows, repo)
-    if screens_required(change):
-        problems += screens_problems(change)
-    if not ledger.exists() and screens_required(change):  # per-screen records stand in for the ledger
-        screens = change / "verify" / "screens"
-        for rid in sorted(wanted):
-            if not (screens / f"{rid}.json").is_file():
-                problems.append(f"{rid}: missing screen record; run evidence.py screen {change.name} {rid}")
-    else:
+    strict = screens_required(change)
+    if lock_data(change) is None:
+        problems.append("lock.json cannot be read: the screens requirement cannot be decided")
+    if strict:
+        problems += screens_check(change, sources)
+    if ledger.exists() or not strict:  # strict records stand in for a ledger that was never made
         for rid in wanted.keys() - seen:
             problems.append(f"{rid}: missing row; run marks.py init {change.name}")
     for problem in sorted(problems):

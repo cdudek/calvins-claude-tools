@@ -1026,6 +1026,8 @@ KIT_DB = {
 KIT_EVIDENCE = {
     "6a317db378861d28",
     "c90008dbca3b8a29",
+    "d1ca5373b45d3068",
+    "1ee414d2b612b638",
 }
 KIT_PREFLIGHT = {
     "848114ac6dd4a375",

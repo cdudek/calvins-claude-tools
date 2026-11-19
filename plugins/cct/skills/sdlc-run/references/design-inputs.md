@@ -55,12 +55,16 @@ build or browser. The images become reference rows, and every one needs a checke
 ## The design system is frozen at approval
 
 Set `sdlc.json` `designSystem` to `{"package": "<npm name>", "consumers": ["package.json",
-"apps/x/package.json"], "auditAbove": 20}`. `approve` reads the pinned version from each consumer
-and locks it in `lock.json`; `verify_gate.py milestone` blocks when a pin has moved, naming the file.
-Re-approve with the new release, because every screen is re-judged against it, or pin it back.
+"apps/x/package.json"], "auditAbove": 20}`. `approve` reads the declared version and the version the
+lockfile installed (`package-lock.json`, `pnpm-lock.yaml` or `yarn.lock`, beside the consumer or in a
+parent folder) from each consumer and locks the package and all consumers in `lock.json`;
+`verify_gate.py milestone` blocks when the package, a pin, an installed version or the list of
+consumers has moved, naming the file. Re-approve with the new release, because every screen is
+re-judged against it, or pin it back.
 
-A change with more than `auditAbove` screens also needs `design-system-audit.md` before approval: a
-table of screen group, design-system part, status `have` or `gap`. Any `gap` means one
+A change with more than `auditAbove` approved screens (notes, loose images and the pages of a bundle
+all count) also needs `design-system-audit.md` before approval: a table of screen group,
+design-system part, status `have` or `gap`; every row must say one of the two. Any `gap` means one
 design-system release that closes them all comes first, so the design system does not move while
 the screens are built.
 

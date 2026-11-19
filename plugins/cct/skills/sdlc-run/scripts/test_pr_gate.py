@@ -629,7 +629,7 @@ def _push(repo: Path) -> int:
 
 
 @pytest.mark.parametrize(
-    "name", ["facts.md", "done.json", "lock.json", "marks.json", "asks/shot.png"]
+    "name", ["facts.md", "done.json", "lock.json", "marks.json", "asks/shot.png", "screens/home.json"]
 )
 def test_a_locked_input_or_evidence_edited_after_the_gate_voids_the_pass_F6(
     repo: Path, name: str
@@ -639,6 +639,16 @@ def test_a_locked_input_or_evidence_edited_after_the_gate_voids_the_pass_F6(
     _commit(repo, f"changes/{ID}/milestone.md", "gate line\n")  # a close record rides along
     assert _push(repo) == 0
     _commit(repo, f"changes/{ID}/{name}", "easier\n")
+    assert _push(repo) == 2
+
+
+def test_deleting_a_screen_record_after_the_gate_voids_the_pass(repo: Path) -> None:
+    _commit(repo, f"changes/{ID}/screens/home.json", "{}\n")
+    _pass(repo)
+    _commit(repo, f"changes/{ID}/milestone.md", "gate line\n")
+    assert _push(repo) == 0
+    _git(repo, "rm", "-q", f"changes/{ID}/screens/home.json")
+    _git(repo, "commit", "-qm", "drop the record")
     assert _push(repo) == 2
 
 
