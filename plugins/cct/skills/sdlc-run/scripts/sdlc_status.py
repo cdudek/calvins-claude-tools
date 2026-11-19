@@ -4,6 +4,7 @@
     python3 ${CLAUDE_SKILL_DIR}/scripts/sdlc_status.py goal <id> [--milestone <n> | --feature <n> | --project]
     python3 ${CLAUDE_SKILL_DIR}/scripts/sdlc_status.py ids [<id>]
     python3 ${CLAUDE_SKILL_DIR}/scripts/sdlc_status.py readme [<id>]
+    python3 ${CLAUDE_SKILL_DIR}/scripts/sdlc_status.py record <id> project --sha <sha> [--accepted]
 
 Runs from the plugin and is never copied into a repo: run it with the working directory inside the
 adopted repo, which it finds from the cwd. It loads `verify_gate` from the plugin's own
@@ -25,6 +26,10 @@ n from plan.md `## Milestones`) merged or open with auto-merge armed, the last
 `## Feature PRs` row n and a `feature` gate; `--milestone <n>` narrows to one milestone. A `gh`
 that is missing or fails is `OPEN gh-unavailable`, never DONE. When the goal is not DONE a second
 line `Blocking: <what>, because <why>; <who> runs `<step>`.` says the one thing in the way.
+
+`record <id> project --sha <sha> [--accepted]` persists, for a project with no branch, the default-branch
+commit that holds every milestone and the owner's acceptance (state/heads.json); `goal <id> --project`
+is DONE only with both. The gates persist each milestone's head and base there, and a hotfix head.
 
 `ids` prints every id the change defines with its one-line meaning and the file that decides it.
 `readme` writes `<change>/README.md`, the reading map (`references/readability.md`).
@@ -257,23 +262,53 @@ def planned(change: Path) -> int:
     return sum(1 for line in section(plan, "Milestones") if re.match(r"\|\s*M\d+\b", line))
 
 
+def recorded(change: Path) -> dict:
+    """state/heads.json (the old place second): the head and base each gate passed, persisted so a
+    resumed goal or a new session reads what the gate saw, not a name derived from the plan."""
+    data = read_json(spec.state_path(change, "heads.json"))
+    return data if isinstance(data, dict) else {}
+
+
+def milestone_heads(change: Path, decisions: dict, n: int | None, cfg: dict | None = None) -> list[tuple[int, str]]:
+    """(number, head branch) of the milestone PRs that end the goal: the head the gate recorded for
+    it, else <prefix><slug>-<n> (feature-PR delivery: the one branch <prefix><slug>)."""
+    slug = decisions.get("milestone", {}).get("slug") or slug_of(change.name)
+    prefix = ((cfg or {}).get("milestones") or {}).get("branchPrefix", "milestone/")
+    kept = recorded(change).get("milestones")
+    kept = kept if isinstance(kept, dict) else {}
+    feature_prs = (cfg or {}).get("delivery") == "feature-prs"
+    rows = [n] if n else [1] if feature_prs else range(1, max(planned(change), 1) + 1)
+    return [
+        (i, str((kept.get(str(i)) or {}).get("head") or (f"{prefix}{slug}" if feature_prs else f"{prefix}{slug}-{i}")))
+        for i in rows
+    ]
+
+
 def branches(
     change: Path, decisions: dict, scope: str, n: int | None, cfg: dict | None = None
 ) -> list[str]:
-    """Head branches whose PRs end the goal: <prefix><slug>-<n>, or the Feature PRs row's branch."""
+    """Head branches whose PRs end the goal: the recorded or derived milestone heads, or the Feature
+    PRs row's branch (a hotfix with no row: the head its feature gate recorded)."""
     plan = (change / "plan.md").read_text(encoding="utf-8") if (change / "plan.md").exists() else ""
     if scope == "feature":
         for line in section(plan, "Feature PRs"):
             cells = [c.strip().strip("`") for c in line.strip().strip("|").split("|")]
             if len(cells) >= 4 and cells[0] == str(n):
                 return [cells[3]]
-        return []
-    slug = decisions.get("milestone", {}).get("slug") or slug_of(change.name)
-    count = planned(change)
-    prefix = ((cfg or {}).get("milestones") or {}).get("branchPrefix", "milestone/")
-    if (cfg or {}).get("delivery") == "feature-prs":  # one milestone branch, named without a number
-        return [f"{prefix}{slug}"]
-    return [f"{prefix}{slug}-{i}" for i in ([n] if n else range(1, max(count, 1) + 1))]
+        hotfix = recorded(change).get("hotfix")
+        return [str(hotfix["head"])] if n is None and isinstance(hotfix, dict) and hotfix.get("head") else []
+    return [head for _, head in milestone_heads(change, decisions, n, cfg)]
+
+
+def route(change: Path, cfg: dict, scope: str, n: int | None) -> str:
+    """The scope a goal reads: a hotfix change (decisions milestone.kind, sdlc.json hotfix on) that
+    has a recorded hotfix head is a feature gate and a hotfix PR, not milestone 1."""
+    if scope == "milestone" and n is None and cfg.get("hotfix", True):
+        kind = read_json(spec.state_path(change, "decisions.json")).get("milestone", {}).get("kind")
+        hotfix = recorded(change).get("hotfix")
+        if kind == "hotfix" and isinstance(hotfix, dict) and hotfix.get("head"):
+            return "feature"
+    return scope
 
 
 def parent_of(change: Path, cfg: dict, scope: str, head: str = "") -> str:
@@ -286,6 +321,9 @@ def parent_of(change: Path, cfg: dict, scope: str, head: str = "") -> str:
     if scope == "milestone":
         from verify_gate import project_branch
 
+        for row in (recorded(change).get("milestones") or {}).values():  # the base its gate saw
+            if isinstance(row, dict) and row.get("head") == head and row.get("base"):
+                return str(row["base"])
         return project_branch(change, cfg) or default
     if head.startswith("hotfix/") and cfg.get("hotfix", True):
         return default
@@ -345,6 +383,37 @@ def pr_flag(root: Path, cfg: dict, pr: dict, answer: str = "") -> tuple[str, str
     return "published", waiting_on(root, cfg, pr, accepted)
 
 
+def integrated(root: Path, sha: str, default: str) -> bool:
+    """`sha` is in the default branch, local or as origin has it."""
+    return any(contains(root, sha, ref) for ref in (default, f"origin/{default}"))
+
+
+def branchless_project(root: Path, change: Path, cfg: dict) -> tuple[int, str] | None:
+    """A project with no branch is done by the record `record <id> project` wrote: the default-branch
+    commit that holds every milestone, and the owner's acceptance. None when nothing was recorded."""
+    rec = recorded(change).get("project")
+    if not isinstance(rec, dict) or not rec.get("sha"):
+        return None
+    name, sha = f"GOAL {change.name}", str(rec["sha"])
+    if not integrated(root, sha, cfg.get("defaultBranch") or "main"):
+        return 1, f"{name} OPEN project-not-integrated"
+    if not rec.get("accepted"):
+        return 1, f"{name} OPEN project-not-accepted"
+    slug = (read_json(spec.state_path(change, "decisions.json")).get("project") or {}).get("slug", "")
+    return 0, f"{name} DONE project={slug} integrated={sha}"
+
+
+def record_project(root: Path, change: Path, cfg: dict, sha: str, accepted: bool) -> tuple[int, str]:
+    """Persist the integrated default-branch commit of a branchless project and the owner's acceptance."""
+    from verify_gate import record_head
+
+    default = cfg.get("defaultBranch") or "main"
+    if not integrated(root, sha, default):
+        return 1, f"{sha or 'no sha'} is not in {default}: merge every milestone into {default} first"
+    record_head(change, "project", None, {"sha": sha, "accepted": accepted})
+    return 0, f"recorded project sha={sha} accepted={'yes' if accepted else 'no'}"
+
+
 def goal(
     root: Path, change: Path, scope: str = "milestone", n: int | None = None, gh=gh_json
 ) -> tuple[int, str]:
@@ -355,7 +424,10 @@ def goal(
 
     name = f"GOAL {change.name}"
     cfg = config(root) if (root / "sdlc.json").exists() else {}
+    scope = route(change, cfg, scope, n)
     project = project_branch(change, cfg)
+    if scope == "project" and not project and (done := branchless_project(root, change, cfg)):
+        return done
     subject = change.name
     folder = change
     if scope == "project":
@@ -399,9 +471,9 @@ def goal(
             return next((p for p in merged_in if contains(root, gated, p)), "")
 
         if planned(change):
-            for b in branches(change, read_json(spec.state_path(change, "decisions.json")), scope, n, cfg):
-                i = b.rsplit("-", 1)[1]
+            for i, b in milestone_heads(change, read_json(spec.state_path(change, "decisions.json")), n, cfg):
                 receipt = read_json(change / "verify" / f"milestone-{i}.json")
+                i = str(i)
                 tip = git(root, "rev-parse", "--verify", "--quiet", f"{b}^{{commit}}")
                 if receipt:
                     # a receipt counts only for its own milestone and change, never a copy
@@ -578,6 +650,24 @@ BLOCKS = {
         "plan.md has no matching row",
         "you",
         "add the row to plan.md ## Feature PRs",
+    ),
+    "no-project-branch": (
+        "the project has no branch and nothing records it integrated",
+        "no default-branch commit that holds every milestone is recorded",
+        "the agent",
+        "python3 ${{CLAUDE_SKILL_DIR}}/scripts/sdlc_status.py record {id} project --sha <default-branch commit that holds every milestone>",
+    ),
+    "project-not-integrated": (
+        "the recorded project commit is not in the default branch",
+        "the commit was recorded before the milestones merged, or it left the default branch",
+        "the agent",
+        "merge every milestone into the default branch, then `python3 ${{CLAUDE_SKILL_DIR}}/scripts/sdlc_status.py record {id} project --sha <sha>`",
+    ),
+    "project-not-accepted": (
+        "the owner has not accepted the project",
+        "the integrated project is recorded without the owner's acceptance",
+        "you",
+        "accept in the project dialog, then `python3 ${{CLAUDE_SKILL_DIR}}/scripts/sdlc_status.py record {id} project --sha <sha> --accepted`",
     ),
     "no-change-folder": (
         "there is no change folder",
@@ -806,7 +896,7 @@ def write_readme(change: Path, text: str) -> int:
 
 
 def main(argv: list[str]) -> int:
-    if len(argv) < 2 or argv[1] not in ("map", "goal", "ids", "readme", "base"):
+    if len(argv) < 2 or argv[1] not in ("map", "goal", "ids", "readme", "base", "record"):
         print(__doc__)
         return 2
     if argv[1] == "goal":
@@ -820,6 +910,15 @@ def main(argv: list[str]) -> int:
     if not change:
         print("no change folder for this branch: pass its id")
         return 2
+    if argv[1] == "record":  # record <id> project --sha <sha> [--accepted]
+        rest = argv[3:]
+        sha = rest[rest.index("--sha") + 1] if "--sha" in rest and rest.index("--sha") + 1 < len(rest) else ""
+        if rest[:1] != ["project"]:
+            print(__doc__)
+            return 2
+        code, said = record_project(root, change, cfg, sha, "--accepted" in rest)
+        print(said)
+        return code
     if argv[1] == "base":
         sha = security_base(change)
         print(sha or "no recorded start: approve the plan first")

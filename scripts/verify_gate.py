@@ -249,6 +249,22 @@ def project_branch(change: Path, cfg: dict) -> str:
     return ""
 
 
+def record_head(change: Path, key: str, name: str | None, value: dict) -> None:
+    """Persist the head and base a gate passed in state/heads.json, so a resumed goal or a new session
+    reads the same values the gate saw (milestones.<n>, or hotfix). The old place is read first."""
+    try:
+        data = json.loads(read(spec.state_path(change, "heads.json")) or "{}")
+    except ValueError:
+        data = {}
+    if name is None:
+        data[key] = value
+    else:
+        data.setdefault(key, {})[name] = value
+    path = change / "state" / "heads.json"
+    path.parent.mkdir(exist_ok=True)
+    path.write_text(json.dumps(data, indent=2) + "\n", encoding="utf-8")
+
+
 def parent_tips(change: Path, cfg: dict) -> list[tuple[str, str]]:
     """(branch, sha) on origin of every branch a milestone must contain: the default branch,
     and project/<slug> too when the change's project has a branch. A branch origin lacks
@@ -1072,6 +1088,12 @@ def run(
         # `sdlc_status.py goal` reads, so a deleted merged branch does not undo a finished milestone
         if scope == "milestone" and number:
             (out_dir / f"milestone-{number}.json").write_text(text, encoding="utf-8")
+        if line.startswith("VERIFY PASS") and scope in ("milestone", "feature"):
+            branch, default = sh("git", "symbolic-ref", "--short", "-q", "HEAD"), cfg.get("defaultBranch") or "main"
+            if scope == "milestone" and number:
+                record_head(change, "milestones", str(number), {"head": branch, "base": project_branch(change, cfg) or default, "sha": report["sha"]})
+            elif scope == "feature" and branch.startswith("hotfix/") and cfg.get("hotfix", True):
+                record_head(change, "hotfix", None, {"head": branch, "base": default, "sha": report["sha"]})
         rows = "\n".join(
             f"| {c['name']} | {c['status']} | {c['seconds']} |" for c in report["checks"]
         )

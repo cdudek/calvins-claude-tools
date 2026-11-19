@@ -310,6 +310,30 @@
         "done"
       ]
     },
+    "no-project-branch": {
+      "kind": "blocked",
+      "actor": "agent",
+      "command": "python3 ${CLAUDE_SKILL_DIR}/scripts/sdlc_status.py record {id} project --sha <sha>",
+      "to": [
+        "project-not-accepted"
+      ]
+    },
+    "project-not-integrated": {
+      "kind": "blocked",
+      "actor": "agent",
+      "command": "merge every milestone into the default branch, then record the project again",
+      "to": [
+        "project-not-accepted"
+      ]
+    },
+    "project-not-accepted": {
+      "kind": "blocked",
+      "actor": "owner",
+      "command": "accept in the project dialog, then record the project with --accepted",
+      "to": [
+        "done"
+      ]
+    },
     "done": {
       "kind": "terminal",
       "actor": "",
