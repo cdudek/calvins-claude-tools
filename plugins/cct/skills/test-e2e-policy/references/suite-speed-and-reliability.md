@@ -53,7 +53,8 @@ section 6 requires. Failure classification belongs in
 ## F. Treat machine load as a test input
 
 Run one e2e suite at a time on a shared machine, behind a machine-wide lock that covers
-every worktree and runner. Before starting, require both the 1- and 5-minute load averages
+every worktree and runner (in an sdlc-run repo that lock is its heavy-job queue,
+`scripts/heavy.py`, so never add a second one). Before starting, require both the 1- and 5-minute load averages
 to be below a documented threshold calibrated for that machine. Record load and worker
 count with the result. Other work can double durations and turn passes into timeouts;
 adding workers on an already loaded machine makes this worse.

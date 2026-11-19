@@ -192,11 +192,11 @@ Skipped for size `none` and for `sdlc.json` `ux: off`, with one printed line.
      recommended answer; each answer goes into the facts at once. Fill the rest with defaults
      under `## Assumptions`; at most 3 `[NEEDS CLARIFICATION]` markers; leftovers under
      `## Deferred` (`references/quality-passes.md`).
-  5. A reviewer in a fresh context writes `checklist.md`: items that test how the facts are
+  5. `python3 scripts/verify_gate.py lint <id>` over intent, facts and plan, **on the draft, before
+     the checklist reviewer is dispatched**: a pure file check is cheaper than a reviewer pass.
+  6. A reviewer in a fresh context writes `checklist.md`: items that test how the facts are
      written (Gap, Ambiguity, Conflict, Assumption), never the behaviour. The agent answers each
      in the facts, and the reviewer ticks it.
-  6. `python3 scripts/verify_gate.py lint <id>` over intent, facts and plan, **on the draft, before
-     the checklist reviewer is dispatched**: a pure file check is cheaper than a reviewer pass.
 - **Gate:** none; `chain-gate.sh` refuses `facts.md` before the UX plan is done or skipped.
 
 ## Stage 4 — Tech plan and the one gate
@@ -275,15 +275,18 @@ a change small enough for one milestone has one.
    tests for its facts (`cct:test-e2e-coverage-run`, tagged `@F<n>`;
    bugs: `test-behavior-writer`, then `review-fix-implementer`), build in the plan's folders, commit,
    set the row in `milestone.md` to `done <sha>`, start the next feature at once. **Run touched tests and required pre-commit checks between features**; do not
-   repeat the full suite while diagnosing one failure. Before pushing, run the full suite once.
+   repeat the full suite while diagnosing one failure. The full suite runs once, inside
+   `verify_gate.py milestone` on the final head (Stage 6); no other step runs it.
 3. Features that edit different files may build in parallel (Wall clock below): the supervisor
    commits its records, then dispatches each builder with a `Base: <milestone head sha>` line,
    and merges the builders' branches into the milestone branch locally, one at a time. Commits
    need Conventional Commit subjects: a merge commit keeps them, and the release reads them.
 4. When every feature of the milestone is `done`, the supervisor hands the milestone's local
    pipeline to **one `cct:sdlc-feature-builder` subagent with `Mode: close`** and the head it runs on
-   (unit tests, the full E2E suite, the one fix round, `verify_gate.py milestone`; it spawns no
-   agents of its own). Nothing merges into the milestone while it runs: the gate fails
+   (the one fix round with targeted tests, then `verify_gate.py milestone`, which owns the full unit
+   and E2E suites; it spawns no agents of its own). It runs the gate as a heavy job:
+   `python3 scripts/heavy.py run -- python3 scripts/verify_gate.py milestone <id>`
+   ([heavy work](heavy-work.md)). Nothing merges into the milestone while it runs: the gate fails
    `check=moved` if the head changes. The supervisor dispatches
    the Stage 6 reviews and the validation in parallel, writes the findings the subagent fixes, and
    goes on building the next milestone wherever that does not build on this one. Only a
@@ -309,14 +312,16 @@ a change small enough for one milestone has one.
      `review-fix-implementer`.
   3. Build in the plan's folders. A file elsewhere is `scope-growth`: stop and ask.
   4. `cct:test-e2e-policy` on the feature tags locally, in the feature's own worktree and E2E
-     slot, in the foreground (see Wall clock below); `test-flake-fix` for an inconsistent test.
+     slot, through `python3 scripts/heavy.py run -- <command>` (see Wall clock below);
+     `test-flake-fix` for an inconsistent test.
   5. `python3 scripts/verify_gate.py feature <id>`, once per feature at the end, never after a
      task group; between edits run only the test files the change touched, since the gate is
      the final full check. On `FAIL`, use the targeted failure loop in [local-first](local-first.md), then rerun the full gate once: passed checks on an
      unchanged tree are cached, and the third failed run blocks with `reason=attempts`. On `BLOCKED`: one
      `AskUserQuestion` naming the reason in plain words, two or three ways forward, your pick
      first as `(Recommended)` with why.
-  6. `cct:git-pr-run --base milestone/<slug>` (hotfix: the default branch), auto-merge not
+  6. Lint the proposed body first (`python3 scripts/verify_gate.py lint <id> --pr-body <file>`),
+     then `cct:git-pr-run --base milestone/<slug>` (hotfix: the default branch), auto-merge not
      yet armed. The branch and title carry the feature's sub-issue key, never the change's key.
   7. UX check on the feature's own screens: `cct:ux-assessment-run <pr>`, run from the feature's
      worktree and E2E slot. Capture every changed screen and control open.
@@ -345,7 +350,8 @@ a change small enough for one milestone has one.
      does not run on it, and no human is asked to approve it. The workflow skips itself on the
      base ref (`references/tiers.md`). The code is reviewed once, locally, at the milestone
      close.
-  9. On merge: the feature's row in `milestone.md` → `merged`; the next feature starts.
+  9. On merge: the feature's row in `milestone.md` → `merged`; a row that waited on this one's
+     code starts now. Independent rows started at step 8, not here.
 - **Failure modes:** an edit outside `/goal` (refused), a protected-path edit (refused), a test
   edited to pass.
 
@@ -385,7 +391,7 @@ while a dependency PR's CI ran. Four rules, for every stack.
   the PR in the background (`gh pr checks <n> --watch` as a background command, or `Monitor`),
   and start the next independent row at once. The supervisor watches, not the builder; a
   builder returns when it has pushed. A red check interrupts: dispatch a builder to the PR's
-  branch, then go back. Independent rows build in parallel builders, at most 4 (Wall clock).
+  branch, then go back. Independent rows build in parallel builders, at most 4, inside about 6 helpers (Wall clock).
 - **Agents run what they touched.** A builder runs only the tests or specs its change touched
   (the command per stack: `../../test-e2e-policy/references/suite-speed-and-reliability.md`
   section K, column "Touched tests"). The full suite runs once on the final head before each push; the required GitHub checks are the merge gate, see [local-first](local-first.md).
@@ -413,7 +419,17 @@ disappear.
   `sdlc.json` `builderModel` and `builderEffort` (default `sonnet`, `high`; the agent's own
   frontmatter says the same, so the default changes nothing), or to the pair the plan's
   Approach names for this change. A subagent's result comes back as a file path
-  plus a summary of at most about 2k tokens. At most 4 builders run at once.
+  plus a summary of at most about 2k tokens. At most 4 builders run at once, inside about 6 helpers
+  in all (builders plus the reviewers, validators and fix parts out at the same moment); heavy
+  slots are counted separately ([heavy work](heavy-work.md)).
+- **Dispatch names the workspace.** Every builder prompt (and every Codex brief) starts with four
+  lines: `Repo: <git remote url, no credentials>`, `Worktree: <absolute path>`,
+  `Change: <change id>`, `Base: <milestone head sha>`. The builder checks them before any edit or
+  install and stops, reporting, when `git rev-parse --show-toplevel` is not the Worktree, when
+  `git rev-parse --absolute-git-dir` equals `--git-common-dir` (it is in the main working folder),
+  or when the change folder is not there. A branch name never selects the change. Planned
+  prohibited files (protected paths, lockfiles, locked tests) go into the brief too, and the
+  post-run check stays.
 - **Codex builders (`sdlc.json` `builders: "codex"`).** The same rows go to the Codex CLI
   instead of an agent, one run per worktree, through the kit's `scripts/codex-build.sh`
   (`${CLAUDE_PLUGIN_ROOT}/skills/sdlc-run/scripts/`). Per row: run the stack's install in the
@@ -431,8 +447,9 @@ disappear.
   for any builder. `blocked` or `failed` (exit 4) carries the blockers: answer in the brief and
   re-dispatch. To cancel, kill the process group in `run.json` first; the lock in the worktree's
   git dir refuses a second run while one lives. Loopback stays open with the network off
-  (checked 2026-11-02), so a Codex builder runs its touched E2E specs in its slot like any
-  builder. The milestone close keeps its one `cct:sdlc-feature-builder`, which then runs checks and gate
+  (checked 2026-11-02), but its `.git` is read-only, so it cannot take a heavy slot: a Codex
+  builder runs light checks only, and the supervisor runs its touched E2E specs, builds and captures
+  through `heavy.py run` on the worker branch before merging it ([heavy work](heavy-work.md)). The milestone close keeps its one `cct:sdlc-feature-builder`, which then runs checks and gate
   only: Claude checks, Codex fix parts, Claude checks and gate again.
 - **A builder gets a context pack, not whole files.** The supervisor puts three things in the
   prompt (or in the brief file for Codex): the feature's facts verbatim with their tags, the
@@ -441,19 +458,24 @@ disappear.
   Data-model and contract constraints are quoted, not summarised. The builder opens `plan.md`
   or `facts.md` only for a gap the pack names.
 - **Isolate each worktree's E2E resources.** Give its run an app port, stub port, database and
-  logs, derived from the worktree path. A repo that hard-codes a port or database name gets
-  one env var per value first. Schedule runs under the lock and load policy in
-  `../../test-e2e-policy/references/suite-speed-and-reliability.md` section F.
-- **Builders never wait on background work.** E2E and long gates run in the foreground with a
-  long tool timeout. A builder that parks on its own background job stalls the supervisor and
-  the next builder.
+  logs. Ports come from the heavy slot (`SDLC_APP_PORT`, `SDLC_STUB_PORT`), never from the
+  worktree path; the database is a private copy from `db.py test`. A repo that hard-codes a port or
+  database name gets one env var per value first. The machine-wide lock and load policy of
+  `../../test-e2e-policy/references/suite-speed-and-reliability.md` section F is this queue.
+- **Heavy work goes through the queue.** Builds, app servers, browser tests, captures and the full
+  suite run as `python3 scripts/heavy.py run -- <command>`; everything else runs without a slot
+  ([heavy work](heavy-work.md)). A builder whose heavy job would queue for long submits it
+  (`heavy.py submit`) and returns its report with the job id; the supervisor wakes the next step on
+  the result. A builder never parks on a queue while light work is waiting.
 - **Fit and width assertions keep slack.** CI's Linux fonts render wider than a Mac. A test that
   asserts text fits its box requires text ≤ 0.9 × the box, or a measured wrap, so a pass on a Mac
   is a pass on CI. Before the milestone PR, where a container runtime exists, run the fit specs
   once in the Playwright Linux image.
-- **The milestone review does not wait for the last feature.** Start the Stage 6 review on the
-  merged features while the last one builds, and review the last one's diff when it lands. Start
-  the full E2E run at the same time as the review, not after it.
+- **The milestone review does not wait for the last feature.** Start the read-only Stage 6 review
+  on the merged features while the last one builds, and review the last one's diff when it lands.
+  The full E2E suite is not started early: an early result cannot certify the final tree, and a
+  standalone run does not fill the gate's cache. `verify_gate.py milestone` runs it once on the
+  final head. Early on, run only the cheap checks and the targeted specs.
 - **The fix round runs in parallel parts.** Split the findings by the files they touch, give each
   part its own builder and worktree, and run the parts at once. Don't hold the fix round for an
   E2E result: dispatch the review's findings at once and add an E2E failure to the part that
@@ -479,8 +501,8 @@ person's own browser session. Never use Claude in Chrome or any tool driving tha
    change gets, since 3.7.0 nothing reviews in CI),
    `cct:ux-responsive-audit` (the `responsiveTier` matrix, nothing overflows; reflow at
    320 × 640, WCAG 1.4.10 as written, never a 320 × 256 window), the states of
-   every changed page, `cct:ux-accessibility-audit`, the full E2E suite once, ×3 only for
-   changed and flaky specs. Use the committed `e2e/flaky-specs.txt` list and the selection
+   every changed page, `cct:ux-accessibility-audit`, the full E2E suite once (inside the gate, step 5),
+   ×3 only for changed and flaky specs. Use the committed `e2e/flaky-specs.txt` list and the selection
    and line-format rules in `../../test-e2e-policy/references/suite-speed-and-reliability.md`
    section G. Send inconsistent results to `test-flake-fix`. Also run `cct:ux-assessment-run` only
    when the change adds a screen,
@@ -489,7 +511,12 @@ person's own browser session. Never use Claude in Chrome or any tool driving tha
    stories and facts. `cct:review-security-run` runs only on the goal's last milestone, on the whole
    goal diff (`git diff origin/<defaultBranch>...milestone/<slug>-<last>`), and only when auth, money or
    consent is touched anywhere in it; in a project it waits for Stage 6p. Never on earlier milestones.
-   The review starts while the last feature builds, and the full E2E starts with it, not after.
+   The read-only review starts while the last feature builds; the full E2E does not (the gate owns it).
+   **Offline checks first, before any browser or suite starts:** `python3 scripts/preflight.py`
+   (tools, sign-in, Docker), `python3 scripts/verify_gate.py lint <id>`,
+   `python3 scripts/marks.py check <id>` (shape: files and rows exist), the shape of `validation.md`
+   and `findings.md`, and `python3 scripts/evidence.py stale <dir> --catalog <file>` for screens whose
+   text changed. A missing tool, input or evidence file fails in seconds here, not after a browser run.
    Require the shared visual pass from each UX run: open every image, including responsive
    and state captures, and validate each issue against the repo's documents with the same
    three verdicts as Stage 5. Include late feature captures before the final check.

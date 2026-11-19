@@ -9,8 +9,10 @@ Each entry: title · status · date · tags, then when to read it. Newest first 
 - [The tracker acts on the owner's press; cleanup is a skill the owner triggers](2026-11-14-adr-tracker-acts-on-owner-press.md) · accepted · 2026-11-14 · agent-tracker, safety, cleanup
   Read when: before you change what it decided (agent-tracker, safety, cleanup)
 
-## design (1)
+## design (2)
 
+- [Heavy-job queue and fail-fast: what the core stream wires in](heavy-integration.md) · active · 2026-11-19 · sdlc-run, heavy, integration
+  Read when: when you wire the gate, the hooks or the status code to the heavy-job queue
 - [Agent tracker: one view of every repo, worktree, session and task](agent-tracker.md) · active · 2026-11-13 · agent-tracker, mod, claude-code
   Read when: when your change touches it (agent-tracker, mod, claude-code)
 
