@@ -3,6 +3,7 @@
 # becomes session context, so Claude passes it on instead of silently skipping the gate.
 # Never fails a session. docs/sdlc.md has the install; sdlc.json names the command.
 set -uo pipefail
+export PYTHONDONTWRITEBYTECODE=1 # a hook must not leave __pycache__ in a clean checkout
 . "$(dirname "$0")/sdlc-config.sh"
 
 missing=()

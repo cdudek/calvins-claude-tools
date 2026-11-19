@@ -30,6 +30,7 @@
 # only when the checked-out branch has a change folder: no folder, no opinion. Bash wrapper,
 # Python engine.
 set -uo pipefail
+export PYTHONDONTWRITEBYTECODE=1 # a hook must not leave __pycache__ in a clean checkout
 . "$(dirname "$0")/sdlc-config.sh"
 : "${SDLC_PY:=python3}" # an older sdlc-config.sh (one-file upgrade) does not set it
 

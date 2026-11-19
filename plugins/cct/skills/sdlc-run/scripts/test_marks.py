@@ -382,7 +382,7 @@ def test_bundle_needs_rendering_until_images_exist_and_stays_pinned(repo: Path) 
     assert (
         result.returncode == 1 and "bundle:asks/2026-11-01-export: needs rendering" in result.stdout
     )
-    write(change(repo) / "asks/2026-11-01-export-render/home.png")
+    write(change(repo) / "asks/2026-11-01-export-render/index--desktop@2x.png")
     run(repo, "init")
     data = rows(repo)
     for row in data:
@@ -458,7 +458,7 @@ def test_render_folder_must_cover_every_bundle_screen(repo: Path) -> None:
     write(folder / "about.html", "<html>about</html>")
     write(change(repo) / "asks/export-render/index.png")
     render_row(repo, "asks/export-render")
-    assert "1 image for 2 screens" in run(repo, "check").stdout
+    assert "rendered has no image for screen: about" in run(repo, "check").stdout
 
 
 def test_bundle_without_index_html_is_found_through_visual_source(repo: Path) -> None:
@@ -471,3 +471,93 @@ def test_bundle_without_index_html_is_found_through_visual_source(repo: Path) ->
     assert run(repo, "init").returncode == 0
     row = {r["id"]: r for r in rows(repo)}["bundle:asks/react-export"]
     assert row["kind"] == "bundle" and len(row["hash"]) == 64
+
+
+def test_render_folder_needs_an_image_for_each_screen_by_name_F11(repo: Path) -> None:
+    """render.sh names a shot <screen>--<viewport>@2x.png: two viewports of one screen are one
+    screen rendered, not two."""
+    folder = bundle(repo)
+    write(folder / "about.html", "<html>about</html>")
+    render = change(repo) / "asks/export-render"
+    write(render / "index--desktop@2x.png")
+    write(render / "index--mobile@2x.png")  # two images, but about has none
+    render_row(repo, "asks/export-render")
+    out = run(repo, "check").stdout
+    assert "rendered has no image for screen: about\n" in out
+    write(render / "about--desktop@2x.png")
+    out = run(repo, "check").stdout
+    assert "no image for screen" not in out
+
+
+def test_a_directory_named_like_an_image_is_not_a_render_F11(repo: Path) -> None:
+    folder = bundle(repo)
+    (change(repo) / "asks/export-render/index.png").mkdir(parents=True)
+    render_row(repo, "asks/export-render")
+    assert "rendered has no image for screen: index" in run(repo, "check").stdout
+    assert folder.exists()
+
+
+def test_a_passing_legacy_ledger_survives_the_new_inventory_F8(repo: Path) -> None:
+    """The ledger of a milestone in flight, passing under the old inventory: it had a row for a
+    generated mockup and one for an image inside what is now a recognised bundle."""
+    resolved(repo)
+    root = change(repo)
+    folder = bundle(repo)
+    write(folder / "assets/hero.png")
+    write(root / "spec/prototype/home.png")
+    legacy = rows(repo) + [
+        {
+            "id": "ref:spec/prototype/home.png",
+            "kind": "reference",
+            "image": "spec/prototype/home.png",
+            "expected": "Home matches.",
+            "shot": "verify/shots/fresh.png",
+            "status": "match",
+        },
+        {
+            "id": "ref:asks/2026-11-01-export/assets/hero.png",
+            "kind": "reference",
+            "image": "asks/2026-11-01-export/assets/hero.png",
+            "decision": "docs/designs/choice.md",
+            "expected": "Hero matches.",
+            "shot": "verify/shots/fresh.png",
+            "status": "match",
+        },
+    ]
+    save(repo, legacy)
+    write(repo / "docs/designs/choice.md")
+    assert "orphan row" in run(repo, "check").stdout  # the failure the migration removes
+    init = run(repo, "init")
+    assert init.returncode == 0 and "orphans=0" in init.stdout, init.stdout
+    data = json.loads((root / "marks.json").read_text())
+    assert [r for r in data["retired"]] == [legacy[-2]]  # the evidence is kept whole
+    bundle_row = next(r for r in data["rows"] if r["kind"] == "bundle")
+    assert bundle_row["folded"] == [legacy[-1]]  # with its owner decision
+    assert not any(r["id"].startswith("ref:spec/prototype") for r in data["rows"])
+    write(root / "asks/2026-11-01-export-render/index--desktop@2x.png")
+    for row in data["rows"]:
+        if row["kind"] == "bundle":
+            row["rendered"] = "asks/2026-11-01-export-render"
+        elif row["id"].startswith("ref:asks/2026-11-01-export-render"):
+            row.update(expected="Home matches.", shot="verify/shots/fresh.png", status="match")
+    (root / "marks.json").write_text(json.dumps(data))
+    run(repo, "init")  # the rendered image becomes a reference row
+    data = json.loads((root / "marks.json").read_text())
+    for row in data["rows"]:
+        if row["id"].startswith("ref:asks/2026-11-01-export-render"):
+            row.update(expected="Home matches.", shot="verify/shots/fresh.png", status="match")
+    (root / "marks.json").write_text(json.dumps(data))
+    final = run(repo, "check")
+    assert final.returncode == 0, final.stdout
+    run(repo, "init")
+    again = (root / "marks.json").read_bytes()
+    run(repo, "init")
+    assert (root / "marks.json").read_bytes() == again  # migrating twice changes nothing
+
+
+def test_marks_py_still_exports_what_an_older_gate_imports_F3() -> None:
+    """The other upgrade order: marks.py replaced, verify_gate.py not (it imports both names)."""
+    spec = __import__("importlib.util").util.spec_from_file_location("marks_new", SCRIPT)
+    mod = __import__("importlib.util").util.module_from_spec(spec)
+    spec.loader.exec_module(mod)
+    assert callable(mod.bundles) and callable(mod.sessions)

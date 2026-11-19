@@ -18,6 +18,7 @@
 # path that is about to run `verify` for seconds anyway.
 set -uo pipefail
 set -f # verifyDirty globs go to git as patterns, never expanded against cwd
+export PYTHONDONTWRITEBYTECODE=1 # a hook must not leave __pycache__ in a clean checkout
 . "$(dirname "$0")/sdlc-config.sh"
 : "${SDLC_PY:=python3}" # an older sdlc-config.sh (one-file upgrade) does not set it
 

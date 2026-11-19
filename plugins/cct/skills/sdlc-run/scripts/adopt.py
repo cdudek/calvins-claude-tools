@@ -857,7 +857,13 @@ def finish_upgrade() -> str:
                 f"review: `{w}` is a layout migration or removal that --upgrade does not apply; run `adopt` to apply it"
             )
     out = []
-    for rel in REPLACE:
+    # verify_gate.py and marks.py are one pair: either one alone from another kit version breaks
+    # the gate's imports, so replacing one replaces the other when it differs too
+    pair = {"scripts/verify_gate.py": "scripts/marks.py", "scripts/marks.py": "scripts/verify_gate.py"}
+    wanted = list(dict.fromkeys(r for rel in REPLACE for r in (rel, pair.get(rel, rel))))
+    for rel in wanted:
+        if rel not in pending and rel not in REPLACE:
+            continue  # the partner is already the kit's copy
         if rel not in pending:
             manual.append(
                 f"--replace {rel}: nothing to replace (it is the kit's copy already, or not a file adopt owns)"

@@ -9,6 +9,7 @@
 # the docs path and the rules as NUL-separated fields. The matching stays `grep -E`, because the
 # rules are POSIX ERE (`[[:space:]]`), which Python's `re` does not read.
 set -uo pipefail
+export PYTHONDONTWRITEBYTECODE=1 # a hook must not leave __pycache__ in a clean checkout
 . "$(dirname "$0")/sdlc-config.sh"
 : "${SDLC_PY:=python3}" # an older sdlc-config.sh (one-file upgrade) does not set it
 

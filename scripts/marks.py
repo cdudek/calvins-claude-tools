@@ -7,9 +7,13 @@ table a Markdown report. Written by `sdlc-run adopt`; edit the kit, not this cop
 A design export bundle (a folder under asks/ with an index.html, or the folder decisions.json
 names as visualSource.path) is one row, kind bundle, with the hash of every file in it. It is
 never edited: a changed hash fails the check. Its row says "needs rendering" until `rendered`
-names a separate folder under asks/ holding at least one image per screen; those images are then
-inventoried as reference rows like any other. Generated mockups (spec/prototype) are advisory
-and never rows.
+names a separate folder under asks/ holding at least one image per screen, matched by name
+(`<screen>.png`, `<screen>--desktop@2x.png`); those images are then inventoried as reference rows
+like any other. Generated mockups (spec/prototype) are advisory and never rows.
+
+`init` migrates a ledger written before these rules: a `ref:spec/prototype/...` row moves to
+`retired` (advisory now; the whole row is kept), and a `ref:` row for an image inside a bundle is
+folded into the bundle row's `folded` list with its owner decisions. Neither is an orphan.
 
 marks.json holds {"rows": [...]}. Source paths and shots are change-relative; decision
 paths are repo-relative. IDs use the session folder relative to asks, or ref:<image path>.
@@ -178,23 +182,48 @@ def extra(source: dict) -> dict:
     return BUNDLE_FILLED if source["kind"] == "bundle" else FILLED
 
 
+def migrate(rows: list[dict], retired: list[dict], bundles_: dict[str, dict]) -> list[dict]:
+    """Rows of the two categories earlier versions inventoried and this one does not: generated
+    mockups retire as advisory, images inside a bundle fold into its row. Evidence stays."""
+    kept = []
+    for row in rows:
+        image = row["id"][4:] if row["id"].startswith("ref:") else None
+        owner = next((b for p, b in bundles_.items() if image and image.startswith(p + "/")), None)
+        if image is not None and image.startswith("spec/prototype/"):
+            retired.append(row)
+            print(f"{row['id']}: retired as advisory; the row is kept under retired")
+        elif owner is not None:
+            owner.setdefault("folded", []).append(row)
+            print(f"{row['id']}: folded into {owner['id']}")
+        else:
+            kept.append(row)
+    return kept
+
+
 def init(change: Path, sources: list[dict]) -> int:
     path = change / "marks.json"
     rows = read_rows(path) if path.exists() else []
+    retired = json.loads(path.read_text(encoding="utf-8")).get("retired", []) if path.exists() else []
     by_id = {row["id"]: row for row in rows}
+    wanted = {row["id"] for row in sources}
     added = 0
     for source in sources:
         if source["id"] not in by_id:
             rows.append(source | extra(source))
+            by_id[source["id"]] = rows[-1]
             added += 1
         else:
             for key, value in (source | extra(source)).items():
                 by_id[source["id"]].setdefault(key, value)
-    source_ids = {row["id"] for row in sources}
-    orphans = [row["id"] for row in rows if row["id"] not in source_ids]
+    stale = [r for r in rows if r["id"] not in wanted]
+    folds = {s["path"]: by_id[s["id"]] for s in sources if s["kind"] == "bundle"}
+    orphaned = migrate(stale, retired, folds)
+    rows = [row for row in rows if row["id"] in wanted or row in orphaned]
+    orphans = [row["id"] for row in rows if row["id"] not in wanted]
     for orphan in orphans:
         print(f"{orphan}: orphan retained; source is missing")
-    content = json.dumps({"rows": rows}, ensure_ascii=False, indent=2) + "\n"
+    data = {"rows": rows, **({"retired": retired} if retired else {})}
+    content = json.dumps(data, ensure_ascii=False, indent=2) + "\n"
     if not path.exists() or path.read_text(encoding="utf-8") != content:
         path.write_text(content, encoding="utf-8")
     print(f"MARKS INIT {change.name} added={added} rows={len(rows)} orphans={len(orphans)}")
@@ -237,12 +266,22 @@ def check(change: Path, sources: list[dict], repo: Path, designs: Path, globs: l
             ):
                 problem("rendered must be separate from the bundle (render a copy, not the bundle)")
             elif source:
-                screens = [
-                    h for h in (change / source["path"]).rglob("*.html") if h.name != "gallery.html"
+                screens = sorted(
+                    {h.stem for h in (change / source["path"]).rglob("*.html") if h.name != "gallery.html"}
+                )
+                images = [
+                    p.stem
+                    for p in (change / rendered).rglob("*")
+                    if p.is_file() and p.suffix.lower() in IMAGES
                 ]
-                images = [p for p in (change / rendered).rglob("*") if p.suffix.lower() in IMAGES]
-                if len(images) < max(len(screens), 1):
-                    problem(f"rendered holds {len(images)} image for {len(screens)} screens")
+                # render.sh names a shot <screen>--<viewport>@2x.png: one image per screen, by name
+                lacking = [
+                    name
+                    for name in screens
+                    if not any(re.fullmatch(re.escape(name) + r"(--.*|@.*)?", img) for img in images)
+                ]
+                if lacking or not images:
+                    problem(f"rendered has no image for screen: {', '.join(lacking) or 'any'}")
             continue
         statuses = NOTE_STATUSES if kind == "note" else REFERENCE_STATUSES
         if kind not in ("note", "reference"):
