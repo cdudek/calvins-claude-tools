@@ -611,17 +611,62 @@ def test_a_locked_input_or_evidence_edited_after_the_gate_voids_the_pass_F6(
     assert _push(repo) == 2
 
 
+def _archive(repo: Path, edit: str = "") -> Path:
+    """The Stage 7 archive commit: move the change, and `edit` rewrites facts.md while moving."""
+    (repo / "changes" / "archive" / "2026" / "2026-11").mkdir(parents=True)
+    _git(repo, "mv", f"changes/{ID}", f"changes/archive/2026/2026-11/{ID}")
+    facts = repo / "changes" / "archive" / "2026" / "2026-11" / ID / "facts.md"
+    if edit:
+        facts.write_text(edit)
+    _git(repo, "add", ".")
+    _git(repo, "commit", "-qm", "archive")
+    return facts
+
+
 def test_an_archive_move_keeps_the_pass_only_while_the_locked_files_keep_their_content_F6(
     repo: Path,
 ) -> None:
     _commit(repo, f"changes/{ID}/facts.md", "F1 the first\n")
     _pass(repo)
-    (repo / "changes" / "archive" / "2026" / "2026-11").mkdir(parents=True)
-    _git(repo, "mv", f"changes/{ID}", f"changes/archive/2026/2026-11/{ID}")
-    _git(repo, "commit", "-qm", "archive")
+    _archive(repo)
     assert _push(repo) == 0
     (repo / "changes" / "archive" / "2026" / "2026-11" / ID / "facts.md").write_text("F1 easier\n")
     _git(repo, "commit", "-qam", "edit while archiving")
+    assert _push(repo) == 2
+
+
+FACTS = "---\nstatus: approved\n---\nF1 the first\n"
+
+
+def test_the_archive_commit_may_add_archived_at_to_facts_and_nothing_else_H1(repo: Path) -> None:
+    _commit(repo, f"changes/{ID}/facts.md", FACTS)
+    _pass(repo)
+    _archive(repo, FACTS.replace("status: approved\n", "status: approved\narchived_at: 2026-11-19\n"))
+    assert _push(repo) == 0
+
+
+@pytest.mark.parametrize(
+    "edited",
+    [
+        "---\nstatus: approved\narchived_at: 2026-11-19\n---\nF1 easier\n",  # a fact moved too
+        "---\nstatus: draft\narchived_at: 2026-11-19\n---\nF1 the first\n",  # frontmatter moved too
+        "---\nstatus: approved\narchived_at: a\narchived_at: b\n---\nF1 the first\n",  # twice
+        "---\nstatus: approved\n---\nF1 the first\narchived_at: 2026-11-19\n",  # in the body
+    ],
+)
+def test_the_archive_commit_may_not_edit_facts_beyond_archived_at_H1(
+    repo: Path, edited: str
+) -> None:
+    _commit(repo, f"changes/{ID}/facts.md", FACTS)
+    _pass(repo)
+    _archive(repo, edited)
+    assert _push(repo) == 2
+
+
+def test_archived_at_added_to_a_live_facts_file_voids_the_pass_H1(repo: Path) -> None:
+    _commit(repo, f"changes/{ID}/facts.md", FACTS)
+    _pass(repo)
+    _commit(repo, f"changes/{ID}/facts.md", FACTS.replace("---\nF1", "archived_at: 1\n---\nF1"))
     assert _push(repo) == 2
 
 
@@ -713,3 +758,54 @@ def test_a_hook_run_leaves_a_clean_checkout_clean_F13(repo: Path) -> None:
     )  # fmt: skip
     assert r.returncode == 2
     assert _git(repo, "status", "--porcelain") == ""
+
+
+# 3.20.2: round-2 review (H4, F7, F1).
+def _receipt(repo: Path, n: int, sha: str | None = None) -> None:
+    sha = sha or _git(repo, "rev-parse", "HEAD")
+    common = Path(_git(repo, "rev-parse", "--path-format=absolute", "--git-common-dir"))
+    out = common / "sdlc" / "receipts" / ID
+    out.mkdir(parents=True, exist_ok=True)
+    receipt = {
+        "scope": "milestone", "milestone": n, "change": ID, "sha": sha,
+        "result": f"VERIFY PASS milestone {ID} {sha}",
+    }  # fmt: skip
+    (out / f"milestone-{n}.json").write_text(json.dumps(receipt))
+
+
+def test_the_receipt_of_milestone_1_never_admits_milestone_2_H4(repo: Path) -> None:
+    _receipt(repo, 1)
+    assert _push(repo) == 0
+    _git(repo, "checkout", "-qb", "milestone/trial-2")  # cut at milestone 1's tip
+    r = _run(repo, "git push -u origin milestone/trial-2")
+    assert r.returncode == 2 and "without a passing milestone gate" in r.stderr
+    assert _run(repo, "gh pr create --base master --title t --body x").returncode == 2
+    _receipt(repo, 2)
+    assert _run(repo, "git push -u origin milestone/trial-2").returncode == 0
+
+
+def test_local_merge_reads_the_owner_at_the_gated_sha_not_the_tip_F7(repo: Path) -> None:
+    _local(repo)
+    _pass(repo)  # gated while the change belonged to project/trial
+    decisions = repo / "changes" / ID / "decisions.json"
+    data = json.loads(decisions.read_text())
+    decisions.write_text(json.dumps({**data, "project": {"slug": "other", "branch": True}}))
+    _git(repo, "commit", "-qam", "the change moves to another project")  # a record: the pass holds
+    _git(repo, "branch", "project/other", "project/trial")
+    _git(repo, "checkout", "-q", "project/other")
+    r = _run(repo, "git merge --no-ff milestone/trial-1")
+    assert r.returncode == 2 and "belongs to project/trial" in r.stderr
+
+
+def test_a_pr_create_naming_the_same_repo_is_still_gated_F1(repo: Path) -> None:
+    _local(repo, None)
+    _git(repo, "remote", "add", "gh", "git@github.com:acme/trial.git")
+    cmd = "gh pr create --repo {} --base project/trial --title t --body x"
+    for name in ("acme/trial", "github.com/acme/trial", "https://github.com/acme/trial.git"):
+        r = _run(repo, cmd.format(name))
+        assert r.returncode == 2 and "without a passing milestone gate" in r.stderr, name
+    assert _run(repo, cmd.format("acme/elsewhere")).returncode == 0  # another repo: not ours to read
+    _pass(repo)
+    assert _run(repo, cmd.format("acme/trial")).returncode == 0
+    wrong = "gh pr create --repo acme/trial --base master --title t --body x"
+    assert _run(repo, wrong).returncode == 2
