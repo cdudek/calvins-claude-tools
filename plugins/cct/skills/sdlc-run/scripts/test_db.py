@@ -42,6 +42,7 @@ def _repo(tmp_path: Path, db: dict) -> Path:
 
 def _db(repo: Path, *args: str, env: dict | None = None) -> subprocess.CompletedProcess[str]:
     e = {k: v for k, v in os.environ.items() if not k.startswith("SDLC_")}
+    e["SDLC_DB_ENGINE"] = "docker"  # the printed commands are checked as docker commands
     e.update(env or {})
     return subprocess.run(
         [sys.executable, str(DB), *args], capture_output=True, text=True, cwd=repo, env=e
@@ -131,6 +132,30 @@ def test_dev_config_gaps_are_named(tmp_path: Path) -> None:
     gap = {k: v for k, v in DEV.items() if k != "create"}
     res = _db(_repo(tmp_path, {"dev": gap}), "dev", "ensure", "--print")
     assert res.returncode == 2 and "db.dev.create" in res.stderr
+
+
+os.environ["SDLC_DB_ENGINE"] = "docker"  # the fakes below speak docker; engine choice is tested on its own
+
+
+def _cli(monkeypatch, cfg: dict, env: str | None, have: set[str]) -> str:
+    monkeypatch.delenv("SDLC_DB_ENGINE", raising=False)
+    if env:
+        monkeypatch.setenv("SDLC_DB_ENGINE", env)
+    monkeypatch.setattr(mod.shutil, "which", lambda n: f"/bin/{n}" if n in have else None)
+    return mod.TestDb({"container": "c", "port": 1, "template": "t", **cfg}, mod.Runner(True)).cli
+
+
+def test_podman_when_docker_is_missing(monkeypatch) -> None:
+    assert _cli(monkeypatch, {}, None, {"podman"}) == "podman"
+
+
+def test_docker_wins_when_both_exist(monkeypatch) -> None:
+    assert _cli(monkeypatch, {}, None, {"docker", "podman"}) == "docker"
+
+
+def test_config_and_env_override(monkeypatch) -> None:
+    assert _cli(monkeypatch, {"engine": "podman"}, None, {"docker"}) == "podman"
+    assert _cli(monkeypatch, {}, "podman", {"docker"}) == "podman"
 
 
 # --- the fake docker: a dict of databases, no Docker needed ---------------------------------------
@@ -375,25 +400,25 @@ def test_sdlc_json_is_read_from_the_repo_root_not_the_cwd(tmp_path: Path) -> Non
     assert "CREATE DATABASE sdlc_tmpl_" in out.stdout
 
 
+_ENGINE = shutil.which("docker") and "docker" or shutil.which("podman") and "podman"
+
+
 @pytest.mark.skipif(
-    shutil.which("docker") is None or os.environ.get("SDLC_DB_LIVE") != "1",
-    reason="live database test: set SDLC_DB_LIVE=1 with Docker running",
+    not _ENGINE or os.environ.get("SDLC_DB_LIVE") != "1",
+    reason="live database test: set SDLC_DB_LIVE=1 with Docker or Podman running",
 )
 def test_live_template_copy_is_fast(tmp_path: Path) -> None:
-    ok = subprocess.run(["docker", "info"], capture_output=True).returncode == 0
-    if not ok:
-        pytest.skip("Docker is not running")
+    if subprocess.run([_ENGINE, "info"], capture_output=True).returncode != 0:
+        pytest.skip(f"{_ENGINE} is not running")
     cfg = dict(TEST, container=f"sdlc-test-pg-{os.getpid()}", port=55000 + os.getpid() % 900)
-    cfg["migrate"] = "true"
+    cfg["migrate"], cfg["engine"] = "true", _ENGINE
     repo = _repo(tmp_path, {"test": cfg})
     try:
         assert _db(repo, "test", "prepare").returncode == 0
-        import time
-
         start = time.time()
         made = _db(repo, "test", "create")
         assert made.returncode == 0, made.stderr
-        assert time.time() - start < 2
+        assert time.time() - start < 2, f"a copy took {time.time() - start:.2f}s"
         assert _db(repo, "test", "drop", made.stdout.split()[0]).returncode == 0
     finally:
-        subprocess.run(["docker", "rm", "-f", cfg["container"]], capture_output=True)
+        subprocess.run([_ENGINE, "rm", "-f", cfg["container"]], capture_output=True)

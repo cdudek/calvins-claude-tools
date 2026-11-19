@@ -36,6 +36,7 @@ import json
 import os
 import re
 import shlex
+import shutil
 import subprocess
 import sys
 import time
@@ -144,6 +145,10 @@ class TestDb:
         self.port = int(cfg["port"])
         self.template = valid(cfg["template"])  # the prefix; the template itself is <prefix>_<hash>
         self.user = cfg.get("user", "postgres")
+        # docker or podman: db.test.engine, then SDLC_DB_ENGINE, then whichever is installed
+        self.cli = cfg.get("engine") or os.environ.get("SDLC_DB_ENGINE") or (
+            "podman" if shutil.which("podman") and not shutil.which("docker") else "docker"
+        )
         self.key = re.sub(r"[^A-Za-z0-9_.-]", "_", self.container)
 
     @property
@@ -155,7 +160,7 @@ class TestDb:
 
     def psql(self, sql: str, db: str = "postgres") -> subprocess.CompletedProcess:
         return self.r.run(
-            ["docker", "exec", self.container, "psql", "-U", self.user, "-d", db,
+            [self.cli, "exec", self.container, "psql", "-U", self.user, "-d", db,
              "-v", "ON_ERROR_STOP=1", "-tAc", sql]
         )  # fmt: skip
 
@@ -194,7 +199,7 @@ class TestDb:
         return data
 
     def ready(self) -> bool:
-        return self.r.probe(["docker", "exec", self.container, "pg_isready", "-U", self.user])
+        return self.r.probe([self.cli, "exec", self.container, "pg_isready", "-U", self.user])
 
     def wait_ready(self, tries: int) -> bool:
         for _ in range(tries):
@@ -209,7 +214,7 @@ class TestDb:
         if self.wait_ready(3):  # one failed probe never condemns a container
             return
         state = self.r.run(
-            ["docker", "inspect", "-f", "{{.State.Running}}", self.container], check=False
+            [self.cli, "inspect", "-f", "{{.State.Running}}", self.container], check=False
         )
         exists, running = state.returncode == 0, state.stdout.strip() == "true"
         if exists and running:  # up but still starting, or busy: wait, never remove
@@ -220,9 +225,9 @@ class TestDb:
                 f"run `docker logs {self.container}`"
             )
         if exists:
-            self.r.run(["docker", "rm", "-f", self.container], check=False)
+            self.r.run([self.cli, "rm", "-f", self.container], check=False)
         self.r.run(
-            ["docker", "run", "-d", "--name", self.container,
+            [self.cli, "run", "-d", "--name", self.container,
              "-e", "POSTGRES_HOST_AUTH_METHOD=trust", "-p", f"127.0.0.1:{self.port}:5432",
              self.c.get("image", "postgres:17")]
         )  # fmt: skip

@@ -116,7 +116,7 @@ python3 scripts/db.py test sweep            # drop leaked copies and old templat
 
 `db.test`: `container`, `port`, `template` (a name prefix), `migrate` (a command that reads `DATABASE_URL`),
 `migrations` (globs: their hash names and stamps the template, so a stale template never serves tests),
-optional `image`, `user`. The container listens on 127.0.0.1 with trust auth: a throwaway with no
+optional `image`, `user`, `engine` (`docker` or `podman`; default: `SDLC_DB_ENGINE`, else Docker when installed, else Podman). The container listens on 127.0.0.1 with trust auth: a throwaway with no
 password. Database tests are light and need no slot.
 
 **`dev`**: connects a developer to their own cloud database through the provider's auth proxy with
