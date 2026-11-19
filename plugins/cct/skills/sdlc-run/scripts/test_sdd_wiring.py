@@ -7,6 +7,7 @@ from __future__ import annotations
 
 import json
 import os
+import re
 import subprocess
 import sys
 from pathlib import Path
@@ -211,3 +212,27 @@ def test_the_gate_and_status_read_machine_files_from_state(tmp_path: Path) -> No
     assert last(gate(repo, "feature", ID)) == "VERIFY BLOCKED reason=protected-path"
     out = status(repo, "map", ID).stdout
     assert "stage  5/7" in out  # the lock is found under state/
+
+
+# ------------------------------------------------------------------ CI runs the drift check
+
+
+def _spec_steps(workflow: Path, job: str) -> tuple[dict, list[dict]]:
+    import yaml
+
+    doc = yaml.safe_load(workflow.read_text())
+    return doc, doc["jobs"][job]["steps"]
+
+
+@pytest.mark.parametrize(
+    "path,job",
+    [(SKILL / "templates/ci/github-actions.yml", "spec"), (SKILL.parents[3] / ".github/workflows/ci.yml", "tests")],
+)
+def test_ci_runs_the_spec_check_against_the_base_on_a_full_clone(path: Path, job: str) -> None:
+    doc, steps = _spec_steps(path, job)
+    checkout = next(s for s in steps if str(s.get("uses", "")).startswith("actions/checkout"))
+    assert checkout["with"]["fetch-depth"] == 0
+    run = next(s["run"] for s in steps if "scripts/spec.py check" in str(s.get("run", "")))
+    assert re.search(r"--base \"?origin/", run)
+    if job == "spec":  # the one required status waits for it
+        assert "spec" in doc["jobs"]["check"]["needs"]

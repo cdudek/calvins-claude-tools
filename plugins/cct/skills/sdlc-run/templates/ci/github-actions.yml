@@ -179,6 +179,24 @@ jobs:
           if [ ! -f scripts/preflight.py ]; then echo "::notice::no scripts/preflight.py: run sdlc-run adopt"; exit 0; fi
           python3 scripts/preflight.py --config
 
+  # The living spec: every changed rule has a changed, tagged test, no rule id is reused, no tag names a missing
+  # rule. A repo with no specs folder (and no sdlc.json livingSpecs) passes at once. The base must resolve, so the
+  # clone is full: a shallow one has no origin/<base> and the strict check would always fail.
+  spec:
+    name: Living spec
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+          fetch-depth: 0
+      - env:
+          BASE: ${{ github.base_ref || github.event.repository.default_branch }}
+        run: |
+          if [ ! -f scripts/spec.py ]; then echo "::notice::no scripts/spec.py: run sdlc-run adopt"; exit 0; fi
+          python3 scripts/spec.py check --base "origin/$BASE"
+
   lint:
     name: Lint and types
     needs: [changes, preflight]
@@ -514,7 +532,7 @@ jobs:
   check:
     name: check
     if: always()
-    needs: [changes, preflight, lint, unit, build, e2e, deploy]
+    needs: [changes, preflight, spec, lint, unit, build, e2e, deploy]
     runs-on: ubuntu-latest
     timeout-minutes: 5
     steps:
