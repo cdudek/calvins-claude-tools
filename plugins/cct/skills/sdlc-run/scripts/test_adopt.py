@@ -1975,3 +1975,23 @@ def test_upgrade_reports_the_e2e_gap_and_the_old_review_sentence(tmp_path: Path)
     assert any("no full E2E entry" in m for m in manual), manual
     assert any("REVIEW.md" in m and "review-fix-run" in m and NEW_REVIEW_SENTENCE in m for m in manual), manual
     assert (repo / "REVIEW.md").read_text().count("review-fix-run") == 1  # --upgrade writes nothing
+
+
+def test_a_root_specs_folder_of_living_rules_is_never_moved_into_designs(tmp_path: Path) -> None:
+    repo = _repo(tmp_path, "node")
+    for holds in ("rules/R1.md", "manifest.yaml"):
+        f = repo / "specs" / "billing" / holds
+        f.parent.mkdir(parents=True, exist_ok=True)
+        f.write_text("x\n")
+    env = _env()
+    subprocess.run(["git", "add", "."], cwd=repo, check=True, env=env)
+    subprocess.run(["git", "-c", "user.name=t", "-c", "user.email=t@t", "commit", "-qm", "rules"], cwd=repo, check=True, env=env)
+    _adopt(repo)
+    assert (repo / "specs" / "billing" / "rules" / "R1.md").exists()
+    assert not (repo / "docs" / "designs" / "billing").exists()
+
+
+def test_adopt_installs_spec_py_with_the_gate_scripts(tmp_path: Path) -> None:
+    repo = _repo(tmp_path, "node")
+    _adopt(repo)
+    assert (repo / "scripts" / "spec.py").exists()

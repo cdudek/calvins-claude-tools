@@ -1144,7 +1144,10 @@ def main() -> int:
         written.append(cfg_path)
     changes_dir = cfg.get("changesDir", "changes")
     designs_dir = cfg.get("designsDir", "docs/designs")
+    living = any((ROOT / "specs").glob("*/rules")) or any((ROOT / "specs").glob("*/manifest.yaml"))
     for old, new in ((ROOT / ".changes", ROOT / changes_dir), (ROOT / "specs", ROOT / designs_dir)):
+        if old.name == "specs" and living:  # living specs (rules/, manifest.yaml) are not old design docs
+            continue
         if old.is_dir() and old != new and not new.exists():
             wrote.append(f"{old.relative_to(ROOT)}/ -> {new.relative_to(ROOT)}/ (migrated)")
             if not DRY:
