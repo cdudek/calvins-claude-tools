@@ -6,6 +6,12 @@ number of builds, app servers and browsers a machine can run. This file is the k
 `scripts/heavy.py`, `scripts/db.py`, `scripts/evidence.py`, `scripts/preflight.py` (installed by
 `adopt`, stdlib only, so they run in CI and inside `/goal` where no plugin is installed).
 
+## What is wired in (3.21.0)
+
+- **The gate.** Every check of `verify_gate.py milestone` runs as `heavy.py run --auto`: a heavy check waits for a slot, a light one just runs, and a gate already inside a slot passes straight through. A check's own timeout (`checkTimeout`, per-check `timeout`) still kills its process group. A slot that never frees is `VERIFY BLOCKED reason=env` naming the holder. With `preflight` in `sdlc.json`, the preflight runs before the first heavy command.
+- **The hooks.** `helper-guard.sh` is registered by `adopt`. A feature-PR repo with local milestones is refused with the two ways out, and a `blocked[]` rule with no message still refuses and names who owns `sdlc.json`.
+- **Status.** `sdlc_status.py status` shows who holds or waits for a slot, and a failed stop left in `sdlc-stop-status.json`. It runs the plugin's own `heavy.py`, never a repo copy.
+
 ## Heavy and light
 
 | Heavy: takes a slot | Light: never waits |

@@ -84,7 +84,7 @@ here blocks it.
   test, and a tagged test that is skipped does not count. Only the rules of the milestone's tasks
   move from `planned` to `live`.
 - **7 outcome, no archive.** After the merge: `spec.py outcome write <folder>`, then remove the
-  folder in one records-only close PR (the pass record stays in `.sdlc/receipts/`). Never remove it
+  folder in one records-only close PR (history stays in git and the PR). Never remove it
   before the merge. The measure is read from `.sdlc/outcomes/<id>.json` (`spec.py outcome due`) and
   recorded there, and in the tracker when there is one: a final change with no tracker and no next
   PR still has its route (S3). A miss starts the next change with the measurement as its first ask.
@@ -174,7 +174,7 @@ Worktree lifecycle commands follow the [shared worktree policy](../../../referen
 
 - **Steps:**
   1. Collect sources in order: ticket, conversation, the owner-words file from `docs/ux/setup.md`,
-     then every `sdlc.json` `feedback` file since the last archived change for the same screen.
+     then every `sdlc.json` `feedback` file since the last merged change for the same screen.
      Copy each request verbatim into `intent.md` `## Asks` as `A1`, `A2`, …;
      copy resources into `changes/<id>/asks/<source-date>/` and link them.
   2. Copy each Snapmark export whole into `changes/<id>/asks/<session-date>-snapmark/`:
@@ -425,7 +425,7 @@ while a dependency PR's CI ran. Four rules, for every stack.
   `VERIFY PASS milestone` on it (a records-only commit after the PASS is fine), and inside
   `/goal` any other PR or push. Another repository follows the same rule with its own milestone
   branch. The only exception is the engineer's words in `decisions.json` `prExceptions`. The
-  archive move (Stage 7) is a commit in the last milestone.
+  folder removal (Stage 7) comes after the merge, in its own records-only PR.
 - **A cross-repo dependency builds against a local copy.** When this repo needs another repo's
   unreleased code (a kit fix found by the app), link or pack it locally (`npm pack`, a
   workspace `file:` path that is not committed) and build on. The published version arrives with
@@ -780,7 +780,7 @@ A change folder removed after merge reads `GOAL <id> DONE pr=<n> state=merged fo
    command (Git fallback; a worktree entered by path is never removed by `ExitWorktree`). Move the tracker forward only, never backwards.
 2. After release: read the success measure from PostHog (`cct:posthog-manage` or the insight
    named in `intent.md`) and write it in the tracker at once and under `## Outcome` in the
-   outcome record (`spec.py outcome record`), committed with the next change's PR, never a PR of its own.
+   outcome record (`spec.py outcome record`), committed with the next change's PR; with no later change it is one records-only PR, never a PR of its own for anything else.
 3. A miss starts the next change at 1.3, with the measurement as its first ask.
 4. **Reflection**, before the folder is removed: one short `reflection.md` in the change folder, four
    lines: what surprised us, what the challenge or analyze pass caught (or missed), what we would

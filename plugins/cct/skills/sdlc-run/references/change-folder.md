@@ -83,10 +83,9 @@ rule. Appetite, a security threat model and a plan-proportion check are not buil
 
 There is no archive. After the change reaches the default branch the folder is removed in a
 records-only close PR: `spec.py outcome write <folder>` first copies the success measure to
-`.sdlc/outcomes/<change id>.json`, the pass record stays in `.sdlc/receipts/`, and `git rm -r` takes
-the folder. Never before the merge: the folder is what a red-CI rerun needs. A reference into the
-folder blocks the removal, as it blocked the move (Stage 7 guard). History lives in git, the PR and
-the receipts.
+`.sdlc/outcomes/<change id>.json`, and `git rm -r` takes the folder. Never before the merge: the folder is what a red-CI rerun needs. A reference into the
+folder blocks the removal, as it blocked the move (Stage 7 guard). History lives in git and the merged PR. A pass is read from the gate's report in the
+checkout, so nothing reads a removed folder (pass records are not part of this release).
 
 ## Deadlocks and stuck states this layout closes
 
