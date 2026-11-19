@@ -249,6 +249,8 @@ def proves(repo: Path, changes_dir: str, gated: str, head: str) -> bool:
     before, after = _tree(repo, rel, gated), _tree(repo, rel, head)
     if before is None or after is None:
         return False
+    if before and not after:  # Stage 7: the whole folder removed in the milestone's last commit
+        return True
     for key in {k for k in before.keys() | after.keys() if (before.get(k) or ("",))[0] != (after.get(k) or ("",))[0]}:
         parts = key.split("/")
         if parts[-1] == "facts.md" and key in before and key in after and _only_archived_at(repo, before[key], after[key]):

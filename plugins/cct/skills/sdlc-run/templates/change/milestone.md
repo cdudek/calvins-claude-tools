@@ -21,8 +21,8 @@ own `decisions.json` and add their features below.
 
 ## Features
 
-In build order. `state` is `todo`, `building`, `done <sha>` (one go: a commit on the milestone
-branch), `merged` (feature PRs) or `blocked: <reason>`.
+In build order. `state` is `todo`, `building`, `done <sha>` (a commit on the milestone
+branch) or `blocked: <reason>`.
 
 | # | Change | Feature | PR or commit | State |
 |---|---|---|---|---|
@@ -31,7 +31,7 @@ branch), `merged` (feature PRs) or `blocked: <reason>`.
 
 ## Done
 
-- Every feature above is `done` (one go) or `merged` (feature PRs) on `milestone/<slug>`.
+- Every feature above is `done` on `milestone/<slug>`.
 - `python3 scripts/verify_gate.py milestone {{CHANGE}}` ends `VERIFY PASS milestone`.
 - `findings.md` has no open blocking item after the one fix round.
 - Row 0 ran after the last earlier milestone merged (the gate's `parent-sync` check proves it).

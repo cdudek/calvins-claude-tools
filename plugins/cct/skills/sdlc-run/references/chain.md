@@ -295,7 +295,7 @@ It cannot be disabled in `sdlc.json`, does not change `lock.json`, and fails as 
 | archived (older layout only; no archive since layout 4) | `changes(<id>): archived` | `archived_at` |
 | intent confirmed (milestone process) | `changes(<id>): intent confirmed by <who>` | `intent.md` approved |
 | one gate passed (milestone process) | `changes(<id>): approved by <who>` | facts and plan approved, `lock.json` |
-| feature merged | in the milestone branch | `milestone.md` row → `merged` |
+| feature done | a commit on the milestone branch | `milestone.md` row → `done <sha>` |
 | outcome read | `changes(<id>): outcome` | `milestone.md` `## Outcome` |
 
 ## Linear
@@ -338,8 +338,8 @@ permalinks; local laptop paths are refused.
 | `projects` | skill | `{branchPrefix}`; default `project/`. Only used when `decisions.json` `project.branch` is true (or the project predates 3.7.0 and has no `branch` key); otherwise a project is planning only and its milestones go straight to the default branch |
 | `rules` | skill | optional list of repo paths holding standing rules (code of conduct, `PRODUCT.md`, `DESIGN.md`, an architecture policy). Stages 1 and 4 read them; intent lists the rule IDs that apply, each fact cites the IDs it touches. Absent: the defaults in `references/quality-passes.md`, existing files only. `adopt` never writes it, keeps it on re-adopt and rejects a value that is not a list of paths |
 | `hotfix` | skill | the hotfix lane on or off; default `true` |
-| `delivery` | skill | `one-go` (default): one `/goal` builds every feature as commits on the milestone branch and closes the milestone; `feature-prs`: one PR per feature into the milestone |
-| `goal` | skill | `{runTurns, featureTurns, milestoneTurns, projectTurns}`; default 150, 40, 30 and the milestone cap |
+| `delivery` | skill | `one-go`, the only delivery since 3.24.0: one `/goal` builds every feature as commits on the milestone branch and closes the milestone. `feature-prs` is gone: `adopt --upgrade` prints a MANUAL line for a repo that still sets it |
+| `goal` | skill | `{runTurns, milestoneTurns, projectTurns}`; default 150, 30 and the milestone cap (`featureTurns` is obsolete) |
 | `builders` | skill, adopt | who builds feature rows and fix parts: `claude` (`cct:sdlc-feature-builder` agents, default) or `codex` (`scripts/codex-build.sh` runs the Codex CLI in the worktree, network off, `.git` read-only; the wrapper checks the result and makes the commit). The supervisor, the milestone close and the gates stay Claude either way |
 | `builderModel`, `builderEffort` | skill, adopt | which model builds and how hard: for `claude` the `model` and `effort` of every `cct:sdlc-feature-builder` dispatch (a Claude Code alias `sonnet`, `opus`, `haiku` or a model id; default `sonnet`, `high`), for `codex` the `--model` and `--reasoning` of `codex-build.sh` (default `gpt-5.5`, `high`). Effort is one of `low`, `medium`, `high`, `xhigh`. A plan's Approach may name another pair for that one change |
 | `languages` | skill, checks | the languages the product ships; default `["en"]` |

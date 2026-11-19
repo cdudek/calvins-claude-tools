@@ -3,8 +3,8 @@
 Visual review rounds do not converge when "any defect fails" has no size, spacing is judged by
 eye, and the design system is still growing. This file is the rule set. The layers and
 tolerances live in `../../ux-build-validate/references/build.md` (Measurements) and the shared
-`visual-pass.md` (section 5); this file adds the round rules, the design-system audit and the
-capture rule.
+`visual-pass.md` (section 5); this file adds the round rules and the design-system audit; the capture
+rules are in [visual work](visual-work.md).
 
 ## Six layers, written tolerances
 
@@ -91,56 +91,7 @@ A screen that is done in the app and waits only on a missing design-system part 
 It is not a failure and needs no accepted words. When the release ships, the row is checked again
 and set to `match` or `differs`.
 
-## Capture: one owner, one manifest, one pinned commit
+## Capture, per-screen records and the owner sheet
 
-One assessment (`cct:ux-assessment-run`) owns every capture of a milestone, in
-`verify/shots/manifest.json`, keyed by build SHA, reference revision, screen, state, width and
-zoom. Responsive, accessibility, build QA and the reviewer read those captures; none takes its
-own. After a fix, only the affected cells are captured again, from the new build. A stale `qa.md`
-is invalidated by its inputs (its recorded build against HEAD, the reference bytes), never reused
-because the file exists. `marks.py check` enforces it: a capture or `qa.md` whose build differs
-from HEAD in any file outside the changes folder, a changed reference, a shot missing from the
-manifest, or one cell captured twice is a problem.
-
-For a change approved from 3.21.0 (its `lock.json` has `"manifest": "required"`; older changes keep
-the lenient behaviour) the rules are strict: the manifest must exist when the change holds visual
-work; each `build` is a full 40-character commit sha, never `HEAD` or a branch; each entry carries
-the sha256 `reference` digest; each entry lists the `sources` (repo files or folders) of its screen
-and the manifest lists `shared` dependencies, so a fix to screen A leaves screen B's cell valid and a
-change to a shared file invalidates every cell; and `<spec>/qa.md` must exist and record its own
-`Build: <sha>` line, which is checked against HEAD (the manifest's `qa` metadata is ignored). Fail closed: an unreadable `lock.json` counts as strict; a change with visual rows needs `qa.md` even without a spec folder or a manifest; every declared `sources` and `shared` path must be a plain repo path (no absolute path, `.` or `..`) tracked at HEAD. `lock.json` is protected after approval by `chain-gate.sh`.
-
-Capture all visual evidence from one build per milestone version, from a worktree pinned to one
-commit. Never capture from the live milestone branch: merges moved the branch in the middle of a
-capture and ruined a batch. Builders change code; the capture happens once, after they are done.
-**Capture once; capture again only a screen marked unstable or whose first judgement fails.** A
-screen is not captured twice up front. If two captures of a screen exist they must agree: a screen
-whose two captures differ is unstable and is fixed or ruled before it is judged.
-
-## One record per screen (changes approved from 3.23.0)
-
-A change whose `lock.json` has `"screens": "required"` keeps one file per screen,
-`<change>/verify/screens/<screen-id>.json`, so parallel helpers never write the same file. It holds
-the status (`match`, `fixed`, `open`, `waits-on-design-system`, `ruled-out`, `accepted-by-owner`),
-the frozen defect list (id, severity, layer, text, the build of the first review), `rounds` (fix
-rounds used in the current design-system release), `designSystem` (the release it is judged
-against), and the latest capture: the build sha and the sha256 of each capture file. The files are
-written with `scripts/evidence.py` (`screen`, `review`, `round`, `status`, `sheet`), never by hand.
-`marks.json` and the shared manifest stay for older changes; for these the per-screen files are the
-source of truth and any combined ledger is generated from them.
-
-`marks.py check` fails: a defect added after the first review that is not High and not marked as a
-regression; more than two rounds in one design-system release (send the side-by-side list to the
-owner); a screen whose two captures differ; a capture whose bytes no longer match its recorded
-sha256. A new design-system release resets `rounds`.
-
-`sdlc_status.py` prints `screens: 62 of 271 done · 40 wait on you · 50 wait on the design system ·
-119 open` (done is match, fixed, ruled-out and accepted-by-owner; each screen counts in one state).
-
-## One owner sheet, answered once per group
-
-Screens still open after their two rounds go to the owner as one sheet, not one dialog per
-finding: `evidence.py sheet <change>` writes `<change>/verify/owner-sheet.md`, one row per screen
-(reference image, build capture, open defects, a blank "accept / send back" column), grouped by the
-screen's `group`. The owner answers it once per group; the answers become `accepted-by-owner` or
-send the screen back for a new round.
+Moved to [visual work](visual-work.md): the capture rules (one owner, one manifest, one pinned commit, the
+strict manifest of 3.21.0), the one record per screen of 3.23.0 and the owner sheet.

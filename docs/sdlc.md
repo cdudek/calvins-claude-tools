@@ -13,7 +13,7 @@ changes/<date>-<KEY>-<slug>/
   intent.md             ## Asks, job stories, success measure
   spec/                 the UX plan: brief · ia · interaction · screens · conformance · validation
   facts.md              EARS facts citing asks, screens and test tags
-  plan.md               where things go · feature PRs · Done · Goal handover
+  plan.md               where things go · features · Done · Goal handover
   done.json, lock.json  the criteria as data, and their hash at approval
   milestone.md          features and states · outcome
 docs/designs/
@@ -40,10 +40,10 @@ That installs plannotator and its plugin. Linear: in Claude Code run `/mcp` and 
 | 2 UX plan | the cct UX skills: design, sitemap, conformance, words; one validation pass. Skipped for size `none` or `ux: off`. | none |
 | 3 Facts | Facts cite asks, screens and the E2E tag that proves them; plain-language lint. | none |
 | 4 Tech plan | Where things go, milestones and their features, Done, one goal for all of it. | one gate for all three, then `verify_gate.py approve` |
-| 5 Build | One go (default): one `/goal` builds every milestone in order; per feature, tests, build, commit, and nothing else runs between features. Questions go to `questions.md` and never block; answers become asks of the next milestone. (`delivery: feature-prs`: a PR per feature.) | none |
+| 5 Build | One go (default): one `/goal` builds every milestone in order; per feature, tests, build, commit, and nothing else runs between features. Questions go to `questions.md` and never block; answers become asks of the next milestone. | none |
 | 6 Milestone | Checks on the milestone diff; the full E2E suite once, ×3 only for changed and flaky specs (see Build and test); validation of every fact and ask against the built app (`validation.md`), one findings list, one fix round, `verify_gate.py milestone`, one PR that releases it. | only when a Critical or High would be deferred |
 | 6p Project | Only for work spanning several milestones: rebase `project/<slug>`, re-check the whole project diff, one PR to the default branch. | engineer accepts |
-| 7 Outcome | After the merge, record the outcome and remove the folder in one records-only PR (no archive); read the success measure after release. | engineer reads it |
+| 7 Outcome | In the last milestone, record the outcome and remove the folder in the PR's last commit (no archive, no second PR); read the success measure after release. | engineer reads it |
 
 ### Branches
 
@@ -61,8 +61,8 @@ none.
 | --- | --- |
 | `checks.feature[]`, `checks.milestone[]` | what `scripts/verify_gate.py` runs, cheapest first by recorded seconds (`"after": ["<check name>"]` keeps a check behind the one it needs, such as codegen before the typecheck; `"serial": true` pins a check in place; an approval made before 3.18.0 keeps the declared order; `--keep-going` runs past a failure) |
 | `milestones`, `hotfix` | milestone branch prefix and rebase rule; the hotfix lane |
-| `delivery` | `one-go` (default) or `feature-prs` |
-| `goal` | turn caps: `runTurns` for the one-go goal, `featureTurns` and `milestoneTurns` for feature PRs, `projectTurns` for a project close (default: the milestone cap) |
+| `delivery` | `one-go`, the only delivery: features are commits on the milestone branch, one milestone PR |
+| `goal` | turn caps: `runTurns` for the goal, `projectTurns` for a project close (default: `milestoneTurns`, 30) |
 | `builders` | `claude` (default) or `codex`: who builds feature rows and fix parts. With `codex`, the kit's `codex-build.sh` runs the Codex CLI in the feature worktree with the network off and rejects a run that touched a protected path; Claude still supervises, closes the milestone and runs the gates |
 | `builderModel`, `builderEffort` | which model builds and how hard (default `sonnet`, `high`): the `model` and `effort` of every builder agent, or the Codex model and reasoning when `builders` is `codex`. Set `opus` for a repo whose changes are hard; a plan's Approach may override both for one change |
 | `languages`, `responsiveTier`, `ux` | what the product ships, the device matrix tier, UX on or off |
@@ -119,11 +119,11 @@ that changes the behaviour. The PR's git diff is the delta; there is no archive 
 with the next free id, `check` makes a changed rule need a changed test, and `renumber` fixes two
 PRs that took the same number.
 
-## After the merge
+## Closing the change
 
-There is no archive. After the PR into the default branch merges, `spec.py outcome write
-changes/<id>` copies the success measure to `.sdlc/outcomes/<id>.json`, then
-`git rm -r changes/<id>` goes in one records-only PR (never before the merge, and only when
+There is no archive and no second PR. In the change's last milestone, after the gate passed,
+`spec.py outcome write changes/<id>` copies the success measure to `.sdlc/outcomes/<id>.json`, then
+`git rm -r changes/<id>` is the last commit of the milestone PR (only when
 `git grep -F "changes/<id>/"` finds no reader). After release the measure is recorded with
 `spec.py outcome record`; `spec.py outcome due` lists the ones still waiting. History stays in git
 and the merged PR.

@@ -458,14 +458,16 @@ def test_adopt_says_when_the_removed_coowner_step_was_in_use_F20(tmp_path: Path)
     assert not [m for m in _sections(_adopt(repo).stdout)["MANUAL"] if "SDLC_COOWNER" in m]
 
 
-def test_adopt_refuses_feature_prs_with_local_milestones_F12(tmp_path: Path) -> None:
+def test_upgrade_tells_a_feature_prs_repo_it_now_delivers_one_milestone_pr(tmp_path: Path) -> None:
     repo = _repo(tmp_path, "node")
     _adopt(repo)
     cfg = json.loads((repo / "sdlc.json").read_text())
     cfg.update({"delivery": "feature-prs", "milestones": {"merge": "local"}})
     (repo / "sdlc.json").write_text(json.dumps(cfg))
-    res = _adopt(repo)
-    assert res.returncode != 0 and 'delivery "one-go"' in res.stderr + res.stdout
+    res = _adopt(repo, "--upgrade")
+    assert res.returncode == 0, res.stderr
+    notes = [m for m in _sections(res.stdout)["MANUAL"] if "feature-prs" in m]
+    assert len(notes) == 1 and "one milestone PR" in notes[0]
 
 
 def test_change_templates_name_the_local_route_F12() -> None:
@@ -1826,7 +1828,7 @@ def test_adopt_migrates_the_old_review_fix_run_sentence_and_keeps_the_custom_rul
 
 def test_the_plan_template_does_not_tell_the_closer_to_run_unit_and_e2e_beside_the_gate() -> None:
     plan = " ".join((SCRIPTS.parent / "templates/change/plan.md").read_text().split())
-    branch = plan.split("**One milestone**", 1)[1].split("**Feature PRs**", 1)[0]
+    branch = plan.split("**One milestone**", 1)[1].split("## Goal handover", 1)[0]
     assert "unit, E2E (changed and flaky specs ×3) and" not in branch
     assert "only runner of the full suite" in branch
 

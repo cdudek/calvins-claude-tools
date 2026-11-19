@@ -345,17 +345,12 @@ def test_a_rule_with_no_message_and_no_codeowners_still_names_a_route(bash_repo:
 # ---------------------------------------------------------------- D4: the hook says why
 
 
-def test_feature_prs_with_local_milestones_is_refused_with_the_two_choices(pr_repo: Path) -> None:
+def test_a_leftover_feature_prs_setting_gets_no_special_message_from_the_hook(pr_repo: Path) -> None:
     cfg = json.loads((pr_repo / "sdlc.json").read_text())
     cfg.update(delivery="feature-prs", milestones={"merge": "local"})
     (pr_repo / "sdlc.json").write_text(json.dumps(cfg))
-    for command in (
-        "git push -u origin milestone/trial-1",
-        "gh pr create --base milestone/trial-1 --head feat/x --title t --body b",
-    ):
-        r = pr_run(pr_repo, command)
-        assert r.returncode == 2, command
-        assert 'milestones.merge "pr"' in r.stderr and 'delivery "one-go"' in r.stderr, r.stderr
+    r = pr_run(pr_repo, "gh pr create --base milestone/trial-1 --head feat/x --title t --body b")
+    assert r.returncode == 2 and "feature PRs" not in r.stderr, r.stderr
 
 
 # ---------------------------------------------------------------- F3: authorization is bound and spent
@@ -559,17 +554,12 @@ def _done(text: str) -> str:
     return text.split("## Done")[1].split("## How to run")[0]
 
 
-def test_done_and_turn_caps_follow_the_delivery_mode() -> None:
-    one = _render(ONE_GO="1", RUN_TURNS="150", FEATURE_TURNS="40", MILESTONE_TURNS="30", PROJECT_TURNS="30")
+def test_done_and_turn_caps_are_the_one_milestone_pr_delivery() -> None:
+    one = _render(RUN_TURNS="150", PROJECT_TURNS="30")
     assert "verify_gate.py milestone 2026-11-19-x` ends `VERIFY PASS` once" in _done(one)
     assert "verify_gate.py feature" not in _done(one)  # a feature is a commit, not a gate
-    assert "Stop after 150 turns" in _done(one) and "40 turns" not in _done(one)
-    feature = _render(FEATURE_PRS="1", RUN_TURNS="150", FEATURE_TURNS="40", MILESTONE_TURNS="30", PROJECT_TURNS="30")
-    assert "verify_gate.py feature 2026-11-19-x` ends `VERIFY PASS` for every feature" in _done(feature)
-    assert "Stop after 40 turns per feature and 30 for the milestone close" in _done(feature)
-    assert "150" not in _done(feature)
-    for text in (one, feature):
-        assert "{{" not in text and "}}" not in text.replace("${{", ""), text[:200]
+    assert "Stop after 150 turns" in _done(one) and "per feature" not in one
+    assert "{{" not in one and "}}" not in one.replace("${{", ""), one[:200]
 
 
 def test_adopt_writes_a_first_plan_for_the_one_go_mode_without_leftover_markers(tmp_path: Path) -> None:

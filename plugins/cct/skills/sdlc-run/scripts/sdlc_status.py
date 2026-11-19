@@ -23,8 +23,10 @@ gate=<sha>`, exit 3 `GOAL <id> BLOCKED reason=<code>` (the last gate said VERIFY
 n from plan.md `## Milestones`) merged or open with auto-merge armed, the last
 `VERIFY PASS milestone <id> <sha>` in verify/report.json equal to the head sha of the last PR
 (`gh`, never local HEAD: records written after a merge move HEAD), and no open record
-(validation.md, findings.md; `verify_gate.milestone_blockers`). `--feature <n>` reads the plan's
-`## Feature PRs` row n and a `feature` gate; `--milestone <n>` narrows to one milestone. A `gh`
+(validation.md, findings.md; `verify_gate.milestone_blockers`). `--feature <n>` (the hotfix lane) reads the plan's
+`## Feature PRs` row n and a `feature` gate; `--milestone <n>` narrows to one milestone. Stage 7 removes
+the change folder in the last milestone PR's last commit, so a goal with no folder is DONE once that PR is
+merged or armed (`folder=removed`). A `gh`
 that is missing or fails is `OPEN gh-unavailable`, never DONE. When the goal is not DONE a second
 line `Blocking: <what>, because <why>; <who> runs `<step>`.` says the one thing in the way.
 
@@ -279,17 +281,13 @@ def recorded(change: Path) -> dict:
 
 def milestone_heads(change: Path, decisions: dict, n: int | None, cfg: dict | None = None) -> list[tuple[int, str]]:
     """(number, head branch) of the milestone PRs that end the goal: the head the gate recorded for
-    it, else <prefix><slug>-<n> (feature-PR delivery: the one branch <prefix><slug>)."""
+    it, else <prefix><slug>-<n>."""
     slug = decisions.get("milestone", {}).get("slug") or slug_of(change.name)
     prefix = ((cfg or {}).get("milestones") or {}).get("branchPrefix", "milestone/")
     kept = recorded(change).get("milestones")
     kept = kept if isinstance(kept, dict) else {}
-    feature_prs = (cfg or {}).get("delivery") == "feature-prs"
-    rows = [n] if n else [1] if feature_prs else range(1, max(planned(change), 1) + 1)
-    return [
-        (i, str((kept.get(str(i)) or {}).get("head") or (f"{prefix}{slug}" if feature_prs else f"{prefix}{slug}-{i}")))
-        for i in rows
-    ]
+    rows = [n] if n else range(1, max(planned(change), 1) + 1)
+    return [(i, str((kept.get(str(i)) or {}).get("head") or f"{prefix}{slug}-{i}")) for i in rows]
 
 
 def branches(
@@ -484,7 +482,7 @@ def goal_state(
     if scope == "project":
         subject = (read_json(spec.state_path(change, "decisions.json")).get("project") or {}).get("slug", "")
         folder = project_record(subject, root) if project else change
-    number = (n or (1 if cfg.get("delivery") == "feature-prs" else max(planned(change), 1))) if scope == "milestone" else None
+    number = (n or max(planned(change), 1)) if scope == "milestone" else None
     if scope == "feature":
         feature = branches(change, read_json(spec.state_path(change, "decisions.json")), scope, n, cfg)
         key = pass_key(scope, feature[0]) if feature else None
@@ -618,8 +616,9 @@ def planned_in_history(root: Path, cfg: dict, change_id: str) -> int:
 
 
 def goal_removed(root: Path, change_id: str, scope: str, n: int | None, gh=gh_json) -> tuple[int, str] | None:
-    """The folder is gone: the owner's rule removes it after merge, so that is the normal end state.
-    Merged PRs from the change's milestone branches are the proof; None when they do not prove it.
+    """The folder is gone: Stage 7 removes it in the milestone PR's last commit, so that is the normal
+    end state. PRs from the change's milestone branches, merged or open with auto-merge armed, are the
+    proof; None when they do not prove it, and OPEN when the PR waits on something (not armed, held).
     `--milestone n` needs milestone n merged. The whole goal needs every planned milestone merged
     (the plan is read from history), or, with no plan left, a merged PR into the default branch: a
     milestone merged into a project branch counts only with the project's own PR merged there."""
@@ -628,15 +627,29 @@ def goal_removed(root: Path, change_id: str, scope: str, n: int | None, gh=gh_js
         return None
     prefix, slug = (cfg.get("milestones") or {}).get("branchPrefix", "milestone/"), slug_of(change_id)
     default = cfg.get("defaultBranch") or "main"
-    found = gh(root, "pr", "list", "--state", "merged", "--limit", "200", "--json", "number,headRefName,baseRefName,state")
-    if not found:  # gh failed or nothing merged: no proof, so the id is still unknown
+    fields = "number,headRefName,baseRefName,state,mergedAt,autoMergeRequest,labels,statusCheckRollup"
+    found = gh(root, "pr", "list", "--state", "all", "--limit", "200", "--json", fields)
+    if not found:  # gh failed or no PR: no proof, so the id is still unknown
         return None
-    merged = [  # the one rule of the gate and the hook: <prefix><slug>-<n> is n, <prefix><slug> is 1
+    mine = [  # the one rule of the gate and the hook: <prefix><slug>-<n> is n, <prefix><slug> is 1
         (num, p) for p in found
         if (num := milestone_of(str(p.get("headRefName", "")), prefix, slug)) and (n is None or num == n)
     ]
+    merged, waiting = [], []
+    for num, p in mine:
+        if p.get("state") == "MERGED" or p.get("mergedAt"):
+            merged.append((num, p))
+        elif p.get("state") == "OPEN":
+            from marks import owner_decisions
+
+            answer = owner_decisions(root, change_id).get(f"PR{p['number']}", ("",))[0]
+            phase, flag = pr_flag(root, cfg, p, answer)
+            if phase == "awaiting-ci":
+                merged.append((num, p))
+            else:
+                waiting.append((p["number"], flag or "not-merged-or-armed"))
     if not merged:
-        return None
+        return (1, f"GOAL {change_id} OPEN pr-{waiting[-1][0]}-{waiting[-1][1]}") if waiting else None
     last = merged[-1][1]
     if n is None:
         parents = {str(p.get("baseRefName", "")) for _, p in merged}
@@ -649,7 +662,8 @@ def goal_removed(root: Path, change_id: str, scope: str, n: int | None, gh=gh_js
                 return None
         elif not any(p.get("baseRefName") == default for _, p in merged):
             return None
-    return 0, f"GOAL {change_id} DONE pr={last['number']} state=merged folder=removed"
+    state = "merged" if last.get("state") == "MERGED" or last.get("mergedAt") else "armed"
+    return 0, f"GOAL {change_id} DONE pr={last['number']} state={state} folder=removed"
 
 
 # what is in the way, by the first missing item: (what, why, who acts, the exact step)

@@ -759,19 +759,6 @@ def graph_problems(plan: str) -> list[str]:
     return list(dict.fromkeys(problems))
 
 
-def branch_mode_problems(change: Path, cfg: dict) -> list[str]:
-    """Delivery and merge modes that cannot both be served: feature PRs publish a milestone branch
-    that local milestones, once the change has a project branch, never push (checked at approval,
-    before any branch or goal exists)."""
-    if cfg.get("delivery") == "feature-prs" and merges_locally(cfg) and project_branch(change, cfg):
-        return [
-            'sdlc.json: delivery "feature-prs" needs a remote milestone branch, which milestones.merge '
-            '"local" never pushes for a change with a project branch; choose delivery "one-go" with '
-            'local milestones, or milestones.merge "pr" with feature PRs'
-        ]
-    return []
-
-
 def v4_done(change: Path) -> dict:
     """done.json of a layout-4 change, derived from the spec: one fact per rule the change adds or
     changes (id R<n>, tag @R<n>), with the screens and states its UX table names."""
@@ -860,7 +847,6 @@ def approve(change: Path, cfg: dict) -> int:
     else:
         problems += [f"{name} is missing: approval locks it" for name in ("facts.md", "plan.md") if not (change / name).is_file()]
         problems += graph_problems(read(change / "plan.md"))
-    problems += branch_mode_problems(change, cfg)
     visual = visual_run_required(change, cfg, root())
     if visual:
         problems += audit_problems(change, cfg)
