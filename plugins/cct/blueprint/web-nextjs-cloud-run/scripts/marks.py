@@ -178,17 +178,34 @@ def spec_text(repo: Path, globs: list[str]) -> str:
     return "\n".join(parts)
 
 
+def shot_screen(image: Path) -> str:
+    """The screen a rendered image shows: render.sh puts <screen>--<viewport>@2x.png in a shots/
+    folder beside the screen, so the folder (minus shots/) plus the name before `--` or `@`."""
+    name = re.sub(r"(--.*|@.*)$", "", image.stem)
+    return "/".join([*(part for part in image.parent.parts if part != "shots"), name])
+
+
 def extra(source: dict) -> dict:
     return BUNDLE_FILLED if source["kind"] == "bundle" else FILLED
 
 
-def migrate(rows: list[dict], retired: list[dict], bundles_: dict[str, dict]) -> list[dict]:
+def migrate(
+    rows: list[dict], retired: list[dict], bundles_: dict[str, dict], change: Path
+) -> list[dict]:
     """Rows of the two categories earlier versions inventoried and this one does not: generated
-    mockups retire as advisory, images inside a bundle fold into its row. Evidence stays."""
+    mockups retire as advisory, images inside a bundle fold into its row. Evidence stays. A row
+    folds only for an image that is still on disk: a deleted one stays a (failing) orphan row."""
     kept = []
     for row in rows:
         image = row["id"][4:] if row["id"].startswith("ref:") else None
-        owner = next((b for p, b in bundles_.items() if image and image.startswith(p + "/")), None)
+        owner = next(
+            (
+                b
+                for p, b in bundles_.items()
+                if image and image.startswith(p + "/") and (change / image).is_file()
+            ),
+            None,
+        )
         if image is not None and image.startswith("spec/prototype/"):
             retired.append(row)
             print(f"{row['id']}: retired as advisory; the row is kept under retired")
@@ -217,7 +234,7 @@ def init(change: Path, sources: list[dict]) -> int:
                 by_id[source["id"]].setdefault(key, value)
     stale = [r for r in rows if r["id"] not in wanted]
     folds = {s["path"]: by_id[s["id"]] for s in sources if s["kind"] == "bundle"}
-    orphaned = migrate(stale, retired, folds)
+    orphaned = migrate(stale, retired, folds, change)
     rows = [row for row in rows if row["id"] in wanted or row in orphaned]
     orphans = [row["id"] for row in rows if row["id"] not in wanted]
     for orphan in orphans:
@@ -266,20 +283,20 @@ def check(change: Path, sources: list[dict], repo: Path, designs: Path, globs: l
             ):
                 problem("rendered must be separate from the bundle (render a copy, not the bundle)")
             elif source:
+                # a screen is its path in the bundle without the extension: settings/index is not index
                 screens = sorted(
-                    {h.stem for h in (change / source["path"]).rglob("*.html") if h.name != "gallery.html"}
+                    {
+                        h.relative_to(change / source["path"]).with_suffix("").as_posix()
+                        for h in (change / source["path"]).rglob("*.html")
+                        if h.name != "gallery.html"
+                    }
                 )
-                images = [
-                    p.stem
+                images = {
+                    shot_screen(p.relative_to(change / rendered))
                     for p in (change / rendered).rglob("*")
                     if p.is_file() and p.suffix.lower() in IMAGES
-                ]
-                # render.sh names a shot <screen>--<viewport>@2x.png: one image per screen, by name
-                lacking = [
-                    name
-                    for name in screens
-                    if not any(re.fullmatch(re.escape(name) + r"(--.*|@.*)?", img) for img in images)
-                ]
+                }
+                lacking = [name for name in screens if name not in images]
                 if lacking or not images:
                     problem(f"rendered has no image for screen: {', '.join(lacking) or 'any'}")
             continue

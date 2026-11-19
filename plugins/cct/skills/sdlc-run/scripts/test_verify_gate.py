@@ -728,7 +728,8 @@ def test_milestone_receipt_honours_the_branch_prefix_F5(tmp_path: Path) -> None:
 def test_a_newer_gate_beside_an_older_marks_py_still_approves_audits_and_lints_F3(
     tmp_path: Path,
 ) -> None:
-    """A one-file upgrade: verify_gate.py replaced, marks.py not (it has no `bundles` yet)."""
+    """A one-file upgrade: verify_gate.py replaced, marks.py not (it has no `bundles` yet): approve,
+    lint and audit still run."""
     old = tmp_path / "scripts"
     old.mkdir()
     for f in GATE.parent.glob("*.py"):
@@ -752,7 +753,8 @@ def test_a_newer_gate_beside_an_older_marks_py_still_approves_audits_and_lints_F
         [sys.executable, str(old / "verify_gate.py"), "milestone", ID],
         cwd=repo, capture_output=True, text=True, env=_env(),
     )  # fmt: skip
-    assert _last(r).startswith(f"VERIFY PASS milestone {ID}"), r.stdout + r.stderr
+    # the milestone gate is where a marks.py without `bundles` is refused (H5, below)
+    assert _last(r) == "VERIFY BLOCKED reason=env", r.stdout + r.stderr
 
 
 @pytest.mark.parametrize("merge", [None, "pr"])
@@ -1269,3 +1271,44 @@ def test_the_gate_and_every_hook_keep_a_clean_tree_clean_F13(tmp_path: Path) -> 
         if hook.name not in ("sdlc-config.sh", "plan-gate.sh"):
             assert "PYTHONDONTWRITEBYTECODE=1" in hook.read_text(), hook.name
     assert "PYTHONDONTWRITEBYTECODE=1" in (hooks / "sdlc-config.sh").read_text()
+
+
+def test_a_kept_legacy_marks_py_blocks_the_milestone_gate_and_names_the_upgrade_H5(
+    tmp_path: Path,
+) -> None:
+    """A marks.py with no `bundles` cannot inventory design bundles: that is a blocked gate, never
+    an empty inventory that lets an unrendered bundle pass."""
+    old = tmp_path / "scripts"
+    old.mkdir()
+    for f in GATE.parent.glob("*.py"):
+        (old / f.name).write_text(f.read_text())
+    (old / "marks.py").write_text("def sessions(change):\n    return []\n")
+    repo = _repo(tmp_path, ["true"])
+    cfg = json.loads((repo / "sdlc.json").read_text())
+    (repo / "sdlc.json").write_text(json.dumps({**cfg, "checks": {"milestone": ["true"]}}))
+    bundle = repo / "changes" / ID / "asks" / "export"
+    bundle.mkdir(parents=True)
+    (bundle / "index.html").write_text("<html>screen</html>")
+    _git(repo, "add", ".")
+    _git(repo, "commit", "-qm", "a bundle nobody rendered")
+    gate = [sys.executable, str(old / "verify_gate.py")]
+    approve = subprocess.run([*gate, "approve", ID], cwd=repo, capture_output=True, text=True, env=_env())
+    assert approve.returncode == 0, approve.stdout
+    _git(repo, "add", ".")
+    _git(repo, "commit", "-qm", "approved")
+    r = subprocess.run([*gate, "milestone", ID], cwd=repo, capture_output=True, text=True, env=_env())
+    assert r.returncode == 3 and _last(r) == "VERIFY BLOCKED reason=env", r.stdout
+    assert "scripts/marks.py" in r.stdout and "adopt --upgrade --replace scripts/marks.py" in r.stdout
+
+
+def test_an_open_question_inside_a_gherkin_block_still_blocks_approval_M5(tmp_path: Path) -> None:
+    repo = _repo(tmp_path, ["true"])
+    facts = repo / "changes" / ID / "facts.md"
+    scenario = "```gherkin\nScenario: list\n  Then the list shows {}\n```\n"
+    facts.write_text("---\nstatus: approved\n---\n\n" + scenario.format("[NEEDS CLARIFICATION: how many rows?]"))
+    r = _gate(repo, "lint", ID)
+    assert r.returncode == 1 and "facts.md: an open [NEEDS CLARIFICATION]" in r.stdout
+    assert _gate(repo, "approve", ID).returncode == 1
+    # the template's own instruction text is not a question
+    facts.write_text("---\nstatus: approved\n---\n\n" + scenario.format("[NEEDS CLARIFICATION: <question>]"))
+    assert _gate(repo, "lint", ID).returncode == 0

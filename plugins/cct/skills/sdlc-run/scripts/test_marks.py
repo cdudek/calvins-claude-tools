@@ -561,3 +561,57 @@ def test_marks_py_still_exports_what_an_older_gate_imports_F3() -> None:
     mod = __import__("importlib.util").util.module_from_spec(spec)
     spec.loader.exec_module(mod)
     assert callable(mod.bundles) and callable(mod.sessions)
+
+
+# 3.20.2: round-2 review (findings 11 and M4).
+def test_a_nested_screen_needs_its_own_image_not_another_screens_F11(repo: Path) -> None:
+    """settings/index.html and index.html are two screens; one `index` shot is only the second."""
+    folder = bundle(repo)
+    write(folder / "settings/index.html", "<html>settings</html>")
+    render = change(repo) / "asks/export-render"
+    write(render / "index--desktop@2x.png")
+    render_row(repo, "asks/export-render")
+    out = run(repo, "check").stdout
+    assert "rendered has no image for screen: settings/index\n" in out
+    write(render / "settings/index--desktop@2x.png")
+    assert "no image for screen" not in run(repo, "check").stdout
+    # render.sh puts a screen's shots in a shots/ folder beside it
+    (render / "settings/index--desktop@2x.png").unlink()
+    write(render / "settings/shots/index--desktop@2x.png")
+    assert "no image for screen" not in run(repo, "check").stdout
+
+
+def test_a_screen_in_a_folder_is_not_satisfied_by_a_same_named_stem_elsewhere_F11(
+    repo: Path,
+) -> None:
+    folder = bundle(repo)
+    write(folder / "a/home.html", "<html>a</html>")
+    write(folder / "b/home.html", "<html>b</html>")
+    render = change(repo) / "asks/export-render"
+    for name in ("index.png", "a/home.png"):
+        write(render / name)
+    render_row(repo, "asks/export-render")
+    assert "no image for screen: b/home\n" in run(repo, "check").stdout
+
+
+def test_migration_keeps_a_row_whose_bundle_image_never_existed_M4(repo: Path) -> None:
+    """A legacy image row folds into its bundle only when the image is still on disk: a deleted
+    one stays a failing row, never a passing ledger."""
+    resolved(repo)
+    root = change(repo)
+    folder = bundle(repo)
+    write(folder / "assets/hero.png")
+    gone = {
+        "id": "ref:asks/2026-11-01-export/assets/gone.png",
+        "kind": "reference",
+        "image": "asks/2026-11-01-export/assets/gone.png",
+        "expected": "Gone matches.",
+        "shot": "verify/shots/fresh.png",
+        "status": "match",
+    }
+    save(repo, rows(repo) + [gone])
+    init = run(repo, "init")
+    assert "folded into" not in init.stdout and "orphans=1" in init.stdout, init.stdout
+    data = json.loads((root / "marks.json").read_text())
+    assert gone in data["rows"] and not any(r.get("folded") for r in data["rows"])
+    assert "ref:asks/2026-11-01-export/assets/gone.png: orphan row" in run(repo, "check").stdout

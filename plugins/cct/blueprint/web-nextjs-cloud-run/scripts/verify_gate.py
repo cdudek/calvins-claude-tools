@@ -118,6 +118,7 @@ LABEL = re.compile(
 )
 TABLE_ID = re.compile(rf"^\s*\|\s*({ID_TOKEN})\s*\|")
 IDS_ONLY = re.compile(rf"[\s,;/&+-]*(?:{ID_TOKEN}[\s,;/&+-]*)*")
+PLACEHOLDER = re.compile(r"\[NEEDS CLARIFICATION: (?:<[^>\n]*>|\.\.\.)\]")  # the template's own
 BRACKETS = re.compile(r"\([^()]*\)|\[[^\[\]]*\]")  # may span a line wrap, never a blank line
 
 
@@ -251,6 +252,13 @@ def milestone_blockers(change: Path) -> tuple[str, list[str]] | None:
     return None
 
 
+def legacy_marks() -> bool:
+    """scripts/marks.py from before design bundles: a kept copy (sdlc.json `keep`) can stay old."""
+    import marks
+
+    return not callable(getattr(marks, "bundles", None))
+
+
 def has_owner_marks(change: Path) -> bool:
     """Owner notes or a design bundle to check. marks.py is imported here and nowhere else, so an
     older copy of it beside a newer gate never breaks approve, audit or lint."""
@@ -259,7 +267,7 @@ def has_owner_marks(change: Path) -> bool:
     return bool(
         (change / "marks.json").exists()
         or marks.sessions(change)
-        or getattr(marks, "bundles", lambda _: {})(change)  # absent before design bundles
+        or marks.bundles(change)  # the milestone gate blocks on a marks.py without it first
     )
 
 
@@ -379,7 +387,10 @@ def lint_problems(change: Path, body: str | None = None) -> list[str]:
             if len(s.split()) > SENTENCE_WORDS:
                 problems.append(f"{name}: {len(s.split())} words: {s[:90]}...")
         # an open question is a marker in running text; the same words in code explain the syntax
-        if "[NEEDS CLARIFICATION" in re.sub(r"```.*?```|`[^`\n]*`|<!--.*?-->", "", text, flags=re.S):
+        # a fenced Gherkin step is running requirements text: only the template's own placeholder
+        # marker (`<question>`, `...`) is skipped there
+        unfenced = re.sub(r"```(.*?)```", lambda m: PLACEHOLDER.sub("", m[1]), text, flags=re.S)
+        if "[NEEDS CLARIFICATION" in re.sub(r"`[^`\n]*`|<!--.*?-->", "", unfenced, flags=re.S):
             problems.append(f"{name}: an open [NEEDS CLARIFICATION] remains")
     return problems
 
@@ -604,6 +615,11 @@ def run(
     if scope == "milestone" and (blocker := milestone_blockers(change)):
         print("\n".join(blocker[1][:TAIL]))
         return finish(f"VERIFY BLOCKED reason={blocker[0]}", 3)
+    if scope == "milestone" and legacy_marks():
+        print("scripts/marks.py is older than this gate (it has no `bundles`): it cannot inventory")
+        print("design bundles, and an empty inventory would pass an unrendered one.")
+        print("Run `adopt --upgrade --replace scripts/marks.py --apply` (or restore the kit's marks.py).")
+        return finish("VERIFY BLOCKED reason=env", 3)
 
     suite = "milestone" if scope == "project" else scope
     checks = cfg.get("checks", {}).get(suite, [])
