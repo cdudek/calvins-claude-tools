@@ -39,8 +39,10 @@ When a charge fails, the system shall retry it once after ten minutes.
 `R` and a number with no fixed width: R1, R123, R10000. Never reused. The next one is the highest ever
 used plus one, from the live files, `.sdlc/last-rule-id` and the git history of added rule files
 (`--no-renames`, so a move hides no add): `python3 scripts/spec.py next`, or `spec.py new <capability>
-<summary>` which creates the file with it. The tag is `@R123`, never `#`. (`R` also names a review
-finding in the old layout's findings; the two never share a document.)
+<summary>` which creates the file with it. The tag is `@R123`, never `#`. `R` also names a review finding in the old layout. The meaning is pinned per layout: in layout 4
+`R<n>` is only a rule and a review finding is `V<n>`; facts, analysis and challenge ids (F, N, X, H) do
+not exist there. `spec.id_families(change)` is the one definition, and `change_docs.py` (`sdlc_status.py
+ids`) glosses `R` from the rule file in layout 4.
 
 Two PRs can take the same number in different capabilities and merge cleanly. `check` refuses a
 number already on the base branch or removed from it earlier, and `spec.py renumber [--base REF]`
@@ -68,7 +70,8 @@ python3 scripts/spec.py find invoice retries --paths src/billing --prs
 
 Up to ten rules with their path, the matched words, `stale?` (three code commits since the rule
 last changed) and `! open PR #n edits it` (only with `--prs`, needs `gh`, silent without it). Ranking:
-exact id, summary words, capability name and aliases, purpose, the paths given; ties go to the older
+exact id, summary words, capability name and aliases, purpose, the paths given, then the rules of the
+capabilities a best hit lists under `related` (marked `via <capability>`); ties go to the older
 git date, because a five-year-old duplicate-charge rule outranks yesterday's copy edit. A miss lists
 the capabilities that match with their `code` and `tests`, and says when a capability is only
 partly catalogued, so an empty answer is not read as "no rule". The index is `.git/spec-index.json`
@@ -81,8 +84,14 @@ then open only the rules it names.
 `spec.py eval fixture.json --k 10` replays past changes: each case has the `query` known at intake,
 the `paths`, the pre-existing rule ids that mattered (`relevant`) and optionally `rev` (the parent
 revision). It prints recall@k for `find` and for a grep over the rule files, the misses, and counts
-new-feature cases (no relevant rule) apart. About a hundred cases per repo, labelled by a reviewer;
-`templates/specs/eval-fixture.example.json` shows the shape. The number is a gate for turning on
+new-feature cases (no relevant rule) apart. About a hundred cases per repo, labelled by a reviewer. A repo with no reviewer labels yet can
+build a first fixture from its own history: `python3 scripts/eval_corpus.py <repo> <out>` turns every
+fact of every change into a rule and every ask into a case whose relevant rules are the facts citing
+it. This repo's own run is committed in `tests/eval/` (233 rules, 57 cases; the repo has only five
+changes, so a hundred was not reachable): recall@10 is 0.24 for `find` against 0.13 for the grep
+baseline (a Python equivalent of `rg -c -i`; `rg` is not a binary on every machine). Each ask cites many
+facts, which caps recall@10, and the labels are traceability, not a reviewer's judgement: read the
+number as "find beats a grep", not as a recall target. `templates/specs/eval-fixture.example.json` shows the shape. The number is a gate for turning on
 blocking drift checks in that repo, not a claim about it.
 
 ## Rollout

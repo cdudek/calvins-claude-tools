@@ -11,3 +11,10 @@ Spec-driven restructure and the living spec.
 - **Safety.** `livingSpecs` must be one plain folder name inside the repo; manifest test roots may not leave the repo; in CI or with an explicit `--base`, an unresolvable base or a failed git call is a failure, never a silent skip.
 
 Migration: nothing. Existing changes, archives and repos keep working; see `docs/designs/sdd-integration.md` for what the gate, status and hooks still have to read.
+
+Second wave.
+
+- **Recall fixture from the repo's own changes.** `scripts/eval_corpus.py` turns a repo's facts into rules and its asks into labelled cases; this repo's run is in `tests/eval/` (233 rules, 57 cases). `spec.py eval --root` evaluates against it: recall@10 is 0.24 for `find` and 0.13 for a grep.
+- **`find` pulls in related capabilities** (manifest `related`), below every direct hit and marked `via <capability>`.
+- **UX skills.** `ux-spec-validate` runs once as a draft pass in sdlc mode (an ask may be `pending`, no nested goal); `ux-design-run` calls it that way and records `prototype`; `ux-build-validate` runs `spec.py qa` before it asks for any readiness file.
+- **The letter R, pinned per layout.** In layout 4 `R<n>` is only a rule and a review finding is `V<n>`; `spec.id_families` is the one definition and `sdlc_status.py ids` reads it.

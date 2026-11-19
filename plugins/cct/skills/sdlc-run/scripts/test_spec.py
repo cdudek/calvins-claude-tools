@@ -661,7 +661,7 @@ def test_find_pulls_in_the_rules_of_related_capabilities_after_the_direct_hits(r
     assert not any(ln.startswith("R2  reporting") for ln in spec.find(repo, "payment retry"))
 
 
-CORPUS = SKILL / "references/eval"
+CORPUS = SKILL.parents[2].parent / "tests" / "eval"
 
 
 def test_the_committed_recall_fixture_beats_a_grep_on_the_repos_own_changes() -> None:
@@ -699,3 +699,31 @@ def test_the_corpus_builder_labels_each_ask_with_the_facts_that_cite_it(tmp_path
     assert {c["id"] for c in fx} == {"retry-charges/A1", "retry-charges/A1.1", "retry-charges/A1.2"}
     assert all(c["relevant"] == ["R1"] for c in fx)
     assert spec.load_rules(out / "corpus")[2] == []
+
+
+def test_the_letter_r_means_a_rule_in_layout_4_and_a_review_finding_before(repo: Path) -> None:
+    sys.path.insert(0, str(SKILL / "scripts"))
+    import change_docs
+
+    assert spec.id_families(None)["R"][0] == "review finding"
+    v4 = spec.id_families(_change(repo))
+    assert v4["R"][0] == "rule" and v4["V"][0] == "review finding" and "F" not in v4
+    c = _change(repo)
+    (c / "tasks.md").write_text("Task T1 satisfies R1; the reviewer's V2 says add a test.\n")
+    (c / "findings.md").write_text("- V2 The test for R1 does not assert the retry count.\n")
+    out = "\n".join(change_docs.ids(c))
+    assert "R1" in out and "The system shall" not in out and "When x, the system shall y" in out
+    assert "specs/billing/rules/R1.md" in out
+    assert "V2" in out and "does not assert the retry count" in out
+    assert "no definition found" not in out
+
+
+def test_the_old_layout_still_reads_r_as_a_finding(repo: Path) -> None:
+    sys.path.insert(0, str(SKILL / "scripts"))
+    import change_docs
+
+    old = repo / "changes" / "2026-10-01-old"
+    old.mkdir(parents=True)
+    (old / "facts.md").write_text("see R1\n")
+    (old / "findings.md").write_text("| R1 | finding | text of the finding |\n")
+    assert "R1   " in "\n".join(change_docs.ids(old))

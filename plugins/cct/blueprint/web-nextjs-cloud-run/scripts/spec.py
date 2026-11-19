@@ -945,6 +945,34 @@ def layout(change: Path) -> str:
     return "legacy" if (change / "facts.md").exists() or (change / "intent.md").exists() else "none"
 
 
+# family letter -> (what it is, where it is defined). The letter R is one id family with two
+# meanings, pinned by layout: a review finding before layout 4, a rule from layout 4 on, where a
+# review finding is V. F, N, X and H (facts, analysis, challenge) do not exist in layout 4.
+FAMILIES_LEGACY = {
+    "A": ("ask", "intent.md"),
+    "J": ("job story", "intent.md"),
+    "F": ("fact", "facts.md"),
+    "N": ("non-functional fact", "facts.md"),
+    "X": ("analysis finding", "analyze.md"),
+    "H": ("challenge finding", "challenge.md"),
+    "Q": ("question asked during the build", "questions.md"),
+    "R": ("review finding", "findings.md"),
+    "B": ("numbered item", ""),
+}
+FAMILIES_V4 = {
+    "A": ("ask", "spec.md"),
+    "J": ("job story", "spec.md"),
+    "R": ("rule", "specs/<capability>/rules/R<n>.md"),
+    "V": ("review finding", "findings.md"),
+    "Q": ("question asked during the build", "questions.md"),
+    "B": ("numbered item", ""),
+}
+
+
+def id_families(change: Path | None) -> dict[str, tuple[str, str]]:
+    return FAMILIES_V4 if change is not None and applies(Path(change)) else FAMILIES_LEGACY
+
+
 def applies(change: Path) -> bool:
     return layout(change) == "v4"
 

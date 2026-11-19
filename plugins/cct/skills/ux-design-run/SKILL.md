@@ -31,7 +31,7 @@ Shared files are in `references/`, two levels up from this skill's base director
 1. Read `docs/ux/setup.md`. Missing: stop and run `cct:ux-setup`.
 2. Resolve the spec folder and the mode with the shared `references/spec-folder.md`.
 3. **sdlc mode:** read `decisions.json` (`size`, `skips`, `design`) and the change's `intent.md`
-   `## Asks`. **Standalone mode:** read `decisions.json` and `intent.md` when they exist, for the
+   `## Asks` (layout 4: `spec.md` `## Asks`). **Standalone mode:** read `decisions.json` and `intent.md` when they exist, for the
    ticket and the problem only.
 4. Read the design file named by `decisions.json` `design`, when present.
 5. Read the setup paths for the guidelines, screen goals, components, owner words and feedback.
@@ -53,7 +53,12 @@ file; its reason is already recorded.
 3. **Interaction.** Use `references/interaction.md`. Write `<spec>/interaction.md`.
 4. **Screens.** Use `references/screens.md`. Write `<spec>/screens.md`.
 5. **Conformance.** Run `cct:ux-rules-validate spec <spec>`. It writes `<spec>/conformance.md`.
-6. **Validate the spec, as a loop.** Run `cct:ux-spec-validate spec <spec>` as a `/goal` loop:
+6. **Validate the spec.** In sdlc mode run `cct:ux-spec-validate spec <spec>` **once, as a single
+   draft pass**: no `/goal`, no loop, no nested goal. An in-scope ask whose rule is not written yet
+   is `pending` in `spec.md`'s Asks table and counts as mapped; the pass lists those and the owner
+   gate is where they must be gone. Standalone mode (and sdlc changes on the old layout) run it as a
+   `/goal` loop:
+   Run `cct:ux-spec-validate spec <spec>` as a `/goal` loop:
    review, fix the spec, re-check, until `<spec>/readiness.md` says `verdict: ready`. The loop
    is in `../ux-spec-validate/references/spec.md`.
 7. **Prototype, only from a validated spec.** Start only when `<spec>/readiness.md` (or the
@@ -64,7 +69,9 @@ file; its reason is already recorded.
    reporting the image loop complete. A failed check means the review did not run.
 8. **Gate pass.** Standalone mode: run `cct:ux-spec-validate spec <spec>` once more; it checks the
    images against the validated spec (no full re-review) and hands `<spec>/readiness.md` to the
-   owner. sdlc mode: stop here; the SDLC writes `facts.md` and then runs the same gate pass.
+   owner. sdlc mode: stop here; the SDLC writes the requirements (`facts.md`, or the rule files and
+   `spec.md` in layout 4) and then runs the same gate pass. At Stage 2 write `prototype: required` or
+   `prototype: none` into `spec.md` (layout 4) so build QA can decide before it asks for readiness.
 
 Why this order: images drawn before validation get redrawn after every spec fix. On one product
 (2026-10-07), validation after the images found 19 severity-3 issues and about 250 images were

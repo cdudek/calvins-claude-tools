@@ -57,6 +57,30 @@ spec.qa_applicability(change)   # (True | False | None, reason); None = unrecord
   Existing `changes/archive/` is untouched here; removal once its changes are complete is the
   integrator's step, and the status, audit and pr-gate readers still scan it.
 
+## Left for the integrator, with the exact call site
+
+1. **R / V lint (verify_gate.py).** The id-family letters are hard-coded (`OWNER_FILES`, the lint
+   regex `[ABFHJNQRX]`). One change: `fams = spec.id_families(change)`; build the regex from
+   `"".join(fams)`; for layout 4 skip the bare-id check for `R<n>` inside the Requirements table of
+   `spec.md` and in `tasks.md` Rules column (they are the table's key), and keep it for prose. Review
+   findings written by the converge pass in a layout-4 change use `V<n>`, not `R<n>`.
+2. **`state/` move and `intake.json`.** Not built: every machine file keeps its path. If the
+   integrator wants it, move behind one resolver (`state_path(change, name)`: new place first, old
+   place second) used by `verify_gate.py`, `sdlc_status.py`, `marks.py`, the hooks and `ux-*` skills,
+   shipped before any writer moves a file; `decisions.json` keeps its place as the format pin.
+3. **Capability `decisions/` folders.** `marks.py` rejects decision evidence outside `designsDir`
+   (`marks.py`, the evidence check) and `design_index.py` scans only that tree. To support
+   `specs/<capability>/decisions/`: accept that prefix in the marks evidence check and add it to the
+   index's scan roots. Nothing in `spec.py` needs it.
+4. **Archive removal.** `git rm -r changes/archive/<id>` per change once its change is complete,
+   after `status --shipped`, the audit's "executed" evidence and pr-gate's report scan read
+   `.sdlc/receipts/` instead of `changes/archive/*/verify/report.json`. New work is never archived.
+5. **`adopt.py` `specs/` move guard** (the blocker below): in the migration loop `for old, new in
+   ((ROOT / ".changes", ...), (ROOT / "specs", ROOT / designs_dir))`, skip the second pair when
+   `(ROOT / "specs").glob("*/rules")` or `(ROOT / "specs").glob("*/manifest.yaml")` matches.
+6. **Gate wiring.** The calls above, in `verify_gate.py approve` and `milestone`, `sdlc_status.py`,
+   `chain-gate.sh` and `pr-gate.sh`; nothing in this stream edits them.
+
 ## Blockers and hazards to know
 
 - **BLOCKER to enabling layout 4 in any repo: `adopt.py` (the `specs/` to `designs_dir` migration, near line 945)** moves a root `specs/` folder into
@@ -71,7 +95,6 @@ spec.qa_applicability(change)   # (True | False | None, reason); None = unrecord
 - **`kitTemplates`** in `sdlc.json` changes with these templates; the three streams will collide on
   that line. Recompute with `python3 plugins/cct/skills/sdlc-run/scripts/adopt.py --templates-hash`
   after merging them.
-- **Not built:** the `state/` folder move, `intake.json` rename, capability `decisions/` folders
-  (`marks.py` and `design_index.py` still read only the designs folder), the 100-case recall
-  fixture (the script and a two-case example exist; the fixture needs real past changes of a repo),
-  back-fill of `specs/`, related-capability expansion in `find`.
+- **Not built:** back-fill of `specs/`, and a reviewer-labelled 100-case fixture (this repo's own
+  57-case fixture is in `tests/eval/`; see `living-spec.md`). The rest of the not-built list is the
+  integrator section above.
