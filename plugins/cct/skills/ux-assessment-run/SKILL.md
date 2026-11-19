@@ -203,9 +203,10 @@ commentary minimal: the deliverable is the consolidated findings.
 
 - **Local form** (`base` and `head` given): the caller already named the diff, so there is no PR
   to find and the run never calls `gh`. The interface files are
-  `git -C <worktree> diff --name-only <base>...<head>`. The run folder is
-  `${TMPDIR:-/tmp}/cct/review/local-<repo>-<head sha, 12 characters>`. Every pass below gets the
-  same base, head and worktree, so no pass reads a PR.
+  `git -C <worktree> diff --name-only <base>...<head>`. `base_ref=<base>` stays the git ref for
+  every pass; the run folder root is
+  `run_root="${TMPDIR:-/tmp}/cct/review/local-<repo>-<head sha, 12 characters>"`. Every pass below
+  gets the same base, head and worktree, so no pass reads a PR.
 - **PR form** (a number, a URL, or neither): a PR number or URL. Otherwise the current branch's
   open PR: `gh pr view --json number,url,title,headRefName,baseRefName`. None: stop and say so.
   `gh pr diff <n> --name-only` lists the files.
@@ -220,12 +221,14 @@ commentary minimal: the deliverable is the consolidated findings.
   target from the diff.
 - The PR adds, moves or removes a route: run `cct:ux-sitemap-create diff base:<base ref>` as the
   `sitemap` pass; its findings join the merge, including every moved address with no redirect.
-- Make the run folder, outside the repo, and note the previous round of this PR first:
+- Make the run folder, outside the repo. Choose `run_root` once, for the mode you are in (PR form:
+  `run_root="${TMPDIR:-/tmp}/cct/review/<owner>-<repo>-<n>"`; local form: the `local-...` root
+  above), never both, and never call the folder `base`: `base_ref` is the git ref. The PR form
+  notes the previous round first:
 
   ```bash
-  base="${TMPDIR:-/tmp}/cct/review/<owner>-<repo>-<n>"
-  prev=$(ls -1d "$base"/*/ 2>/dev/null | sort | tail -n 1)
-  run="$base/$(date +%Y%m%d-%H%M%S)"; mkdir -p "$run/passes"
+  prev=$(ls -1d "$run_root"/*/ 2>/dev/null | sort | tail -n 1)
+  run="$run_root/$(date +%Y%m%d-%H%M%S)"; mkdir -p "$run/passes"
   ```
 
 ### 2. See it running

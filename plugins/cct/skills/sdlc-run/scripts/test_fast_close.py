@@ -228,3 +228,12 @@ def test_the_threat_model_is_written_down() -> None:
     assert "someone with a shell" in CONVERGENCE and "out of scope" in CONVERGENCE
     assert "not a sandbox" in CONVERGENCE
 
+
+# Review fix 16: the run folder root is chosen once per mode; `base` stays the git ref
+def test_the_run_root_is_chosen_once_per_mode_and_base_ref_stays_the_git_ref() -> None:
+    resolve = CHANGE_SCOPE.split("### 2.", 1)[0]
+    assert 'base="${TMPDIR:-/tmp}/cct/review/<owner>-<repo>-<n>"' not in resolve
+    assert 'run_root="${TMPDIR:-/tmp}/cct/review/<owner>-<repo>-<n>"' in resolve
+    assert 'run_root="${TMPDIR:-/tmp}/cct/review/local-<repo>-<head sha, 12 characters>"' in resolve
+    assert 'base_ref=<base>' in resolve or "`base_ref`" in resolve
+    assert '"$base"' not in resolve  # no line reads the directory as `base`
