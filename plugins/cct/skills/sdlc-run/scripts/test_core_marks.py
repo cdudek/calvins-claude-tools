@@ -11,6 +11,7 @@ from pathlib import Path
 
 import pytest
 from test_verify_gate import (
+    CONVERGED,
     GATE,
     ID,
     OPEN_ITEM,
@@ -50,7 +51,7 @@ def test_a_reused_finding_id_needs_a_fresh_answer(tmp_path: Path) -> None:
     _dispose(repo)  # first B2
     _dispose(repo, "## Blocking\n\n- [x] **B1** other\n")  # B2 gone
     findings = repo / "changes" / ID / "findings.md"
-    findings.write_text(OPEN_ITEM)
+    findings.write_text(OPEN_ITEM + CONVERGED)
     _git(repo, "add", "-A")
     late = _later(600).replace("Z", "+00:00")
     subprocess.run(

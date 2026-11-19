@@ -11,6 +11,7 @@ from pathlib import Path
 
 import pytest
 from test_verify_gate import (
+    CONVERGED,
     GATE,
     ID,
     _approve,
@@ -280,9 +281,9 @@ def test_fix_it_now_passes_only_after_the_box_is_ticked_again(tmp_path: Path) ->
     _dispose(repo, ticked)
     answers = _dialog(label="Block the close", n=1) + _dialog(label="Fix it now", n=2)
     assert _last(_owner_gate(repo, answers)) == "VERIFY BLOCKED reason=findings-open"
-    (repo / "changes" / ID / "findings.md").write_text(open_item)  # the fix round reopens it
+    (repo / "changes" / ID / "findings.md").write_text(open_item + CONVERGED)  # the fix round reopens it
     _commit_at(repo, "reopen", _later(300))
-    (repo / "changes" / ID / "findings.md").write_text(ticked)  # and ticks it after the fix
+    (repo / "changes" / ID / "findings.md").write_text(ticked + CONVERGED)  # and ticks it after the fix
     _commit_at(repo, "fixed", _later(400))
     assert _last(_owner_gate(repo, answers)).startswith(f"VERIFY PASS milestone {ID}")
 
@@ -315,11 +316,10 @@ def test_a_visual_checker_that_is_not_the_shipped_one_is_refused(tmp_path: Path)
     assert _last(r) == f"VERIFY FAIL milestone {ID} check=ux-visual-binding", r.stdout
 
 
-def test_a_visual_run_folder_without_its_visual_json_is_refused(tmp_path: Path) -> None:
+def test_a_visual_run_that_is_not_a_folder_is_refused(tmp_path: Path) -> None:
     repo = _milestone_repo(tmp_path)
     _commit_files(repo, validation_md="| F1 | x | y | z | met |\n")
     checker = tmp_path / "visual-check.py"
     checker.write_text("import sys\nsys.exit(0)\n")
-    (tmp_path / "empty").mkdir()
-    r = _gate(repo, "milestone", ID, "--visual-check", str(checker), "--visual-run", str(tmp_path / "empty"))
+    r = _gate(repo, "milestone", ID, "--visual-check", str(checker), "--visual-run", str(tmp_path / "no-such-run"))
     assert _last(r) == f"VERIFY FAIL milestone {ID} check=ux-visual-binding", r.stdout

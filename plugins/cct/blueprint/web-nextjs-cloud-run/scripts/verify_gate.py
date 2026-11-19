@@ -582,7 +582,7 @@ def milestone_blockers(change: Path, number: int | None = None) -> tuple[str, li
     ]
     if open_items:
         return "findings-open", [f"findings.md: open: {i[:80]}" for i in open_items]
-    if section(findings, "Converge") and "Converged:" not in findings:
+    if (section(findings, "Converge") or current_format(change)) and "Converged:" not in findings:
         return "not-converged", ["findings.md: ## Converge has no `Converged: round <n>` line"]
     if gaps := validation_gaps(change, number):
         return "validation-not-met", gaps
@@ -614,8 +614,55 @@ def end(line: str, code: int) -> int:
     return code
 
 
+def graph_problems(plan: str) -> list[str]:
+    """The plan's `## Milestones` graph must be buildable: unique ids, every `needs` defined, no
+    milestone needing itself and no cycle (two milestones waiting on each other's merge)."""
+    rows = [r for r in table_rows(section(plan, "Milestones"))[1:] if r and re.match(r"M\d+\b", r[0])]
+    ids = [re.match(r"M\d+", r[0])[0] for r in rows]
+    problems = [f"plan.md: {i} is defined twice" for i in dict.fromkeys(ids) if ids.count(i) > 1]
+    needs: dict[str, list[str]] = {}
+    for r in rows:
+        mine = re.match(r"M\d+", r[0])[0]
+        listed = re.findall(r"M\d+", r[2]) if len(r) > 2 else []
+        needs[mine] = listed
+        problems += [f"plan.md: {mine} needs itself" for _ in listed if _ == mine]
+        problems += [f"plan.md: {mine} needs {n}, which the plan does not define (unknown milestone)" for n in listed if n not in ids]
+    done: set[str] = set()
+    for start in needs:  # depth-first, one report per cycle
+        stack, on = [(start, iter(needs[start]))], {start}
+        while stack:
+            node, it = stack[-1]
+            nxt = next((n for n in it if n in needs and n != node), None)
+            if nxt is None:
+                stack.pop()
+                on.discard(node)
+                done.add(node)
+            elif nxt in on:
+                problems.append(f"plan.md: circular milestones: {node} and {nxt} wait on each other")
+                break
+            elif nxt not in done:
+                on.add(nxt)
+                stack.append((nxt, iter(needs[nxt])))
+    return list(dict.fromkeys(problems))
+
+
+def branch_mode_problems(change: Path, cfg: dict) -> list[str]:
+    """Delivery and merge modes that cannot both be served: feature PRs publish a milestone branch
+    that local milestones, once the change has a project branch, never push (checked at approval,
+    before any branch or goal exists)."""
+    if cfg.get("delivery") == "feature-prs" and merges_locally(cfg) and project_branch(change, cfg):
+        return [
+            'sdlc.json: delivery "feature-prs" needs a remote milestone branch, which milestones.merge '
+            '"local" never pushes for a change with a project branch; choose delivery "one-go" with '
+            'local milestones, or milestones.merge "pr" with feature PRs'
+        ]
+    return []
+
+
 def approve(change: Path, cfg: dict) -> int:
     problems = lint_problems(change) + approval_blockers(change)  # the cheap pure check first
+    problems += [f"{name} is missing: approval locks it" for name in ("facts.md", "plan.md") if not (change / name).is_file()]
+    problems += graph_problems(read(change / "plan.md")) + branch_mode_problems(change, cfg)
     if gap := full_e2e_gap((cfg.get("checks") or {}).get("milestone") or [], root()):
         problems.append(gap)
     if not (change / "done.json").exists():  # approval requires its artifacts
@@ -855,6 +902,26 @@ def order_checks(
     return result
 
 
+CHECK_TIMEOUT = 1800  # seconds a single check may run (sdlc.json `checkTimeout`, or `timeout` on the check)
+
+
+def run_check(cmd: str, cwd: Path, limit: int) -> subprocess.CompletedProcess[str]:
+    """Run a shell check in its own process group; past `limit` seconds kill the group and report 124."""
+    import signal
+
+    proc = subprocess.Popen(
+        cmd, shell=True, cwd=cwd, stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True,
+        stdin=subprocess.DEVNULL, start_new_session=True,
+    )  # fmt: skip
+    try:
+        out, err = proc.communicate(timeout=limit)
+    except subprocess.TimeoutExpired:
+        os.killpg(proc.pid, signal.SIGKILL)
+        out, err = proc.communicate()
+        return subprocess.CompletedProcess(cmd, 124, out or "", (err or "") + f"\ntimed out after {limit}s\n")
+    return subprocess.CompletedProcess(cmd, proc.returncode, out, err)
+
+
 def run(
     scope: str,
     change: Path,
@@ -964,6 +1031,11 @@ def run(
         local = project_branch(change, cfg) if merges_locally(cfg) else ""
         if local and (tip := sh("git", "rev-parse", "--verify", "--quiet", f"{local}^{{commit}}")):
             tips.append((local, tip))
+        default = cfg.get("defaultBranch") or "main"
+        if sh("git", "remote", "get-url", "origin") and not any(n == f"origin/{default}" for n, _ in tips):
+            print(f"origin/{default} cannot be resolved (offline, or the fetch failed): the gate cannot tell whether")
+            print(f"this {scope} contains its parent. Fix the connection, then run `git fetch origin {default}` and the gate again.")
+            return finish("VERIFY BLOCKED reason=env", 3)
         behind = [
             name
             for name, tip in tips
@@ -1051,13 +1123,12 @@ def run(
         )
     if visual_check and (
         Path(visual_check).name != "visual-check.py"
-        or any(not (Path(r) / "visual.json").is_file() for r in visual_runs or [])
+        or any(not Path(r).is_dir() for r in visual_runs or [])
     ):  # the shipped checker over a real run folder, not any command that exits 0
         evidence.append(
             refusal(
                 "ux-visual-binding",
-                "--visual-check must be the shipped visual-check.py and every --visual-run a run folder "
-                "that holds the visual.json it checks",
+                "--visual-check must be the shipped visual-check.py and every --visual-run an existing run folder",
             )
         )
     for k, visual_run in enumerate(visual_runs or [], 1):  # not `number`: finish() reads the milestone number
@@ -1118,9 +1189,8 @@ def run(
             print(f"ok (cached) {name}: {cmd}")
             continue
         started = time.monotonic()
-        proc = subprocess.run(
-            cmd, shell=True, cwd=repo, capture_output=True, text=True, stdin=subprocess.DEVNULL
-        )
+        limit = int(check.get("timeout") or cfg.get("checkTimeout") or CHECK_TIMEOUT)
+        proc = run_check(cmd, repo, limit)
         output = proc.stdout + proc.stderr
         tail = "\n".join(output.strip().splitlines()[-TAIL:])
         status = "pass" if proc.returncode == 0 else "fail"
@@ -1136,7 +1206,10 @@ def run(
         )
         print(f"{'ok  ' if status == 'pass' else 'FAIL'} {name}: {cmd}")
         if status == "pass":
-            if key:
+            # staged: a check that ran while the tree moved proves nothing about the starting tree
+            if key and sh("git", "rev-parse", "HEAD^{tree}") == tree and not [
+                line for line in sh("git", "status", "--porcelain").splitlines() if f"{change.name}/verify/" not in line
+            ]:
                 cache[key] = name
                 cache_path.write_text(json.dumps(cache, indent=2) + "\n", encoding="utf-8")
             durations[cmd] = report["checks"][-1]["seconds"]

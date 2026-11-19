@@ -17,6 +17,7 @@ import pytest
 SKILL = Path(__file__).resolve().parents[1]
 GATE = SKILL / "templates" / "scripts" / "verify_gate.py"
 ID = "2026-10-09-trial"
+CONVERGED = "## Converge\n\nConverged: round 1\n"
 
 
 def _env() -> dict[str, str]:
@@ -49,6 +50,7 @@ def _repo(tmp_path: Path, feature: list) -> Path:
     )
     # a milestone passes only with a met row and evidence for every approved fact
     (change / "validation.md").write_text("| F1 | It works | ran | tests/x.py::test_f1 | met |\n")
+    (change / "findings.md").write_text(CONVERGED)  # a current-format close needs its Converged line
     _git(repo, "init", "-q", "-b", "master")
     _git(repo, "add", ".")
     _git(repo, "commit", "-qm", "init")
@@ -983,6 +985,7 @@ def _owner_gate(
 
 
 def _dispose(repo: Path, item: str = OPEN_ITEM) -> None:
+    item = item if "Converged:" in item else item + CONVERGED
     _commit_files(repo, validation_md="| F1 | x | y | z | met |\n", findings_md=item)
 
 
