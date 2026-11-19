@@ -27,7 +27,7 @@ list. Then one `AskUserQuestion`: the four kinds, the script's `recommend` first
 | **Initiative** | an outcome over a quarter or so; several projects | the design docs that name it |
 | **Project** | one deliverable with one design | `docs/designs/<slug>.md` |
 | **Milestone** | one shippable slice, checked once, one PR to the default branch | a change folder + `milestone/<slug>` |
-| **Issue** | one feature PR into the milestone | a row in `milestone.md` `## Features` |
+| **Issue** | one feature, a commit on the milestone branch | a row in `milestone.md` `## Features` |
 
 Each tool organises these differently. Use its own concepts; do not force one onto another.
 
@@ -38,7 +38,7 @@ Each tool organises these differently. Use its own concepts; do not force one on
 | Initiative | Initiative | holds several projects and their health updates |
 | Project | Project, under the initiative | description links the design doc permalink |
 | Milestone | Project milestone, plus one issue for the change | the change's issue holds the folder key and closes with the milestone PR |
-| Issue | Sub-issue of the change's issue, in the project and milestone | one per feature PR, created at the plan gate (4.3); blocking via relations |
+| Issue | Sub-issue of the change's issue, in the project and milestone | one per feature, created at the plan gate (4.3); blocking via relations |
 
 **Setup:** connect the MCP (`/mcp` → claude.ai Linear). Pick the team. Create or attach the initiative, then
 the project. Write `tracker: {"kind": "linear", "team", "initiative", "project"}`. Create minimal,

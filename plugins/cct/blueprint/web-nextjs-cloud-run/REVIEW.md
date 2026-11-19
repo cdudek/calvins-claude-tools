@@ -6,7 +6,7 @@ in CI), and by anyone reviewing by hand. The human reviewer's job is intent and 
 mechanical passes below are Claude's job, and they run identically on every PR.
 
 The review (`cct:review-code-run changes <parent> --codex`, then one fix round on its findings) runs once per milestone,
-on the milestone diff, not on each feature PR.
+on the milestone diff, not on each feature commit.
 
 ## Passes
 

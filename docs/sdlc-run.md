@@ -80,7 +80,7 @@ The two touchpoints are the intent and the plan. After the plan is approved, `lo
 
 ### 7 Outcome
 
-- **You get:** after the change reaches the default branch, the folder is removed (there is no archive), a short `reflection.md` written before it goes and, after release, the success measure read where `intent.md` says. What happens to the folder is in [After the merge](#after-the-merge).
+- **You get:** in the last milestone PR's last commit the folder is removed (there is no archive, and no second PR), a short `reflection.md` written before it goes and, after release, the success measure read where `intent.md` says. What happens to the folder is in [Closing the change](#closing-the-change).
 - **Who acts:** the agent removes the folder and records the outcome; **you read** the measure.
 - **Typical time:** a minute to remove the folder; the measure is read days or weeks later.
 - **Example:** "support questions about finding invoices: down 55 percent in 30 days, target met". A miss starts the next change.
@@ -89,9 +89,7 @@ A project, work that spans several milestones, adds stage 6p: after the last mil
 
 ## One /goal per milestone
 
-`delivery: "one-go"` is the default in `sdlc.json`. Everything you asked for at once is one change. One `/goal` builds every milestone in the plan, in order, each on its own local branch `milestone/<slug>-<n>` cut from the default branch, so it merges on its own. Only a milestone whose plan row says `needs: M<k>` is cut from that one; it builds at once and opens its PR after that one merges. Nothing is pushed before the milestone's gate passes. Each feature is a commit. The full suite runs once on the final milestone head before push; failure diagnosis stays targeted.
-
-`delivery: "feature-prs"` keeps the older shape: one PR per feature, auto-merged into the milestone branch. It suits teams building features in parallel.
+`delivery: "one-go"` is the only delivery in `sdlc.json`. Everything you asked for at once is one change. One `/goal` builds every milestone in the plan, in order, each on its own local branch `milestone/<slug>-<n>` cut from the default branch, so it merges on its own. Only a milestone whose plan row says `needs: M<k>` is cut from that one; it builds at once and opens its PR after that one merges. Nothing is pushed before the milestone's gate passes. Each feature is a commit. The full suite runs once on the final milestone head before push; failure diagnosis stays targeted.
 
 Builders are `cct:sdlc-feature-builder` agents, at most four at once, each in its own worktree and test slot. Each gets a `Base: <sha>` line, the milestone head, and resets to it before any edit, because a worktree hook cuts from the default branch. The supervisor commits its records first, edits no code, runs no test suite, and merges builder branches back one at a time. The close is one `cct:sdlc-feature-builder` with `Mode: close`; nothing merges while it runs.
 
@@ -110,20 +108,18 @@ flowchart BT
 <default> ─── project/<slug> ─── milestone/<slug>-<n> ─── <features>  a project that asked for a branch
 ```
 
-**Commits, not PRs.** While a milestone is open, everything that belongs to it is a commit on `milestone/<slug>`: features, fixes found during the build, test and flaky-spec repairs, CI timeout tweaks its tests need, and records (plans, handovers, gate lines, `findings.md`, `validation.md`, `questions.md`). No PR holds only a record, a fix or a test repair. One exception comes after the milestone has merged: the [records-only PR that removes the folder](#after-the-merge).
+**Commits, not PRs.** While a milestone is open, everything that belongs to it is a commit on `milestone/<slug>`: features, fixes found during the build, test and flaky-spec repairs, CI timeout tweaks its tests need, and records (plans, handovers, gate lines, `findings.md`, `validation.md`, `questions.md`). No PR holds only a record, a fix or a test repair. The folder removal is the last commit of the change's last milestone PR ([closing the change](#closing-the-change)).
 
 **PRs that exist:**
 
 - The milestone PR, into the default branch (or `project/<slug>` when the project has a branch).
 - The project PR, only when the project has a branch.
-- Feature PRs, only with `delivery: "feature-prs"`.
 - Other repositories, and a change you send to the default branch first.
 
 **Only the PR into the default branch is tiered.** Everything below it is an interior merge inside one change and auto-merges on its checks alone. The code review is not a PR step at all: it runs once, locally, at the milestone close. Nothing runs Claude in CI, so no repo needs `ANTHROPIC_API_KEY`.
 
 | PR | Checks | Ship/Show/Ask | Who approves |
 |---|---|---|---|
-| feature to `milestone/*` (`feature-prs` only) | feature checks | no | nobody; auto-merge on green |
 | milestone to `project/*` | milestone checks | no | nobody; auto-merge on green |
 | `project/*` or `milestone/*` to the default branch | milestone checks | yes | the tier decides |
 
@@ -200,12 +196,12 @@ python3 scripts/spec.py consistency changes/<id> --phase approve # script checks
 
 `find` is for the start of a change: read the rules it names before you ask for new ones. It warns when a rule looks stale or an open PR edits it. `check` runs at the milestone gate and in CI. If two PRs take the same rule number, `spec.py renumber` gives the later one the next free number. Other commands: `show`, `next`, `index`, `capabilities`, `eval`, `outcome`, `qa`.
 
-## After the merge
+## Closing the change
 
-There is no archive. After the PR into the default branch merges:
+There is no archive and no second PR. In the change's last milestone, after the gate passed:
 
 1. `spec.py outcome write changes/<id>` copies the success measure to `.sdlc/outcomes/<id>.json`. It is the one place the result is recorded, so a change with no tracker and no later PR still has a home for it.
-2. `git rm -r changes/<id>` goes in one records-only PR. Never before the merge: a red-CI rerun needs the folder.
+2. `git rm -r changes/<id>` is the last commit of the milestone PR, before the one push. After a red CI check, `git revert` it, fix, run the gate again and remove the folder again.
 3. Before it removes anything, the agent runs `git grep -l -F "changes/<id>/"`. A test, script or doc that reads inside the folder would break, so it is repointed first.
 4. After release the measure is read and recorded with `spec.py outcome record`. `spec.py outcome due` lists the ones still waiting.
 

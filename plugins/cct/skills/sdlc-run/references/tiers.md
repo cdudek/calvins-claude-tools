@@ -7,8 +7,8 @@ this off: every PR auto-merges on green.
 
 ## Only the PR into the default branch is tiered
 
-The tiers answer **"who must look before this reaches the trunk"**. A feature PR into
-`milestone/*`, and a milestone PR into `project/*`, reach nothing — they are interior merges
+The tiers answer **"who must look before this reaches the trunk"**. A milestone PR
+into `project/*` reaches nothing — they are interior merges
 inside one change, and they auto-merge on their checks alone. Tiering them would ask a code
 owner to approve the same code two or three times on its way up, and the `ask` paths
 (`k8s/**`, `.github/**`, migrations) are exactly the ones a multi-milestone project touches

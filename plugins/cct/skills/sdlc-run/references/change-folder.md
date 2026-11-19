@@ -81,9 +81,10 @@ rule. Appetite, a security threat model and a plan-proportion check are not buil
 
 ## Closing: the folder is removed, never archived
 
-There is no archive. After the change reaches the default branch the folder is removed in a
-records-only close PR: `spec.py outcome write <folder>` first copies the success measure to
-`.sdlc/outcomes/<change id>.json`, and `git rm -r` takes the folder. Never before the merge: the folder is what a red-CI rerun needs. A reference into the
+There is no archive and no second PR. The folder is removed in the last commit of the change's last
+milestone PR: `spec.py outcome write <folder>` first copies the success measure to
+`.sdlc/outcomes/<change id>.json`, and `git rm -r` takes the folder. After a red CI check on that PR,
+`git revert` the removal commit, fix and run the gate again, then remove the folder again. A reference into the
 folder blocks the removal, as it blocked the move (Stage 7 guard). History lives in git and the merged PR. A pass is read from the gate's report in the
 checkout, so nothing reads a removed folder (pass records are not part of this release).
 
@@ -100,6 +101,6 @@ checkout, so nothing reads a removed folder (pass records are not part of this r
   nothing, so stop and ask. A missing record is never read as a skip.
 - **S3, an outcome with no later PR.** The measure leaves the folder before the folder goes, into
   `.sdlc/outcomes/<id>.json` (`due`, `observed: null`). The scheduled read and the tracker comment
-  record the value with `spec.py outcome record`; with no tracker and no next change it is one
-  records-only PR. The route never needs the removed folder, a tracker or a future change.
+  record the value with `spec.py outcome record`; with no tracker and no next change it stays
+  in the tracker. The route never needs the removed folder, a tracker or a future change.
   `spec.py outcome due` lists what is waiting.
