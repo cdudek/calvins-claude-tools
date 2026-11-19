@@ -251,8 +251,24 @@ def full_e2e_gap(checks: list, repo: Path) -> str:
     )
 
 
+PLAIN_REF = re.compile(r"[A-Za-z0-9._/-]+")
+
+
+def unsafe_substitutions(change_id: str, cfg: dict) -> str:
+    """Why `{id}` or `{base}` may not be put into a shell command line, or "" when both are plain."""
+    if not PLAIN_REF.fullmatch(change_id):
+        return f"the change id {change_id!r} holds characters outside [A-Za-z0-9._/-]"
+    branch = cfg.get("defaultBranch") or "main"
+    if not PLAIN_REF.fullmatch(branch):
+        return f"sdlc.json defaultBranch {branch!r} holds characters outside [A-Za-z0-9._/-]"
+    return ""
+
+
 def expand(cmd: str, change_id: str, cfg: dict) -> str:
-    """`{id}` is the change, `{base}` the default branch on origin (the diff base of a repeat run)."""
+    """`{id}` is the change, `{base}` the default branch on origin (the diff base of a repeat run).
+    Both go into a command run by a shell, so only plain names are substituted."""
+    if why := unsafe_substitutions(change_id, cfg):
+        raise ValueError(why)
     base = f"origin/{cfg.get('defaultBranch') or 'main'}"
     return cmd.replace("{id}", change_id).replace("{base}", base)
 
@@ -266,6 +282,53 @@ def item_id(item: str) -> str:
     settled by an owner answer)."""
     m = re.match(rf"\*\*({FINDING_ID})\*\*", item.strip())
     return m.group(1) if m else ""
+
+
+NO_EVIDENCE = {"", "-", "--", "n/a", "na", "none", "tbd", "todo", "?"}
+
+
+def approved_facts(change: Path) -> list[str]:
+    """The fact ids the approved `done.json` lists (a string, or an object with an `id`)."""
+    try:
+        listed = json.loads(read(change / "done.json")).get("facts") or []
+    except (ValueError, AttributeError):
+        return []
+    return [str(f["id"] if isinstance(f, dict) else f) for f in listed if f]
+
+
+def milestone_facts(change: Path) -> list[str]:
+    """The approved facts this milestone must prove: the `## Milestones` row of `plan.md` for the
+    checked-out `milestone/<slug>-<n>` branch, else every approved fact."""
+    facts = approved_facts(change)
+    on = re.fullmatch(
+        r"milestone/.+-(\d+)", sh("git", "-C", str(change), "rev-parse", "--abbrev-ref", "HEAD")
+    )
+    if on:
+        for row in table_rows(section(read(change / "plan.md"), "Milestones"))[1:]:
+            if re.match(rf"M{on[1]}\b", row[0]) and len(row) > 1:
+                mine = re.findall(r"[A-Z]\d+", row[1])
+                return [f for f in facts if f in mine]
+    return facts
+
+
+def validation_gaps(change: Path) -> list[str]:
+    """What validation.md lacks: for every approved fact of this milestone one row with the verdict
+    `met` and evidence (a test, a file, an observed artefact: not empty, not a placeholder)."""
+    rows = table_rows(read(change / "validation.md"))
+    head = [c.lower() for c in rows[0]] if rows else []
+    at = head.index("evidence") if "evidence" in head else 3
+    gaps = []
+    for fact in milestone_facts(change):
+        mine = [r for r in rows if fact in re.findall(r"[A-Z]\d+", r[0] if r else "")]
+        if not mine:
+            gaps.append(f"validation.md: {fact} has no row")
+        for row in mine:
+            evidence = row[at].strip(" `") if len(row) > at else ""
+            if row[-1].strip().lower() != "met":
+                gaps.append(f"validation.md: {fact} is not marked met")
+            elif evidence.lower() in NO_EVIDENCE or evidence[:1] == "<":
+                gaps.append(f"validation.md: {fact} is met without evidence")
+    return gaps
 
 
 def milestone_blockers(change: Path) -> tuple[str, list[str]] | None:
@@ -304,6 +367,8 @@ def milestone_blockers(change: Path) -> tuple[str, list[str]] | None:
         return "findings-open", [f"findings.md: open: {i[:80]}" for i in open_items]
     if section(findings, "Converge") and "Converged:" not in findings:
         return "not-converged", ["findings.md: ## Converge has no `Converged: round <n>` line"]
+    if gaps := validation_gaps(change):
+        return "validation-not-met", gaps
     return None
 
 
@@ -552,6 +617,9 @@ def run(
     visual_runs: list[str] | None = None,
     keep_going: bool = False,
 ) -> int:
+    if why := unsafe_substitutions(change.name, cfg):
+        print(f"refused before any check runs: {why}.")  # the id and branch reach a shell line
+        return end("VERIFY BLOCKED reason=env", 3)
     out_dir = change / "verify"
     out_dir.mkdir(exist_ok=True)
     report: dict = {"scope": scope, "id": change.name, "checks": []}

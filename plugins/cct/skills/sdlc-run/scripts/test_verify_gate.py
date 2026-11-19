@@ -1557,3 +1557,28 @@ def test_only_the_facts_of_this_milestone_are_expected(tmp_path: Path) -> None:
     assert _last(_gate(repo, "milestone", ID)).startswith(f"VERIFY PASS milestone {ID}")
     _git(repo, "checkout", "-q", "-b", "milestone/trial-2")
     assert _last(_gate(repo, "milestone", ID)) == "VERIFY BLOCKED reason=validation-not-met"
+
+
+# --- shell safety: the change id and the branch go into a shell command ------------------------
+
+
+@pytest.mark.parametrize("name", ["x;touch PWNED", "a b", "x$(touch PWNED)", "x`touch PWNED`"])
+def test_a_change_id_that_is_not_a_plain_path_is_refused_before_any_check_runs(
+    tmp_path: Path, name: str
+) -> None:
+    repo = _repo(tmp_path, ["true"])
+    (repo / "changes" / name).mkdir()
+    for scope in ("feature", "milestone"):
+        r = _gate(repo, scope, name)
+        assert r.returncode == 3 and _last(r) == "VERIFY BLOCKED reason=env", r.stdout
+        assert "change id" in r.stdout
+    assert not (repo / "PWNED").exists() and not (repo / "changes" / name / "PWNED").exists()
+
+
+def test_a_default_branch_that_is_not_a_plain_ref_is_refused(tmp_path: Path) -> None:
+    repo = _milestone_repo(tmp_path)
+    cfg = json.loads((repo / "sdlc.json").read_text())
+    (repo / "sdlc.json").write_text(json.dumps({**cfg, "defaultBranch": "x;touch PWNED"}))
+    r = _gate(repo, "milestone", ID)
+    assert r.returncode == 3 and _last(r) == "VERIFY BLOCKED reason=env" and "defaultBranch" in r.stdout
+    assert not (repo / "PWNED").exists()

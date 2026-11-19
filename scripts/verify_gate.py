@@ -251,8 +251,24 @@ def full_e2e_gap(checks: list, repo: Path) -> str:
     )
 
 
+PLAIN_REF = re.compile(r"[A-Za-z0-9._/-]+")
+
+
+def unsafe_substitutions(change_id: str, cfg: dict) -> str:
+    """Why `{id}` or `{base}` may not be put into a shell command line, or "" when both are plain."""
+    if not PLAIN_REF.fullmatch(change_id):
+        return f"the change id {change_id!r} holds characters outside [A-Za-z0-9._/-]"
+    branch = cfg.get("defaultBranch") or "main"
+    if not PLAIN_REF.fullmatch(branch):
+        return f"sdlc.json defaultBranch {branch!r} holds characters outside [A-Za-z0-9._/-]"
+    return ""
+
+
 def expand(cmd: str, change_id: str, cfg: dict) -> str:
-    """`{id}` is the change, `{base}` the default branch on origin (the diff base of a repeat run)."""
+    """`{id}` is the change, `{base}` the default branch on origin (the diff base of a repeat run).
+    Both go into a command run by a shell, so only plain names are substituted."""
+    if why := unsafe_substitutions(change_id, cfg):
+        raise ValueError(why)
     base = f"origin/{cfg.get('defaultBranch') or 'main'}"
     return cmd.replace("{id}", change_id).replace("{base}", base)
 
@@ -601,6 +617,9 @@ def run(
     visual_runs: list[str] | None = None,
     keep_going: bool = False,
 ) -> int:
+    if why := unsafe_substitutions(change.name, cfg):
+        print(f"refused before any check runs: {why}.")  # the id and branch reach a shell line
+        return end("VERIFY BLOCKED reason=env", 3)
     out_dir = change / "verify"
     out_dir.mkdir(exist_ok=True)
     report: dict = {"scope": scope, "id": change.name, "checks": []}
