@@ -57,13 +57,11 @@ is `scope-growth`.
 
 ## Feature PRs
 
-In order, grouped under `### Milestone <n> — <what a user can do after it>`. One go (the
-default): each row is a commit on `milestone/<slug>-<n>` with touched tests and required pre-commit checks between rows; each
+In order, grouped under `### Milestone <n> — <what a user can do after it>`. Each row is a commit on `milestone/<slug>-<n>` with touched tests and required pre-commit checks between rows; each
 milestone gets the checks and validation once, and one PR that releases it. For E2E, run
 the full suite once, inside `verify_gate.py milestone` (the only runner of the full suite), ×3 only for changed and flaky specs. Use the committed
 `e2e/flaky-specs.txt` list per `cct:test-e2e-policy`, `suite-speed-and-reliability.md`
-section G (selection and line format). `delivery: "feature-prs"`: each row is one PR into
-`milestone/<slug>` (a hotfix: into the default branch), the next starts when it auto-merges.
+section G (selection and line format).
 
 | # | Feature | Facts | Branch | State |
 |---|---|---|---|---|
@@ -111,20 +109,12 @@ What must hold, as data in [done.json](done.json) (facts, test tags, pages, stat
 below ends on the status line of `sdlc_status.py goal` (from the sdlc-run plugin), which reads the verify gate and the PRs,
 so every line here is proven by a check, not by a claim.
 
-{{#FEATURE_PRS}}
-- `python3 scripts/verify_gate.py feature {{CHANGE}}` ends `VERIFY PASS` for every feature.
-{{/FEATURE_PRS}}
 - `python3 scripts/verify_gate.py milestone {{CHANGE}}` ends `VERIFY PASS` once, on the milestone.
 - <file> exists / contains `<string>`.
 - Every fact passes by its named check.
 - Nothing outside `## Files that change` is edited.
 - Stop and report as soon as a step cannot proceed. Never work around a blocker.
-{{#ONE_GO}}
-- Stop after {{RUN_TURNS}} turns if not met. First run `python3 <STATUS> handoff {{CHANGE}} --cap turns --what <what is missing> --next <the exact next command>`. It writes the one HANDOFF record.
-{{/ONE_GO}}
-{{#FEATURE_PRS}}
-- Stop after {{FEATURE_TURNS}} turns per feature and {{MILESTONE_TURNS}} for the milestone close if not met. First run `python3 <STATUS> handoff {{CHANGE}} --cap turns --what <what is missing> --next <the exact next command>`. It writes the one HANDOFF record. The fix-round and retry caps do the same (`--cap fix-rounds`, `--cap retries`).
-{{/FEATURE_PRS}}
+- Stop after {{RUN_TURNS}} turns if not met. First run `python3 <STATUS> handoff {{CHANGE}} --cap turns --what <what is missing> --next <the exact next command>`. It writes the one HANDOFF record. The fix-round and retry caps do the same (`--cap fix-rounds`, `--cap retries`).
 
 ## How to run
 
@@ -204,16 +194,9 @@ before any check or push: it owns local iteration, failures and the final full c
   Sync first, one fix round, diagnose locally with failing tests and affected suites until green,
   then `python3 scripts/verify_gate.py milestone {{CHANGE}}`, output pasted: it is the only runner
   of the full suite and the full E2E (its checks hold the changed and flaky specs ×3); never a
-  separate unit or E2E run of the whole suite beside it. Then one push and PR. Records and
-  repairs are commits there, never separate PRs.
-- **Feature PRs** (`delivery: "feature-prs"`): each feature is its own `/goal` from
-  `templates/goal/feature.txt`: `cct:sdlc-feature-builder`, or `codex-build.sh` when `builders` is
-  `codex`, with `builderModel` and `builderEffort`. Run the touched tests and affected suites until
-  green, then the full suite before the push, `python3 scripts/verify_gate.py feature
-  {{CHANGE}}`, output pasted. Use this worktree's E2E slot. After opening the PR run
-  `cct:ux-assessment-run` unless `ux` is off, and fix Critical and High before arming auto-merge.
-  Tick plan tasks and log departures under `## Revisions`. Stages 5 and 6 in `stages.md` have the
-  steps.
+  separate unit or E2E run of the whole suite beside it. Run `cct:ux-assessment-run` on the milestone
+  diff unless `ux` is off, and settle its findings before arming auto-merge. Then one push and PR.
+  Records and repairs are commits there, never separate PRs.
 
 ## Goal handover
 
@@ -221,13 +204,7 @@ Two blocks, filled when the gate returns approved and committed verbatim, so the
 one chat message. The kickoff prompt tells the run what to do. The `/goal` line holds only the end
 state: the status command prints `GOAL <ID> DONE`, `GOAL <ID> BLOCKED` or `GOAL <ID> HANDOFF`, and the run stops after
 `<TURNS>` turns.
-{{#ONE_GO}}
 `<TURNS>` is `goal.runTurns`, {{RUN_TURNS}} here.
-{{/ONE_GO}}
-{{#FEATURE_PRS}}
-One `/goal` per feature from `templates/goal/feature.txt`: `<TURNS>` is `goal.featureTurns`, {{FEATURE_TURNS}}
-here; the milestone close uses `goal.milestoneTurns`, {{MILESTONE_TURNS}}.
-{{/FEATURE_PRS}}
 The project close (`goal --project`) uses `goal.projectTurns`, {{PROJECT_TURNS}} here.
 
 The guardrail test fails an approved plan whose section is empty. Write `none —

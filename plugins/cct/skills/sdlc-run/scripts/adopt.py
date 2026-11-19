@@ -671,16 +671,11 @@ def render(text: str, values: dict[str, str]) -> str:
 
 
 def delivery_values(cfg: dict) -> dict[str, str]:
-    """What plan.md's `Done` and turn caps render by: one block per delivery mode, and the caps from
-    `goal` (defaults 150 for a whole run, 40 per feature, 30 for a milestone close)."""
+    """What plan.md's turn caps render by, from `goal` (defaults 150 for a whole run, 30 for a
+    milestone close, which is also the default for a project close)."""
     goal = cfg.get("goal") if isinstance(cfg.get("goal"), dict) else {}
-    feature_prs = cfg.get("delivery") == "feature-prs"
     return {
-        "ONE_GO": "" if feature_prs else "1",
-        "FEATURE_PRS": "1" if feature_prs else "",
         "RUN_TURNS": str(goal.get("runTurns", 150)),
-        "FEATURE_TURNS": str(goal.get("featureTurns", 40)),
-        "MILESTONE_TURNS": str(goal.get("milestoneTurns", 30)),
         "PROJECT_TURNS": str(goal.get("projectTurns", goal.get("milestoneTurns", 30))),  # a project close is a milestone-sized run
     }
 
@@ -1037,6 +1032,7 @@ KIT_PREFLIGHT = {
     "d5c15466ff9464be",
     "9e40826faba1db82",
     "020f538fc743c5b0",
+    "800076649e5cd346",
 }
 KIT_HELPER_GUARD = {
     "ca26ffb8ad16e8b3",
@@ -1278,11 +1274,10 @@ def main() -> int:
     if cfg_path.exists():
         cfg = json.loads(cfg_path.read_text(encoding="utf-8"))
         cfg_before = json.dumps(cfg, sort_keys=True)
-        if cfg.get("delivery") == "feature-prs" and (cfg.get("milestones") or {}).get("merge") == "local":
-            sys.exit(
-                'sdlc.json: delivery "feature-prs" needs a remote milestone branch, which '
-                'milestones.merge "local" never pushes. Use delivery "one-go" (the default) with '
-                'local milestones, or milestones.merge "pr" with feature PRs.'
+        if cfg.get("delivery") == "feature-prs":
+            manual.append(
+                'sdlc.json: delivery "feature-prs" is gone (sdlc-run 3.24.0): every change now delivers one '
+                'milestone PR, features are commits on its branch. Set "delivery": "one-go" to silence this'
             )
         kept.append("sdlc.json")
         plan = migrate_plan(cfg) if MIGRATE else {}

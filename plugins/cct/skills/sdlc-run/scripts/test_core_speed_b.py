@@ -62,15 +62,14 @@ def test_approve_requires_the_facts_and_the_plan(tmp_path: Path, gone: str) -> N
     assert r.returncode == 1 and gone in r.stdout
 
 
-def test_approve_refuses_feature_prs_with_local_milestones_and_a_project_branch(tmp_path: Path) -> None:
+def test_approve_no_longer_refuses_a_leftover_feature_prs_setting(tmp_path: Path) -> None:
     repo = _repo(tmp_path, ["true"])
     cfg = json.loads((repo / "sdlc.json").read_text())
     (repo / "sdlc.json").write_text(json.dumps({**cfg, "delivery": "feature-prs", "milestones": {"merge": "local"}}))
     (repo / "changes" / ID / "decisions.json").write_text(json.dumps({"size": "S", "project": {"slug": "p", "branch": True}}))
     _git(repo, "add", "-A")
     _git(repo, "commit", "-qm", "conflicting modes")
-    r = _gate(repo, "approve", ID)
-    assert r.returncode == 1 and "feature-prs" in r.stdout and "local" in r.stdout
+    assert "feature-prs" not in _gate(repo, "approve", ID).stdout
 
 
 def test_a_strict_milestone_needs_a_findings_file_with_its_converged_line(tmp_path: Path) -> None:

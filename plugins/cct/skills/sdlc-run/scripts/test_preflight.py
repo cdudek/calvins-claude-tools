@@ -63,13 +63,9 @@ def test_docker_is_required_only_when_a_test_database_is_configured(tmp_path: Pa
     assert _run(tmp_path, {"db": {"test": {}}}, fakes={"docker": 0}).returncode == 0
 
 
-def test_D4_feature_prs_with_local_milestones_is_refused_with_both_ways_out(tmp_path: Path) -> None:
+def test_D4_a_leftover_feature_prs_setting_is_not_a_config_failure(tmp_path: Path) -> None:
     cfg = {"delivery": "feature-prs", "milestones": {"merge": "local"}}
-    res = _run(tmp_path, cfg)
-    assert "FAIL config delivery" in res.stdout
-    assert 'milestones.merge "pr"' in res.stdout and 'delivery "one-go"' in res.stdout
-    fine = {"delivery": "feature-prs", "milestones": {"merge": "pr"}}
-    assert _run(tmp_path / "ok", fine).returncode == 0
+    assert "FAIL config delivery" not in _run(tmp_path, cfg).stdout
 
 
 def test_S4_a_blocked_rule_without_a_message_has_no_route(tmp_path: Path) -> None:

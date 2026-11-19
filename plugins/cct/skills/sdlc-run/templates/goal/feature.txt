@@ -1,1 +1,0 @@
-`python3 <STATUS> goal <ID> --feature <n>` printed `GOAL <ID> DONE`, `GOAL <ID> BLOCKED` or `GOAL <ID> HANDOFF` as its last run in this conversation, or stop after <TURNS> turns.
