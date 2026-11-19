@@ -72,7 +72,7 @@ none.
 | `protected` | paths refused after approval |
 | `heavy`, `db`, `preflight` | the heavy-job queue (`slots`, `waitTimeout`, `runTimeout`, `portBase`, `patterns`), the local test database and the personal cloud database, and the preflight checks (`tools`, `auth`, `docker`): `references/heavy-work.md` in the kit |
 | `checkTimeout` | seconds a gate check may run (default 1800); a check's own `timeout` overrides it |
-| `layout`, `livingSpecs` | `4` opts in to the three-document layout and the living spec (never set by `adopt`); `livingSpecs` renames the `specs` folder |
+| `layout`, `livingSpecs` | `4` opts in to the three-document layout and the living spec (a new adoption writes `4`; an adopted repo keeps its value, and `adopt --upgrade` offers the switch); `livingSpecs` renames the `specs` folder |
 | `verify`, `verifyStop` | full command before PR; fast Stop hook command (skipped inside a `/goal` and when nothing changed since its last pass) |
 | `planGate` | `owner` or `self`; self is barred for data safety, irreversible writes, security or money |
 | `testGlobs`, `prototypeDirs`, `feedback` | locked tests, prototype paths, owner-words files |
@@ -106,9 +106,9 @@ touched unit tests) never wait.
 All of it is optional. Set `heavy`, `db` and `preflight` in `sdlc.json` (key table above); the kit's
 `references/heavy-work.md` has the details.
 
-## The living spec (optional)
+## The living spec (the default for a new adoption)
 
-A repo opts in with `"layout": 4` in `sdlc.json`. A change then holds three documents, `spec.md`
+A repo on `"layout": 4` in `sdlc.json` (a new adoption writes it; an adopted repo adds it to switch) holds three documents, `spec.md`
 (why and what), `design.md` (how) and `tasks.md` (in what order), instead of intent, facts, plan and
 the rest. Scope S needs only the spec, M the spec and the tasks, L all three, chosen by risk. A
 change already on the old layout finishes on it.

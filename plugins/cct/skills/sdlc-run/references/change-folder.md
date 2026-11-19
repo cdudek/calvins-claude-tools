@@ -39,11 +39,16 @@ M the intent confirmation and the plan gate are one round on the same files.
 
 Layout 4 moves no machine file. `decisions.json`, `done.json`, `lock.json`, `asks/`, `marks.json`,
 `verify/` and the findings keep their paths and readers; `decisions.json` gains `"layout": 4`,
-written once at intake and never changed (the pin per change). A repo opts in with `"layout": 4` in
-`sdlc.json`, only after its hooks, status and verifier read the new documents; adopt never sets it.
+written once at intake and never changed (the pin per change). A new change follows the repo's
+`sdlc.json` `layout`: `adopt` writes `"layout": 4` on a fresh adoption, leaves an adopted repo's value
+alone (no silent switch) and, with `--upgrade`, prints one MANUAL line offering it.
 A `state/` folder was proposed first and is not built: the readers of every one of those files
 would have to ship before it, and bypass words (`protectedEdit`, `prExceptions`) must stay where a
 reviewer sees them.
+
+The pass rule uses the same list: `pass_proof.py` `LOCKED_FILES` names the locked documents per
+layout, `chain-gate.sh` protects them (not `tasks.md`, which takes ticks) and the lock hash covers
+them, so a later edit of `spec.md`, `design.md`, a task row or a rule file voids a gate pass.
 
 Three things the lock covers: the whole of `spec.md`, the task rows of `tasks.md` (not the `State`
 column, not the handover) and `design.md`. A tick never invalidates an approval.

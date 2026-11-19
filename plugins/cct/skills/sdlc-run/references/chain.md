@@ -353,7 +353,7 @@ permalinks; local laptop paths are refused.
 | `db` | `db.py` | `test` (local Postgres container with a migrated template) and `dev` (a personal cloud database through the auth proxy); every value is a command, so no vendor is named |
 | `preflight` | `preflight.py`, `verify_gate.py` | `tools`, `auth` (`{name, check, fix}`): checked once before the first heavy command |
 | `checkTimeout` | `verify_gate.py` | seconds a gate check may run (default 1800); a check's own `timeout` overrides it; the process group is killed |
-| `layout` | `spec.py`, hooks, gate | `4` opts a repo in to the three-document layout and the living spec; `adopt` never sets it; `references/change-folder.md` |
+| `layout` | `spec.py`, hooks, gate | `4` opts a repo in to the three-document layout and the living spec; a new adoption writes it, an adopted repo keeps its value and `adopt --upgrade` offers the switch; `references/change-folder.md` |
 | `livingSpecs` | `spec.py` | the folder that holds the living spec (default `specs`); one plain folder name inside the repo; `specsDir` is the old key for designs and is not reused |
 | `protected` | hook | globs refused after approval; default `sdlc.json`, `**/*-snapshots/**`, `**/__screenshots__/**`, `**/*allowlist*` |
 

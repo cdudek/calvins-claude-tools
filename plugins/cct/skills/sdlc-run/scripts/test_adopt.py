@@ -2324,3 +2324,44 @@ def test_adopt_flags_migrations_without_a_db_test_block(tmp_path: Path) -> None:
 def test_adopt_stays_quiet_about_databases_when_the_repo_has_no_migrations(tmp_path: Path) -> None:
     res = _adopt(_repo(tmp_path, "node"))
     assert not any("db.test" in m for m in _sections(res.stdout)["MANUAL"])
+
+
+# --- 3.24.0: layout 4 is the default for a new adoption, never a silent switch ---------------------
+
+
+def _layout_manual(out: str) -> list[str]:
+    return [m for m in _sections(out).get("MANUAL", []) if '"layout": 4' in m]
+
+
+def test_a_fresh_adoption_writes_layout_4(tmp_path: Path) -> None:
+    repo = _repo(tmp_path, "node")
+    assert _adopt(repo).returncode == 0
+    assert json.loads((repo / "sdlc.json").read_text())["layout"] == 4
+
+
+@pytest.mark.parametrize("args", [(), ("--upgrade",)])
+def test_an_adopted_repo_keeps_its_layout_value(tmp_path: Path, args: tuple[str, ...]) -> None:
+    repo = _repo(tmp_path, "node")
+    _adopt(repo)
+    cfg = json.loads((repo / "sdlc.json").read_text())
+    for value in (3, None):
+        if value is None:
+            cfg.pop("layout")
+        else:
+            cfg["layout"] = value
+        (repo / "sdlc.json").write_text(json.dumps(cfg))
+        _adopt(repo, *args)
+        assert json.loads((repo / "sdlc.json").read_text()).get("layout") == value
+
+
+def test_upgrade_offers_the_layout_switch_once_and_only_without_a_layout(tmp_path: Path) -> None:
+    repo = _repo(tmp_path, "node")
+    _adopt(repo)
+    cfg = json.loads((repo / "sdlc.json").read_text())
+    cfg.pop("layout")
+    (repo / "sdlc.json").write_text(json.dumps(cfg))
+    assert len(_layout_manual(_adopt(repo, "--upgrade").stdout)) == 1
+    assert _layout_manual(_adopt(repo).stdout) == []  # plain adopt of an adopted repo says nothing
+    cfg["layout"] = 3
+    (repo / "sdlc.json").write_text(json.dumps(cfg))
+    assert _layout_manual(_adopt(repo, "--upgrade").stdout) == []
