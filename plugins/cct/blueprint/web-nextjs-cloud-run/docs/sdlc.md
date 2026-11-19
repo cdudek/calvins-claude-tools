@@ -11,7 +11,7 @@ changes/<date>-<KEY>-<slug>/
   intent.md             ## Asks, job stories, success measure
   spec/                 the UX plan: brief · ia · interaction · screens · conformance · validation
   facts.md              EARS facts citing asks, screens and test tags
-  plan.md               where things go · feature PRs · Done · Goal handover
+  plan.md               where things go · features · Done · Goal handover
   done.json, lock.json  the criteria as data, and their hash at approval
   milestone.md          features and states · outcome
 docs/designs/
@@ -38,7 +38,7 @@ That installs plannotator and its plugin. Linear: in Claude Code run `/mcp` and 
 | 2 UX plan   | the cct UX skills: design, sitemap, conformance, words; one validation pass. Skipped for size `none` or `ux: off`.                                                                                                                                                                          | none                                                  |
 | 3 Facts     | Facts cite asks, screens and the E2E tag that proves them; plain-language lint.                                                                                                                                                                                                   | none                                                  |
 | 4 Tech plan | Where things go, milestones and their features, Done, one goal for all of it.                                                                                                                                                                                                     | one gate for all three, then `verify_gate.py approve` |
-| 5 Build     | One go (default): one `/goal` builds every milestone in order; per feature, tests, build, commit, and nothing else runs between features. Questions go to `questions.md` and never block; answers become asks of the next milestone. (`delivery: feature-prs`: a PR per feature.) | none                                                  |
+| 5 Build     | One go (default): one `/goal` builds every milestone in order; per feature, tests, build, commit, and nothing else runs between features. Questions go to `questions.md` and never block; answers become asks of the next milestone. | none                                                  |
 | 6 Milestone | Checks on the milestone diff; the full E2E suite once, ×3 only for changed and flaky specs (see Build and test); validation of every fact and ask against the built app (`validation.md`), one findings list, one fix round, `verify_gate.py milestone`, one PR that releases it. | only when a Critical or High would be deferred        |
 | 6p Project  | Only for work spanning several milestones: rebase `project/<slug>`, re-check the whole project diff, one PR to the default branch.                                                                                                                                                | engineer accepts                                      |
 | 7 Outcome   | Archive on merge; read the success measure after release.                                                                                                                                                                                                                         | engineer reads it                                     |

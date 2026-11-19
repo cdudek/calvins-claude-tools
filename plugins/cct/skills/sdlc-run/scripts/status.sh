@@ -93,7 +93,7 @@ PY
 import json, pathlib, sys
 dec = json.load(open(sys.argv[1], encoding="utf-8"))
 d = pathlib.Path(sys.argv[2])
-if "size" not in dec or dec.get("size") == "none":
+if "size" not in dec or dec.get("size") in ("none", "S"):  # S has no UX stage
     sys.exit(1)
 skips = dec.get("skips", {})
 files = {
@@ -116,7 +116,7 @@ PY
 import json, pathlib, sys
 dec = json.load(open(sys.argv[1], encoding="utf-8"))
 d = pathlib.Path(sys.argv[2])
-if "size" not in dec or str(dec.get("skips", {}).get("validation", "")).startswith("skip"):
+if "size" not in dec or dec.get("size") == "S" or str(dec.get("skips", {}).get("validation", "")).startswith("skip"):
     sys.exit(1)
 val = d / "spec" / "readiness.md"
 if not val.exists():  # a folder written before the rename keeps its old name

@@ -13,7 +13,7 @@ changes/<date>-<KEY>-<slug>/
   intent.md             ## Asks, job stories, success measure
   spec/                 the UX plan: brief · ia · interaction · screens · conformance · validation
   facts.md              EARS facts citing asks, screens and test tags
-  plan.md               where things go · feature PRs · Done · Goal handover
+  plan.md               where things go · features · Done · Goal handover
   done.json, lock.json  the criteria as data, and their hash at approval
   milestone.md          features and states · outcome
 docs/designs/
@@ -40,10 +40,10 @@ That installs plannotator and its plugin. Linear: in Claude Code run `/mcp` and 
 | 2 UX plan | the cct UX skills: design, sitemap, conformance, words; one validation pass. Skipped for size `none` or `ux: off`. | none |
 | 3 Facts | Facts cite asks, screens and the E2E tag that proves them; plain-language lint. | none |
 | 4 Tech plan | Where things go, milestones and their features, Done, one goal for all of it. | one gate for all three, then `verify_gate.py approve` |
-| 5 Build | One go (default): one `/goal` builds every milestone in order; per feature, tests, build, commit, and nothing else runs between features. Questions go to `questions.md` and never block; answers become asks of the next milestone. (`delivery: feature-prs`: a PR per feature.) | none |
+| 5 Build | One go (default): one `/goal` builds every milestone in order; per feature, tests, build, commit, and nothing else runs between features. Questions go to `questions.md` and never block; answers become asks of the next milestone. | none |
 | 6 Milestone | Checks on the milestone diff; the full E2E suite once, ×3 only for changed and flaky specs (see Build and test); validation of every fact and ask against the built app (`validation.md`), one findings list, one fix round, `verify_gate.py milestone`, one PR that releases it. | only when a Critical or High would be deferred |
 | 6p Project | Only for work spanning several milestones: rebase `project/<slug>`, re-check the whole project diff, one PR to the default branch. | engineer accepts |
-| 7 Outcome | After the merge, record the outcome and remove the folder in one records-only PR (no archive); read the success measure after release. | engineer reads it |
+| 7 Outcome | The change's PR keeps its folder; the next change's first commit removes it with the outcome record (no archive, no records-only PR); read the success measure after release. | engineer reads it |
 
 ### Branches
 
@@ -61,8 +61,8 @@ none.
 | --- | --- |
 | `checks.feature[]`, `checks.milestone[]` | what `scripts/verify_gate.py` runs, cheapest first by recorded seconds (`"after": ["<check name>"]` keeps a check behind the one it needs, such as codegen before the typecheck; `"serial": true` pins a check in place; an approval made before 3.18.0 keeps the declared order; `--keep-going` runs past a failure) |
 | `milestones`, `hotfix` | milestone branch prefix and rebase rule; the hotfix lane |
-| `delivery` | `one-go` (default) or `feature-prs` |
-| `goal` | turn caps: `runTurns` for the one-go goal, `featureTurns` and `milestoneTurns` for feature PRs, `projectTurns` for a project close (default: the milestone cap) |
+| `delivery` | `one-go`, the only delivery: features are commits on the milestone branch, one milestone PR |
+| `goal` | turn caps: `runTurns` for the goal, `projectTurns` for a project close (default: `milestoneTurns`, 30) |
 | `builders` | `claude` (default) or `codex`: who builds feature rows and fix parts. With `codex`, the kit's `codex-build.sh` runs the Codex CLI in the feature worktree with the network off and rejects a run that touched a protected path; Claude still supervises, closes the milestone and runs the gates |
 | `builderModel`, `builderEffort` | which model builds and how hard (default `sonnet`, `high`): the `model` and `effort` of every builder agent, or the Codex model and reasoning when `builders` is `codex`. Set `opus` for a repo whose changes are hard; a plan's Approach may override both for one change |
 | `languages`, `responsiveTier`, `ux` | what the product ships, the device matrix tier, UX on or off |
@@ -72,7 +72,7 @@ none.
 | `protected` | paths refused after approval |
 | `heavy`, `db`, `preflight` | the heavy-job queue (`slots`, `waitTimeout`, `runTimeout`, `portBase`, `patterns`), the local test database and the personal cloud database, and the preflight checks (`tools`, `auth`, `docker`): `references/heavy-work.md` in the kit |
 | `checkTimeout` | seconds a gate check may run (default 1800); a check's own `timeout` overrides it |
-| `layout`, `livingSpecs` | `4` opts in to the three-document layout and the living spec (never set by `adopt`); `livingSpecs` renames the `specs` folder |
+| `layout`, `livingSpecs` | `4` opts in to the three-document layout and the living spec (a new adoption writes `4`; an adopted repo keeps its value, and `adopt --upgrade` offers the switch); `livingSpecs` renames the `specs` folder |
 | `verify`, `verifyStop` | full command before PR; fast Stop hook command (skipped inside a `/goal` and when nothing changed since its last pass) |
 | `planGate` | `owner` or `self`; self is barred for data safety, irreversible writes, security or money |
 | `testGlobs`, `prototypeDirs`, `feedback` | locked tests, prototype paths, owner-words files |
@@ -106,9 +106,9 @@ touched unit tests) never wait.
 All of it is optional. Set `heavy`, `db` and `preflight` in `sdlc.json` (key table above); the kit's
 `references/heavy-work.md` has the details.
 
-## The living spec (optional)
+## The living spec (the default for a new adoption)
 
-A repo opts in with `"layout": 4` in `sdlc.json`. A change then holds three documents, `spec.md`
+A repo on `"layout": 4` in `sdlc.json` (a new adoption writes it; an adopted repo adds it to switch) holds three documents, `spec.md`
 (why and what), `design.md` (how) and `tasks.md` (in what order), instead of intent, facts, plan and
 the rest. Scope S needs only the spec, M the spec and the tasks, L all three, chosen by risk. A
 change already on the old layout finishes on it.
@@ -119,14 +119,14 @@ that changes the behaviour. The PR's git diff is the delta; there is no archive 
 with the next free id, `check` makes a changed rule need a changed test, and `renumber` fixes two
 PRs that took the same number.
 
-## After the merge
+## Closing the change
 
-There is no archive. After the PR into the default branch merges, `spec.py outcome write
-changes/<id>` copies the success measure to `.sdlc/outcomes/<id>.json`, then
-`git rm -r changes/<id>` goes in one records-only PR (never before the merge, and only when
-`git grep -F "changes/<id>/"` finds no reader). After release the measure is recorded with
-`spec.py outcome record`; `spec.py outcome due` lists the ones still waiting. History stays in git
-and the merged PR.
+There is no archive and no records-only PR. The change's PR keeps its folder. The next change's first
+commit runs `sdlc_status.py sweep-merged --apply`: for each change whose PR merged,
+`spec.py outcome write changes/<id>` copies the success measure to `.sdlc/outcomes/<id>.json`, then
+`git rm -r changes/<id>` removes the folder (only when `git grep -F "changes/<id>/"` finds no reader). After
+release the measure is recorded with `spec.py outcome record`; `spec.py outcome due` lists the ones
+still waiting. History stays in git and the merged PR.
 
 ## Hooks
 

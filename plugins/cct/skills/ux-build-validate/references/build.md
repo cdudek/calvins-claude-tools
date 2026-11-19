@@ -12,13 +12,13 @@ milestone close and the supervisor owns it.
 - Approved `<spec>/readiness.md` (`<spec>/validation.md` in a folder written before the rename),
   unless the `validation` skip is recorded and a `visualSource` is supplied: then the intent
   approval authorises the run.
-- `<spec>/screens.md`, always.
+- `<spec>/screens.md`, always (build QA does not run for sizes `none` and S).
 - `<spec>/brief.md`, `<spec>/ia.md` and `<spec>/interaction.md`: required unless the owner's
   record skips the activity. The record is `decisions.json` `skips` (`sdlc-run` `chain.md`): an
   activity is skipped exactly when `skips` lists it, whatever the size, because the owner may
   restore a preset skip or waive an activity with a yes and a reason. The size (`size`) is only the
   default, for a `decisions.json` with no `skips` key:
-  size S skips all three, size M skips `ia`, size L skips none.
+  sizes `none` and S have no UX stage and skip everything, size M skips `ia`, size L skips none.
   A file missing for an activity `skips` does not list is a QA failure, never a skip: set
   `verdict: fail` and name the file.
 - The declared `visualSource`, when `decisions.json` names one: the reference.

@@ -12,8 +12,7 @@ uses:
   exit 0 means signed in; `fix` is the one line printed on failure
 - disk: free space on the repo's volume (`preflight.minFreeGB`, default 15): FAIL below it, WARN below twice it
 - Docker or Podman (db.test.engine, as db.py picks it), only when `db.test` is configured or `preflight.docker` is true
-- config: feature-PR delivery with local milestones (the milestone branch it needs is the one a local
-  milestone never pushes; `adopt` refuses the same pair), and a `blocked[]` rule with no message (a refusal with no route)
+- config: a `blocked[]` rule with no message (a refusal with no route)
 
 Written by `sdlc-run adopt` from the kit; edit the kit, not this copy. stdlib only.
 """
@@ -41,17 +40,6 @@ def ok(argv: list[str]) -> bool:
 
 def config_conflicts(cfg: dict) -> list[str]:
     out: list[str] = []
-    merge = (
-        (cfg.get("milestones") or {}).get("merge")
-        if isinstance(cfg.get("milestones"), dict)
-        else None
-    )
-    if cfg.get("delivery") == "feature-prs" and merge == "local":
-        out.append(
-            "FAIL config delivery: feature PRs need a published milestone branch and local milestones "
-            'forbid it; choose remote feature PRs (milestones.merge "pr") or local feature commits '
-            '(delivery "one-go") in sdlc.json'
-        )
     for i, rule in enumerate(cfg.get("blocked") or []):
         if isinstance(rule, dict) and not str(rule.get("message", "")).strip():
             out.append(

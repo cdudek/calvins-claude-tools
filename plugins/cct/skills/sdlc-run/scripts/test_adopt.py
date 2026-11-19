@@ -114,11 +114,13 @@ def test_adopt_renders_everything_without_leftover_tokens(
     changes = [p for p in (repo / "changes").iterdir() if p.is_dir() and p.name != "archive"]
     first = f"{dt.date.today().isoformat()}-adopt-sdlc"
     assert [c.name for c in changes] == [first]
-    assert "## Problem" in (changes[0] / "intent.md").read_text()
-    plan = (changes[0] / "plan.md").read_text()
-    for section in ("## Order of work", "## Done", "## Revisions", "## Design changes"):
-        assert section in plan, section
-    assert f"change: {first}" in plan and "linear: none" in plan
+    # a fresh adoption is on layout 4 (sdlc.json says so), so its first change is too: one spec.md, pinned
+    assert sorted(p.name for p in changes[0].iterdir()) == ["decisions.json", "spec.md"]
+    assert json.loads((changes[0] / "decisions.json").read_text()) == {"layout": 4}
+    spec_md = (changes[0] / "spec.md").read_text()
+    assert "## Asks" in spec_md and "## Requirements" in spec_md
+    assert f"change: {first}" in spec_md and "linear: none" in spec_md
+    assert "scope: S" in spec_md and "ux: none" in spec_md and "<S |" not in spec_md
     assert (
         "/goal" in (repo / "CLAUDE.md").read_text()
         and "sdlc-run" in (repo / "CLAUDE.md").read_text()
@@ -404,8 +406,8 @@ def test_ticket_names_the_first_change(tmp_path: Path) -> None:
     repo = _repo(tmp_path, "node")
     _adopt(repo, "--ticket", "REV-947")
     first = repo / "changes" / f"{dt.date.today().isoformat()}-REV-947-adopt-sdlc"
-    assert (first / "plan.md").exists()
-    assert "linear: REV-947" in (first / "facts.md").read_text()
+    assert (first / "spec.md").exists() and not (first / "plan.md").exists()
+    assert "linear: REV-947" in (first / "spec.md").read_text()
 
 
 def test_migrates_goals_and_claude_plans(tmp_path: Path) -> None:
@@ -458,14 +460,32 @@ def test_adopt_says_when_the_removed_coowner_step_was_in_use_F20(tmp_path: Path)
     assert not [m for m in _sections(_adopt(repo).stdout)["MANUAL"] if "SDLC_COOWNER" in m]
 
 
-def test_adopt_refuses_feature_prs_with_local_milestones_F12(tmp_path: Path) -> None:
+def test_upgrade_tells_a_feature_prs_repo_it_now_delivers_one_milestone_pr(tmp_path: Path) -> None:
     repo = _repo(tmp_path, "node")
     _adopt(repo)
     cfg = json.loads((repo / "sdlc.json").read_text())
     cfg.update({"delivery": "feature-prs", "milestones": {"merge": "local"}})
     (repo / "sdlc.json").write_text(json.dumps(cfg))
-    res = _adopt(repo)
-    assert res.returncode != 0 and 'delivery "one-go"' in res.stderr + res.stdout
+    res = _adopt(repo, "--upgrade")
+    assert res.returncode == 0, res.stderr
+    notes = [m for m in _sections(res.stdout)["MANUAL"] if "feature-prs" in m]
+    assert len(notes) == 1 and "one milestone PR" in notes[0]
+
+
+def test_upgrade_refuses_while_a_feature_prs_change_is_approved_and_unmerged(tmp_path: Path) -> None:
+    repo = _repo(tmp_path, "node")
+    _adopt(repo)
+    cfg = json.loads((repo / "sdlc.json").read_text())
+    (repo / "sdlc.json").write_text(json.dumps({**cfg, "delivery": "feature-prs"}))
+    change = next((repo / "changes").glob("*-adopt-sdlc"))
+    (change / "lock.json").write_text("{}\n")  # approved, its folder not removed: not merged
+    before = (repo / "sdlc.json").read_text()
+    res = _adopt(repo, "--upgrade")
+    assert res.returncode != 0 and change.name in res.stderr
+    assert "finish or re-approve it as one milestone PR first" in res.stderr
+    assert (repo / "sdlc.json").read_text() == before
+    (change / "lock.json").unlink()  # nothing approved is in flight: only the note
+    assert _adopt(repo, "--upgrade").returncode == 0
 
 
 def test_change_templates_name_the_local_route_F12() -> None:
@@ -1826,7 +1846,7 @@ def test_adopt_migrates_the_old_review_fix_run_sentence_and_keeps_the_custom_rul
 
 def test_the_plan_template_does_not_tell_the_closer_to_run_unit_and_e2e_beside_the_gate() -> None:
     plan = " ".join((SCRIPTS.parent / "templates/change/plan.md").read_text().split())
-    branch = plan.split("**One milestone**", 1)[1].split("**Feature PRs**", 1)[0]
+    branch = plan.split("**One milestone**", 1)[1].split("## Goal handover", 1)[0]
     assert "unit, E2E (changed and flaky specs ×3) and" not in branch
     assert "only runner of the full suite" in branch
 
@@ -2324,3 +2344,44 @@ def test_adopt_flags_migrations_without_a_db_test_block(tmp_path: Path) -> None:
 def test_adopt_stays_quiet_about_databases_when_the_repo_has_no_migrations(tmp_path: Path) -> None:
     res = _adopt(_repo(tmp_path, "node"))
     assert not any("db.test" in m for m in _sections(res.stdout)["MANUAL"])
+
+
+# --- 3.24.0: layout 4 is the default for a new adoption, never a silent switch ---------------------
+
+
+def _layout_manual(out: str) -> list[str]:
+    return [m for m in _sections(out).get("MANUAL", []) if '"layout": 4' in m]
+
+
+def test_a_fresh_adoption_writes_layout_4(tmp_path: Path) -> None:
+    repo = _repo(tmp_path, "node")
+    assert _adopt(repo).returncode == 0
+    assert json.loads((repo / "sdlc.json").read_text())["layout"] == 4
+
+
+@pytest.mark.parametrize("args", [(), ("--upgrade",)])
+def test_an_adopted_repo_keeps_its_layout_value(tmp_path: Path, args: tuple[str, ...]) -> None:
+    repo = _repo(tmp_path, "node")
+    _adopt(repo)
+    cfg = json.loads((repo / "sdlc.json").read_text())
+    for value in (3, None):
+        if value is None:
+            cfg.pop("layout")
+        else:
+            cfg["layout"] = value
+        (repo / "sdlc.json").write_text(json.dumps(cfg))
+        _adopt(repo, *args)
+        assert json.loads((repo / "sdlc.json").read_text()).get("layout") == value
+
+
+def test_upgrade_offers_the_layout_switch_once_and_only_without_a_layout(tmp_path: Path) -> None:
+    repo = _repo(tmp_path, "node")
+    _adopt(repo)
+    cfg = json.loads((repo / "sdlc.json").read_text())
+    cfg.pop("layout")
+    (repo / "sdlc.json").write_text(json.dumps(cfg))
+    assert len(_layout_manual(_adopt(repo, "--upgrade").stdout)) == 1
+    assert _layout_manual(_adopt(repo).stdout) == []  # plain adopt of an adopted repo says nothing
+    cfg["layout"] = 3
+    (repo / "sdlc.json").write_text(json.dumps(cfg))
+    assert _layout_manual(_adopt(repo, "--upgrade").stdout) == []

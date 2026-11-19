@@ -159,17 +159,13 @@ decision.
   which is never refused. The command is split into real segments and wrappers (`env`, `timeout`,
   `nice`, `xargs`, `sh -c`, `find -exec`) are read by their inner command. It stops a careless
   agent; it is not a sandbox.
-- **Evidence is one file per screen.** `evidence.py record` writes `<dir>/<screen>.json` with the shot's
-  hash and a hash of each text-catalogue key the screen shows. Parallel helpers never write the same
-  file, and a ledger edit conflicts with nothing.
-- **"Changed since capture" is checked per text key.** `evidence.py stale` names each screen whose own
-  keys changed, so one new button label recaptures the screens that show it, not every screen.
+- **Screen evidence** (one file per screen, "changed since capture" per text key): [visual work](visual-work.md).
 
 ## Preflight
 
 `python3 scripts/preflight.py` checks, once, what this change will need: the tools (`git`, the first
 word of `verify`, `preflight.tools`), sign-in (`preflight.auth`: `{name, check, fix}`), the container engine
-(the one `db.py` picks: `db.test.engine`, `SDLC_DB_ENGINE`, Docker, else Podman) when `db.test` exists, and two config conflicts: feature PRs with local milestones, and a `blocked[]` rule
+(the one `db.py` picks: `db.test.engine`, `SDLC_DB_ENGINE`, Docker, else Podman) when `db.test` exists, and one config conflict: a `blocked[]` rule
 with no message. It prints one `FAIL <what>: <fix>` line per failure and ends with `PREFLIGHT OK` or
 `PREFLIGHT FAIL <n>`. Run it at plan approval, and `--config` in CI.
 

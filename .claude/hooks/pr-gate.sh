@@ -11,16 +11,15 @@
 #     head project/*          -> base is the default branch (Stage 6p)
 #     head hotfix/*           -> base is the default branch (sdlc.json hotfix)
 #     base project/*          -> refused for any other head: commit it on the open milestone
-#     base milestone/*        -> refused unless sdlc.json delivery is "feature-prs"
+#     base milestone/*        -> refused (features are commits on the milestone branch)
 #     anything else           -> refused inside an active /goal; outside one it is the
 #                                engineer's own ask and passes
 #   git push
 #     milestone/*             -> only a commit that carries `VERIFY PASS milestone`
-#                                (feature-prs: also its sync, since feature PRs merge into it)
 #     project/*               -> only its creation from origin/<default>; after that it moves
 #                                through milestone PRs alone
 #     the default branch      -> never
-#     anything else           -> refused inside an active /goal (feature-prs: allowed)
+#     anything else           -> refused inside an active /goal
 #
 # sdlc.json `milestones.merge: "local"` (default "pr", which changes nothing above) keeps milestones
 # and the project branch on this machine; only the PR into the default branch goes online:
@@ -128,7 +127,6 @@ class Repo:
         self.default = self.cfg.get("defaultBranch") or "main"
         self.m = (self.cfg.get("milestones") or {}).get("branchPrefix", "milestone/")
         self.p = (self.cfg.get("projects") or {}).get("branchPrefix", "project/")
-        self.feature_prs = self.cfg.get("delivery") == "feature-prs"
         self.local = (self.cfg.get("milestones") or {}).get("merge") == "local"
         self.hotfix = bool(self.cfg.get("hotfix", True))
         self.changes = self.top / self.cfg.get("changesDir", "changes")
@@ -328,13 +326,6 @@ RIDE = (
 )
 
 
-CONFLICT = (
-    "Feature PRs need a published milestone branch, and local milestones never publish one. Choose one in "
-    'sdlc.json: remote feature PRs (milestones.merge "pr") or local feature commits (delivery "one-go"). '
-    "`preflight.py` and `adopt` refuse the same pair."
-)
-
-
 def local_merge_route(project: str, milestone: str) -> str:
     return (
         "Local milestones (sdlc.json milestones.merge): a milestone merges on this machine, after "
@@ -381,11 +372,9 @@ def check_push(repo: Repo, args: list[str]) -> None:
         if dst == repo.default:
             block(f"a push to {dst}.", "The default branch moves only through a merged PR.")
         if dst.startswith(repo.m):
-            if repo.feature_prs and repo.local:
-                block(f"a push of {dst}: sdlc.json asks for feature PRs and for local milestones.", CONFLICT, "sdlc.json")
             if repo.local and (project := repo.project_of(dst)):
                 block(f"a push of {dst} in local milestones mode.", local_merge_route(project, dst))
-            if not repo.feature_prs and not repo.passed(sha, branch=dst, owner=repo.project_of(dst, sha)):
+            if not repo.passed(sha, branch=dst, owner=repo.project_of(dst, sha)):
                 block(f"a push of {dst} at {sha[:12] or src} without a passing milestone gate.", CLOSE, "verify/report.json")
             continue
         if dst.startswith(repo.p):
@@ -410,8 +399,6 @@ def check_push(repo: Repo, args: list[str]) -> None:
             )
         if repo.hotfix and dst.startswith("hotfix/") and repo.hotfix_recorded(dst, sha):
             continue  # a feature gate passed this hotfix head (state/heads.json): the one-go hotfix lane
-        if repo.feature_prs:
-            continue
         if repo.in_session() and goal_active():
             block(f"a push of {dst} inside a /goal run.", RIDE, GOAL_SOURCE, GOAL_ACTION)
 
@@ -456,10 +443,6 @@ def check_pr(repo: Repo, args: list[str]) -> None:
     if repo.hotfix and head.startswith("hotfix/") and base == repo.default:
         return
     if base.startswith(repo.m):
-        if repo.feature_prs and repo.local:
-            block(f"a PR from {head} into {base}: sdlc.json asks for feature PRs and for local milestones.", CONFLICT, "sdlc.json")
-        if repo.feature_prs:
-            return
         block(f"a PR from {head} into {base}.", RIDE)
     if base.startswith(repo.p):
         block(f"a PR from {head} into {base}: only milestone branches merge into a project.", RIDE)

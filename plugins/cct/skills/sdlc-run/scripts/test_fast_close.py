@@ -59,8 +59,8 @@ def test_stages_say_the_gate_runs_evidence_checks_before_the_suites() -> None:
 
 
 # 4. Findings straight to one fix round
-_at = STAGES.index("4. One fix round at milestone close")
-STEP4 = STAGES[_at : STAGES.index("5. Reopen recaptured images", _at)]
+_at = STAGES.index("5. One fix round at milestone close")
+STEP4 = STAGES[_at : STAGES.index("6. Reopen recaptured images", _at)]
 
 
 def test_the_fix_round_reviews_once_explicitly_and_never_starts_a_fresh_review() -> None:
@@ -71,9 +71,15 @@ def test_the_fix_round_reviews_once_explicitly_and_never_starts_a_fresh_review()
     assert "state directory" in STEP4 and "joined findings" in STEP4
 
 
-def test_the_close_builder_fixes_from_the_joined_findings_and_never_reviews() -> None:
-    assert "joined findings" in CLOSE and "review state directory" in CLOSE
-    assert "never start a review" in CLOSE
+def test_the_close_builder_runs_the_gate_only_after_the_parallel_fix_parts() -> None:
+    assert "run the milestone's gate, and only the gate" in CLOSE
+    assert "Never start a review" in CLOSE and "never start a second fix round" in CLOSE
+    assert "Fix the blocking findings" not in CLOSE
+    assert "parallel fix parts" in CLOSE
+    # stages.md says the same: parts first, then the gate only
+    assert "The parts run first and merge one at a time" in STEP4 and "it runs the gate only" in STEP4
+    assert "the Stage 6 fix parts have merged" in STAGES and "it fixes no review finding" in STAGES
+    assert "fixed in the same round if small" not in QUALITY
 
 
 def test_residual_findings_are_settled_by_the_owner_dialog() -> None:
@@ -86,6 +92,7 @@ def test_residual_findings_are_settled_by_the_owner_dialog() -> None:
 
 # 5. One budget
 CONVERGENCE = flat(SKILL / "references/convergence.md")
+VISUAL_WORK = flat(SKILL / "references/visual-work.md")
 QUALITY = flat(SKILL / "references/quality-passes.md")
 BUILD = flat(CCT / "skills/ux-build-validate/references/build.md")
 BUILD_SKILL = flat(CCT / "skills/ux-build-validate/SKILL.md")
@@ -148,7 +155,7 @@ def test_every_child_pass_receives_base_head_and_worktree() -> None:
 def test_stage_6_calls_the_local_form_before_the_gate() -> None:
     assert "cct:ux-assessment-run scope=change base=<parent> head=<milestone head>" in STAGES
     assert STAGES.index("cct:ux-assessment-run scope=change base=<parent>") < STAGES.index(
-        "5. Reopen recaptured images"
+        "6. Reopen recaptured images"
     )
 
 
@@ -164,11 +171,11 @@ KEY = "build SHA, reference revision, screen, state, width and zoom"
 
 
 def test_one_assessment_owns_the_captures_in_one_manifest() -> None:
-    for name, text in (("convergence", CONVERGENCE), ("visual-pass", VISUAL), ("ux", UX)):
+    for name, text in (("visual-work", VISUAL_WORK), ("visual-pass", VISUAL), ("ux", UX)):
         assert "verify/shots/manifest.json" in text, name
         assert KEY in text, name
-    assert "only the affected cells are captured again" in CONVERGENCE
-    assert "stale `qa.md`" in CONVERGENCE
+    assert "only the affected cells are captured again" in VISUAL_WORK
+    assert "stale `qa.md`" in VISUAL_WORK
 
 
 def test_stage_6_lists_the_assessment_once_and_lets_it_dispatch_the_specialists() -> None:
@@ -276,20 +283,29 @@ def test_stage_6_merges_the_close_findings_before_the_triager() -> None:
 
 
 def test_convergence_documents_the_strict_manifest_and_its_version_boundary() -> None:
-    assert '"manifest": "required"' in CONVERGENCE and "full 40-character commit sha" in CONVERGENCE
-    assert "`sources`" in CONVERGENCE and "`shared`" in CONVERGENCE and "`Build: <sha>`" in CONVERGENCE
+    assert '"manifest": "required"' in VISUAL_WORK and "full 40-character commit sha" in VISUAL_WORK
+    assert "`sources`" in VISUAL_WORK and "`shared`" in VISUAL_WORK and "`Build: <sha>`" in VISUAL_WORK
 
 
-# Review fix 14: feature-PR delivery uses the one-go order
-FEATURE_PRS = STAGES.split("### Feature PRs", 1)[1].split("  5. `python3 scripts/verify_gate.py feature", 1)[0]
+# The per-feature PR mode is gone (3.24.0): one delivery, one milestone PR; the next change removes the folder
+def test_stages_describe_one_delivery_and_the_next_change_sweeping_the_folder() -> None:
+    assert "### Feature PRs" not in STAGES and 'delivery: "feature-prs"' not in STAGES
+    stage7 = STAGES.split("## Stage 7", 1)[1].split("2. After release", 1)[0]
+    assert "sweep-merged" in stage7 and "first commit of the next" in stage7 and "keeps its folder" in stage7
+    assert "sweep-merged --apply" in STAGES.split("## Stage 2", 1)[0]  # Stage 1.2 calls it
 
 
-def test_feature_pr_steps_run_the_live_e2e_generator_only_after_the_build() -> None:
-    contract = FEATURE_PRS.index("smallest failing contract assertion")
-    build = FEATURE_PRS.index("3. Build in the plan's folders")
-    live = FEATURE_PRS.index("Live browser coverage, after the build")
-    assert contract < build < live
-    assert FEATURE_PRS.index("cct:test-e2e-coverage-run") > build
+def test_stage_6_numbers_its_steps_once_and_audits_before_the_gate() -> None:
+    raw = (SKILL / "references/stages.md").read_text()  # flat() joins lines, so read the file itself
+    stage6 = raw.split("## Stage 6 — Milestone", 1)[1].split("### Enforcement audit", 1)[0]
+    assert re.findall(r"^(\d+)\. ", stage6, re.M) == ["1", "2", "3", "4", "5", "6", "7"]
+    assert stage6.index("4. **Enforcement audit**") < stage6.index("6. Reopen recaptured images")
+
+
+def test_the_visual_rules_have_one_home() -> None:
+    assert "agent-browser" in VISUAL_WORK and "Never use Claude in Chrome" in VISUAL_WORK
+    assert "Never use Claude in Chrome" not in STAGES + CONVERGENCE
+    assert "visual-work.md" in STAGES and "visual-work.md" in CONVERGENCE
 
 
 # Review fix 15: the milestone's required UX checks go into dispatch and are accounted for

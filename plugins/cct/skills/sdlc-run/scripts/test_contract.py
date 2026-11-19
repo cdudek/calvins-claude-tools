@@ -100,7 +100,7 @@ def test_every_hook_template_is_registered_by_adopt() -> None:
 
 
 def test_goal_templates_name_the_status_command_and_the_plan_names_the_gate() -> None:
-    for name in ("run", "feature", "milestone"):
+    for name in ("run",):
         text = (TEMPLATES / "goal" / f"{name}.txt").read_text(encoding="utf-8")
         assert "python3 <STATUS> goal <ID>" in text
     plan = (TEMPLATES / "change" / "plan.md").read_text(encoding="utf-8")
@@ -315,13 +315,13 @@ def test_build_qa_waives_only_the_files_the_size_preset_skips_M6_C10() -> None:
     file only for a size that skips it: for size L a missing interaction.md fails the QA, and no
     check is made conditional on the file existing."""
     chain = (SKILL / "references/chain.md").read_text(encoding="utf-8")
-    assert re.search(r"\| `S` \|[^\n]*`brief`, `ia`, `interaction`", chain)
+    assert re.search(r"\| `S` \|[^\n]*all seven design activities, reason `skip -- S: no UX stage`", chain)
     assert re.search(r"\| `M` \|[^\n]*`ia`, reason", chain) and "| `L` | a new screen, flow or feature | none |" in chain
     build = (SKILLS / "ux-build-validate/references/build.md").read_text(encoding="utf-8")
     inputs = build.split("## Steps", 1)[0]
     # the owner's record (`skips`) decides; the size is only the default for a record without it
     assert "`decisions.json` `skips`" in inputs and "exactly when `skips` lists it" in inputs
-    assert "size S skips all three, size M skips `ia`, size L skips none" in inputs
+    assert "sizes `none` and S have no UX stage and skip everything, size M skips `ia`, size L skips none" in inputs
     assert "A file missing for an activity" in inputs and "`verdict: fail`" in inputs
     for line in build.splitlines():
         if re.search(r"ia\.md|interaction\.md", line) and not line.startswith("- `<spec>/screens.md`"):

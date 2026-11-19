@@ -3,7 +3,8 @@ sdlc_status.py (the goal check). stdlib only.
 
 A pass proves the head the gate ran on. A later head counts as the same pass only when the gated
 head is its ancestor and nothing but the change records moved: a file outside the changes folder,
-a locked input (facts.md, done.json, lock.json; the checks live in sdlc.json, outside the folder)
+a locked input (LOCKED_FILES: facts.md, or spec.md, design.md and tasks.md rows, with done.json and
+lock.json; the checks live in sdlc.json, outside the folder)
 or evidence (marks.json and anything under asks/, evidence/, shots/, screens/) moved. A record under
 .sdlc/outcomes/ is a change record too. An archive
 move (changes/<id> -> changes/archive/<id> or archive/<year>/<year-month>/<id>) is not a change
@@ -21,7 +22,14 @@ import subprocess
 from pathlib import Path
 from urllib.parse import quote
 
-LOCKED = {"facts.md", "done.json", "lock.json"}
+# The documents approval locks, by layout: the one list. chain-gate.sh protects them (minus the ones
+# that take ticks) and verify_gate.py hashes them into lock.json; test_sdd_hooks pins that the three agree.
+LOCKED_FILES = {
+    3: ("facts.md", "done.json", "lock.json"),
+    4: ("spec.md", "design.md", "tasks.md", "done.json", "lock.json"),
+}
+TICKED_FILES = ("tasks.md",)  # a tick or a handover edit is not an edit: only its task rows are locked
+LOCKED = {name for names in LOCKED_FILES.values() for name in names}
 EVIDENCE_FILES = {"marks.json"}
 EVIDENCE_DIRS = {"asks", "evidence", "shots", "screens"}  # screens/: the per-screen records (3.23.0)
 OUTCOMES = ".sdlc/outcomes/"  # a record of the success measure (spec.py outcome write): records only
@@ -201,6 +209,74 @@ def _only_archived_at(repo: Path, old: tuple[str, str], new: tuple[str, str]) ->
     return re.fullmatch(r"\d{4}-\d{2}-\d{2}", value) is not None
 
 
+def _section(text: str, name: str) -> str:
+    """spec.py `section`: the body of a `##`-`####` heading, up to the next heading of its level or above."""
+    m = re.search(rf"^(#{{2,4}})\s+{re.escape(name)}\b.*$", text, re.M | re.I)
+    if not m:
+        return ""
+    rest = text[m.end() :]
+    stop = re.search(rf"^#{{2,{len(m.group(1))}}}\s", rest, re.M)
+    return rest[: stop.start()] if stop else rest
+
+
+def tasks_lock(text: str) -> str:
+    """What approval hashes of a tasks.md: the rows of its `## Tasks` and `## Milestones` tables without
+    the State column (spec.py `lock_inputs`, the one reader; test_sdd_hooks keeps the two equal). A tick or
+    a handover edit never moves it; renaming or emptying a section does."""
+    keep = []
+    for name in ("Tasks", "Milestones"):
+        rows = [
+            [c.strip() for c in ln.strip().strip("|").split("|")]
+            for ln in _section(text, name).splitlines()
+            if ln.strip().startswith("|")
+        ]
+        rows = [r for r in rows if not all(re.fullmatch(r":?-{2,}:?", c) for c in r)]
+        head = [h.lower() for h in rows[0]] if rows else []
+        keep += ["|".join(v for k, v in dict(zip(head, r)).items() if k != "state") for r in rows[1:]]
+    return "\n".join(keep)
+
+
+def _text(repo: Path, entry: tuple[str, str] | None) -> str:
+    return _git(repo, "cat-file", "blob", entry[0]).stdout.decode("utf-8", "replace") if entry else ""
+
+
+def _only_ticks(repo: Path, old: tuple[str, str], new: tuple[str, str]) -> bool:
+    """`new` differs from `old` only outside the locked rows of the change's own tasks.md, or in their State column."""
+    return tasks_lock(_text(repo, old)) == tasks_lock(_text(repo, new))
+
+
+ROUTING = ("size", "visualSource")  # the decisions.json fields the lock hashes (verify_gate.ROUTING; test_sdd_hooks)
+
+
+def _routing(repo: Path, tree: dict[str, tuple[str, str]]) -> object:
+    """verify_gate.routing: the routing fields, `state/intake.json` first; a missing or unreadable file is itself."""
+    entry = tree.get("state/intake.json") or tree.get("decisions.json")
+    if not entry:
+        return {"missing": True}
+    try:
+        data = json.loads(_text(repo, entry))
+    except ValueError:
+        return {"unreadable": True}
+    return {k: data.get(k) for k in ROUTING} if isinstance(data, dict) else {"unreadable": True}
+
+
+def _plan_milestones(repo: Path, tree: dict[str, tuple[str, str]]) -> str:
+    """verify_gate `section(plan.md, "Milestones")`: the layout 3 allocation the lock hashes."""
+    m = re.search(r"^#{2,3} Milestones\s*$(.*?)(?=^#{1,3} |\Z)", _text(repo, tree.get("plan.md")), re.M | re.S)
+    return m.group(1) if m else ""
+
+
+def _lock_keys(repo: Path, tree: dict[str, tuple[str, str]]) -> set[str]:
+    """The `criteria` keys the gated lock hashed: an older lock lacks plan.milestones and decisions.routing,
+    which then stay free to edit, as the gate treats them."""
+    try:
+        data = json.loads(_text(repo, tree.get("state/lock.json") or tree.get("lock.json")))
+    except ValueError:
+        return set()
+    criteria = data.get("criteria") if isinstance(data, dict) else None
+    return set(criteria) if isinstance(criteria, dict) else set()
+
+
 def proves(repo: Path, changes_dir: str, gated: str, head: str) -> bool:
     """True when a pass gated at `gated` still holds at `head`."""
     if not gated or not head:
@@ -216,10 +292,22 @@ def proves(repo: Path, changes_dir: str, gated: str, head: str) -> bool:
     before, after = _tree(repo, rel, gated), _tree(repo, rel, head)
     if before is None or after is None:
         return False
-    for key in {k for k in before.keys() | after.keys() if (before.get(k) or ("",))[0] != (after.get(k) or ("",))[0]}:
+    changed = {k for k in before.keys() | after.keys() if (before.get(k) or ("",))[0] != (after.get(k) or ("",))[0]}
+    for key in changed:  # `<change id>/<path inside it>`
         parts = key.split("/")
+        if parts[-1] in EVIDENCE_FILES or EVIDENCE_DIRS & set(parts[1:-1]):  # first: evidence is never a task list
+            return False
         if parts[-1] == "facts.md" and key in before and key in after and _only_archived_at(repo, before[key], after[key]):
             continue
-        if parts[-1] in LOCKED | EVIDENCE_FILES or EVIDENCE_DIRS & set(parts[:-1]):
+        if len(parts) == 2 and parts[1] in TICKED_FILES and key in before and key in after and _only_ticks(repo, before[key], after[key]):
+            continue
+        if parts[-1] in LOCKED:
+            return False
+    for cid in {k.split("/", 1)[0] for k in changed}:  # what the lock hashes beyond the locked files
+        mine = [{k.split("/", 1)[1]: v for k, v in tree.items() if k.startswith(cid + "/")} for tree in (before, after)]
+        keys = _lock_keys(repo, mine[0])
+        if "decisions.routing" in keys and _routing(repo, mine[0]) != _routing(repo, mine[1]):
+            return False
+        if "plan.milestones" in keys and _plan_milestones(repo, mine[0]) != _plan_milestones(repo, mine[1]):
             return False
     return True

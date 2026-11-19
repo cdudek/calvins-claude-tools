@@ -37,7 +37,7 @@ TRANSCRIPTS = {
 def repo(tmp_path: Path) -> Path:
     repo = tmp_path / "repo"
     (repo / ".claude" / "hooks").mkdir(parents=True)
-    for name in ("chain-gate.sh", "sdlc-config.sh", "goal_active.py", "block_state.py"):
+    for name in ("chain-gate.sh", "sdlc-config.sh", "goal_active.py", "block_state.py", "pass_proof.py"):
         if (HOOKS / name).exists():  # the helpers sit beside the hook; absent in older trees
             shutil.copy(HOOKS / name, repo / ".claude" / "hooks" / name)
     (repo / "sdlc.json").write_text(json.dumps({"changesDir": "changes"}))
@@ -108,6 +108,14 @@ def test_protected_paths_are_refused_after_approval(repo: Path, file: str) -> No
     d["protectedEdit"] = "2026-10-09 engineer: 'F3 was wrong, change it'"
     decisions.write_text(json.dumps(d))
     assert _edit(repo, file, "active").returncode == 0
+
+
+def test_a_pass_proof_from_before_the_shared_lists_blocks_instead_of_crashing(repo: Path) -> None:
+    """One-file upgrade: the new hook beside the old pass_proof.py must still refuse (exit 2), never fail open."""
+    hook = repo / ".claude" / "hooks" / "pass_proof.py"
+    hook.write_text(hook.read_text().replace("LOCKED_FILES", "OLD_LOCKED").replace("TICKED_FILES", "OLD_TICKED"))
+    r = _edit(repo, f"changes/{ID}/facts.md", "active")
+    assert r.returncode == 2 and "sdlc-run adopt" in r.stderr
 
 
 def test_facts_wait_for_the_confirmed_intent(repo: Path) -> None:
@@ -437,3 +445,37 @@ def test_routes_are_configurable_and_untracked_means_new(repo: Path) -> None:
     assert _edit(repo, "src/app/page.tsx", "active").returncode == 2  # staged is not committed
     _commit(repo)
     assert _edit(repo, "src/app/page.tsx", "active").returncode == 0
+
+
+@pytest.mark.parametrize(("size", "allowed"), [("S", True), ("none", True), ("M", False), ("L", False)])
+def test_facts_wait_for_the_ux_plan_except_on_size_s_and_none(repo: Path, size: str, allowed: bool) -> None:
+    """3.24.0: a size S change has no UX stage, so its facts need no conformance file."""
+    change = repo / "changes" / ID
+    (change / "lock.json").unlink()
+    (change / "plan.md").unlink()
+    (change / "decisions.json").write_text(
+        json.dumps({"size": size, "kind": "feature", "milestone": {"kind": "single", "slug": "trial"}})
+    )
+    r = _edit(repo, f"changes/{ID}/facts.md", "none")
+    assert (r.returncode == 0) == allowed, r.stderr
+
+
+@pytest.mark.parametrize(
+    ("size", "files", "stage"),
+    [("S", [], "intent"), ("M", [], "design"), ("S", ["facts.md"], "facts"), ("M", ["facts.md"], "design")],
+)
+def test_status_has_no_ux_stage_for_size_s(repo: Path, size: str, files: list[str], stage: str) -> None:
+    change = repo / "changes" / ID
+    (change / "lock.json").unlink()
+    (change / "plan.md").unlink()
+    (change / "facts.md").unlink()
+    for f in files:
+        (change / f).write_text("---\nstatus: approved\n---\n")
+    (change / "decisions.json").write_text(json.dumps({"size": size, "kind": "feature"}))
+    out = subprocess.run(
+        ["bash", str(Path(__file__).parent / "status.sh"), ID],
+        capture_output=True,
+        text=True,
+        env={**os.environ, "CLAUDE_PROJECT_DIR": str(repo)},
+    ).stdout
+    assert f"state={stage}\t" in out, out

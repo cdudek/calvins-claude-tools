@@ -27,12 +27,12 @@ When your prompt has a `Base: <sha>` line, your worktree was cut from the trunk,
 
 ## Mode: close
 
-When your prompt says `Mode: close`, you are not building a feature: you run one milestone's local pipeline in the supervisor's worktree, on the head it names. Steps 1 to 5 above do not apply; this does:
+When your prompt says `Mode: close`, you are not building a feature and you fix no review finding: you run the milestone's gate, and only the gate, in the supervisor's worktree, on the head it names. The one fix round already happened, in parallel fix parts the supervisor dispatched and merged before you were started; what it left the supervisor settles with the owner through an `AskUserQuestion`. Steps 1 to 5 above do not apply; this does:
 
 1. Confirm `git rev-parse HEAD` is the head your prompt names. Another sha: stop and report.
-2. Diagnose failures with the exact local test and directly affected suite; E2E edits run that spec and its neighbours. Collect changed/flaky reliability evidence as the prompt and `sdlc.json` require.
-3. Fix the blocking findings in one round, each a commit, working from the joined findings and the review state directory your prompt names. You never start a review: never start a review of your own, and never call a review or review-fix skill. The round is the only fix round at the milestone; what it leaves the supervisor settles with the owner through an `AskUserQuestion`.
-4. Run `python3 scripts/verify_gate.py milestone <id>` once on the final head and paste its full output. It is the only runner of the full suite and the full E2E at the close and takes its own heavy slot for them (`heavy.py run --auto`, see heavy-work.md): never start a separate unit or E2E run of the whole suite before it, and never one after it on the same tree. If it fails, return to targeted local diagnosis (the failing test and its neighbours), then run it again. Nothing else may merge or edit while it runs; it fails `check=moved` if the head changes.
+2. Never start a review, never call a review or review-fix skill, never start a second fix round.
+3. Run `python3 scripts/verify_gate.py milestone <id>` once on the final head and paste its full output. It is the only runner of the full suite and the full E2E at the close and takes its own heavy slot for them (`heavy.py run --auto`, see heavy-work.md): never start a separate unit or E2E run of the whole suite before it, and never one after it on the same tree. Collect changed/flaky reliability evidence as the prompt and `sdlc.json` require.
+4. If the gate fails, diagnose that failure with the exact local test and directly affected suite (an E2E failure: that spec and its neighbours), commit the repair, then run the gate again. That repair is not a fix round. Nothing else may merge or edit while the gate runs; it fails `check=moved` if the head changes.
 
 ## Never edit
 

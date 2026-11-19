@@ -41,7 +41,8 @@ Owned by the reviewer (the agent in a fresh context, never the one that wrote th
 item tests how a fact is **written**, never whether the software works: "Is the empty state of
 the list defined?", not "Check the list renders". Items start `- [ ]`, are tagged **Gap**,
 **Ambiguity**, **Conflict** or **Assumption**, and cite the fact (`F3`). The reviewer ticks an
-item only after the facts answer it. `verify_gate.py approve` refuses while any item is open.
+item only after the facts answer it. `verify_gate.py approve` refuses while any item is open. **Size S has no checklist** (the lint is its
+check); a change with no `checklist.md` is not blocked.
 
 ## Analyze (before gate 2)
 
@@ -57,7 +58,8 @@ conflict or an untestable fact; **MEDIUM** drift or a vague term; **LOW** wordin
 findings, stable IDs `X1…`. `analyze.md` is one coverage table (ask | facts | tags | plan row)
 and one findings table: `| ID | Severity | Pass | Where | Finding | Status |`, Status `open` or
 `fixed`. The agent fixes in the source file and marks `fixed`; the pass itself never edits.
-`verify_gate.py approve` refuses an `open` CRITICAL.
+`verify_gate.py approve` refuses an `open` CRITICAL. **Size S skips this pass**; a change with no
+`analyze.md` is not blocked.
 
 ## Challenge (before gate 2, after analyze)
 
@@ -79,7 +81,7 @@ analyze, ids `H1…`, at most 20 findings, Status `open`, `answered` (the plan o
 why; name the line) or `accepted` (the engineer decided to carry it; the reason is in the
 row). The pass never edits the plan. `verify_gate.py approve` refuses an `open` CRITICAL, and
 nothing else in it; a change with no `challenge.md` (in flight before 3.9.0) is not blocked.
-Size S and `none` may skip it with a printed line.
+Size S skips it (one printed line); `none` may.
 
 ## Converge (milestone close)
 
@@ -92,8 +94,7 @@ After validation, before the fix round. Append-only: it adds to `findings.md`, n
    `unrequested` (built, no ask or fact). Append each as `- [ ] **C<n>** <verdict>: <F or A id>
    — <source ref: file:line, test name or shot>` under `## Converge` in `findings.md`.
 3. The one fix round at milestone close closes the items. What it leaves is settled by the owner's answer to a dialog
-   ([convergence](convergence.md)). Run the pass again; items it adds are fixed in the same
-   round if small, else they start the next milestone. A pass that adds nothing writes
+   ([convergence](convergence.md)). Run the pass again. A pass that adds nothing writes
    `Converged: round <n>` and the milestone may close.
 
 `verify_gate.py milestone` fails `not-converged` while the section has no `Converged:` line.

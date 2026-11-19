@@ -1,6 +1,6 @@
 # sdlc-run, end to end
 
-Describes sdlc-run 3.23.0.
+Describes sdlc-run 3.24.0.
 
 `/cct:sdlc-run` runs an AI-native software lifecycle in any repo. The agent drafts the intent, the UX plan, the facts and the tech plan. You confirm twice. Then one `/goal` builds the whole milestone as commits, runs the heavy checks once, and opens one PR.
 
@@ -80,7 +80,7 @@ The two touchpoints are the intent and the plan. After the plan is approved, `lo
 
 ### 7 Outcome
 
-- **You get:** after the change reaches the default branch, the folder is removed (there is no archive), a short `reflection.md` written before it goes and, after release, the success measure read where `intent.md` says. What happens to the folder is in [After the merge](#after-the-merge).
+- **You get:** the next change's first commit removes the folder once this one merged (there is no archive, and no records-only PR), a short `reflection.md` written before it goes and, after release, the success measure read where `intent.md` says. What happens to the folder is in [Closing the change](#closing-the-change).
 - **Who acts:** the agent removes the folder and records the outcome; **you read** the measure.
 - **Typical time:** a minute to remove the folder; the measure is read days or weeks later.
 - **Example:** "support questions about finding invoices: down 55 percent in 30 days, target met". A miss starts the next change.
@@ -89,9 +89,7 @@ A project, work that spans several milestones, adds stage 6p: after the last mil
 
 ## One /goal per milestone
 
-`delivery: "one-go"` is the default in `sdlc.json`. Everything you asked for at once is one change. One `/goal` builds every milestone in the plan, in order, each on its own local branch `milestone/<slug>-<n>` cut from the default branch, so it merges on its own. Only a milestone whose plan row says `needs: M<k>` is cut from that one; it builds at once and opens its PR after that one merges. Nothing is pushed before the milestone's gate passes. Each feature is a commit. The full suite runs once on the final milestone head before push; failure diagnosis stays targeted.
-
-`delivery: "feature-prs"` keeps the older shape: one PR per feature, auto-merged into the milestone branch. It suits teams building features in parallel.
+`delivery: "one-go"` is the only delivery in `sdlc.json`. Everything you asked for at once is one change. One `/goal` builds every milestone in the plan, in order, each on its own local branch `milestone/<slug>-<n>` cut from the default branch, so it merges on its own. Only a milestone whose plan row says `needs: M<k>` is cut from that one; it builds at once and opens its PR after that one merges. Nothing is pushed before the milestone's gate passes. Each feature is a commit. The full suite runs once on the final milestone head before push; failure diagnosis stays targeted.
 
 Builders are `cct:sdlc-feature-builder` agents, at most four at once, each in its own worktree and test slot. Each gets a `Base: <sha>` line, the milestone head, and resets to it before any edit, because a worktree hook cuts from the default branch. The supervisor commits its records first, edits no code, runs no test suite, and merges builder branches back one at a time. The close is one `cct:sdlc-feature-builder` with `Mode: close`; nothing merges while it runs.
 
@@ -110,20 +108,18 @@ flowchart BT
 <default> ─── project/<slug> ─── milestone/<slug>-<n> ─── <features>  a project that asked for a branch
 ```
 
-**Commits, not PRs.** While a milestone is open, everything that belongs to it is a commit on `milestone/<slug>`: features, fixes found during the build, test and flaky-spec repairs, CI timeout tweaks its tests need, and records (plans, handovers, gate lines, `findings.md`, `validation.md`, `questions.md`). No PR holds only a record, a fix or a test repair. One exception comes after the milestone has merged: the [records-only PR that removes the folder](#after-the-merge).
+**Commits, not PRs.** While a milestone is open, everything that belongs to it is a commit on `milestone/<slug>`: features, fixes found during the build, test and flaky-spec repairs, CI timeout tweaks its tests need, and records (plans, handovers, gate lines, `findings.md`, `validation.md`, `questions.md`). No PR holds only a record, a fix or a test repair. The folder removal is the last commit of the change's last milestone PR ([closing the change](#closing-the-change)).
 
 **PRs that exist:**
 
 - The milestone PR, into the default branch (or `project/<slug>` when the project has a branch).
 - The project PR, only when the project has a branch.
-- Feature PRs, only with `delivery: "feature-prs"`.
 - Other repositories, and a change you send to the default branch first.
 
 **Only the PR into the default branch is tiered.** Everything below it is an interior merge inside one change and auto-merges on its checks alone. The code review is not a PR step at all: it runs once, locally, at the milestone close. Nothing runs Claude in CI, so no repo needs `ANTHROPIC_API_KEY`.
 
 | PR | Checks | Ship/Show/Ask | Who approves |
 |---|---|---|---|
-| feature to `milestone/*` (`feature-prs` only) | feature checks | no | nobody; auto-merge on green |
 | milestone to `project/*` | milestone checks | no | nobody; auto-merge on green |
 | `project/*` or `milestone/*` to the default branch | milestone checks | yes | the tier decides |
 
@@ -200,13 +196,13 @@ python3 scripts/spec.py consistency changes/<id> --phase approve # script checks
 
 `find` is for the start of a change: read the rules it names before you ask for new ones. It warns when a rule looks stale or an open PR edits it. `check` runs at the milestone gate and in CI. If two PRs take the same rule number, `spec.py renumber` gives the later one the next free number. Other commands: `show`, `next`, `index`, `capabilities`, `eval`, `outcome`, `qa`.
 
-## After the merge
+## Closing the change
 
-There is no archive. After the PR into the default branch merges:
+There is no archive and no records-only PR. After the change's PR merged, the next change's first commit runs `sdlc_status.py sweep-merged --apply`:
 
 1. `spec.py outcome write changes/<id>` copies the success measure to `.sdlc/outcomes/<id>.json`. It is the one place the result is recorded, so a change with no tracker and no later PR still has a home for it.
-2. `git rm -r changes/<id>` goes in one records-only PR. Never before the merge: a red-CI rerun needs the folder.
-3. Before it removes anything, the agent runs `git grep -l -F "changes/<id>/"`. A test, script or doc that reads inside the folder would break, so it is repointed first.
+2. `git rm -r changes/<id>` goes in with it, as that next change's first commit, so it ships in that change's one PR. The change's own PR keeps its folder, and a goal reads DONE as before.
+3. Before it removes anything, the sweep runs `git grep -l -F "changes/<id>/"` and prints BLOCKED for a hit. A test, script or doc that reads inside the folder would break, so it is repointed first.
 4. After release the measure is read and recorded with `spec.py outcome record`. `spec.py outcome due` lists the ones still waiting.
 
 History stays in git and in the merged PR. Folders archived by older versions stay readable. The status and gate code accept a folder that is gone.
@@ -249,7 +245,7 @@ It first asks whether to use Ship/Show/Ask merge tiers (a code owner approves ri
 
 ## Staying current
 
-`adopt` writes `"sdlcVersion": "3.23.0"` into `sdlc.json`. Every time the skill runs in the repo, `status` and the verify gate compare the stamp with the installed plugin and print one line when it is missing or older, for example:
+`adopt` writes `"sdlcVersion": "3.24.0"` into `sdlc.json`. Every time the skill runs in the repo, `status` and the verify gate compare the stamp with the installed plugin and print one line when it is missing or older, for example:
 
 ```text
 This repo runs sdlc-run 3.2.0; the kit is 3.3.1. Run `adopt --upgrade` (changes: 3.3.1: adopt --upgrade never overwrites or moves anything; 3.3.0: the CI workflow ships as a template, ciPaths by file type, versioned repos).
@@ -272,3 +268,4 @@ Each version's headline and migration steps are in the skill's [changelog](../pl
 - **The living spec (3.21, opt-in):** three documents per change, one file per rule, no archive. See [The living spec](#the-living-spec-optional).
 - **One close job, one queue per machine (3.22):** the milestone close takes one heavy slot, builds once and uses one test database copy; heavy commands are recognised by program and script; one queue serves every repo on the machine; the test template is kept per migration version and works with Docker or Podman; preflight checks free disk and merged builder worktrees are removed. See [Heavy work](#heavy-work-builds-browsers-and-databases).
 - **Screens mode (3.23):** one record per screen with its frozen defect list and round count, checked by `marks.py`; capture once; status in screens; one owner sheet per screen group; the design-system version frozen at approval; a visual change refuses migrations, auth and new pages.
+- **A lighter front (3.24):** the three-document layout by default for new adoptions, size S skips the UX stage and the checklist, analyze and challenge passes, one PR per change (the next change's first commit removes the merged folder), and one delivery mode.

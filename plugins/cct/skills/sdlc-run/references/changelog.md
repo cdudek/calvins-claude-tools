@@ -5,6 +5,18 @@ version warning, the **Mechanical** lines are what `adopt` does for you (it adds
 with the stack's defaults and never overwrites a value), the **Manual** lines are printed for
 the engineer. A version with no migration lines needs nothing but a re-run of `adopt`.
 
+## 3.24.0 — a lighter front: layout 4 by default, small changes skip the extra passes, one PR per change
+
+- **Layout 4 is the default for new adoptions.** Three documents per change (`spec.md`, `design.md`, `tasks.md`) and one file per rule. A repo that already has a `layout` keeps it; `adopt --upgrade` offers the switch once.
+- **An edit after the gate voids the pass, the way the lock sees it.** One list of locked documents per layout, shared by the pass rule and the edit hook, with a contract test that the lock hash covers the same files. The pass also compares what `lock.json` hashed beyond them: the plan's `## Milestones` (layout 3) and the `size` and `visualSource` of `decisions.json`. Ticking a task row in the change's own `tasks.md` does not void it; renaming or emptying `## Tasks` or `## Milestones`, or editing evidence that happens to be named `tasks.md`, does. The edit hook refuses (it no longer fails open) when `pass_proof.py` is older than itself.
+- **Size S skips the extra passes:** no UX stage (the same two sizes, `none` and S, in the approval check, build QA, the intake preset and both generated guardrail suites), no checklist reviewer, no analyze or challenge pass, and the code review is the one reviewer at the close (add the others for visual work, auth or data).
+- **One PR per change.** The change's own PR keeps its folder, so the goal reads DONE as before. The next change's first commit removes the folders of merged changes (`sdlc_status.py sweep-merged --apply`, called from Stage 1.2): the outcome record is written first, a reader outside the folder blocks the removal. No records-only PR.
+- **One delivery mode.** Per-feature PRs are gone; the project branch for work over several milestones stays.
+- **One description of the close fix round:** parallel fix parts first, then the close builder runs the gate only. Stage 6 is numbered once and the enforcement audit runs before the fix round. The capture and visual rules are collected in `references/visual-work.md`.
+- Mechanical: re-running `adopt` replaces `pass_proof.py`, `chain-gate.sh`, `pr-gate.sh`, `verify_gate.py` and `preflight.py`, and removes the per-feature goal templates.
+- **A fresh adoption's first change is on layout 4** (one `spec.md`, pinned), not the old three files.
+- Manual: `adopt` refuses while a change approved with `"delivery": "feature-prs"` is unmerged, and names it: finish it or re-approve it as one milestone PR first. Otherwise a repo with that key now delivers one milestone PR; remove the key. To move an existing repo to the three-document layout, add `"layout": 4` to `sdlc.json` between changes, never with a change in flight.
+
 ## 3.23.0 — screens mode: one record per screen, enforced rounds, a frozen design system, status in screens, a scope guard for visual changes
 
 - **One record per screen, tracked.** `evidence.py screen|review|round|status|sheet` keeps `<change>/screens/<file>.json` (committed, not in the ignored `verify/` folder) and `<change>/owner-sheet.md`: status, the frozen defect list with a snapshot of the first review, fix rounds in the approved design-system release and the capture hashes per build, state, viewport and zoom. A screen id is the one `marks.py` derives from the approved inputs (`ref:asks/home.png`, `bundle:asks/export/home`, one per bundle page) and one shared rule makes its file name. Each record is written under a lock and published by an atomic rename, so parallel helpers never lose an update.

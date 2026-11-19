@@ -49,6 +49,7 @@ INTENT_SECTIONS = (
 )
 PLAN_SECTIONS = ("## Order of work", "## Done", "## Revisions")
 V3_SIZES = {"none", "S", "M", "L"}
+NO_UX_STAGE = {"none", "S"}  # sizes with no UX stage: every activity is skipped (spec.py NO_UX_STAGE)
 V3_KINDS = {"feature", "bug", "refactor", "docs", "chore"}
 V3_ACTIVITIES = (
     "brief",
@@ -364,9 +365,9 @@ def test_v3_approved_plan_has_spec_guardrails(change: Path, archived: bool) -> N
         "validation": verdict_file,
     }
     for activity in V3_ACTIVITIES:
-        skipped = str(skips.get(activity, "")).startswith("skip")
+        skipped = decisions.get("size") in NO_UX_STAGE or str(skips.get(activity, "")).startswith("skip")
         assert skipped or files[activity].exists(), f"{change.name}: {activity}"
-    if not str(skips.get("validation", "")).startswith("skip"):
+    if decisions.get("size") not in NO_UX_STAGE and not str(skips.get("validation", "")).startswith("skip"):
         fm = _frontmatter(verdict_file)
         assert fm.get("verdict") == "ready" and fm.get("status") == "approved"
     _assert_change_resources_stay_in_repo(REPO_ROOT, change)

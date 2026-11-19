@@ -39,11 +39,16 @@ M the intent confirmation and the plan gate are one round on the same files.
 
 Layout 4 moves no machine file. `decisions.json`, `done.json`, `lock.json`, `asks/`, `marks.json`,
 `verify/` and the findings keep their paths and readers; `decisions.json` gains `"layout": 4`,
-written once at intake and never changed (the pin per change). A repo opts in with `"layout": 4` in
-`sdlc.json`, only after its hooks, status and verifier read the new documents; adopt never sets it.
+written once at intake and never changed (the pin per change). A new change follows the repo's
+`sdlc.json` `layout`: `adopt` writes `"layout": 4` on a fresh adoption, leaves an adopted repo's value
+alone (no silent switch) and, with `--upgrade`, prints one MANUAL line offering it.
 A `state/` folder was proposed first and is not built: the readers of every one of those files
 would have to ship before it, and bypass words (`protectedEdit`, `prExceptions`) must stay where a
 reviewer sees them.
+
+The pass rule uses the same list: `pass_proof.py` `LOCKED_FILES` names the locked documents per
+layout, `chain-gate.sh` protects them (not `tasks.md`, which takes ticks) and the lock hash covers
+them, so a later edit of `spec.md`, `design.md`, a task row or a rule file voids a gate pass.
 
 Three things the lock covers: the whole of `spec.md`, the task rows of `tasks.md` (not the `State`
 column, not the handover) and `design.md`. A tick never invalidates an approval.
@@ -81,9 +86,10 @@ rule. Appetite, a security threat model and a plan-proportion check are not buil
 
 ## Closing: the folder is removed, never archived
 
-There is no archive. After the change reaches the default branch the folder is removed in a
-records-only close PR: `spec.py outcome write <folder>` first copies the success measure to
-`.sdlc/outcomes/<change id>.json`, and `git rm -r` takes the folder. Never before the merge: the folder is what a red-CI rerun needs. A reference into the
+There is no archive and no records-only PR. A change's own PR keeps its folder. The first commit of the
+next change's branch runs `sdlc_status.py sweep-merged --apply`: for each change whose PR merged,
+`spec.py outcome write <folder>` copies the success measure to `.sdlc/outcomes/<change id>.json`, and
+`git rm -r` takes the folder, so it ships in that change's one PR. A reference into the
 folder blocks the removal, as it blocked the move (Stage 7 guard). History lives in git and the merged PR. A pass is read from the gate's report in the
 checkout, so nothing reads a removed folder (pass records are not part of this release).
 
@@ -100,6 +106,6 @@ checkout, so nothing reads a removed folder (pass records are not part of this r
   nothing, so stop and ask. A missing record is never read as a skip.
 - **S3, an outcome with no later PR.** The measure leaves the folder before the folder goes, into
   `.sdlc/outcomes/<id>.json` (`due`, `observed: null`). The scheduled read and the tracker comment
-  record the value with `spec.py outcome record`; with no tracker and no next change it is one
-  records-only PR. The route never needs the removed folder, a tracker or a future change.
+  record the value with `spec.py outcome record`; with no tracker and no next change it stays
+  in the tracker. The route never needs the removed folder, a tracker or a future change.
   `spec.py outcome due` lists what is waiting.

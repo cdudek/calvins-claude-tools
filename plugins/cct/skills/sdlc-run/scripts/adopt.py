@@ -671,16 +671,11 @@ def render(text: str, values: dict[str, str]) -> str:
 
 
 def delivery_values(cfg: dict) -> dict[str, str]:
-    """What plan.md's `Done` and turn caps render by: one block per delivery mode, and the caps from
-    `goal` (defaults 150 for a whole run, 40 per feature, 30 for a milestone close)."""
+    """What plan.md's turn caps render by, from `goal` (defaults 150 for a whole run, 30 for a
+    milestone close, which is also the default for a project close)."""
     goal = cfg.get("goal") if isinstance(cfg.get("goal"), dict) else {}
-    feature_prs = cfg.get("delivery") == "feature-prs"
     return {
-        "ONE_GO": "" if feature_prs else "1",
-        "FEATURE_PRS": "1" if feature_prs else "",
         "RUN_TURNS": str(goal.get("runTurns", 150)),
-        "FEATURE_TURNS": str(goal.get("featureTurns", 40)),
-        "MILESTONE_TURNS": str(goal.get("milestoneTurns", 30)),
         "PROJECT_TURNS": str(goal.get("projectTurns", goal.get("milestoneTurns", 30))),  # a project close is a milestone-sized run
     }
 
@@ -1012,6 +1007,7 @@ KIT_SPEC = {
     "b317d0a123e1827a",
     "c6542ee0d5796633",
     "d493b854eb70d6ec",
+    "be0765bdcddad6b6",
 }
 KIT_HEAVY = {
     "5deaa2eb45d65844",
@@ -1039,6 +1035,7 @@ KIT_PREFLIGHT = {
     "d5c15466ff9464be",
     "9e40826faba1db82",
     "020f538fc743c5b0",
+    "800076649e5cd346",
 }
 KIT_HELPER_GUARD = {
     "ca26ffb8ad16e8b3",
@@ -1280,13 +1277,28 @@ def main() -> int:
     if cfg_path.exists():
         cfg = json.loads(cfg_path.read_text(encoding="utf-8"))
         cfg_before = json.dumps(cfg, sort_keys=True)
-        if cfg.get("delivery") == "feature-prs" and (cfg.get("milestones") or {}).get("merge") == "local":
-            sys.exit(
-                'sdlc.json: delivery "feature-prs" needs a remote milestone branch, which '
-                'milestones.merge "local" never pushes. Use delivery "one-go" (the default) with '
-                'local milestones, or milestones.merge "pr" with feature PRs.'
+        if cfg.get("delivery") == "feature-prs":
+            open_changes = ROOT / cfg.get("changesDir", "changes")
+            approved = [  # a lock is the approval; a merged change's folder is already gone
+                d.name for d in sorted(open_changes.iterdir())
+                if d.is_dir() and d.name != "archive" and any((d / n).exists() for n in ("lock.json", "state/lock.json"))
+            ] if open_changes.is_dir() else []  # fmt: skip
+            if approved:
+                sys.exit(
+                    f"{', '.join(approved)} was approved with per-feature PR delivery and is not merged: "
+                    "sdlc-run 3.24.0 removed that mode: finish or re-approve it as one milestone PR first, then run adopt again."
+                )
+            manual.append(
+                'sdlc.json: delivery "feature-prs" is gone (sdlc-run 3.24.0): every change now delivers one '
+                'milestone PR, features are commits on its branch. Set "delivery": "one-go" to silence this'
             )
         kept.append("sdlc.json")
+        if UPGRADE and "layout" not in cfg:  # never a silent switch: new changes of this repo stay on layout 3
+            manual.append(
+                'layout: new changes use the three-document layout (spec.md, design.md, tasks.md) when '
+                'sdlc.json has `"layout": 4`; this repo has no `layout`, so new changes keep intent, facts and plan. '
+                "Add it to switch (a change already in flight finishes on the layout it started with)"
+            )
         plan = migrate_plan(cfg) if MIGRATE else {}
         if not UPGRADE:
             cfg["kitTemplates"] = templates_hash()
@@ -1294,6 +1306,7 @@ def main() -> int:
     else:
         cfg = json.loads((TPL / "presets" / f"{preset}.json").read_text(encoding="utf-8"))
         cfg["defaultBranch"] = default_branch()
+        cfg["layout"] = 4  # a new adoption starts on the three-document layout
         cfg["kitTemplates"] = templates_hash()
         apply_tiers_answer(cfg)
         add_ci_paths(cfg, preset)
@@ -1940,11 +1953,23 @@ def main() -> int:
             "VERIFY": cfg["verify"],
             **delivery_values(cfg),
         }
-        for name in ("intent.md", "facts.md", "plan.md"):
-            write(first / name, render((TPL / "change" / name).read_text(encoding="utf-8"), cvals))
-        manual.append(
-            f"{first.relative_to(ROOT)}/ is the first change: fill intent/facts/plan from this adoption, gate the plan, archive it when the PR is green"
-        )
+        if cfg.get("layout") == 4:  # the configured layout: one spec.md (scope S, no UX), pinned in decisions.json
+            text = render((TPL / "change" / "spec.md").read_text(encoding="utf-8"), cvals)
+            text = re.sub(r"^scope: .*$", "scope: S", text, count=1, flags=re.M)
+            text = re.sub(r"^ux: .*$", "ux: none", text, count=1, flags=re.M)
+            text = re.sub(r"^prototype: .*\n", "", text, count=1, flags=re.M)
+            write(first / "spec.md", text)
+            write(first / "decisions.json", json.dumps({"layout": 4}) + "\n")
+            manual.append(
+                f"{first.relative_to(ROOT)}/ is the first change: fill spec.md from this adoption, gate it; "
+                "the next change removes its folder once the PR merged (`sdlc_status.py sweep-merged`)"
+            )
+        else:
+            for name in ("intent.md", "facts.md", "plan.md"):
+                write(first / name, render((TPL / "change" / name).read_text(encoding="utf-8"), cvals))
+            manual.append(
+                f"{first.relative_to(ROOT)}/ is the first change: fill intent/facts/plan from this adoption, gate the plan, archive it when the PR is green"
+            )
     (archive).mkdir(parents=True, exist_ok=True) if not DRY else None
     gitkeep = archive / ".gitkeep"
     if not DRY and not any(archive.iterdir()):

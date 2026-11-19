@@ -369,7 +369,7 @@ def test_approve_runs_the_lint_first_and_refuses_on_failure(tmp_path: Path) -> N
     assert not (change / "lock.json").exists()
 
 
-@pytest.mark.parametrize("name", ["run", "feature", "milestone", "project"])
+@pytest.mark.parametrize("name", ["run", "project"])
 def test_goal_templates_are_end_states_not_processes(name: str) -> None:
     """2026-11-11: a process in the condition cannot be satisfied after the merge, so it never clears."""
     text = (SKILL / "templates" / "goal" / f"{name}.txt").read_text()

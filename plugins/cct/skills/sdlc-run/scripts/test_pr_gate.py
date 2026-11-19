@@ -186,13 +186,13 @@ def test_a_heredoc_that_only_mentions_push_is_left_alone(repo: Path) -> None:
     assert _run(repo, cmd, goal=True).returncode == 0
 
 
-def test_feature_prs_delivery_allows_feature_prs_into_the_milestone(repo: Path) -> None:
+def test_a_repo_that_still_says_feature_prs_gets_no_feature_pr_lane(repo: Path) -> None:
     cfg = json.loads((repo / "sdlc.json").read_text())
     (repo / "sdlc.json").write_text(json.dumps({**cfg, "delivery": "feature-prs"}))
     _git(repo, "checkout", "-qb", "feat/trial-login")
-    assert _run(repo, "git push -u origin feat/trial-login", goal=True).returncode == 0
+    assert _run(repo, "git push -u origin feat/trial-login", goal=True).returncode == 2
     cmd = "gh pr create --base milestone/trial-1 --title t --body b"
-    assert _run(repo, cmd, goal=True).returncode == 0
+    assert _run(repo, cmd, goal=True).returncode == 2
 
 
 def test_a_repo_without_sdlc_json_gets_no_opinion(repo: Path) -> None:

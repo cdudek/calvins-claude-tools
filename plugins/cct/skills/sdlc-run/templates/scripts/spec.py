@@ -1082,6 +1082,9 @@ def change_rules(change: Path) -> dict[int, dict]:
     return out
 
 
+NO_UX_STAGE = ("none", "S")  # UX sizes with no UX stage (3.24.0): no prototype decision, no build QA; chain-gate.sh, status.sh and the guardrail tests list the same two
+
+
 def qa_applicability(change: Path) -> tuple[bool | None, str]:
     """Decide first whether build QA applies, before any readiness file is asked for (S1).
     True runs it, False skips it with the reason, None means Stage 2 recorded nothing: the
@@ -1089,8 +1092,8 @@ def qa_applicability(change: Path) -> tuple[bool | None, str]:
     fm, _ = split_frontmatter((Path(change) / "spec.md").read_text(encoding="utf-8"))
     if "ux" not in fm:
         return None, "spec.md has no `ux` field: Stage 2 must record it"
-    if str(fm["ux"]) in ("none", "off"):
-        return False, "no interface change (ux: none)"
+    if str(fm["ux"]) in (*NO_UX_STAGE, "off"):
+        return False, f"no UX stage (ux: {fm['ux']})"
     if str(fm.get("prototype", "")) == "none":
         return False, "prototype: none, recorded at Stage 2"
     if str(fm.get("prototype", "")) == "required":
@@ -1154,7 +1157,7 @@ def consistency(
     if "ux" not in fm:
         errs.append("spec.md: no `ux` field (none, S, M or L)")
     ux = str(fm.get("ux", "none"))
-    if ux not in ("none", "off") and str(fm.get("prototype", "")) not in ("required", "none"):
+    if ux not in (*NO_UX_STAGE, "off") and str(fm.get("prototype", "")) not in ("required", "none"):
         errs.append(
             "spec.md: ux is not none, so record `prototype: required` or `prototype: none` at Stage 2"
         )
