@@ -43,7 +43,7 @@ That installs plannotator and its plugin. Linear: in Claude Code run `/mcp` and 
 | 5 Build | One go (default): one `/goal` builds every milestone in order; per feature, tests, build, commit, and nothing else runs between features. Questions go to `questions.md` and never block; answers become asks of the next milestone. (`delivery: feature-prs`: a PR per feature.) | none |
 | 6 Milestone | Checks on the milestone diff; the full E2E suite once, ×3 only for changed and flaky specs (see Build and test); validation of every fact and ask against the built app (`validation.md`), one findings list, one fix round, `verify_gate.py milestone`, one PR that releases it. | only when a Critical or High would be deferred |
 | 6p Project | Only for work spanning several milestones: rebase `project/<slug>`, re-check the whole project diff, one PR to the default branch. | engineer accepts |
-| 7 Outcome | Archive on merge; read the success measure after release. | engineer reads it |
+| 7 Outcome | Remove the folder after merge (no archive); read the success measure after release. | engineer reads it |
 
 ### Branches
 

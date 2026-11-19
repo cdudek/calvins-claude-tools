@@ -98,5 +98,5 @@ blocking drift checks in that repo, not a claim about it.
 
 Seed `specs/` as changes touch a capability; no back-fill. Mark a half-catalogued capability
 `coverage: partial`. Run `check` report-only in a repo until its baseline is clean, then blocking for
-the capabilities that are clean. Existing archives are removed once their changes are complete (the
-integrator's step, not this layout's); new work is never archived.
+the capabilities that are clean. Existing archives are removed once their changes are complete; new work is
+never archived.

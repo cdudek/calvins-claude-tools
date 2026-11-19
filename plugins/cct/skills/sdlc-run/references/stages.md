@@ -710,7 +710,9 @@ changes nothing and keeps four states apart, because a green run proves only the
 - **configured**: the gate scope that runs it, the CI job (`ci <file>:<job>`) that runs the same
   command, the hook event and matcher in `.claude/settings.json`.
 - **executed**: the newest `verify/report.json` (any change, archive included) that ran it; a hook
-  leaves no log, so it says so.
+  leaves no log, so it says so. A change folder removed after merge takes its report along (it is
+  never committed): the audit reads that as no evidence and does not fail on the missing folder;
+  `--no-evidence` skips the test, as in CI.
 - **passed**: that run's status.
 
 `required` is read from the default branch with `gh api` (rulesets, then branch protection): `yes`
@@ -746,26 +748,28 @@ Only when `decisions.json` has a `project`, and only once its last milestone has
 4. **The engineer accepts the project** in one `AskUserQuestion`. No second fix round: what is
    left becomes the next project's first change.
 
-## Stage 7 — Outcome and archive
+## Stage 7 — Outcome and removal
 
-1. Before the PR into the default branch merges, its last commit does
-   `git mv changes/<id> changes/archive/<year>/<year-month>/<id>`, sets `archived_at` and reads
-   `changes(<id>): archived`: no separate PR after the merge. **Guard, before the move:** run
+1. There is no archive. After the PR into the default branch merges, `spec.py outcome write
+   changes/<id>` copies the success measure to `.sdlc/outcomes/<id>.json`, then `git rm -r changes/<id>`
+   goes in one records-only PR (never before the merge). A change still on the old layout may carry the
+   old `changes/archive/` move; the readers accept both, and a folder that is gone is not an error.
+   **Guard, before the removal:** run
    `git grep -l -F "changes/<id>/" -- . ':!changes'`. A test, script or doc that reads or writes
    inside the folder breaks the day it moves. Promote what it reads to `docs/` (product truth, not
-   a change record) or write outputs under `test-results/`, repoint the reference, and archive only
+   a change record) or write outputs under `test-results/`, repoint the reference, and remove only
    when the grep is empty. After it merges: comment the merge
    SHA in the tracker, `ExitWorktree keep`, then remove the owned path using the shared policy’s `wt remove`
    command (Git fallback; a worktree entered by path is never removed by `ExitWorktree`). Move the tracker forward only, never backwards.
 2. After release: read the success measure from PostHog (`cct:posthog-manage` or the insight
    named in `intent.md`) and write it in the tracker at once and under `## Outcome` in the
-   archived `milestone.md`, committed with the next change's PR, never a PR of its own.
+   outcome record (`spec.py outcome record`), committed with the next change's PR, never a PR of its own.
 3. A miss starts the next change at 1.3, with the measurement as its first ask.
-4. **Reflection**, before the archive move: one short `reflection.md` in the change folder, four
+4. **Reflection**, before the folder is removed: one short `reflection.md` in the change folder, four
    lines: what surprised us, what the challenge or analyze pass caught (or missed), what we would
    do differently, and one **Lesson** sentence a future agent could act on (or `none`). The agent
    writes it, the engineer may edit it. It is not a report; skip a line rather than pad it.
-   When the same lesson appears in two or more archived `reflection.md` files, the agent lists it
+   When the same lesson appears in two or more `reflection.md` files, the agent lists it
    in the milestone message as "repeated lesson, promote?". Only the owner moves it into the repo's
    agent file (`CLAUDE.md` or `AGENTS.md`, its pitfalls section); the agent never edits that file
    for this.

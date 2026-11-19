@@ -6,14 +6,14 @@
   asks/<session-date>-snapmark/              original session.md, img/, optional PDF/zip
   marks.json                                one row per owner note or reference image
   verify/shots/                             fresh headless screenshots for comparison
-<changesDir>/archive/<year>/<year-month>/<same name>/   archived when the PR is green
+(no archive: the folder is removed after the merge; see change-folder.md)
 <designsDir>/<date>-<type>-<slug>.md          a design or one decision that outlives one PR
 <designsDir>/INDEX.md                         one line per file there, generated; read it first
 ```
 
 One change = one folder = one PR. The id is `<created>-<KEY>-<slug>`, or
 `<created>-<slug>` when there is no Linear issue. `created:` matches the date in the name.
-Archiving moves the folder and never renames it.
+A merged change's folder is removed, never archived (older archives stay readable).
 
 `spec/` is new in v3. It holds this change's design slice. A design that spans changes still
 lives in `docs/designs/`.
@@ -22,7 +22,7 @@ lives in `docs/designs/`.
 
 | Thing | Folder | Lifetime | Linear |
 |---|---|---|---|
-| the work of one PR: `intent.md`, `facts.md`, `plan.md`, `handover.md`, and v3 `spec/*` | `changes/<created>-<KEY>-<slug>/` | archived at merge | **issue** (1:1 with the PR) when there is one |
+| the work of one PR: `intent.md`, `facts.md`, `plan.md`, `handover.md`, and v3 `spec/*` | `changes/<created>-<KEY>-<slug>/` | removed after merge | **issue** (1:1 with the PR) when there is one |
 | a design that outlives one PR: data model, ADR, RFC, screen-by-screen design, API contract | `docs/designs/<date>-<slug>.md` | as long as the behaviour exists; `status` and `supersedes` move | **project** (1:1 with the design), plus a Document for ADR and RFC |
 | runbooks, architecture, security | `docs/` | forever | none |
 
