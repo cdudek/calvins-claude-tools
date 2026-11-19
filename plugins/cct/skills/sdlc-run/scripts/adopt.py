@@ -1070,65 +1070,89 @@ def finish_upgrade() -> str:
 
 
 def merged_heads(root: Path) -> list[str] | None:
-    """Head branches of the merged PRs gh lists; None when gh cannot say."""
+    """Head branch of every merged PR (all pages); None when gh cannot say."""
     try:
         out = subprocess.run(
-            ["gh", "pr", "list", "--state", "merged", "--limit", "200", "--json", "headRefName"],
-            cwd=root, capture_output=True, text=True, timeout=60,
+            ["gh", "api", "--paginate", "repos/{owner}/{repo}/pulls?state=closed&per_page=100",
+             "--jq", ".[] | select(.merged_at) | .head.ref"],
+            cwd=root, capture_output=True, text=True, timeout=600,
         )  # fmt: skip
-        return [str(p.get("headRefName", "")) for p in json.loads(out.stdout or "[]")] if out.returncode == 0 else None
-    except (OSError, ValueError, subprocess.TimeoutExpired):
+        return out.stdout.split() if out.returncode == 0 else None
+    except (OSError, subprocess.TimeoutExpired):
         return None
 
 
+def _slug(value: object, prefix: str) -> str | None:
+    """A slug from a decisions.json field: a string (`slug` or the whole branch name) or a dict with
+    `slug`. "" for a missing field, None for a shape adopt cannot read."""
+    if value is None:
+        return ""
+    if isinstance(value, dict):
+        value = value.get("slug", "")
+    if not isinstance(value, str):
+        return None
+    return value.removeprefix(prefix)
+
+
 def own_branch(folder: Path, cfg: dict, head: str) -> bool:
-    """`head` is a branch of this change: milestone/<slug>[-n], project/<slug> or a Feature PRs row,
-    named by the change's own decisions.json and plan.md (the folder name when they name no slug).
-    Nothing a PR body says counts."""
-    decisions: dict = {}
+    """`head` is a branch of this change: milestone/<slug>[-n], project/<slug>, or a branch the
+    change's own plan.md names (the folder name gives the slug when decisions.json names none).
+    Nothing a PR body says counts, and a decisions.json adopt cannot read means the branch is unknown."""
+    decisions: object = {}
     for path in (folder / "state" / "decisions.json", folder / "decisions.json"):
         try:
             decisions = json.loads(path.read_text(encoding="utf-8"))
             break
         except (OSError, ValueError):
             continue
-    slug = (decisions.get("milestone") or {}).get("slug") or re.sub(
-        r"^([A-Z][A-Z0-9]+-\d+-)?", "", re.sub(r"^\d{4}-\d{2}-\d{2}-", "", folder.name)
-    )
+    if not isinstance(decisions, dict):
+        return False
     prefix = (cfg.get("milestones") or {}).get("branchPrefix", "milestone/")
-    if re.fullmatch(re.escape(f"{prefix}{slug}") + r"(-\d+)?", head):
+    pprefix = (cfg.get("projects") or {}).get("branchPrefix", "project/")
+    slug = _slug(decisions.get("milestone"), prefix)
+    project = _slug(decisions.get("project"), pprefix)
+    if slug is None or project is None:
+        return False
+    slug = slug or re.sub(r"^([A-Z][A-Z0-9]+-\d+-)?", "", re.sub(r"^\d{4}-\d{2}-\d{2}-", "", folder.name))
+    if re.fullmatch(re.escape(f"{prefix}{slug}") + r"(-\d+)?", head) or (project and head == f"{pprefix}{project}"):
         return True
-    project = decisions.get("project")
-    if isinstance(project, dict) and project.get("slug"):
-        if head == f"{(cfg.get('projects') or {}).get('branchPrefix', 'project/')}{project['slug']}":
-            return True
     try:
         plan = (folder / "plan.md").read_text(encoding="utf-8")
     except OSError:
         return False
-    rows = re.search(r"^## Feature PRs\s*$(.*?)(?=^## |\Z)", plan, re.M | re.S)
-    for line in rows.group(1).splitlines() if rows else ():
-        cells = [c.strip().strip("`") for c in line.strip().strip("|").split("|")]
-        if len(cells) >= 4 and cells[3] == head:
-            return True
-    return False
+    return "/" in head and re.search(rf"(?<![\w/.-]){re.escape(head)}(?![\w/-])", plan) is not None
 
 
-def migrate_report(cfg: dict) -> None:
-    """The rest of `--migrate`: an archive folder is removed (the owner's rule is no archive) only
-    when a merged PR came from the change's own branch, and only its tracked files; the others are
-    listed. A dry run prints the same lines and deletes nothing. Every change still in flight gets the
-    one gate run that writes the new report."""
+def migrate_plan(cfg: dict) -> dict:
+    """The reads of `--migrate` (gh, branches, every decisions.json), made before anything is
+    written, so a half-migrated tree cannot happen. Returns what to remove and what to list."""
     changes = ROOT / cfg.get("changesDir", "changes")
+    if not changes.is_dir():
+        changes = ROOT / ".changes"
     folders = archived_changes(changes / "archive")
-    heads = merged_heads(ROOT) if folders else None
+    heads = merged_heads(ROOT)
+    remove_list, kept_lines = [], []
     for folder in folders:
-        rel = folder.relative_to(ROOT)
-        if heads is None or not any(own_branch(folder, cfg, h) for h in heads):
-            manual.append(
-                f"{rel}: kept, gh could not confirm a merged PR from {folder.name}'s own branch"
+        if heads is not None and any(own_branch(folder, cfg, h) for h in heads):
+            remove_list.append(folder)
+        else:
+            kept_lines.append(
+                f"{folder.relative_to(ROOT)}: kept, gh could not confirm a merged PR from {folder.name}'s own branch"
             )
-            continue
+    return {
+        "remove": remove_list,
+        "kept": kept_lines,
+        "open": unmerged_branches(ROOT, cfg.get("defaultBranch") or "main", heads),
+    }
+
+
+def migrate_archives(plan: dict) -> None:
+    """An archive folder is removed (the owner's rule is no archive) only when a merged PR came from
+    the change's own branch, and only its tracked files; the others are listed. Runs before the
+    layout migration, whose staged renames would stop `git rm`. A dry run prints the same lines."""
+    manual.extend(plan["kept"])
+    for folder in plan["remove"]:
+        rel = folder.relative_to(ROOT)
         if DRY:
             wrote.append(f"{rel} (would be removed: its PR merged, no archive)")
             continue
@@ -1140,21 +1164,26 @@ def migrate_report(cfg: dict) -> None:
             manual.append(f"{rel}: kept, untracked files remain (or git could not remove it): check it by hand")
         else:
             wrote.append(f"{rel} (removed: its PR merged, no archive)")
-    open_branches = unmerged_branches(ROOT, cfg.get("defaultBranch") or "main")
+
+
+def migrate_report(cfg: dict, plan: dict) -> None:
+    """Every change still in flight gets the one gate run that writes the new report."""
+    changes = ROOT / cfg.get("changesDir", "changes")
     for folder in sorted(changes.glob("*")) if changes.is_dir() else ():
         if not (folder.is_dir() and folder.name != "archive" and (
             (folder / "lock.json").exists() or (folder / "state" / "lock.json").exists()
         )):
             continue
-        for branch in (b for b in open_branches if own_branch(folder, cfg, b)):
+        for branch in (b for b in plan["open"] if own_branch(folder, cfg, b)):
             manual.append(
                 f"{folder.name} is in flight on {branch}: `git switch {branch}`, then run "
                 f"`python3 scripts/verify_gate.py milestone {folder.name}` once (it writes the report the new gate reads)"
             )
 
 
-def unmerged_branches(root: Path, default: str) -> list[str]:
-    """Branches not merged into the default branch (local and origin), plus the heads of open PRs."""
+def unmerged_branches(root: Path, default: str, merged: list[str] | None = None) -> list[str]:
+    """Branches not merged into the default branch (local and origin) and without a merged PR
+    (a squash merge leaves the branch looking unmerged), plus the heads of open PRs."""
     base = f"origin/{default}" if subprocess.run(
         ["git", "rev-parse", "--verify", "-q", f"origin/{default}"], cwd=root, capture_output=True
     ).returncode == 0 else default  # fmt: skip
@@ -1163,6 +1192,7 @@ def unmerged_branches(root: Path, default: str) -> list[str]:
         cwd=root, capture_output=True, text=True,
     )  # fmt: skip
     names = [n.removeprefix("origin/") for n in out.stdout.split()] if out.returncode == 0 else []
+    names = [n for n in names if n not in set(merged or ())]
     try:
         pr = subprocess.run(
             ["gh", "pr", "list", "--state", "open", "--json", "headRefName"],
@@ -1191,6 +1221,7 @@ def main() -> int:
                 'local milestones, or milestones.merge "pr" with feature PRs.'
             )
         kept.append("sdlc.json")
+        plan = migrate_plan(cfg) if MIGRATE else {}
         if not UPGRADE:
             cfg["kitTemplates"] = templates_hash()
             apply_tiers_answer(cfg)
@@ -1203,6 +1234,7 @@ def main() -> int:
         add_ci_commands(cfg, preset)
         add_builders(cfg)
         stamp_version(cfg, fresh=True)
+        plan = migrate_plan(cfg) if MIGRATE else {}
         write(cfg_path, json.dumps(cfg, indent=2, ensure_ascii=False) + "\n")
         manual.append(
             f"sdlc.json was created from the {preset} preset -- check linear.team/project, verify, blocked"
@@ -1250,6 +1282,8 @@ def main() -> int:
         # Not via write(): sdlc.json is the repo's own file and only gets fields merged in.
         # It still has to reach format_written(), or a prettier repo rejects the commit.
         written.append(cfg_path)
+    if MIGRATE:
+        migrate_archives(plan)  # before the layout moves: their staged renames would stop git rm
     changes_dir = cfg.get("changesDir", "changes")
     designs_dir = cfg.get("designsDir", "docs/designs")
     living = any((ROOT / "specs").glob("*/rules")) or any((ROOT / "specs").glob("*/manifest.yaml"))
@@ -1579,7 +1613,9 @@ def main() -> int:
         else:
             manual.append(
                 f".github/workflows/{name} matches no kit version, so it stays; remove it by hand if "
-                f"you no longer want Claude in CI"
+                f"you no longer want Claude in CI. Until you do, the guardrail test fails "
+                f"(`test_docs_and_workflows_exist_and_are_linked` in tests/test_sdlc.py, or "
+                f"`docs and workflows exist and are linked from CLAUDE.md` in tests/sdlc.test.ts)"
             )
     # Decision4 is advisory (no workflow) since 3.12.0. A repo adopted before keeps the workflow
     # adopt wrote then, which calls the shared checker and fails on every PR event. Only a file
@@ -1879,7 +1915,7 @@ def main() -> int:
     )
     diffs = finish_upgrade() if UPGRADE else ""
     if MIGRATE:
-        migrate_report(cfg)
+        migrate_report(cfg, plan)
     format_written()
 
     print("-#-#- WROTE -#-#-")

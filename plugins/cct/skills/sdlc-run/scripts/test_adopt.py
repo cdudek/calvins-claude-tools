@@ -1902,11 +1902,16 @@ def test_a_plain_adopt_writes_a_new_kit_path_when_free_or_an_unedited_kit_copy_H
 
 
 # 3.21.0: `--migrate` is the one way across kit versions.
-def _fake_gh(tmp_path: Path, head: str) -> dict[str, str]:
-    """A gh whose merged PRs are the one from branch `head`."""
+def _fake_gh(tmp_path: Path, head: str, *more: str, open_heads: tuple[str, ...] = ()) -> dict[str, str]:
+    """A gh whose merged PRs (gh api pulls) are the ones from branches `head` and `more`, and whose
+    open PRs are `open_heads`."""
     bin_dir = tmp_path / "bin"
     bin_dir.mkdir()
-    (bin_dir / "gh").write_text(f"#!/bin/sh\necho '[{{\"number\": 4, \"headRefName\": \"{head}\"}}]'\n")
+    merged = "\\n".join((head, *more))
+    opened = ",".join(f'{{"headRefName": "{h}"}}' for h in open_heads)
+    (bin_dir / "gh").write_text(
+        f"#!/bin/sh\nif [ \"$1\" = api ]; then printf '{merged}\\n'; else echo '[{opened}]'; fi\n"
+    )
     (bin_dir / "gh").chmod(0o755)
     return {**_env(), "PATH": f"{bin_dir}{os.pathsep}{os.environ['PATH']}"}
 
@@ -2037,6 +2042,81 @@ def test_migrate_takes_the_branch_from_the_changes_own_decisions(tmp_path: Path)
     res = _migrate(repo, _fake_gh(tmp_path, "project/big-one"))
     assert res.returncode == 0, res.stderr
     assert not folder.exists()
+
+
+@pytest.mark.parametrize(
+    ("decisions", "removed"),
+    [
+        ('{"milestone": "milestone/merged-two"}', True),  # a whole branch name
+        ('{"milestone": "merged-two"}', True),  # a bare slug
+        ('{"milestone": {"slug": "merged-two"}}', True),
+        ('{"milestone": null}', False),  # no slug named: the folder name's slug is unmerged-one
+        ('{"milestone": ["merged-two"]}', False),  # unreadable shape: the branch is unknown
+        ('{"milestone": {"slug": 7}}', False),
+        ('{"project": 7}', False),
+        ('["milestone/merged-two"]', False),
+    ],
+)
+def test_migrate_reads_every_shape_decisions_json_has_had_and_never_crashes(tmp_path: Path, decisions: str, removed: bool) -> None:
+    repo = _stamped_3_18(tmp_path)
+    folder = repo / "changes/archive/2026/2026-10/2026-10-02-unmerged-one"
+    (folder / "decisions.json").write_text(decisions)
+    _commit_all(repo)
+    res = _migrate(repo, _fake_gh(tmp_path, "milestone/merged-two-1"))
+    assert res.returncode == 0, res.stderr
+    assert (not folder.exists()) is removed
+    if not removed:
+        assert "2026-10-02-unmerged-one: kept, gh could not confirm" in "\n".join(_sections(res.stdout)["MANUAL"])
+
+
+def test_migrate_takes_a_feature_branch_the_plan_names(tmp_path: Path) -> None:
+    repo = _stamped_3_18(tmp_path)
+    for name, branch in (("2026-10-01-merged-one", "feature/rev-9-merged-one"), ("2026-10-02-unmerged-one", "feature/rev-9-unmerged")):
+        plan = repo / "changes/archive/2026/2026-10" / name / "plan.md"
+        plan.write_text(plan.read_text() + f"\nWork on branch\n{branch}. Host files come from gh.\n")
+    _commit_all(repo)
+    res = _migrate(repo, _fake_gh(tmp_path, "feature/rev-9-merged-one", "feature/rev-9-unmerged-extra"))
+    assert res.returncode == 0, res.stderr
+    assert not (repo / "changes/archive/2026/2026-10/2026-10-01-merged-one").exists()
+    assert (repo / "changes/archive/2026/2026-10/2026-10-02-unmerged-one").exists()  # a longer name is another branch
+
+
+def test_migrate_reads_all_merged_prs_not_the_latest_page(tmp_path: Path) -> None:
+    repo = _stamped_3_18(tmp_path)
+    env = _fake_gh(tmp_path, "milestone/merged-one-1")
+    log = tmp_path / "gh.log"
+    gh = tmp_path / "bin" / "gh"
+    gh.write_text(f"#!/bin/sh\necho \"$@\" >> {log}\n" + gh.read_text().split("\n", 1)[1])
+    assert _migrate(repo, env).returncode == 0
+    api = [line for line in log.read_text().splitlines() if line.startswith("api")]
+    assert api and "--paginate" in api[0] and "state=closed" in api[0] and "limit" not in api[0]
+
+
+def test_migrate_removes_a_flat_layout_archive_in_the_same_run(tmp_path: Path) -> None:
+    repo = _stamped_3_18(tmp_path)
+    flat = repo / "changes/archive"
+    subprocess.run(["git", "mv", "changes/archive/2026/2026-10/2026-10-01-merged-one", "changes/archive/2026-10-01-merged-one"], cwd=repo, check=True)
+    subprocess.run(["git", "mv", "changes/archive/2026/2026-10/2026-10-02-unmerged-one", "changes/archive/2026-10-02-unmerged-one"], cwd=repo, check=True)
+    _commit_all(repo)
+    res = _migrate(repo, _fake_gh(tmp_path, "milestone/merged-one-1"))
+    assert res.returncode == 0, res.stderr
+    assert not (flat / "2026-10-01-merged-one").exists()
+    assert not list(flat.glob("2026/*/2026-10-01-merged-one"))
+    assert (flat / "2026/2026-10/2026-10-02-unmerged-one").exists()  # kept, and nested by the layout migration
+    assert "2026-10-01-merged-one: kept" not in "\n".join(_sections(res.stdout)["MANUAL"])
+
+
+def test_migrate_lists_an_unmerged_branch_but_not_one_whose_pr_merged(tmp_path: Path) -> None:
+    repo = _stamped_3_18(tmp_path)
+    for branch in ("milestone/inflight-1", "milestone/inflight-2"):
+        subprocess.run(["git", "checkout", "-qb", branch], cwd=repo, check=True, env=_env())
+        subprocess.run(["git", "-c", "user.name=t", "-c", "user.email=t@t", "commit", "-q", "--allow-empty", "-m", branch], cwd=repo, check=True, env=_env())
+        subprocess.run(["git", "checkout", "-q", "-"], cwd=repo, check=True, env=_env())
+    res = _migrate(repo, _fake_gh(tmp_path, "milestone/inflight-1"))
+    assert res.returncode == 0, res.stderr
+    manual = "\n".join(_sections(res.stdout)["MANUAL"])
+    assert "2026-11-01-inflight is in flight on milestone/inflight-2" in manual
+    assert "milestone/inflight-1" not in manual
 
 
 def test_migrate_keeps_a_workflow_that_matches_no_kit_version(tmp_path: Path) -> None:
