@@ -544,6 +544,33 @@ if v3 and decisions.get("kind") == "bug" and decisions.get("testLocked") is True
             source=f"{changes}/{change_id}/decisions.json"
         )
 
+def locked_screens() -> bool:
+    try:
+        return json.loads(state_file(change_dir, "lock.json").read_text(encoding="utf-8")).get("screens") == "required"
+    except (OSError, ValueError, AttributeError):
+        return False
+
+
+# a visual change restyles what exists: no data, no auth, no new pages (those start a linked change)
+SCOPE_GUARD = [
+    "**/migrations/**", "drizzle/**", "prisma/**", "db/migrate/**", "alembic/**",
+    "**/auth/**", "**/permissions/**", *(f"**/*auth*.{e}" for e in ("ts", "tsx", "js", "py", "rb")),
+]
+ROUTE_FILES = [f"**/page.{e}" for e in ("tsx", "jsx", "ts", "js")] + ["**/route.ts", "**/route.js", "**/pages/**", "**/routes/**"]
+
+if (decisions.get("visualSource") or locked_screens()) and not match_any(rel, (cfg.get("scopeGuard") or {}).get("allow", [])):
+    folders = []
+    for doc in ("plan.md", "design.md"):
+        folders += re.findall(r"`([^`]+/)`", section(change_dir / doc, "Where things go"))
+    new_route = match_any(rel, ROUTE_FILES) and not (root / rel).exists() and not any(rel.startswith(f.lstrip("./")) for f in folders)
+    if match_any(rel, SCOPE_GUARD) or new_route:
+        deny(
+            f"{rel}: a visual change does not add data, auth or new pages: start a linked change "
+            "(`sdlc-run` new change) for it. A repo allows a path with sdlc.json `scopeGuard.allow`.",
+            source=f"{changes}/{change_id}/lock.json and decisions.json",
+            action="start a linked change for the data, auth or page work",
+        )
+
 if v3 and not skipped(decisions, "prototype") and not (state_file(change_dir, "lock.json")).exists():  # design only
     for proto in cfg.get("prototypeDirs", []):
         p = proto.rstrip("/")

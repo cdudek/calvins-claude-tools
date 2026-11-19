@@ -272,3 +272,56 @@ def test_the_transcript_guard_holds_in_a_repo_without_sdlc_json(tmp_path: Path) 
         env={**os.environ, "CLAUDE_PROJECT_DIR": str(bare), "HOME": str(home)},
     )
     assert r.returncode == 2 and "session transcripts" in r.stderr
+
+
+def _visual(repo: Path, allow: list[str] | None = None) -> None:
+    (repo / "changes" / ID / "lock.json").write_text('{"screens": "required"}\n')
+    (repo / "changes" / ID / "plan.md").write_text(
+        PLAN + "\n## Where things go\n\n- `src/screens/`: the new screens\n"
+    )
+    cfg = {"changesDir": "changes"}
+    if allow:
+        cfg["scopeGuard"] = {"allow": allow}
+    (repo / "sdlc.json").write_text(json.dumps(cfg))
+
+
+@pytest.mark.parametrize(
+    "file",
+    [
+        "db/migrations/0001_add_table.sql",
+        "apps/web/migrations/0002.py",
+        "drizzle/0003.sql",
+        "prisma/schema.prisma",
+        "db/migrate/20260101_x.rb",
+        "alembic/versions/a1.py",
+        "src/auth/session.ts",
+        "src/lib/oauth_helper.py",
+        "src/permissions/roles.ts",
+        "src/app/settings/page.tsx",
+    ],
+)
+def test_a_visual_change_refuses_data_auth_and_new_pages(repo: Path, file: str) -> None:
+    _visual(repo)
+    r = _edit(repo, file, "active")
+    assert r.returncode == 2
+    assert "a visual change does not add data, auth or new pages" in r.stderr
+    assert "sdlc-run" in r.stderr
+
+
+def test_a_visual_change_allows_its_own_folders_and_existing_pages(repo: Path) -> None:
+    _visual(repo)
+    assert _edit(repo, "src/screens/settings/page.tsx", "active").returncode == 0
+    (repo / "src/app").mkdir(parents=True)
+    (repo / "src/app/page.tsx").write_text("x")  # an existing route is a restyle, not a new page
+    assert _edit(repo, "src/app/page.tsx", "active").returncode == 0
+    assert _edit(repo, "src/components/button.tsx", "active").returncode == 0
+
+
+def test_the_scope_guard_allow_list_lets_a_path_through(repo: Path) -> None:
+    _visual(repo, allow=["prisma/**"])
+    assert _edit(repo, "prisma/schema.prisma", "active").returncode == 0
+    assert _edit(repo, "drizzle/0003.sql", "active").returncode == 2
+
+
+def test_a_change_without_visual_work_may_edit_migrations(repo: Path) -> None:
+    assert _edit(repo, "db/migrations/0001.sql", "active").returncode == 0
