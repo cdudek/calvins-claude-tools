@@ -25,6 +25,10 @@
 #   7. protected paths after approval    -- facts.md, done.json, lock.json, sdlc.json and the
 #                                           `protected` globs, unless protectedEdit quotes the engineer
 #
+# Layout 4 (spec.py `applies`) has no rules 2-4: its plan gate is `status: approved` on spec.md,
+# design.md and tasks.md plus lock.json; after the lock spec.md, design.md, specs/*/rules/R*.md and
+# .sdlc/last-rule-id need `protectedEdit` (a rule's `status:` line and task ticks stay open).
+#
 # v3 = decisions.json has `size`; v2 folders keep the v2 rules, v3 folders without `milestone`
 # keep the v3 rules, so in-flight changes finish on the process they started. Rules 5-7 fire
 # only when the checked-out branch has a change folder: no folder, no opinion. Bash wrapper,
@@ -162,7 +166,16 @@ def is_milestone(decisions: dict) -> bool:
     return "milestone" in decisions
 
 
+def is_v4(change_dir: Path, decisions: dict) -> bool:
+    """Layout 4 (spec.py `applies`, which a hook cannot import): pinned in decisions.json, or a
+    spec.md with no facts.md. It has three documents and a living spec, not intent/facts/plan."""
+    return decisions.get("layout") == 4 or (
+        (change_dir / "spec.md").exists() and not (change_dir / "facts.md").exists()
+    )
+
+
 PROTECTED_FILES = ("facts.md", "done.json", "lock.json")
+V4_PROTECTED_FILES = ("spec.md", "design.md", "done.json", "lock.json")  # tasks.md takes ticks
 PROTECTED_GLOBS = ["sdlc.json", "**/*-snapshots/**", "**/__screenshots__/**", "**/*allowlist*"]
 
 
@@ -271,9 +284,10 @@ if len(parts) >= 3 and parts[0] == changes:
 
     decisions = load_decisions(change_dir)
     v3 = is_v3(decisions)
+    v4 = is_v4(change_dir, decisions)
 
-    if is_milestone(decisions):
-        if inside in PROTECTED_FILES and (change_dir / "lock.json").exists():
+    if is_milestone(decisions) or v4:
+        if inside in (V4_PROTECTED_FILES if v4 else PROTECTED_FILES) and (change_dir / "lock.json").exists():
             if decisions.get("protectedEdit"):
                 sys.exit(0)
             deny(
@@ -281,6 +295,8 @@ if len(parts) >= 3 and parts[0] == changes:
                 "Stop and ask; record their words as `protectedEdit` in decisions.json first.",
                 source=f"{changes}/{change_id}/lock.json and decisions.json", action="stop and ask the engineer; their words go in decisions.json as protectedEdit"
             )
+        if v4:  # no intent/facts/plan ordering: the three documents have one gate, at the lock
+            sys.exit(0)
         if (inside.startswith("spec/") or base == "facts.md") and fm(
             change_dir / "intent.md", "status"
         ) != "approved":
@@ -362,6 +378,23 @@ if len(parts) >= 3 and parts[0] == changes:
             )
     sys.exit(0)
 
+if re.fullmatch(rf"{re.escape(str(cfg.get('livingSpecs') or 'specs'))}/[^/]+/rules/R\d+\.md", rel) or rel == ".sdlc/last-rule-id":
+    # the living spec: rule files and the id floor change by script or git, not by a direct edit,
+    # once a layout-4 change is approved. Flipping a rule's `status:` line is the one open edit.
+    found = branch_change()
+    if found and is_v4(found[1], found[2]) and (found[1] / "lock.json").exists() and not found[2].get("protectedEdit"):
+        tool = payload.get("tool_input") or {}
+        flip = all(re.fullmatch(r"\s*status:\s*\w+\s*", str(tool.get(k, "\n"))) for k in ("old_string", "new_string"))
+        if not flip:
+            deny(
+                f"{rel} is protected since the engineer approved the change. Rule files and the id floor "
+                "change by script (`spec.py new`, `spec.py last-id --write`) or by git; to edit one "
+                f"directly stop and ask, then record the words as `protectedEdit` in {changes}/{found[0]}/decisions.json.",
+                source=f"{changes}/{found[0]}/lock.json and decisions.json",
+                action="stop and ask the engineer; their words go in decisions.json as protectedEdit",
+            )
+    sys.exit(0)
+
 if rel.startswith("docs/") or rel.startswith(f"{designs}/") or rel.startswith(".claude/") or rel.endswith(".md"):
     sys.exit(0)
 
@@ -389,32 +422,42 @@ if v3 and not skipped(decisions, "prototype"):
         if rel == p or rel.startswith(p + "/"):
             sys.exit(0)
 
-if is_milestone(decisions):
+if is_milestone(decisions) or is_v4(change_dir, decisions):
     locked = (change_dir / "lock.json").exists()
+    v4 = is_v4(change_dir, decisions)
     if locked and match_any(rel, cfg.get("protected", PROTECTED_GLOBS)) and not decisions.get("protectedEdit"):
         deny(
             f"{rel} is a protected path since the plan was approved. Stop and ask; record the "
             f"engineer's words as `protectedEdit` in {changes}/{change_id}/decisions.json first.",
             source=f"{changes}/{change_id}/lock.json and decisions.json", action="stop and ask the engineer; their words go in decisions.json as protectedEdit"
         )
-    if fm(change_dir / "plan.md", "status") != "approved" or not locked:
+    if v4:  # the plan gate is `status: approved` on each of the three documents, and the lock
+        unapproved = [
+            f for f in ("spec.md", "design.md", "tasks.md")
+            if (change_dir / f).exists() and fm(change_dir / f, "status") != "approved"
+        ] + ([] if (change_dir / "spec.md").exists() else ["spec.md"])
+        handover = ("tasks.md", "Handover")
+    else:
+        unapproved = [] if fm(change_dir / "plan.md", "status") == "approved" else ["plan.md"]
+        handover = ("plan.md", "Goal handover")
+    if unapproved or not locked:
         deny(
-            f"{changes}/{change_id} is not approved yet. One gate approves UX plan, facts and plan: "
-            f"plannotator annotate {changes}/{change_id}/plan.md --gate, then "
+            f"{changes}/{change_id} is not approved yet ({', '.join(unapproved) or 'lock.json'}). One gate approves the change: "
+            f"plannotator annotate {changes}/{change_id}/{'spec.md' if v4 else 'plan.md'} --gate, then "
             f"python3 scripts/verify_gate.py approve {change_id}.",
-            source=f"{changes}/{change_id}/plan.md and lock.json"
+            source=f"{changes}/{change_id}/{unapproved[0] if unapproved else 'lock.json'} and lock.json"
         )
-    if not section(change_dir / "plan.md", "Goal handover"):
-        deny(f"{changes}/{change_id}/plan.md has an empty ## Goal handover. Write the /goal there first.", source=f"{changes}/{change_id}/plan.md")
+    if not section(change_dir / handover[0], handover[1]):
+        deny(f"{changes}/{change_id}/{handover[0]} has an empty ## {handover[1]}. Write the /goal there first.", source=f"{changes}/{change_id}/{handover[0]}")
     active = goal_active(transcript)
     if active is None:
         print("chain-gate: transcript unreadable, cannot check for an active /goal; allowing.", file=sys.stderr)
     elif not active and os.environ.get("SDLC_GOAL_OFF") != "1":  # the off switch lets build edits through
         deny(
             "building happens inside /goal. Start it with the condition in "
-            f"{changes}/{change_id}/plan.md ## Goal handover, then edit again.",
+            f"{changes}/{change_id}/{handover[0]} ## {handover[1]}, then edit again.",
             source=f"the transcript {transcript}",
-            action=f"start the /goal from the ## Goal handover in {changes}/{change_id}/plan.md (a person types it)",
+            action=f"start the /goal from the ## {handover[1]} in {changes}/{change_id}/{handover[0]} (a person types it)",
         )
     sys.exit(0)
 
