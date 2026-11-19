@@ -35,6 +35,24 @@ export PYTHONDONTWRITEBYTECODE=1 # a hook must not leave __pycache__ in a clean 
 : "${SDLC_PY:=python3}" # an older sdlc-config.sh (one-file upgrade) does not set it
 
 payload=$(cat)
+
+# The session transcripts are the evidence for an owner quote (verify_gate.py reads them): no
+# Write or Edit may touch ~/.claude/projects, in any repo, with or without sdlc.json or a goal.
+if ! printf '%s' "$payload" | "$SDLC_PY" -c '
+import json, os, sys
+try:
+    f = json.load(sys.stdin)["tool_input"]["file_path"]
+except (ValueError, KeyError, TypeError):
+    sys.exit(0)
+if not f:
+    sys.exit(0)
+t = os.path.realpath(os.path.expanduser(os.path.expandvars(f)))
+e = os.path.realpath(os.path.expanduser("~/.claude/projects"))
+sys.exit(1 if t == e or t.startswith(e + os.sep) else 0)
+'; then
+  echo 'BLOCKED: ~/.claude/projects holds the session transcripts, the evidence of what the engineer said. They are never written or edited; ask the engineer to say it in the session.' >&2
+  exit 2
+fi
 [ -f "$SDLC_JSON" ] || exit 0
 
 # One interpreter start per call: the payload (fd 3) and sdlc.json are read in the same process.

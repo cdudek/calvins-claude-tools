@@ -130,6 +130,7 @@ def _pr(
             "state": state,
             "mergedAt": "2026-11-11T10:00:00Z" if state == "MERGED" else None,
             "autoMergeRequest": {"mergeMethod": "MERGE"} if armed else None,
+            "labels": [{"name": n} for n in labels],
         }
     ]
 
@@ -197,7 +198,8 @@ def test_goal_open_without_a_pr(repo: Path) -> None:
 
 def test_goal_open_when_the_pr_is_neither_merged_nor_armed(repo: Path) -> None:
     _gate(repo, PASS)
-    assert _goal(repo, {BRANCH: _pr("OPEN")}) == (1, f"GOAL {ID} OPEN pr-7-not-merged-or-armed")
+    pr = _pr("OPEN", labels=("ship",))  # tiered, labelled: arming is now the next step
+    assert _goal(repo, {BRANCH: pr}) == (1, f"GOAL {ID} OPEN pr-7-not-merged-or-armed")
 
 
 def test_goal_open_without_a_passing_gate(repo: Path) -> None:
@@ -315,6 +317,19 @@ def test_blocker_names_what_why_who_and_the_exact_step(repo: Path) -> None:
     assert sdlc_status.blocker(ID, f"GOAL {ID} DONE pr=7 state=merged gate={GATE}") == ""
 
 
+def test_goal_never_asks_to_arm_a_closed_or_gated_ask_pr(repo: Path) -> None:
+    """3.21.0 (F2): arming comes after the owner's disposition, so a closed PR and an Ask-tier PR
+    are named for what they are, and the blocker never recommends `gh pr merge --auto`."""
+    _gate(repo, PASS)
+    for pr, reason in (
+        (_pr("CLOSED"), "pr-7-closed"),
+        (_pr("OPEN", labels=("ask",)), "pr-7-awaits-owner"),
+    ):
+        assert _goal(repo, {BRANCH: pr}) == (1, f"GOAL {ID} OPEN {reason}")
+        out = sdlc_status.blocker(ID, f"GOAL {ID} OPEN {reason}")
+        assert out.startswith("Blocking: PR 7") and "gh pr merge" not in out and "--auto" not in out
+
+
 def test_blocker_for_a_feature_names_the_feature_gate_and_its_pr(repo: Path) -> None:
     out = sdlc_status.blocker(ID, f"GOAL {ID} OPEN feature-gate-pass", "feature")
     assert "the feature gate has not passed" in out and f"verify_gate.py feature {ID}" in out
@@ -331,6 +346,10 @@ EMITTED = [
     "no-branch-for-feature-2",
     f"no-pr:{BRANCH}",
     "pr-7-not-merged-or-armed",
+    "pr-7-held",
+    "pr-7-awaits-owner",
+    "pr-7-awaits-tier",
+    "pr-7-closed",
     "gate-sha-not-pr-7-head",
     "gh-unavailable",
     "no-change-folder",
@@ -553,7 +572,7 @@ def test_goal_project_open_states(repo: Path) -> None:
         f"GOAL {ID} OPEN project-gate-pass,no-pr:{PROJECT_BRANCH}",
     )
     _project_gate(repo, f"VERIFY PASS project big {GATE}")
-    assert _goal(repo, {PROJECT_BRANCH: _pr("OPEN")}, "project") == (
+    assert _goal(repo, {PROJECT_BRANCH: _pr("OPEN", labels=("ship",))}, "project") == (
         1,
         f"GOAL {ID} OPEN pr-7-not-merged-or-armed",
     )
@@ -616,6 +635,12 @@ def _receipt(repo: Path, n: int, sha: str, verdict: str = "PASS", change: str = 
     (out / f"milestone-{n}.json").write_text(json.dumps(receipt))
 
 
+def _merge(repo: Path, branch: str, into: str = "project/big") -> None:
+    """A real merge commit of `branch` into `into` (what `git merge --no-ff` leaves; a fast-forward leaves none)."""
+    _sh(repo, "checkout", "-q", into)
+    _sh(repo, "merge", "--no-ff", "-q", "-m", f"merge {branch}", branch)
+
+
 def _two_milestones(repo: Path) -> tuple[str, str]:
     """M1 merged into project/big; M2 built on its own branch, not merged."""
     _local_project(repo)
@@ -626,7 +651,8 @@ def _two_milestones(repo: Path) -> tuple[str, str]:
     _sh(repo, "branch", "project/big")
     _sh(repo, "checkout", "-qb", "milestone/redesign-r2-1")
     m1 = _commit(repo, "m1.txt")
-    _sh(repo, "branch", "-f", "project/big", m1)
+    _merge(repo, "milestone/redesign-r2-1")
+    _sh(repo, "checkout", "-q", "milestone/redesign-r2-1")
     _sh(repo, "checkout", "-qb", "milestone/redesign-r2-2")
     return m1, _commit(repo, "m2.txt")
 
@@ -635,8 +661,7 @@ def test_goal_local_milestone_is_done_by_its_receipt_after_the_branch_is_deleted
     repo: Path,
 ) -> None:
     m1, m2 = _two_milestones(repo)
-    _sh(repo, "branch", "-f", "project/big", m2)
-    _sh(repo, "checkout", "-q", "project/big")
+    _merge(repo, "milestone/redesign-r2-2")
     _sh(repo, "branch", "-D", "milestone/redesign-r2-1", "milestone/redesign-r2-2")
     _receipt(repo, 1, m1)
     _receipt(repo, 2, m2)
@@ -667,8 +692,7 @@ def test_goal_local_receipt_whose_head_is_not_in_the_project_branch_is_open(repo
 
 def test_goal_local_receipt_copied_from_another_milestone_is_rejected(repo: Path) -> None:
     m1, m2 = _two_milestones(repo)
-    _sh(repo, "branch", "-f", "project/big", m2)
-    _sh(repo, "checkout", "-q", "project/big")
+    _merge(repo, "milestone/redesign-r2-2")
     _sh(repo, "branch", "-D", "milestone/redesign-r2-1", "milestone/redesign-r2-2")
     _receipt(repo, 1, m1)
     out = repo / "changes" / ID / "verify"
@@ -680,8 +704,7 @@ def test_goal_local_receipt_copied_from_another_milestone_is_rejected(repo: Path
 
 def test_goal_local_receipt_for_another_change_is_rejected(repo: Path) -> None:
     m1, m2 = _two_milestones(repo)
-    _sh(repo, "branch", "-f", "project/big", m2)
-    _sh(repo, "checkout", "-q", "project/big")
+    _merge(repo, "milestone/redesign-r2-2")
     _sh(repo, "branch", "-D", "milestone/redesign-r2-1", "milestone/redesign-r2-2")
     _receipt(repo, 1, m1)
     _receipt(repo, 2, m2, change="2026-01-01-other")
@@ -824,6 +847,76 @@ def test_the_milestone_report_template_links_the_glossary() -> None:
     assert "sdlc_status.py ids" in template.read_text()
 
 
+# --- Review finding 8: an Ask PR is never DONE before the owner's acceptance; Hold blocks ------
+
+
+def _owner(repo: Path, tmp_path: Path, key: str, label: str, monkeypatch, n: int = 1) -> None:
+    """The owner's answer to `Change <id>, finding <key>: ...` in the transcript Claude Code keeps."""
+    import datetime as dt
+    import re
+
+    home = tmp_path / "home"
+    monkeypatch.setenv("HOME", str(home))
+    folder = home / ".claude/projects" / re.sub(r"[^A-Za-z0-9]", "-", str(repo.resolve()))
+    folder.mkdir(parents=True, exist_ok=True)
+    q = f"Change {ID}, finding {key}: accept the milestone?"
+    stamp = (dt.datetime.now(dt.timezone.utc) + dt.timedelta(seconds=n)).isoformat()
+    rows = [
+        {"type": "assistant", "timestamp": stamp, "message": {"content": [{
+            "type": "tool_use", "id": f"t{n}", "name": "AskUserQuestion",
+            "input": {"questions": [{"question": q, "options": [{"label": "Accept milestone"}, {"label": "Hold"}]}]}}]}},
+        {"type": "user", "timestamp": stamp, "toolUseResult": {"answers": {q: label}},
+         "message": {"content": [{"type": "tool_result", "tool_use_id": f"t{n}", "content": "ok"}]}},
+    ]  # fmt: skip
+    with (folder / "session.jsonl").open("a") as out:
+        out.write("".join(json.dumps(r) + "\n" for r in rows))
+
+
+@pytest.mark.parametrize("armed", [False, True])
+def test_an_ask_pr_armed_or_not_is_never_done_without_the_owners_acceptance(
+    repo: Path, tmp_path: Path, monkeypatch, armed: bool
+) -> None:
+    monkeypatch.setenv("HOME", str(tmp_path / "home"))
+    _gate(repo, PASS)
+    pr = _pr("OPEN", armed=armed, labels=("ask",))
+    assert _goal(repo, {BRANCH: pr}) == (1, f"GOAL {ID} OPEN pr-7-awaits-owner")
+    _owner(repo, tmp_path, "PR7", "Accept milestone", monkeypatch)
+    sys.modules["marks"]._ANSWERS.clear()  # one process per call in real use; this test spans two
+    assert _goal(repo, {BRANCH: _pr("OPEN", armed=True, labels=("ask",))})[0] == 0
+
+
+def test_a_recorded_hold_blocks_done_and_arming(repo: Path, tmp_path: Path, monkeypatch) -> None:
+    _gate(repo, PASS)
+    _owner(repo, tmp_path, "PR7", "Hold", monkeypatch)
+    for pr in (
+        _pr("OPEN", armed=True, labels=("ship",)), _pr("OPEN", labels=("ask",)), _pr("OPEN", labels=("show",)),
+        _pr("OPEN", armed=True, labels=("ship", "hold")),  # the label alone holds as well
+    ):
+        assert _goal(repo, {BRANCH: pr}) == (1, f"GOAL {ID} OPEN pr-7-held")
+    assert "nothing arms it" in sdlc_status.blocker(ID, f"GOAL {ID} OPEN pr-7-held")
+    assert "gh pr merge" not in sdlc_status.blocker(ID, f"GOAL {ID} OPEN pr-7-held")
+
+
+def test_status_never_recommends_arming_before_the_tier_label_exists(
+    repo: Path, tmp_path: Path, monkeypatch
+) -> None:
+    monkeypatch.setenv("HOME", str(tmp_path / "home"))
+    _gate(repo, PASS)
+    flow = repo / ".github" / "workflows"  # the tier workflow is what sets the label
+    flow.mkdir(parents=True)
+    (flow / "ship-show-ask.yml").write_text("name: tier\n")
+    assert _goal(repo, {BRANCH: _pr("OPEN")}) == (1, f"GOAL {ID} OPEN pr-7-awaits-tier")
+    out = sdlc_status.blocker(ID, f"GOAL {ID} OPEN pr-7-awaits-tier")
+    assert "gh pr merge" not in out and "tier label" in out
+    assert _goal(repo, {BRANCH: _pr("OPEN", labels=("ship",))}) == (
+        1, f"GOAL {ID} OPEN pr-7-awaits-workflow"
+    )  # fmt: skip
+    (flow / "ship-show-ask.yml").unlink()  # no workflow: nothing sets a label, the agent arms it
+    assert _goal(repo, {BRANCH: _pr("OPEN")}) == (1, f"GOAL {ID} OPEN pr-7-not-merged-or-armed")
+    (repo / "sdlc.json").write_text(json.dumps({"tiers": False}))
+    assert _goal(repo, {BRANCH: _pr("OPEN")}) == (1, f"GOAL {ID} OPEN pr-7-not-merged-or-armed")
+
+
 # 3.20.1 (review findings 1, 2, 5, 6).
 def test_goal_wants_the_exact_parent_as_the_base_of_every_scope_F1(repo: Path) -> None:
     _local_project(repo, "pr")  # the milestone belongs to project/big
@@ -857,7 +950,7 @@ def test_an_unarmed_ask_pr_waits_for_a_person_not_for_an_arm_command_F2(repo: Pa
     code = _open_pr_goal(repo, {}, ("ask",))  # askGatesMerge defaults to on
     assert code == "pr-7-awaits-owner"
     sentence = sdlc_status.blocker(ID, f"GOAL {ID} OPEN {code}")
-    assert "gh pr merge" not in sentence and "you read it and decide" in sentence
+    assert "gh pr merge" not in sentence and "AskUserQuestion" in sentence
 
 
 def test_ask_that_does_not_gate_the_merge_is_left_to_the_workflow_F2(repo: Path) -> None:
@@ -1028,3 +1121,94 @@ def test_a_local_receipt_for_another_project_or_moved_tip_is_not_done_3_20_5(rep
     _sh(repo, "branch", "-f", "project/big", "milestone/redesign-r2-2")
     got = sdlc_status.goal(repo, repo / "changes" / ID, "milestone", None, gh=_no_gh)
     assert got[0] == 1 and "gate-sha-not-tip:milestone/redesign-r2-2" in got[1]
+
+
+# --- a kept older gate never writes change/owner/milestone: its reports are read the old way ----
+
+BINDINGS = ("change", "milestone", "owner")
+
+
+def _strip_bindings(repo: Path, drop=BINDINGS, keep_format: bool = False) -> None:
+    _gate(repo, PASS)
+    path = repo / "changes" / ID / "verify" / "report.json"
+    data = json.loads(path.read_text())
+    data = {k: v for k, v in data.items() if k not in drop and (keep_format or k != "format")}
+    path.write_text(json.dumps(data))
+
+
+def test_a_report_with_no_format_and_no_binding_key_is_read_the_old_way(repo: Path) -> None:
+    _strip_bindings(repo)  # what a kept 3.20.0-3.20.4... gate wrote
+    assert _goal(repo, {BRANCH: _pr()})[0] == 0
+
+
+def test_the_checkout_text_of_the_gate_never_decides_the_mode(repo: Path) -> None:
+    (repo / "scripts").mkdir()
+    (repo / "scripts" / "verify_gate.py").write_text("# an edit that mentions nothing\n")
+    _gate(repo, PASS)  # a report that carries its bindings is strict whatever the file says
+    path = repo / "changes" / ID / "verify" / "report.json"
+    data = json.loads(path.read_text())
+    path.write_text(json.dumps({k: v for k, v in data.items() if k != "owner"}))
+    assert _goal(repo, {BRANCH: _pr()}) == (1, f"GOAL {ID} OPEN milestone-gate-pass")
+
+
+@pytest.mark.parametrize("dropped", [BINDINGS, ("change", "milestone"), ("owner",)])
+def test_a_report_of_the_new_format_must_carry_every_binding(repo: Path, dropped: tuple) -> None:
+    _gate(repo, PASS, format=2)
+    path = repo / "changes" / ID / "verify" / "report.json"
+    data = json.loads(path.read_text())
+    path.write_text(json.dumps({k: v for k, v in data.items() if k not in dropped}))
+    assert _goal(repo, {BRANCH: _pr()}) == (1, f"GOAL {ID} OPEN milestone-gate-pass")
+
+
+def test_the_gate_writes_the_report_format() -> None:
+    import verify_gate
+
+    assert verify_gate.REPORT_FORMAT >= 2
+
+
+# --- a deleted milestone branch: the merge that brought it in is proven, not just contained ----
+
+
+def test_a_post_gate_edit_merged_with_a_deleted_milestone_is_not_done(repo: Path) -> None:
+    m1, m2 = _two_milestones(repo)  # M1 merged with a merge commit; M2 gated at m2
+    (repo / "late.txt").write_text("after the gate\n")  # a product edit after the gate...
+    _sh(repo, "add", ".")
+    _sh(repo, "commit", "-qm", "edit after the gate")
+    _merge(repo, "milestone/redesign-r2-2")  # ...merged with the milestone, the later of two merges
+    _sh(repo, "branch", "-D", "milestone/redesign-r2-1", "milestone/redesign-r2-2")
+    _receipt(repo, 1, m1)
+    _receipt(repo, 2, m2)
+    _gate(repo, f"VERIFY PASS milestone {ID} {m2}")
+    got = sdlc_status.goal(repo, repo / "changes" / ID, "milestone", None, gh=_no_gh)
+    assert got == (1, f"GOAL {ID} OPEN gate-sha-not-tip:milestone/redesign-r2-2")
+
+
+def test_a_fast_forward_leaves_no_merge_to_prove_and_is_not_merged(repo: Path) -> None:
+    m1, m2 = _two_milestones(repo)
+    _sh(repo, "branch", "-f", "project/big", m2)  # fast-forward: no merge commit
+    _sh(repo, "checkout", "-q", "project/big")
+    _sh(repo, "branch", "-D", "milestone/redesign-r2-1", "milestone/redesign-r2-2")
+    _receipt(repo, 1, m1)
+    _receipt(repo, 2, m2)
+    _gate(repo, f"VERIFY PASS milestone {ID} {m2}")
+    got = sdlc_status.goal(repo, repo / "changes" / ID, "milestone", None, gh=_no_gh)
+    assert got == (1, f"GOAL {ID} OPEN receipt-not-merged:1,receipt-not-merged:2")  # both lost their merge
+
+
+def test_the_project_history_is_listed_once_per_poll(repo: Path, monkeypatch) -> None:
+    m1, m2 = _two_milestones(repo)
+    _merge(repo, "milestone/redesign-r2-2")
+    _sh(repo, "branch", "-D", "milestone/redesign-r2-1", "milestone/redesign-r2-2")
+    _receipt(repo, 1, m1)
+    _receipt(repo, 2, m2)
+    _gate(repo, f"VERIFY PASS milestone {ID} {m2}")
+    logs: list[tuple] = []
+    real = sdlc_status.git
+
+    def spy(root, *args):
+        logs.append(args) if args[:1] == ("log",) else None
+        return real(root, *args)
+
+    monkeypatch.setattr(sdlc_status, "git", spy)
+    assert sdlc_status.goal(repo, repo / "changes" / ID, "milestone", None, gh=_no_gh)[0] == 0
+    assert len(logs) == 1, logs

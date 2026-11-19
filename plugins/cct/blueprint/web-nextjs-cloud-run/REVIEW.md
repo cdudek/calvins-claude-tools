@@ -5,7 +5,7 @@ in CI), and by anyone reviewing by hand. The human reviewer's job is intent and 
 `changes/<date>-<slug>/plan.md` says, and is the blast radius acceptable. The
 mechanical passes below are Claude's job, and they run identically on every PR.
 
-The review (`cct:review-code-run` with one `review-fix-run` round) runs once per milestone,
+The review (`cct:review-code-run changes <parent> --codex`, then one fix round on its findings) runs once per milestone,
 on the milestone diff, not on each feature PR.
 
 ## Passes

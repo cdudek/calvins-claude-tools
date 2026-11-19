@@ -98,9 +98,13 @@ REASONS = {
     "test-proves-nothing",
     "validation-not-met",  # a `not met` or `partly` row in validation.md
     "findings-open",  # an unchecked item in findings.md outside ## Advisory
+    "findings-blocked",  # an open item whose ## Dispositions row says blocked: terminal
     "not-converged",  # findings.md ## Converge has no `Converged:` line
 }
 LOCKED = ("facts.md", "done.json")
+REPORT_FORMAT = 2  # a report of this format names its change, owner and milestone; hooks/pass_proof.py requires them
+LOCK_FORMAT = 3  # written by `approve` into lock.json; strict records apply to locks of this version or later
+ROUTING = ("size", "visualSource")  # decisions.json fields that route the gate, locked at approval
 TAIL = 60  # stdout lines of a failing check
 BREAKER = 3
 ATTEMPTS = 3
@@ -131,7 +135,10 @@ def root() -> Path:
     return Path(sh("git", "rev-parse", "--show-toplevel") or ".").resolve()
 
 
-def criteria_hash(change: Path, checks: object) -> dict[str, str]:
+def criteria_hash(change: Path, checks: object, plan: bool = True) -> dict[str, str]:
+    """Hashes of what approval locks: facts.md, done.json, the checks and (from 3.21.0) the plan's
+    `## Milestones` section, which decides which facts each milestone must prove. `plan=False`
+    reads an older lock, which lacks that key."""
     hashes = {
         name: hashlib.sha256((change / name).read_bytes()).hexdigest()
         for name in LOCKED
@@ -140,7 +147,26 @@ def criteria_hash(change: Path, checks: object) -> dict[str, str]:
     hashes["checks"] = hashlib.sha256(
         json.dumps(checks, sort_keys=True).encode("utf-8")
     ).hexdigest()
+    if plan:
+        hashes["plan.milestones"] = hashlib.sha256(
+            section(read(change / "plan.md"), "Milestones").encode("utf-8")
+        ).hexdigest()
+        hashes["decisions.routing"] = hashlib.sha256(
+            json.dumps(routing(change), sort_keys=True).encode("utf-8")
+        ).hexdigest()
     return hashes
+
+
+def routing(change: Path) -> dict:
+    """The routing fields of decisions.json (an unreadable file locks as itself, so editing it moves the hash)."""
+    path = change / "decisions.json"
+    if not path.exists():
+        return {"missing": True}
+    try:
+        data = json.loads(read(path))
+    except (OSError, ValueError):
+        return {"unreadable": True}
+    return {k: data.get(k) for k in ROUTING} if isinstance(data, dict) else {"unreadable": True}
 
 
 def merges_locally(cfg: dict) -> bool:
@@ -256,19 +282,310 @@ def approval_blockers(change: Path) -> list[str]:
     return out
 
 
-def milestone_blockers(change: Path) -> tuple[str, list[str]] | None:
-    """The records a milestone must close before it passes: (reason, offending lines) or None."""
+E2E_ENTRY = re.compile(r"playwright|test:e2e|\be2e\b|cypress")
+E2E_SCOPED = re.compile(
+    r"--grep|--only-changed|--last-failed|--repeat-each|\bseq\b|\bfor\b|\brelated\b"
+    r"|\.(?:spec|test)\.\w+|test_\w+\.py|\$specs"
+)
+
+
+E2E_REPEAT = re.compile(r"--repeat-each|\bseq\s+3\b|\bin\s+1\s+2\s+3\b|--count[= ]3")
+
+
+def has_e2e_config(repo: Path) -> bool:
+    """The repo has an E2E suite of its own: a playwright config or an e2e/ folder."""
+    return (repo / "e2e").is_dir() or any(repo.glob("playwright.config.*"))
+
+
+def full_e2e_gap(checks: list, repo: Path) -> str:
+    """"" when `checks.milestone` names a full E2E entry (or the repo has no E2E suite), else why
+    not: the gate is the only runner of the full suite, so a list without it never runs it."""
+    if not has_e2e_config(repo):
+        return ""
+    cmds = [c["run"] if isinstance(c, dict) else c for c in checks]
+    full = any(E2E_ENTRY.search(c) and not E2E_SCOPED.search(c) for c in cmds)
+    repeat = any(E2E_ENTRY.search(c) and E2E_REPEAT.search(c) for c in cmds)
+    if full and repeat:
+        return ""
+    return (
+        "sdlc.json checks.milestone has no full E2E entry and a repeat (x3) of the changed and flaky specs "
+        "although the repo has an E2E suite: add the full E2E command (the stack's, run once) and the repeat"
+        if not full
+        else "sdlc.json checks.milestone has a full E2E entry but no repeat (x3) of the changed and flaky specs "
+        "although the repo has an E2E suite: add the repeat"
+    )
+
+
+PLAIN_ID = re.compile(r"[A-Za-z0-9][A-Za-z0-9._-]*")  # one path component, never a flag
+PLAIN_BRANCH = re.compile(r"[A-Za-z0-9][A-Za-z0-9._/-]*")
+
+
+def plain_id(name: str) -> bool:
+    return bool(PLAIN_ID.fullmatch(name)) and ".." not in name
+
+
+def plain_branch(name: str) -> bool:
+    return bool(PLAIN_BRANCH.fullmatch(name)) and all(p not in ("", "..") for p in name.split("/"))
+
+
+def unsafe_substitutions(change_id: str, cfg: dict) -> str:
+    """Why `{id}` or `{base}` may not be put into a shell command line, or "" when both are plain."""
+    if not plain_id(change_id):
+        return (
+            f"the change id {change_id!r} is not a plain name "
+            "(start with a letter or digit; then letters, digits, . _ -; no ..)"
+        )
+    branch = cfg.get("defaultBranch") or "main"
+    if not plain_branch(branch):
+        return (
+            f"sdlc.json defaultBranch {branch!r} is not a plain branch name "
+            "(start with a letter or digit; no leading -, no .. or empty component)"
+        )
+    return ""
+
+
+def parent_ref(change: Path, cfg: dict, repo: Path) -> str:
+    """The ref a milestone's diff base is: the project branch it merges into (origin's, or the
+    local one in local mode) when the change has a project branch that exists, else the default
+    branch on origin."""
+    if (pb := project_branch(change, cfg)) and plain_branch(pb):
+        local = merges_locally(cfg) and sh("git", "-C", str(repo), "rev-parse", "--verify", "--quiet", f"{pb}^{{commit}}")
+        if local:
+            return pb
+        if sh("git", "-C", str(repo), "rev-parse", "--verify", "--quiet", f"origin/{pb}^{{commit}}"):
+            return f"origin/{pb}"
+    return f"origin/{cfg.get('defaultBranch') or 'main'}"
+
+
+def expand(cmd: str, change_id: str, cfg: dict, base: str = "") -> str:
+    """`{id}` is the change, `{base}` the diff base of a repeat run: `base` (the real parent ref,
+    see parent_ref) or else the default branch on origin. Both go into a command run by a shell,
+    so only plain names are substituted."""
+    if why := unsafe_substitutions(change_id, cfg):
+        raise ValueError(why)
+    base = base or f"origin/{cfg.get('defaultBranch') or 'main'}"
+    if not plain_branch(base):
+        raise ValueError(f"the diff base {base!r} is not a plain ref")
+    return cmd.replace("{id}", shlex.quote(change_id)).replace("{base}", shlex.quote(base))
+
+
+SETTLED = ("accepted", "deferred")  # `fixed` is the ticked box; `blocked` is terminal
+
+
+def item_id(item: str) -> str:
+    """The id of a findings.md item: its explicit bold label (**B2**, **C1**) when it follows the
+    finding-id grammar shared with the producers, else "" (an item without one can never be
+    settled by an owner answer)."""
+    from marks import FINDING_ID  # lazy: an old marks.py never breaks approve, audit or lint
+
+    m = re.match(rf"\*\*({FINDING_ID})\*\*", item.strip())
+    return m.group(1) if m else ""
+
+
+NO_EVIDENCE = {"", "-", "--", "n/a", "na", "none", "tbd", "todo", "?"}
+
+
+def lock_format(change: Path) -> int:
+    """The format version `approve` wrote into lock.json: 0 for a lock from before it existed or no
+    lock. An unreadable lock reads as the newest format (fail closed)."""
+    if not (change / "lock.json").exists():
+        return 0
+    try:
+        return int(json.loads(read(change / "lock.json")).get("format", 0))
+    except (ValueError, AttributeError, TypeError):
+        return LOCK_FORMAT
+
+
+def current_format(change: Path) -> bool:
+    """Approved under lock format 3 or later: its records may not be missing and its validation rows
+    are strict. An older lock (including one that merely holds done.json) keeps the old behaviour and
+    gets an upgrade-gap note."""
+    return lock_format(change) >= LOCK_FORMAT
+
+
+def approved_facts(change: Path) -> tuple[list[str], list[str]]:
+    """(fact ids of the approved `done.json`, problems). A missing or unparsable file is a problem
+    on a current-format change; a legacy change without one has no facts to derive."""
+    problem = "validation.md: done.json is missing or unreadable, so the approved facts are unknown"
+    if not (change / "done.json").exists():
+        return [], [problem] if current_format(change) else []
+    try:
+        listed = json.loads(read(change / "done.json")).get("facts")
+        if not isinstance(listed, list):
+            raise ValueError("facts is not a list")
+        return [str(f["id"] if isinstance(f, dict) else f) for f in listed if f], []
+    except (ValueError, AttributeError, KeyError, TypeError):
+        return [], [problem]
+
+
+FACT_RANGE = re.compile(r"\b([A-Z])(\d+)\s*(?:to|\.\.|[-\u2013\u2014])\s*(?:[A-Z])?(\d+)\b")
+
+
+def cell_ids(cell: str, universe: list[str]) -> list[str]:
+    """The ids of `universe` a plan cell names: `F1`, `F1 to F132`, `F1-F7`, `F8\u2013F20`; its order."""
+    named: set[str] = set()
+    for m in FACT_RANGE.finditer(cell):
+        lo, hi = int(m[2]), int(m[3])
+        named.update(f"{m[1]}{k}" for k in range(lo, min(hi, lo + 5000) + 1))
+    named.update(re.findall(r"\b[A-Z]\d+\b", FACT_RANGE.sub(" ", cell)))
+    return [f for f in universe if f in named]
+
+
+def row_facts(plan: str, number: int, facts: list[str]) -> list[str]:
+    """The approved `facts` the `## Milestones` row of milestone `number` lists (`M1 ...` or a bare `1`).
+    A plan with one row whose cell names no id (`rows 0 to 5, 74 facts`) gives that row every fact."""
+    rows = table_rows(section(plan, "Milestones"))[1:]
+    row = next((r for r in rows if len(r) > 1 and re.match(rf"M?{number}\b", r[0])), None)
+    mine = cell_ids(row[1], facts) if row else []
+    if not mine and row and len(rows) == 1 and row[1].strip().lower() not in ("", "none", "-") and not re.search(r"\b[A-Z]\d+\b", row[1]):
+        return list(facts)
+    return mine
+
+
+def milestone_facts(change: Path, number: int | None = None) -> tuple[list[str], list[str]]:
+    """(the approved facts this milestone must prove, problems). Under lock format 3 and for a known
+    milestone `number`, the `## Milestones` row of `plan.md` selects them and a missing or empty row is
+    a problem; an older lock uses every approved fact (its plan rows were never locked)."""
+    facts, problems = approved_facts(change)
+    if number and facts and current_format(change):
+        mine = row_facts(read(change / "plan.md"), number, facts)
+        if not mine:
+            return [], problems + [
+                f"validation.md: plan.md ## Milestones has no row for M{number} that lists approved facts"
+            ]
+        return mine, problems
+    return facts, problems
+
+
+def validation_gaps(change: Path, number: int | None = None) -> list[str]:
+    """What validation.md lacks: for every approved fact of this milestone one row with the verdict
+    `met` and evidence (a test, a file, an observed artefact: not empty, not a placeholder). Only a
+    change approved under lock format 3 is held to it; an older one gets an upgrade-gap note instead."""
+    if not current_format(change):
+        return []
+    rows = table_rows(read(change / "validation.md"))
+    head = [c.lower() for c in rows[0]] if rows else []
+    at = head.index("evidence") if "evidence" in head else 3
+    facts, gaps = milestone_facts(change, number)
+    for fact in facts:
+        mine = [r for r in rows if fact in cell_ids(r[0] if r else "", [fact])]
+        if not mine:
+            gaps.append(f"validation.md: {fact} has no row")
+        for row in mine:
+            # the verdict is the last cell and never doubles as the evidence cell
+            evidence = row[at].strip(" `") if len(row) > at and at < len(row) - 1 else ""
+            if row[-1].strip().lower() != "met":
+                gaps.append(f"validation.md: {fact} is not marked met")
+            elif evidence.lower() in NO_EVIDENCE or evidence[:1] == "<":
+                gaps.append(f"validation.md: {fact} is met without evidence")
+    return gaps
+
+
+def read_decisions(change: Path) -> dict | None:
+    """decisions.json as a dict ({} when unparsable or not an object), None when the file is missing."""
+    path = change / "decisions.json"
+    if not path.exists():
+        return None
+    try:
+        data = json.loads(read(path))
+    except (OSError, ValueError, AttributeError):
+        return {}
+    return data if isinstance(data, dict) else {}
+
+
+def sources_present(change: Path) -> bool:
+    """The change holds visual inputs: marks.json, owner sessions, a bundle, a loose reference
+    image or a capture manifest (any one makes `marks.py check` mandatory)."""
+    if (change / "marks.json").exists() or (change / "verify/shots/manifest.json").exists():
+        return True
+    try:
+        from marks import inventory  # absent in an older marks.py: no loose-image check then
+
+        return bool(inventory(change))
+    except ImportError:
+        return False
+    except (OSError, ValueError):
+        return True  # an inventory that cannot be read is itself a marks failure
+
+
+def visual_run_required(change: Path, cfg: dict, repo: Path) -> bool:
+    """A milestone needs a current UX visual run when the UX plan is on, the decision says the
+    change has an interface (`size` is not `none`) and a visual source or reference exists, unless
+    `decisions.json` `skips.visual` is a `skip -- <reason>` that the owner attested. decisions.json
+    is not part of the approval lock, so the attestation is the owner's answer to the dialog
+    `Change <id>, finding visual-skip: ...` (options Skip visual evidence, Run visual evidence)."""
+    decisions = read_decisions(change) or {}
+    if cfg.get("ux") == "off":
+        return False
+    skip = str((decisions.get("skips") or {}).get("visual", ""))
+    if re.match(r"skip -- \S", skip):
+        from marks import owner_decisions
+
+        if owner_decisions(repo, change.name).get("visual-skip", ("",))[0] == "skip":
+            return False
+    # `size: none` only waives loose sources: an explicit visual source always needs its run
+    return bool(decisions.get("visualSource")) or (decisions.get("size") != "none" and sources_present(change))
+
+
+def refusal(name: str, message: str) -> dict:
+    """An evidence check that fails with `message`: the gate says why before any suite runs."""
+    return {
+        "name": name,
+        "cache": False,
+        "run": shlex.join([sys.executable, "-c", f"import sys; print({message!r}); sys.exit(1)"]),
+    }
+
+
+def milestone_blockers(change: Path, number: int | None = None) -> tuple[str, list[str]] | None:
+    """The records a milestone must close before it passes: (reason, offending lines) or None.
+    A residual finding is settled only by the owner's answer to a dialog `Change <id>, finding
+    <finding id>: ...` (`marks.owner_decisions`, the one reader gate and status share)."""
     rows = table_rows(read(change / "validation.md"))
     bad = [r for r in rows if any(c.lower() in ("not met", "partly") for c in r)]
     if bad:
         return "validation-not-met", [f"validation.md: {r[0]} {r[-1]}" for r in bad]
     findings = read(change / "findings.md")
     advisory = section(findings, "Advisory")
-    open_items = re.findall(r"^\s*[-*] \[ \] (.*)$", findings.replace(advisory, ""), re.M)
+    items = re.findall(r"^\s*[-*] \[([ x])\] (.*)$", findings.replace(advisory, ""), re.M)
+    ids = [item_id(text) for _, text in items]
+    decided = {}
+    if any(ids):
+        repo = Path(sh("git", "-C", str(change), "rev-parse", "--show-toplevel") or ".")
+        from marks import owner_decisions
+
+        decided = owner_decisions(repo, change.name, change / "findings.md", "**{}**", with_time=True)
+    # a terminal `Block the close` answer counts against every finding, ticked or not: a ticked
+    # box is no evidence against the owner's block; a later answer from the owner resolves it
+    blocked = [
+        f"findings.md: blocked: {text[:80]}" + (" (ticked, contradicts the owner's block)" if mark == "x" else "")
+        for (mark, text), k in zip(items, ids)
+        if k and decided.get(k, ("",))[0] == "blocked"
+    ]
+    if blocked:
+        return "findings-blocked", blocked
+    open_ids = [k for (mark, _), k in zip(items, ids) if mark == " "]
+
+    def ticked_after_fix(k: str) -> bool:
+        """`Fix it now` is an instruction: a ticked box counts only if it was ticked after it."""
+        from marks import first_seen
+
+        stamp = decided[k][2]
+        began = first_seen(repo, change / "findings.md", f"[x] **{k}**")
+        return bool(began and began > stamp)
+
+    # an answer binds to exactly one open item: an id shared by two open items settles neither
+    open_items = [
+        text
+        for (mark, text), k in zip(items, ids)
+        if (mark == " " and not (k and open_ids.count(k) == 1 and decided.get(k, ("",))[0] in SETTLED))
+        or (mark == "x" and k and decided.get(k, ("",))[0] == "fix" and not ticked_after_fix(k))
+    ]
     if open_items:
         return "findings-open", [f"findings.md: open: {i[:80]}" for i in open_items]
-    if section(findings, "Converge") and "Converged:" not in findings:
+    if (section(findings, "Converge") or current_format(change)) and "Converged:" not in findings:
         return "not-converged", ["findings.md: ## Converge has no `Converged: round <n>` line"]
+    if gaps := validation_gaps(change, number):
+        return "validation-not-met", gaps
     return None
 
 
@@ -287,8 +604,9 @@ def has_owner_marks(change: Path) -> bool:
     return bool(
         (change / "marks.json").exists()
         or marks.sessions(change)
-        or (callable(getattr(marks, "bundles", None)) and marks.bundles(change))
-    )  # an old marks.py has no `bundles`: the milestone gate blocks it only when a bundle exists
+        or (callable(getattr(marks, "bundles", None)) and marks.bundles(change))  # an old marks.py has no `bundles`
+        or sources_present(change)
+    )
 
 
 def end(line: str, code: int) -> int:
@@ -296,8 +614,61 @@ def end(line: str, code: int) -> int:
     return code
 
 
+def graph_problems(plan: str) -> list[str]:
+    """The plan's `## Milestones` graph must be buildable: unique ids, every `needs` defined, no
+    milestone needing itself and no cycle (two milestones waiting on each other's merge)."""
+    rows = [r for r in table_rows(section(plan, "Milestones"))[1:] if r and re.match(r"M\d+\b", r[0])]
+    ids = [re.match(r"M\d+", r[0])[0] for r in rows]
+    problems = [f"plan.md: {i} is defined twice" for i in dict.fromkeys(ids) if ids.count(i) > 1]
+    needs: dict[str, list[str]] = {}
+    for r in rows:
+        mine = re.match(r"M\d+", r[0])[0]
+        listed = re.findall(r"M\d+", r[2]) if len(r) > 2 else []
+        needs[mine] = listed
+        problems += [f"plan.md: {mine} needs itself" for _ in listed if _ == mine]
+        problems += [f"plan.md: {mine} needs {n}, which the plan does not define (unknown milestone)" for n in listed if n not in ids]
+    done: set[str] = set()
+    for start in needs:  # depth-first, one report per cycle
+        stack, on = [(start, iter(needs[start]))], {start}
+        while stack:
+            node, it = stack[-1]
+            nxt = next((n for n in it if n in needs and n != node), None)
+            if nxt is None:
+                stack.pop()
+                on.discard(node)
+                done.add(node)
+            elif nxt in on:
+                problems.append(f"plan.md: circular milestones: {node} and {nxt} wait on each other")
+                break
+            elif nxt not in done:
+                on.add(nxt)
+                stack.append((nxt, iter(needs[nxt])))
+    return list(dict.fromkeys(problems))
+
+
+def branch_mode_problems(change: Path, cfg: dict) -> list[str]:
+    """Delivery and merge modes that cannot both be served: feature PRs publish a milestone branch
+    that local milestones, once the change has a project branch, never push (checked at approval,
+    before any branch or goal exists)."""
+    if cfg.get("delivery") == "feature-prs" and merges_locally(cfg) and project_branch(change, cfg):
+        return [
+            'sdlc.json: delivery "feature-prs" needs a remote milestone branch, which milestones.merge '
+            '"local" never pushes for a change with a project branch; choose delivery "one-go" with '
+            'local milestones, or milestones.merge "pr" with feature PRs'
+        ]
+    return []
+
+
 def approve(change: Path, cfg: dict) -> int:
     problems = lint_problems(change) + approval_blockers(change)  # the cheap pure check first
+    problems += [f"{name} is missing: approval locks it" for name in ("facts.md", "plan.md") if not (change / name).is_file()]
+    problems += graph_problems(read(change / "plan.md")) + branch_mode_problems(change, cfg)
+    if gap := full_e2e_gap((cfg.get("checks") or {}).get("milestone") or [], root()):
+        problems.append(gap)
+    if not (change / "done.json").exists():  # approval requires its artifacts
+        problems.append("done.json is missing: the approved facts cannot be locked without it")
+    elif approved_facts(change)[1]:
+        problems.append("done.json is unreadable or has no `facts` list")
     if problems:
         print("\n".join(problems[:TAIL]))
         return end(f"APPROVE FAIL {change.name} problems={len(problems)}", 1)
@@ -306,6 +677,8 @@ def approve(change: Path, cfg: dict) -> int:
         "sha": sh("git", "rev-parse", "HEAD"),
         "criteria": criteria_hash(change, cfg.get("checks", {})),
         "order": "cost",  # a lock without this key keeps the declared order (before 3.18.0)
+        "manifest": "required",  # from 3.21.0 visual work needs verify/shots/manifest.json
+        "format": LOCK_FORMAT,  # strict validation rows and records apply to this lock and later ones
     }
     (change / "lock.json").write_text(json.dumps(lock, indent=2) + "\n", encoding="utf-8")
     print(f"locked {', '.join(lock['criteria'])} in {change.name}/lock.json -- commit it")
@@ -491,13 +864,15 @@ COST_HINTS = (
 DEFAULT_COST = 60.0  # unit tests and anything unrecognised
 
 
-def order_checks(checks: list[dict], durations: dict[str, float], change_id: str) -> list[dict]:
+def order_checks(
+    checks: list[dict], durations: dict[str, float], change_id: str, cfg: dict | None = None
+) -> list[dict]:
     """Cheapest first: recorded seconds when there are any, else a guess from the command. Stable,
     so ties keep their sdlc.json order; a `serial` check is a wall that nothing moves across, and
     `"after": [<check name>]` keeps a check behind the ones it needs (codegen before tsc)."""
 
     def cost(check: dict) -> float:
-        cmd = check["run"].replace("{id}", change_id)
+        cmd = expand(check["run"], change_id, cfg or {})
         if cmd in durations:
             return durations[cmd]
         text = f"{check['name']} {cmd}".lower()
@@ -527,6 +902,26 @@ def order_checks(checks: list[dict], durations: dict[str, float], change_id: str
     return result
 
 
+CHECK_TIMEOUT = 1800  # seconds a single check may run (sdlc.json `checkTimeout`, or `timeout` on the check)
+
+
+def run_check(cmd: str, cwd: Path, limit: int) -> subprocess.CompletedProcess[str]:
+    """Run a shell check in its own process group; past `limit` seconds kill the group and report 124."""
+    import signal
+
+    proc = subprocess.Popen(
+        cmd, shell=True, cwd=cwd, stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True,
+        stdin=subprocess.DEVNULL, start_new_session=True,
+    )  # fmt: skip
+    try:
+        out, err = proc.communicate(timeout=limit)
+    except subprocess.TimeoutExpired:
+        os.killpg(proc.pid, signal.SIGKILL)
+        out, err = proc.communicate()
+        return subprocess.CompletedProcess(cmd, 124, out or "", (err or "") + f"\ntimed out after {limit}s\n")
+    return subprocess.CompletedProcess(cmd, proc.returncode, out, err)
+
+
 def run(
     scope: str,
     change: Path,
@@ -536,6 +931,9 @@ def run(
     visual_runs: list[str] | None = None,
     keep_going: bool = False,
 ) -> int:
+    if why := unsafe_substitutions(change.name, cfg):
+        print(f"refused before any check runs: {why}.")  # the id and branch reach a shell line
+        return end("VERIFY BLOCKED reason=env", 3)
     out_dir = change / "verify"
     out_dir.mkdir(exist_ok=True)
     report: dict = {"scope": scope, "id": change.name, "checks": []}
@@ -553,6 +951,7 @@ def run(
 
     def finish(line: str, code: int) -> int:
         report["result"] = line
+        report["format"] = REPORT_FORMAT
         report["sha"] = sh("git", "rev-parse", "HEAD")
         if scope != "project":  # what the hook and the goal check bind a pass to
             report["change"], report["owner"] = change.name, project_branch(change, cfg)
@@ -596,7 +995,19 @@ def run(
         lock = json.loads(lock_path.read_text(encoding="utf-8"))
         locked = lock["criteria"]
         declared = lock.get("order") != "cost"
+        old_plan = lock.get("format", 0) < LOCK_FORMAT or "plan.milestones" not in locked
         now = criteria_hash(change, cfg.get("checks", {}))
+        for key in ("plan.milestones", "decisions.routing"):
+            if key not in locked:
+                now.pop(key, None)  # an older lock never hashed it: reported below, not a move
+        if old_plan and scope == "milestone":
+            gap = (
+                f"lock.json predates lock format {LOCK_FORMAT}: every approved fact is expected, validation "
+                "rows, plan.milestones and decisions.routing are not enforced; the engineer approves "
+                "again to lock them"
+            )
+            print(f"upgrade gap: {gap}")
+            report.setdefault("upgrade_gaps", []).append(gap)
         moved = sorted(k for k in set(locked) | set(now) if locked.get(k) != now.get(k))
         if moved:
             print(
@@ -620,6 +1031,11 @@ def run(
         local = project_branch(change, cfg) if merges_locally(cfg) else ""
         if local and (tip := sh("git", "rev-parse", "--verify", "--quiet", f"{local}^{{commit}}")):
             tips.append((local, tip))
+        default = cfg.get("defaultBranch") or "main"
+        if sh("git", "remote", "get-url", "origin") and not any(n == f"origin/{default}" for n, _ in tips):
+            print(f"origin/{default} cannot be resolved (offline, or the fetch failed): the gate cannot tell whether")
+            print(f"this {scope} contains its parent. Fix the connection, then run `git fetch origin {default}` and the gate again.")
+            return finish("VERIFY BLOCKED reason=env", 3)
         behind = [
             name
             for name, tip in tips
@@ -633,7 +1049,7 @@ def run(
             print("  git fetch origin && " + " && ".join(f"git merge {b}" for b in behind))
             return finish(f"VERIFY FAIL {scope} {change.name} check=parent-sync", 1)
 
-    if scope == "milestone" and (blocker := milestone_blockers(change)):
+    if scope == "milestone" and (blocker := milestone_blockers(change, number)):
         print("\n".join(blocker[1][:TAIL]))
         return finish(f"VERIFY BLOCKED reason={blocker[0]}", 3)
     if scope == "milestone" and legacy_marks() and has_bundle_inputs(change):
@@ -645,6 +1061,14 @@ def run(
 
     suite = "milestone" if scope == "project" else scope
     checks = cfg.get("checks", {}).get(suite, [])
+    if suite == "milestone" and (gap := full_e2e_gap(checks, repo)):
+        if current_format(change) and scope == "milestone":
+            # a suite added after approval: the locked checks cannot prove it, the engineer approves again
+            print(gap)
+            return finish("VERIFY BLOCKED reason=env", 3)
+        # an approval made before this rule keeps working: report, never fail
+        print(f"upgrade gap: {gap}")
+        report.setdefault("upgrade_gaps", []).append(gap)
     if not checks:
         print(f"sdlc.json checks.{suite} is empty: nothing would prove this change.")
         return finish("VERIFY BLOCKED reason=env", 3)
@@ -660,9 +1084,12 @@ def run(
     except (OSError, ValueError):
         durations = {}
     if not declared:
-        checks = order_checks(checks, durations, change.name)
+        checks = order_checks(checks, durations, change.name, cfg)
+    # Evidence checks are offline and cheap: they run before the suites, so a missing screenshot,
+    # checker or tag never costs a full E2E run (3.21.0).
+    evidence: list[dict] = []
     if scope == "milestone" and has_owner_marks(change):
-        checks.append(
+        evidence.append(
             {
                 "name": "owner-marks",
                 "cache": False,
@@ -676,10 +1103,38 @@ def run(
                 ),
             }
         )
-    for number, visual_run in enumerate(visual_runs or [], 1):
-        checks.append(
+    if scope == "milestone" and read_decisions(change) is None and current_format(change):
+        evidence.append(
+            refusal("decisions-json", "decisions.json is missing: it records the size, the visual source and the skips this gate reads")
+        )
+    elif (
+        scope == "milestone"
+        and not (visual_check and visual_runs)
+        and visual_run_required(change, cfg, repo)
+    ):
+        evidence.append(
+            refusal(
+                "ux-visual-required",
+                "this milestone has a UX decision and a visual source, but no --visual-check and "
+                "--visual-run were given: run cct:ux-assessment-run and pass its run, or have the "
+                "owner attest a skip (decisions.json skips.visual `skip -- <reason>` plus the "
+                "dialog `Change <id>, finding visual-skip: ...` answered Skip visual evidence)",
+            )
+        )
+    if visual_check and (
+        Path(visual_check).name != "visual-check.py"
+        or any(not Path(r).is_dir() for r in visual_runs or [])
+    ):  # the shipped checker over a real run folder, not any command that exits 0
+        evidence.append(
+            refusal(
+                "ux-visual-binding",
+                "--visual-check must be the shipped visual-check.py and every --visual-run an existing run folder",
+            )
+        )
+    for k, visual_run in enumerate(visual_runs or [], 1):  # not `number`: finish() reads the milestone number
+        evidence.append(
             {
-                "name": f"ux-visual-{number}",
+                "name": f"ux-visual-{k}",
                 "cache": False,
                 "run": shlex.join(
                     [
@@ -692,7 +1147,9 @@ def run(
                 ),
             }
         )
+    checks = evidence + checks
 
+    diff_base = parent_ref(change, cfg, repo) if scope == "milestone" else ""
     cache_path = out_dir / "cache.json"
     cache = json.loads(cache_path.read_text()) if cache_path.exists() else {}
     tree = sh("git", "rev-parse", "HEAD^{tree}")
@@ -722,7 +1179,7 @@ def run(
     first_failure: tuple[str, str, str] | None = None  # --keep-going: the verdict names the first
     for check in checks:
         name = check["name"]
-        cmd = check["run"].replace("{id}", change.name)
+        cmd = expand(check["run"], change.name, cfg, diff_base)
         key = cache_key(tree, cmd, now) if check.get("cache", True) and tree else ""
         if key in cache:
             report["checks"].append(
@@ -732,9 +1189,8 @@ def run(
             print(f"ok (cached) {name}: {cmd}")
             continue
         started = time.monotonic()
-        proc = subprocess.run(
-            cmd, shell=True, cwd=repo, capture_output=True, text=True, stdin=subprocess.DEVNULL
-        )
+        limit = int(check.get("timeout") or cfg.get("checkTimeout") or CHECK_TIMEOUT)
+        proc = run_check(cmd, repo, limit)
         output = proc.stdout + proc.stderr
         tail = "\n".join(output.strip().splitlines()[-TAIL:])
         status = "pass" if proc.returncode == 0 else "fail"
@@ -750,7 +1206,10 @@ def run(
         )
         print(f"{'ok  ' if status == 'pass' else 'FAIL'} {name}: {cmd}")
         if status == "pass":
-            if key:
+            # staged: a check that ran while the tree moved proves nothing about the starting tree
+            if key and sh("git", "rev-parse", "HEAD^{tree}") == tree and not [
+                line for line in sh("git", "status", "--porcelain").splitlines() if f"{change.name}/verify/" not in line
+            ]:
                 cache[key] = name
                 cache_path.write_text(json.dumps(cache, indent=2) + "\n", encoding="utf-8")
             durations[cmd] = report["checks"][-1]["seconds"]
@@ -799,6 +1258,7 @@ def run(
 def checker_exists(cmd: str, repo: Path) -> bool:
     """The program a check runs exists. shortcut: reads only the first command of a `a && b`
     line, so a broken second command is not seen; split it into two checks to audit both."""
+    cmd = re.sub(r"^(?:\s*\w+=\$\(\s*(?:\{\s*)?)+", "", cmd)  # `specs=$( { git diff ...`: a shell fragment
     try:
         words = shlex.split(cmd)
     except ValueError:
@@ -906,7 +1366,7 @@ def audit(cfg: dict, repo: Path, evidence: bool = True) -> int:
         for i, check in enumerate(checks, 1):
             check = check if isinstance(check, dict) else {"run": check}
             cmd, name = check["run"], check.get("name") or f"check-{i}"
-            prefix = cmd.split("{id}")[0].strip()
+            prefix = cmd.split("{id}")[0].split("{base}")[0].strip()  # receipts hold the expanded line
             mine = [j for j in jobs if prefix and prefix in j["body"]]
             when = next((v for k, v in sorted(runs.items()) if k.startswith(prefix)), None)
             if not mine:
@@ -992,7 +1452,11 @@ def main(argv: list[str]) -> int:
         change = project_record(args.id, repo)
         change.mkdir(parents=True, exist_ok=True)
         return run(args.scope, change, cfg, repo, keep_going=args.keep_going)
+    changes = (repo / cfg.get("changesDir", "changes")).resolve()
     change = repo / cfg.get("changesDir", "changes") / args.id
+    if not change.resolve().is_relative_to(changes) or change.resolve() == changes:
+        print(f"the change id {args.id!r} does not name a folder inside {changes.name}/.")
+        return end("VERIFY BLOCKED reason=env", 3)
     if not change.is_dir():
         print(f"no change folder {change.relative_to(repo)}")
         return end("VERIFY BLOCKED reason=env", 3)
@@ -1001,7 +1465,9 @@ def main(argv: list[str]) -> int:
     if args.scope == "lint":
         body = None
         if args.pr_body:
-            body = sys.stdin.read() if args.pr_body == "-" else Path(args.pr_body).read_text("utf-8")
+            body = (
+                sys.stdin.read() if args.pr_body == "-" else Path(args.pr_body).read_text("utf-8")
+            )
         return lint(change, body)
     return run(args.scope, change, cfg, repo, args.visual_check, args.visual_run, args.keep_going)
 

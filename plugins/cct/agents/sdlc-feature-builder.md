@@ -18,7 +18,7 @@ Your prompt names the change folder, the feature or part, the worktree and the c
 ## What to do
 
 1. Build from the context pack in your prompt: your feature's facts (with their tags), the plan excerpt for it, and the text of the rule IDs those facts cite. Open `changes/<id>/plan.md` or `facts.md` only for a gap the pack names, and report the gap. A rule in the pack is binding; if the facts need you to break one, stop and report it instead.
-2. Write the tests for the facts of your feature first.
+2. Write the smallest failing assertion from the approved fact first, tagged `@F<n>` (one that can run before the UI exists; a browser E2E with live selectors only after the surface exists), then build until it passes.
 3. Build in the plan's folders. A file elsewhere is scope growth: stop and report it. When a requirement changes a timing or behaviour contract (a limit, a default, an interval), grep the tests and scripts for the old value and update each one that asserted it.
 4. Run touched tests, their directly affected suite and required pre-commit checks. Follow the linked local-first failure loop. The close builder owns the final full check; if you are authorized to push yourself, run it before that push.
 5. Commit your work on the branch you were given, with a Conventional Commit subject (`feat: ...`, `fix: ...`): the release reads every commit of a milestone, not only the PR title.
@@ -29,8 +29,8 @@ When your prompt says `Mode: close`, you are not building a feature: you run one
 
 1. Confirm `git rev-parse HEAD` is the head your prompt names. Another sha: stop and report.
 2. Diagnose failures with the exact local test and directly affected suite; E2E edits run that spec and its neighbours. Collect changed/flaky reliability evidence as the prompt and `sdlc.json` require.
-3. Fix the blocking findings the prompt lists, in one round, each a commit.
-4. Run the full suite once on the final head before push, including the unit and E2E suites and `python3 scripts/verify_gate.py milestone <id>`; paste its full output. If it fails, return to targeted local diagnosis before another full run. Nothing else may merge or edit while it runs; it fails `check=moved` if the head changes.
+3. Fix the blocking findings in one round, each a commit, working from the joined findings and the review state directory your prompt names. You never start a review: never start a review of your own, and never call a review or review-fix skill. The round is the only fix round at the milestone; what it leaves the supervisor settles with the owner through an `AskUserQuestion`.
+4. Run `python3 scripts/verify_gate.py milestone <id>` once on the final head and paste its full output. It is the only runner of the full suite and the full E2E at the close: never start a separate unit or E2E run of the whole suite before it, and never one after it on the same tree. If it fails, return to targeted local diagnosis (the failing test and its neighbours), then run it again. Nothing else may merge or edit while it runs; it fails `check=moved` if the head changes.
 
 ## Never edit
 
@@ -38,4 +38,4 @@ When your prompt says `Mode: close`, you are not building a feature: you run one
 
 ## Return
 
-Write your report to a file and return its path plus a summary of at most about 2k tokens: the commit SHA, the files changed, the test files run and their result, and anything you stopped on. In close mode: the gate's last line instead of the files changed.
+Write your report to a file and return its path plus a summary of at most about 2k tokens: the commit SHA, the files changed, the test files run and their result, evidence keyed by fact, tag and tested SHA (one line per fact: id, `@F<n>`, the commit the test ran on, result, test name), and anything you stopped on. In close mode: the gate's last line instead of the files changed.

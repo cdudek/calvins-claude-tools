@@ -110,3 +110,39 @@ def test_a_malformed_rule_is_skipped_and_the_valid_ones_still_apply_F14(repo: Pa
         r = _bash(repo, "uv add httpx")
         assert r.returncode == 2 and "BLOCKED: ask first." in r.stderr, rules
         assert "blocked[" in r.stderr and "skipped" in r.stderr, rules
+
+
+@pytest.mark.parametrize(
+    "command",
+    [
+        "echo x > ~/.claude/projects/p/s.jsonl",
+        "echo x >> $HOME/.claude/projects/p/s.jsonl",
+        "cat a | tee ~/.claude/projects/p/s.jsonl",
+        "cp forged.jsonl ~/.claude/projects/p/s.jsonl",
+        "mv forged.jsonl ~/.claude/projects/p/",
+        "sed -i 's/a/b/' ~/.claude/projects/p/s.jsonl",
+        "cd ~/.claude/projects/p && printf x > s.jsonl",
+        "python3 -c \"open('/home/x/.claude/projects/p/s.jsonl','w')\"",
+        "echo x > ~/.claude//projects/p/s.jsonl",
+        "echo x > ~/.claude/./projects/p/s.jsonl",
+        "echo x > ~/'.claude'/\"projects\"/p/s.jsonl",
+        "echo x > ${HOME}/.claude/projects/p/s.jsonl",
+        "echo x > $HOME/.claude//./projects/p/s.jsonl",
+    ],
+)
+def test_bash_writes_into_the_session_transcripts_are_refused(repo: Path, command: str) -> None:
+    r = _bash(repo, command)
+    assert r.returncode == 2 and "session transcripts" in r.stderr
+
+
+@pytest.mark.parametrize(
+    "command",
+    ["cat ~/.claude/projects/p/s.jsonl", "grep -c user ~/.claude/projects/p/s.jsonl > /tmp/n"],
+)
+def test_reading_the_session_transcripts_is_not_refused(repo: Path, command: str) -> None:
+    assert _bash(repo, command).returncode == 0
+
+
+def test_the_transcript_guard_holds_without_any_blocked_rules(repo: Path) -> None:
+    (repo / "sdlc.json").write_text("{}")
+    assert _bash(repo, "echo x > ~/.claude/projects/p/s.jsonl").returncode == 2

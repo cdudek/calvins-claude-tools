@@ -1,6 +1,6 @@
 ---
 name: ux-build-validate
-description: "Returns a built-versus-approved-spec verdict (pass or fail) for one change, from state-by-state visual evidence of the running build compared with the spec and prototype at 100 and 150 percent zoom, with up to three fix rounds. Writes qa.md into the spec folder. Use when the user says 'compare the build with the prototype', 'run design QA on the build', 'does the built ui match the spec', 'write qa.md for this change'. Skip for: whether the spec itself is ready, which belongs to cct:ux-spec-validate."
+description: "Returns a built-versus-approved-spec verdict (pass or fail) for one change, from state-by-state visual evidence of the running build compared with the spec and prototype at 100 and 150 percent zoom, with two fix rounds per screen per design-system release (report-only at milestone close). Writes qa.md into the spec folder. Use when the user says 'compare the build with the prototype', 'run design QA on the build', 'does the built ui match the spec', 'write qa.md for this change'. Skip for: whether the spec itself is ready, which belongs to cct:ux-spec-validate."
 user_invocable: true
 allowed-tools: "Bash(python3 */ux-assessment-run/scripts/*)"
 metadata:
@@ -10,7 +10,9 @@ metadata:
 
 # cct:ux-build-validate
 
-**Arguments:** `<change>`, a change id, a change folder or a spec folder.
+**Arguments:** `<change>`, a change id, a change folder or a spec folder; with no PR, add the local
+form `base=<ref> head=<ref> worktree=<path>` (the build is the worktree at `head`; the diff is
+`git -C <worktree> diff <base>...<head>`).
 
 Validate one built UI against its approved spec and write `<spec>/qa.md` with a verdict. The
 method is in `references/build.md`; follow it.
@@ -27,7 +29,10 @@ Shared files are in `references/`, two levels up from this skill's base director
 
 1. Read `docs/ux/setup.md`. Missing: stop and run `cct:ux-setup`.
 2. Resolve the spec folder and the mode with the shared `references/spec-folder.md`. No spec
-   folder exists: stop and say `cct:ux-design-run` makes one.
+   folder exists: when `decisions.json` names a `visualSource` or the change holds a loose
+   reference image, create `<change folder>/spec/` holding only `qa.md` (the gate requires it for
+   any visual change, and the run compares the build with that source); otherwise stop and say
+   `cct:ux-design-run` makes one.
 3. Read the size and skips first: `decisions.json` in sdlc mode, the frontmatter of
    `<spec>/brief.md` in standalone mode. The size is `none`, or the `prototype` skip is set and
    `decisions.json` names no `visualSource`: do not run; say the skip and its reason in one line.
@@ -65,7 +70,8 @@ fail.
 Judge on six layers with written tolerances (`references/build.md`, "Layers and tolerances"). A
 pixel diff is advisory only. Only High and Medium fail; Low is listed. Freeze the defect list
 after the first review and stop after two fix rounds per design-system release, then hand the
-owner a side-by-side list.
+owner a side-by-side list. At milestone close it is report-only: there is one fix round at
+milestone close, owned by the supervisor.
 
 ## Delegates
 

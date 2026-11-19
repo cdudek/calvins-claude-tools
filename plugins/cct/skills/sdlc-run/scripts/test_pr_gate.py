@@ -880,3 +880,16 @@ def test_a_local_merge_refuses_a_pass_whose_report_names_another_project(repo: P
     _pass(repo)
     _git(repo, "checkout", "-q", "project/trial")
     assert _run(repo, "git merge --no-ff milestone/trial-1").returncode == 0
+
+
+def test_a_joining_change_without_a_project_is_not_a_second_owner(repo: Path) -> None:
+    """Stage 1 `existing`: a second change joins the milestone; its absent project owns nothing."""
+    _local(repo)
+    joiner = repo / "changes" / "2026-11-02-joiner"
+    joiner.mkdir()
+    (joiner / "decisions.json").write_text(json.dumps({"milestone": {"slug": "trial"}}))
+    _git(repo, "add", ".")
+    _git(repo, "commit", "-qm", "a second change joins the milestone")
+    _pass(repo)
+    _git(repo, "checkout", "-q", "project/trial")
+    assert _run(repo, "git merge --no-ff milestone/trial-1").returncode == 0

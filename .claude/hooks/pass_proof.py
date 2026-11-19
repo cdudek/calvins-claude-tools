@@ -23,6 +23,19 @@ EVIDENCE_FILES = {"marks.json"}
 EVIDENCE_DIRS = {"asks", "evidence", "shots"}
 
 
+# Where a change folder lives: live, flat archive, archive/<year>/<year-month>. One list for the PR
+# hook, the goal check and the gate, so none of them looks shallower or deeper than the runbook writes.
+LAYOUTS = ("{id}", "archive/{id}", "archive/*/{id}", "archive/*/*/{id}")
+
+
+def change_paths(changes: Path, change_id: str) -> list[Path]:
+    """The folders named `change_id` under `changes`, live first. An empty list means the folder was
+    removed after merge (the owner's rule), not an error: nothing is left to read."""
+    if Path(change_id).name != change_id or change_id in ("..", "archive", ""):
+        return []
+    return [d for layout in LAYOUTS for d in sorted(changes.glob(layout.format(id=change_id))) if d.is_dir()]
+
+
 def milestone_of(branch: str, prefix: str, slug: str) -> int | None:
     """The milestone a branch is: `<prefix><slug>-<n>` is n, the unnumbered `<prefix><slug>` is 1,
     any other branch none. `prefix` is sdlc.json `milestones.branchPrefix`. verify_gate.py writes the
@@ -36,14 +49,21 @@ def milestone_of(branch: str, prefix: str, slug: str) -> int | None:
     return int(found[1]) if found else None
 
 
-def bound(data: dict, scope: str, subject: str, number: int | None = None, owner: str | None = None) -> bool:
+def bound(
+    data: dict, scope: str, subject: str, number: int | None = None, owner: str | None = None
+) -> bool:
     """A gate report is a pass for this subject: `VERIFY PASS <scope> <subject> <sha>` naming the
     sha it records, and for a milestone the change and the number it was gated as (an unnumbered
     branch is 1; a report with no number is a pass for no numbered milestone). `owner`, when given,
-    is the project branch the caller needs: the report must name the same one."""
+    is the project branch the caller needs: the report must name the same one. A report with no `format`
+    and none of the binding keys (change, owner, milestone) was written by a gate from before they
+    existed (a kept older gate): only its result line is compared. Any other report must carry every
+    binding and match it. The mode comes from the report, never from the checkout's gate text."""
     result, sha = str(data.get("result", "")), data.get("sha")
     if not sha or data.get("scope", scope) != scope or result != f"VERIFY PASS {scope} {subject} {sha}":
         return False
+    if "format" not in data and not {"change", "owner", "milestone"} & data.keys():
+        return True
     if scope == "milestone" and (data.get("change") != subject or number is None or data.get("milestone") != number):
         return False
     return owner is None or scope == "project" or data.get("owner") == owner

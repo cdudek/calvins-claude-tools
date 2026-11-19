@@ -3,9 +3,11 @@ And the two /goal templates, which must stay short enough to read in one go."""
 
 from __future__ import annotations
 
+import datetime as dt
 import hashlib
 import json
 import os
+import re
 import subprocess
 import sys
 from pathlib import Path
@@ -15,6 +17,7 @@ import pytest
 SKILL = Path(__file__).resolve().parents[1]
 GATE = SKILL / "templates" / "scripts" / "verify_gate.py"
 ID = "2026-10-09-trial"
+CONVERGED = "## Converge\n\nConverged: round 1\n"
 
 
 def _env() -> dict[str, str]:
@@ -39,6 +42,15 @@ def _repo(tmp_path: Path, feature: list) -> Path:
     (repo / ".gitignore").write_text("/changes/*/verify/\n")
     (change / "facts.md").write_text("---\nstatus: approved\n---\n\n- [ ] **F1** It works.\n")
     (change / "done.json").write_text('{"facts": ["F1"]}\n')
+    (change / "decisions.json").write_text('{"size": "S"}\n')  # a current-format change has one
+    # on a milestone branch the plan's Milestones rows say which facts each milestone proves
+    (change / "plan.md").write_text(
+        "## Milestones\n\n| Milestone | Features | needs |\n|---|---|---|\n"
+        "| M1 a | F1 | none |\n| M2 b | F1 | M1 |\n"
+    )
+    # a milestone passes only with a met row and evidence for every approved fact
+    (change / "validation.md").write_text("| F1 | It works | ran | tests/x.py::test_f1 | met |\n")
+    (change / "findings.md").write_text(CONVERGED)  # a current-format close needs its Converged line
     _git(repo, "init", "-q", "-b", "master")
     _git(repo, "add", ".")
     _git(repo, "commit", "-qm", "init")
@@ -224,9 +236,8 @@ def test_lint_flags_long_sentences_and_open_questions(tmp_path: Path) -> None:
 
 
 # Ids the change defines. An id that is defined nowhere is ordinary text ("Press F5", "before Q4").
-DEFINED = (
-    "| # | What |\n|---|---|\n"
-    + "".join(f"| {i} | defined |\n" for i in ("Q202", "B19", "F13", "F14", "Q7", "A1", "F1000"))
+DEFINED = "| # | What |\n|---|---|\n" + "".join(
+    f"| {i} | defined |\n" for i in ("Q202", "B19", "F13", "F14", "Q7", "A1", "F1000")
 )
 GOOD_IDS = [
     "Designs win over today's app (Q202).",
@@ -466,13 +477,17 @@ def test_owner_marks_is_automatic_at_milestone_only(tmp_path: Path, trigger: str
     else:
         (change / "marks.json").write_text("{")
     _approve(repo)
+    legacy = json.loads((change / "lock.json").read_text())
+    del legacy["manifest"]  # an approval before 3.21.0: no capture manifest is required of it
+    (change / "lock.json").write_text(json.dumps(legacy))
+    _git(repo, "commit", "-qam", "an older lock")
     lock = (change / "lock.json").read_bytes()
     assert _gate(repo, "feature", ID).returncode == 0
     result = _gate(repo, "milestone", ID)
     assert result.returncode == 1
     assert _last(result) == f"VERIFY FAIL milestone {ID} check=owner-marks"
     report = json.loads((change / "verify/report.json").read_text())
-    assert [c["name"] for c in report["checks"]] == ["check-1", "owner-marks"]
+    assert [c["name"] for c in report["checks"]] == ["owner-marks"]  # evidence first, 3.21.0
     assert "owner-marks" in (change / "verify/report.md").read_text()
     assert (change / "lock.json").read_bytes() == lock
 
@@ -883,6 +898,266 @@ def test_milestone_passes_when_records_are_closed(tmp_path: Path) -> None:
     assert _last(_gate(repo, "milestone", ID)).startswith(f"VERIFY PASS milestone {ID}")
 
 
+def _milestone_repo(tmp_path: Path) -> Path:
+    repo = _repo(tmp_path, [])
+    cfg = json.loads((repo / "sdlc.json").read_text())
+    (repo / "sdlc.json").write_text(json.dumps({**cfg, "checks": {"milestone": ["true"]}}))
+    _git(repo, "commit", "-qam", "milestone checks")
+    _approve(repo)
+    return repo
+
+
+OPEN_ITEM = "## Blocking\n\n- [ ] **B2** the card overflows at 320\n\n"
+OPTIONS = ["Fix it now", "Accept as is", "Defer to milestone 2", "Block the close"]
+
+
+def _later(n: int = 0) -> str:
+    """A timestamp after the commit that holds the finding."""
+    stamp = dt.datetime.now(dt.timezone.utc) + dt.timedelta(seconds=60 + n)
+    return stamp.isoformat().replace("+00:00", "Z")
+
+
+def _dialog(
+    finding: str = "B2",
+    label: str = "Accept as is",
+    n: int = 1,
+    change: str = ID,
+    options: list[str] | None = None,
+    stamp: str | None = None,
+    tool: str = "AskUserQuestion",
+    sidechain: bool = False,
+) -> list[dict]:
+    """The two transcript entries of one answered AskUserQuestion: the agent's tool_use and the
+    structured tool result carrying the owner's selected option."""
+    question = f"Change {change}, finding {finding}: the card overflows at 320. What now?"
+    stamp = stamp or _later(n)
+    base = {"timestamp": stamp, "isSidechain": sidechain}
+    return [
+        {
+            **base,
+            "type": "assistant",
+            "message": {"content": [{
+                "type": "tool_use", "id": f"toolu_{n}", "name": tool,
+                "input": {"questions": [{
+                    "question": question,
+                    "options": [{"label": o} for o in (options or OPTIONS)],
+                }]},
+            }]},
+        },  # fmt: skip
+        {
+            **base,
+            "type": "user",
+            "toolUseResult": {"answers": {question: label}},
+            "message": {"content": [
+                {"type": "tool_result", "tool_use_id": f"toolu_{n}", "content": f'"{question}"="{label}"'}
+            ]},
+        },  # fmt: skip
+    ]
+
+
+def _owner_gate(
+    repo: Path,
+    entries: list[dict] | None = None,
+    symlinked: bool = False,
+    cwd: Path | None = None,
+    home_for: Path | None = None,
+) -> subprocess.CompletedProcess[str]:
+    """The milestone gate with a session transcript, found where Claude Code keeps it
+    (`$HOME/.claude/projects/<repo slug>/`) and holding `entries`."""
+    home = repo.parent / "home"
+    slug = re.sub(r"[^A-Za-z0-9]", "-", str((home_for or repo).resolve()))
+    folder = home / ".claude/projects" / slug
+    if symlinked:
+        real = repo.parent / "real-transcripts"
+        real.mkdir(exist_ok=True)
+        folder.parent.mkdir(parents=True, exist_ok=True)
+        folder.symlink_to(real)
+        folder = real
+    folder.mkdir(parents=True, exist_ok=True)
+    (folder / "session.jsonl").write_text("\n".join(json.dumps(e) for e in entries or []) + "\n")
+    return subprocess.run(
+        [sys.executable, str(GATE), "milestone", ID],
+        cwd=cwd or repo,
+        capture_output=True,
+        text=True,
+        env={**_env(), "HOME": str(home)},
+    )
+
+
+def _dispose(repo: Path, item: str = OPEN_ITEM) -> None:
+    item = item if "Converged:" in item else item + CONVERGED
+    _commit_files(repo, validation_md="| F1 | x | y | z | met |\n", findings_md=item)
+
+
+def _verdict(r: subprocess.CompletedProcess[str]) -> str:
+    return _last(r)
+
+
+@pytest.mark.parametrize("label", ["Accept as is", "Defer to milestone 2"])
+def test_the_owners_answer_settles_a_residual_finding(tmp_path: Path, label: str) -> None:
+    """3.21.0 (S2): accepted or deferred settles a residual only through the owner's structured
+    answer to the dialog, so an agent cannot accept its own finding."""
+    repo = _milestone_repo(tmp_path)
+    _dispose(repo)
+    assert _verdict(_owner_gate(repo, _dialog(label=label))).startswith(f"VERIFY PASS milestone {ID}")
+
+
+@pytest.mark.parametrize("label", ["Fix it now", "Block the close"])
+def test_a_refusal_or_a_fix_request_never_settles(tmp_path: Path, label: str) -> None:
+    """Review finding 2: an explicit refusal is not acceptance."""
+    repo = _milestone_repo(tmp_path)
+    _dispose(repo)
+    r = _owner_gate(repo, _dialog(label=label))
+    want = "findings-blocked" if label == "Block the close" else "findings-open"
+    assert r.returncode == 3 and _verdict(r) == f"VERIFY BLOCKED reason={want}"
+
+
+def _text(text: str, **extra: object) -> dict:
+    return {"type": "user", "timestamp": _later(), "message": {"content": text}, **extra}
+
+
+@pytest.mark.parametrize(
+    "entries",
+    [
+        [_text("I reject B2 and require a fix before we ship.")],
+        [_text("Change " + ID + ", finding B2: accept it, B2 is fine to ship as it is")],
+        [_text("B2 is fine to ship as it is, we build it in M2", promptSource="system", turnOrigin="peer")],
+        [_text("Accept as is", isMeta=True)],
+        [],
+    ],
+)
+def test_typed_text_never_settles_a_finding(tmp_path: Path, entries: list[dict]) -> None:
+    """Review finding 3: no text matching, so another speaker or a screenshot message cannot
+    forge or lose a decision."""
+    repo = _milestone_repo(tmp_path)
+    _dispose(repo)
+    assert _verdict(_owner_gate(repo, entries)) == "VERIFY BLOCKED reason=findings-open"
+
+
+@pytest.mark.parametrize(
+    "entries",
+    [
+        _dialog(label="Accept as is B2, go ahead"),  # a free-text "Other" answer, not an option
+        _dialog(finding="B9"),  # another finding
+        _dialog(change="2026-01-01-other-change"),  # another change
+        _dialog(tool="SomethingElse"),  # not the AskUserQuestion tool
+        _dialog(sidechain=True),  # a subagent
+        _dialog(options=["Fix it now", "Block the close"]),  # the answer is not an offered option
+        _dialog(stamp="2001-01-01T00:00:00Z"),  # said before the finding existed
+        _dialog(stamp="not a time"),
+    ],
+)
+def test_only_an_answer_bound_to_this_change_and_finding_in_time_settles(
+    tmp_path: Path, entries: list[dict]
+) -> None:
+    repo = _milestone_repo(tmp_path)
+    _dispose(repo)
+    assert _verdict(_owner_gate(repo, entries)) == "VERIFY BLOCKED reason=findings-open"
+
+
+def test_the_latest_answer_wins(tmp_path: Path) -> None:
+    repo = _milestone_repo(tmp_path)
+    _dispose(repo)
+    accept, fix = _dialog(n=1), _dialog(label="Fix it now", n=2)
+    assert _verdict(_owner_gate(repo, accept + fix)) == "VERIFY BLOCKED reason=findings-open"
+    assert _verdict(_owner_gate(repo, fix + _dialog(n=3))).startswith("VERIFY PASS")
+
+
+def test_a_ticked_item_cannot_override_a_block_until_the_owner_answers_again(tmp_path: Path) -> None:
+    """Review finding 10: a terminal block is evaluated against every finding, ticked or not."""
+    repo = _milestone_repo(tmp_path)
+    _dispose(repo, "## Blocking\n\n- [x] **B2** the card overflows at 320\n\n")
+    block = _dialog(label="Block the close", n=1)
+    r = _owner_gate(repo, block)
+    assert r.returncode == 3 and _verdict(r) == "VERIFY BLOCKED reason=findings-blocked"
+    assert "B2" in r.stdout and "ticked" in r.stdout
+    # "Fix it now" is an instruction, not a settlement: the box must be ticked again after it
+    fix = _verdict(_owner_gate(repo, block + _dialog(label="Fix it now", n=2)))
+    assert fix == "VERIFY BLOCKED reason=findings-open"
+
+
+def test_a_convergence_id_is_dispositioned_through_the_gate(tmp_path: Path) -> None:
+    """Review finding 9: the id the stage produces (**C1**) is in the grammar the gate reads."""
+    repo = _milestone_repo(tmp_path)
+    item = "## Converge\n\n- [ ] **C1** missing: F3 - a.ts:1\n\nConverged: round 2\n"
+    _dispose(repo, item)
+    assert _verdict(_owner_gate(repo, [])) == "VERIFY BLOCKED reason=findings-open"
+    assert _verdict(_owner_gate(repo, _dialog("C1", "Defer to milestone 2"))).startswith("VERIFY PASS")
+    _dispose(repo, item.replace("- [ ]", "- [x]"))
+    assert _verdict(_owner_gate(repo, _dialog("C1", "Block the close"))) == (
+        "VERIFY BLOCKED reason=findings-blocked"
+    )
+
+
+def test_a_worktree_or_a_subfolder_reads_the_owners_session_in_either_checkout(
+    tmp_path: Path,
+) -> None:
+    """Review finding 4: the owner may have answered in the main checkout while the gate runs in
+    a milestone worktree, or from a subfolder."""
+    repo = _milestone_repo(tmp_path)
+    _dispose(repo)
+    wt = tmp_path / "wt"
+    _git(repo, "worktree", "add", "-q", "-b", "side", str(wt))
+    answer = _dialog()
+    assert _verdict(_owner_gate(repo, answer, cwd=wt, home_for=repo)).startswith("VERIFY PASS")
+    sub = repo / "changes"
+    assert _verdict(_owner_gate(repo, answer, cwd=sub)).startswith("VERIFY PASS")
+
+
+def test_without_a_readable_transcript_nothing_is_settled(tmp_path: Path) -> None:
+    repo = _milestone_repo(tmp_path)
+    _dispose(repo)
+    env = {**_env(), "HOME": str(tmp_path / "empty-home")}
+    r = subprocess.run(
+        [sys.executable, str(GATE), "milestone", ID], cwd=repo, capture_output=True, text=True, env=env
+    )  # fmt: skip
+    assert _last(r) == "VERIFY BLOCKED reason=findings-open"
+
+
+def test_the_caller_cannot_pick_the_evidence_file(tmp_path: Path) -> None:
+    """No env var names the transcript: a file the agent wrote is never read as the owner."""
+    repo = _milestone_repo(tmp_path)
+    _dispose(repo)
+    fake = tmp_path / "fake.jsonl"
+    fake.write_text("\n".join(json.dumps(e) for e in _dialog()) + "\n")
+    env = {**_env(), "HOME": str(tmp_path / "empty-home"), "SDLC_TRANSCRIPT": str(fake)}
+    r = subprocess.run(
+        [sys.executable, str(GATE), "milestone", ID], cwd=repo, capture_output=True, text=True, env=env
+    )  # fmt: skip
+    assert _last(r) == "VERIFY BLOCKED reason=findings-open"
+
+
+def test_a_symlinked_transcript_folder_is_refused(tmp_path: Path) -> None:
+    repo = _milestone_repo(tmp_path)
+    _dispose(repo)
+    r = _owner_gate(repo, _dialog(), symlinked=True)
+    assert r.returncode == 3 and _last(r) == "VERIFY BLOCKED reason=findings-open"
+
+
+def test_a_disposition_needs_an_explicit_bold_id(tmp_path: Path) -> None:
+    """An item with no `**<ID>**` has no id to bind to, so an answer can never settle it."""
+    repo = _milestone_repo(tmp_path)
+    _dispose(repo, "## Blocking\n\n- [ ] the card overflows at 320\n\n")
+    for finding in ("the", "Z2", "B2"):
+        assert _verdict(_owner_gate(repo, _dialog(finding))) == "VERIFY BLOCKED reason=findings-open"
+
+
+def test_an_id_that_matches_two_open_items_settles_neither(tmp_path: Path) -> None:
+    repo = _milestone_repo(tmp_path)
+    _dispose(repo, "## Blocking\n\n- [ ] **B2** one\n- [ ] **B2** two\n\n")
+    assert _verdict(_owner_gate(repo, _dialog())) == "VERIFY BLOCKED reason=findings-open"
+
+
+def test_acceptance_never_turns_a_partly_met_fact_into_met(tmp_path: Path) -> None:
+    repo = _milestone_repo(tmp_path)
+    _commit_files(
+        repo,
+        validation_md="| F1 | x | y | z | partly |\n",
+        findings_md=OPEN_ITEM,
+    )
+    assert _last(_owner_gate(repo, _dialog("F1"))) == "VERIFY BLOCKED reason=validation-not-met"
+
+
 def test_the_report_carries_operational_metrics(tmp_path: Path) -> None:
     repo = _repo(tmp_path, ["true", "false"])
     _approve(repo)
@@ -1117,6 +1392,22 @@ def test_keep_going_runs_every_check_and_names_the_first_failure(tmp_path: Path)
     assert _order(repo) == ["lint", "unit", "e2e"] and "failed: lint, unit" in r.stdout
 
 
+def test_missing_evidence_fails_before_the_suite_starts(tmp_path: Path) -> None:
+    """3.21.0: offline evidence checks (marks, visual checkers) run before the suites, so a
+    missing screenshot never costs a full E2E run."""
+    repo = _repo(tmp_path, ["true"])
+    ran = repo / "suite-ran"
+    suite = f"touch {ran}"
+    (repo / "sdlc.json").write_text(json.dumps({"checks": {"milestone": [suite]}}))
+    export = repo / "changes" / ID / "asks/export"
+    export.mkdir(parents=True)
+    (export / "index.html").write_text("<html>screen</html>")
+    _approve(repo)
+    result = _gate(repo, "milestone", ID)
+    assert _last(result) == f"VERIFY FAIL milestone {ID} check=owner-marks"
+    assert not ran.exists()
+
+
 def test_a_supplied_bundle_requires_a_valid_ledger_at_milestone(tmp_path: Path) -> None:
     repo = _repo(tmp_path, ["true"])
     (repo / "sdlc.json").write_text(json.dumps({"checks": {"milestone": ["true"]}}))
@@ -1175,6 +1466,419 @@ def test_keep_going_reports_a_first_blocked_verdict_after_running_the_rest_F23(
     r = _gate(repo, "feature", ID, "--keep-going")
     assert _last(r) == "VERIFY BLOCKED reason=env" and r.returncode == 3
     assert _order(repo) == ["lint", "unit", "e2e"]
+
+
+# --- Review finding 1: the milestone checks name the full suite and the full E2E -------------
+
+
+def _e2e_repo(tmp_path: Path, milestone: list, config: str | None = "playwright.config.ts") -> Path:
+    repo = _repo(tmp_path, ["true"])
+    cfg = json.loads((repo / "sdlc.json").read_text())
+    (repo / "sdlc.json").write_text(json.dumps({**cfg, "checks": {"milestone": milestone}}))
+    if config:
+        (repo / config).parent.mkdir(parents=True, exist_ok=True)
+        (repo / config).write_text("x")
+    _git(repo, "add", ".")
+    _git(repo, "commit", "-qm", "e2e config")
+    return repo
+
+
+@pytest.mark.parametrize("config", ["playwright.config.ts", "e2e/test_login.py"])
+@pytest.mark.parametrize(
+    "milestone",
+    [["pytest -q"], ["pnpm test"], ["pnpm test:e2e --grep @x"], ["pnpm exec playwright test e2e/a.spec.ts"]],
+)
+def test_approve_refuses_a_milestone_check_list_without_the_full_e2e(
+    tmp_path: Path, milestone: list, config: str
+) -> None:
+    repo = _e2e_repo(tmp_path, milestone, config)
+    r = _gate(repo, "approve", ID)
+    assert r.returncode == 1 and "checks.milestone" in r.stdout and "full E2E" in r.stdout
+    assert _last(r).startswith("APPROVE FAIL")
+    assert not (repo / "changes" / ID / "lock.json").exists()
+
+
+@pytest.mark.parametrize(
+    "milestone",
+    [
+        ["pytest -q", "pnpm test:e2e --max-failures=10", "pnpm exec playwright test --repeat-each=3 $specs"],
+        ["pytest -q", "uv run pytest e2e -q", "for i in 1 2 3; do uv run pytest e2e/a.py -q; done"],
+    ],
+)
+def test_approve_accepts_a_named_full_e2e_entry(tmp_path: Path, milestone: list) -> None:
+    repo = _e2e_repo(tmp_path, milestone)
+    assert _gate(repo, "approve", ID).returncode == 0
+
+
+def test_a_repo_without_an_e2e_config_needs_no_e2e_entry(tmp_path: Path) -> None:
+    repo = _e2e_repo(tmp_path, ["pytest -q"], config=None)
+    assert _gate(repo, "approve", ID).returncode == 0
+
+
+def test_an_old_lock_reports_an_upgrade_gap_and_still_runs(tmp_path: Path) -> None:
+    """An approval made before the rule keeps working: the gate says what is missing, never fails."""
+    repo = _e2e_repo(tmp_path, ["true"], config=None)
+    assert _gate(repo, "approve", ID).returncode == 0
+    _old = repo / "changes" / ID / "lock.json"
+    _lock = json.loads(_old.read_text())
+    _lock.pop("format")
+    _old.write_text(json.dumps(_lock))
+    (repo / "e2e").mkdir()
+    (repo / "e2e" / "a.spec.ts").write_text("x")
+    _git(repo, "add", ".")
+    _git(repo, "commit", "-qm", "e2e appears")
+    _commit_files(repo, validation_md="| F1 | x | y | z | met |\n")
+    r = _gate(repo, "milestone", ID)
+    assert "upgrade gap" in r.stdout and _last(r).startswith(f"VERIFY PASS milestone {ID}")
+    report = json.loads((repo / "changes" / ID / "verify" / "report.json").read_text())
+    assert any("full E2E" in g for g in report["upgrade_gaps"])
+
+
+@pytest.mark.parametrize("name", ["node", "python"])
+def test_the_presets_run_the_full_e2e_and_repeat_changed_and_flaky_specs_three_times(name: str) -> None:
+    preset = json.loads((SKILL / "templates" / "presets" / f"{name}.json").read_text())
+    milestone = " ".join(c if isinstance(c, str) else c["run"] for c in preset["checks"]["milestone"])
+    assert "e2e" in milestone
+    assert "flaky-specs.txt" in milestone
+    assert "--repeat-each=3" in milestone or "seq 3" in milestone or "1 2 3" in milestone
+    assert "git diff --name-only" in milestone and "{base}" in milestone
+
+
+# --- Review finding 6: the validation rows come from the approved facts of the milestone -----
+
+
+def _facts_repo(tmp_path: Path, facts: list, plan: str = "") -> Path:
+    repo = _repo(tmp_path, [])
+    cfg = json.loads((repo / "sdlc.json").read_text())
+    (repo / "sdlc.json").write_text(json.dumps({**cfg, "checks": {"milestone": ["true"]}}))
+    change = repo / "changes" / ID
+    (change / "done.json").write_text(json.dumps({"facts": facts}))
+    (change / "plan.md").write_text(plan)
+    _git(repo, "add", ".")
+    _git(repo, "commit", "-qm", "facts")
+    _approve(repo)
+    return repo
+
+
+@pytest.mark.parametrize(
+    "validation",
+    [
+        None,  # no validation.md at all
+        "| F1 | x | y | z | met |\n",  # F2 has no row
+        "| F1 | x | y |  | met |\n| F2 | x | y | t.test.ts > it | met |\n",  # empty evidence
+        "| F1 | x | y | <test or shot> | met |\n| F2 | x | y | t | met |\n",  # a placeholder
+        "| F1 | x | y | - | met |\n| F2 | x | y | t | met |\n",
+        "| F1 | x | y | z | met |\n| F2 | x | y | z | unknown |\n",  # not a met verdict
+    ],
+)
+def test_a_pass_needs_a_met_row_with_evidence_for_every_approved_fact(
+    tmp_path: Path, validation: str | None
+) -> None:
+    repo = _facts_repo(tmp_path, ["F1", "F2"])
+    if validation is not None:
+        _commit_files(repo, validation_md=validation)
+    else:
+        (repo / "changes" / ID / "validation.md").unlink()
+        _git(repo, "commit", "-qam", "no validation")
+    r = _gate(repo, "milestone", ID)
+    assert r.returncode == 3 and _last(r) == "VERIFY BLOCKED reason=validation-not-met", r.stdout
+
+
+def test_every_fact_with_a_met_row_and_evidence_passes(tmp_path: Path) -> None:
+    repo = _facts_repo(tmp_path, [{"id": "F1", "tag": "@F1"}, "N1"])
+    _commit_files(
+        repo, validation_md="| F1/A1 | x | y | e2e: login.spec.ts @F1 | met |\n| N1 | x | y | shot: a.png | met |\n"
+    )
+    assert _last(_gate(repo, "milestone", ID)).startswith(f"VERIFY PASS milestone {ID}")
+
+
+def test_only_the_facts_of_this_milestone_are_expected(tmp_path: Path) -> None:
+    plan = "## Milestones\n\n| Milestone | Features | needs |\n|---|---|---|\n| M1 a | F1 | none |\n| M2 b | F2 | M1 |\n"
+    repo = _facts_repo(tmp_path, ["F1", "F2"], plan)
+    _git(repo, "checkout", "-q", "-b", "milestone/trial-1")
+    _commit_files(repo, validation_md="| F1 | x | y | z | met |\n")
+    assert _last(_gate(repo, "milestone", ID)).startswith(f"VERIFY PASS milestone {ID}")
+    _git(repo, "checkout", "-q", "-b", "milestone/trial-2")
+    assert _last(_gate(repo, "milestone", ID)) == "VERIFY BLOCKED reason=validation-not-met"
+
+
+# --- shell safety: the change id and the branch go into a shell command ------------------------
+
+
+@pytest.mark.parametrize("name", ["x;touch PWNED", "a b", "x$(touch PWNED)", "x`touch PWNED`"])
+def test_a_change_id_that_is_not_a_plain_path_is_refused_before_any_check_runs(
+    tmp_path: Path, name: str
+) -> None:
+    repo = _repo(tmp_path, ["true"])
+    (repo / "changes" / name).mkdir()
+    for scope in ("feature", "milestone"):
+        r = _gate(repo, scope, name)
+        assert r.returncode == 3 and _last(r) == "VERIFY BLOCKED reason=env", r.stdout
+        assert "change id" in r.stdout
+    assert not (repo / "PWNED").exists() and not (repo / "changes" / name / "PWNED").exists()
+
+
+def test_a_default_branch_that_is_not_a_plain_ref_is_refused(tmp_path: Path) -> None:
+    repo = _milestone_repo(tmp_path)
+    cfg = json.loads((repo / "sdlc.json").read_text())
+    (repo / "sdlc.json").write_text(json.dumps({**cfg, "defaultBranch": "x;touch PWNED"}))
+    r = _gate(repo, "milestone", ID)
+    assert r.returncode == 3 and _last(r) == "VERIFY BLOCKED reason=env" and "defaultBranch" in r.stdout
+    assert not (repo / "PWNED").exists()
+
+
+# --- Review finding 7: the required visual runs come from the UX decision and the sources -----
+
+
+def _visual_repo(
+    tmp_path: Path, decisions: dict | None, ux: str = "on", loose_reference: bool = False
+) -> Path:
+    repo = _repo(tmp_path, [])
+    cfg = {"checks": {"milestone": ["true"]}, "ux": ux}
+    (repo / "sdlc.json").write_text(json.dumps(cfg))
+    change = repo / "changes" / ID
+    if decisions is not None:
+        (change / "decisions.json").write_text(json.dumps(decisions))
+    if loose_reference:
+        (change / "asks").mkdir()
+        (change / "asks/wireframe.png").write_bytes(b"reference")
+    _approve(repo)
+    return repo
+
+
+VISUAL = {"size": "M", "visualSource": {"kind": "images", "path": "asks"}}
+
+
+def test_a_milestone_with_a_visual_source_fails_before_the_suites_without_a_visual_run(
+    tmp_path: Path,
+) -> None:
+    repo = _visual_repo(tmp_path, VISUAL)
+    r = _gate(repo, "milestone", ID)
+    assert _last(r) == f"VERIFY FAIL milestone {ID} check=ux-visual-required"
+    report = json.loads((repo / "changes" / ID / "verify/report.json").read_text())
+    assert [c["name"] for c in report["checks"]] == ["ux-visual-required"]  # the suite never ran
+
+
+@pytest.mark.parametrize(
+    ("decisions", "ux"),
+    [
+        ({**VISUAL, "skips": {"visual": "skip -- the screens are unchanged, the owner agreed"}}, "on"),
+        ({"size": "none"}, "on"),  # no interface change and no visual source
+        (VISUAL, "off"),
+        (None, "on"),  # no visual source, no reference, no manifest
+    ],
+)
+def test_a_recorded_skip_or_no_interface_needs_no_visual_run(
+    tmp_path: Path, decisions: dict | None, ux: str
+) -> None:
+    repo = _visual_repo(tmp_path, decisions, ux)
+    answer = _skip_answer() if decisions and "skips" in decisions else []
+    assert _last(_owner_gate(repo, answer)).startswith(f"VERIFY PASS milestone {ID}")
+
+
+def _skip_answer(label: str = "Skip visual evidence", n: int = 1) -> list[dict]:
+    return _dialog(
+        finding="visual-skip", label=label, n=n, options=["Skip visual evidence", "Run visual evidence"]
+    )
+
+
+def test_a_skip_in_decisions_json_alone_is_not_enough_the_owner_must_attest_it(
+    tmp_path: Path,
+) -> None:
+    """Review (security) 4: decisions.json is not part of the approval lock, so `skips.visual` counts
+    only with the owner's answer to `Change <id>, finding visual-skip: ...`."""
+    skip = {**VISUAL, "skips": {"visual": "skip -- the screens are unchanged"}}
+    repo = _visual_repo(tmp_path, skip)
+    assert _last(_owner_gate(repo, [])).endswith("check=ux-visual-required")
+    assert _last(_owner_gate(repo, _skip_answer("Run visual evidence"))).endswith("check=ux-visual-required")
+    assert _last(_owner_gate(repo, _skip_answer())).startswith(f"VERIFY PASS milestone {ID}")
+
+
+def test_a_skip_without_a_reason_is_not_a_recorded_skip(tmp_path: Path) -> None:
+    repo = _visual_repo(tmp_path, {**VISUAL, "skips": {"visual": "skip -- "}})
+    assert _last(_gate(repo, "milestone", ID)).endswith("check=ux-visual-required")
+
+
+def test_a_loose_reference_image_alone_triggers_the_owner_marks_check(tmp_path: Path) -> None:
+    repo = _visual_repo(tmp_path, {"size": "M"}, loose_reference=True)
+    r = _gate(repo, "milestone", ID)
+    assert _last(r) == f"VERIFY FAIL milestone {ID} check=owner-marks"
+
+
+def test_a_capture_manifest_alone_triggers_the_owner_marks_check(tmp_path: Path) -> None:
+    repo = _repo(tmp_path, [])
+    (repo / "sdlc.json").write_text(json.dumps({"checks": {"milestone": ["true"]}, "ux": "off"}))
+    shots = repo / "changes" / ID / "verify/shots"
+    shots.mkdir(parents=True)
+    (shots / "manifest.json").write_text('{"entries": []}')
+    _approve(repo)
+    assert _last(_gate(repo, "milestone", ID)).endswith("check=owner-marks")
+
+
+# --- Review (security): plain names, quoting, the change path inside the changes folder ----------
+
+
+@pytest.mark.parametrize("name", ["a..b", ".hidden-start"])  # a leading `-` never gets past argparse
+def test_a_change_id_must_start_alphanumeric_and_hold_no_dotdot(tmp_path: Path, name: str) -> None:
+    repo = _repo(tmp_path, ["true"])
+    (repo / "changes" / name).mkdir(exist_ok=True)
+    r = _gate(repo, "milestone", name)
+    assert r.returncode == 3 and _last(r) == "VERIFY BLOCKED reason=env" and "change id" in r.stdout
+
+
+def test_a_change_path_outside_the_changes_folder_is_refused(tmp_path: Path) -> None:
+    repo = _repo(tmp_path, ["true"])
+    (repo / "outside").mkdir()
+    r = _gate(repo, "milestone", "../outside")
+    assert r.returncode == 3 and _last(r) == "VERIFY BLOCKED reason=env" and "change id" in r.stdout
+    assert not (repo / "outside" / "verify").exists()
+
+
+@pytest.mark.parametrize("branch", ["-x", "a/../b", "../x", "a//b"])
+def test_a_default_branch_must_not_lead_with_a_dash_or_hold_a_dotdot_component(
+    tmp_path: Path, branch: str
+) -> None:
+    repo = _milestone_repo(tmp_path)
+    cfg = json.loads((repo / "sdlc.json").read_text())
+    (repo / "sdlc.json").write_text(json.dumps({**cfg, "defaultBranch": branch}))
+    r = _gate(repo, "milestone", ID)
+    assert r.returncode == 3 and _last(r) == "VERIFY BLOCKED reason=env" and "defaultBranch" in r.stdout
+
+
+def test_expand_quotes_what_it_substitutes() -> None:
+    sys.path.insert(0, str(GATE.parent))
+    import verify_gate
+
+    assert verify_gate.expand("git diff {base} {id}", "x-1", {"defaultBranch": "feat/a"}) == (
+        "git diff origin/feat/a x-1"
+    )
+    assert verify_gate.shlex.quote("a b") == "'a b'"
+    src = GATE.read_text()
+    assert "shlex.quote(" in src.split("def expand", 1)[1].split("def ", 1)[0]
+
+
+# --- Review (security): current-format changes cannot lose the records the gate derives from ----
+
+
+def test_an_unparsable_done_json_is_refused_at_approval(tmp_path: Path) -> None:
+    repo = _repo(tmp_path, [])
+    cfg = json.loads((repo / "sdlc.json").read_text())
+    (repo / "sdlc.json").write_text(json.dumps({**cfg, "checks": {"milestone": ["true"]}}))
+    (repo / "changes" / ID / "done.json").write_text("{not json")
+    _git(repo, "add", ".")
+    _git(repo, "commit", "-qm", "broken facts")
+    r = _gate(repo, "approve", ID)
+    assert r.returncode == 1 and "done.json" in r.stdout
+
+
+def test_an_unparsable_done_json_after_approval_blocks_as_a_moved_lock(tmp_path: Path) -> None:
+    repo = _milestone_repo(tmp_path)
+    (repo / "changes" / ID / "done.json").write_text("{not json")
+    _git(repo, "commit", "-qam", "broken facts")
+    assert _last(_gate(repo, "milestone", ID)) == "VERIFY BLOCKED reason=protected-path"
+
+
+def test_a_legacy_change_without_done_json_keeps_the_old_behaviour(tmp_path: Path) -> None:
+    repo = _repo(tmp_path, [])
+    cfg = json.loads((repo / "sdlc.json").read_text())
+    (repo / "sdlc.json").write_text(json.dumps({**cfg, "checks": {"milestone": ["true"]}}))
+    (repo / "changes" / ID / "done.json").unlink()
+    (repo / "changes" / ID / "validation.md").unlink()
+    _git(repo, "add", "-A")
+    _git(repo, "commit", "-qm", "legacy")
+    lock = {"approved_at": "x", "sha": "", "criteria": criteria_of_legacy(repo)}  # a pre-format lock
+    (repo / "changes" / ID / "lock.json").write_text(json.dumps(lock))
+    _git(repo, "add", "-A")
+    _git(repo, "commit", "-qm", "old lock")
+    assert _last(_gate(repo, "milestone", ID)).startswith(f"VERIFY PASS milestone {ID}")
+
+
+def criteria_of_legacy(repo: Path) -> dict:
+    def digest(data: bytes) -> str:
+        return hashlib.sha256(data).hexdigest()
+
+    change = repo / "changes" / ID
+    return {
+        "facts.md": digest((change / "facts.md").read_bytes()),
+        "checks": digest(json.dumps(json.loads((repo / "sdlc.json").read_text())["checks"], sort_keys=True).encode()),
+    }
+
+
+def test_a_missing_decisions_json_on_a_current_format_change_blocks(tmp_path: Path) -> None:
+    repo = _milestone_repo(tmp_path)
+    (repo / "changes" / ID / "decisions.json").unlink()  # present at approval, gone later: a moved lock
+    _git(repo, "add", "-A")
+    _git(repo, "commit", "-qm", "no decisions")
+    assert _last(_gate(repo, "milestone", ID)) == "VERIFY BLOCKED reason=protected-path"
+
+
+def test_a_decisions_json_that_never_existed_fails_the_check_on_a_current_format_change(tmp_path: Path) -> None:
+    repo = _repo(tmp_path, [])
+    cfg = json.loads((repo / "sdlc.json").read_text())
+    (repo / "sdlc.json").write_text(json.dumps({**cfg, "checks": {"milestone": ["true"]}}))
+    (repo / "changes" / ID / "decisions.json").unlink()
+    _git(repo, "add", "-A")
+    _git(repo, "commit", "-qm", "no decisions")
+    _approve(repo)
+    assert _last(_gate(repo, "milestone", ID)) == f"VERIFY FAIL milestone {ID} check=decisions-json"
+
+
+@pytest.mark.parametrize("content", ["{broken", "[]", "null", '"s"'])
+def test_an_unparsable_or_non_object_decisions_json_after_approval_blocks(
+    tmp_path: Path, content: str
+) -> None:
+    repo = _milestone_repo(tmp_path)
+    (repo / "changes" / ID / "decisions.json").write_text(content)
+    _git(repo, "commit", "-qam", "odd decisions")
+    assert _last(_gate(repo, "milestone", ID)) == "VERIFY BLOCKED reason=protected-path"  # routing is locked
+
+
+PLAN2 = "## Milestones\n\n| Milestone | Features | needs |\n|---|---|---|\n| M1 a | F1 | none |\n"
+
+
+@pytest.mark.parametrize(
+    "plan",
+    [
+        "## Milestones\n\n| Milestone | Features | needs |\n|---|---|---|\n| M2 b | F2 | none |\n",  # no M1 row
+        "## Milestones\n\n| Milestone | Features | needs |\n|---|---|---|\n| M1 a | none | none |\n",  # no facts
+        "",  # no plan at all
+    ],
+)
+def test_a_milestone_branch_whose_plan_row_is_missing_or_empty_blocks(tmp_path: Path, plan: str) -> None:
+    repo = _facts_repo(tmp_path, ["F1"], plan)
+    _git(repo, "checkout", "-q", "-b", "milestone/trial-1")
+    r = _gate(repo, "milestone", ID)
+    assert _last(r) == "VERIFY BLOCKED reason=validation-not-met" and "M1" in r.stdout
+
+
+def test_the_plan_milestones_section_is_part_of_the_approval_lock(tmp_path: Path) -> None:
+    repo = _facts_repo(tmp_path, ["F1"], PLAN2)
+    lock = json.loads((repo / "changes" / ID / "lock.json").read_text())
+    assert "plan.milestones" in lock["criteria"]
+    (repo / "changes" / ID / "plan.md").write_text(PLAN2.replace("| F1 |", "| F9 |"))
+    _git(repo, "commit", "-qam", "move the milestone rows")
+    assert _last(_gate(repo, "milestone", ID)) == "VERIFY BLOCKED reason=protected-path"
+
+
+def test_an_old_lock_without_the_plan_hash_reports_an_upgrade_gap_and_still_runs(
+    tmp_path: Path,
+) -> None:
+    repo = _facts_repo(tmp_path, ["F1"], PLAN2)
+    path = repo / "changes" / ID / "lock.json"
+    lock = json.loads(path.read_text())
+    del lock["criteria"]["plan.milestones"]
+    path.write_text(json.dumps(lock))
+    _git(repo, "commit", "-qam", "an older lock")
+    r = _gate(repo, "milestone", ID)
+    assert "upgrade gap" in r.stdout and "plan.milestones" in r.stdout
+    assert _last(r).startswith(f"VERIFY PASS milestone {ID}")
+
+
+def test_a_new_approval_requires_the_capture_manifest_for_visual_work(tmp_path: Path) -> None:
+    """Review finding 12: the version boundary lives in the lock; an older lock lacks the key."""
+    repo = _repo(tmp_path, ["true"])
+    _approve(repo)
+    assert json.loads((repo / "changes" / ID / "lock.json").read_text())["manifest"] == "required"
 
 
 def test_a_filled_copy_of_the_real_templates_is_approved_F9(tmp_path: Path) -> None:
@@ -1323,6 +2027,10 @@ def test_a_milestone_report_names_its_change_milestone_and_owner_3_20_5(
     (repo / "sdlc.json").write_text(json.dumps(cfg))
     _git(repo, "commit", "-qam", "milestone checks")
     _git(repo, "checkout", "-qb", branch)
+    (repo / "changes" / ID / "plan.md").write_text(
+        f"## Milestones\n\n| Milestone | Features | needs |\n|---|---|---|\n| M{number} a | F1 | none |\n"
+    )
+    _git(repo, "commit", "-qam", "plan row")
     _approve(repo)
     r = _gate(repo, "milestone", ID)
     assert _last(r).startswith(f"VERIFY PASS milestone {ID}"), r.stdout

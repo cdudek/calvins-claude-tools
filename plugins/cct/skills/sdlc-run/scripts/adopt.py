@@ -765,6 +765,32 @@ def adopt_ci(cfg: dict, preset: str) -> None:
     )
 
 
+E2E_SCOPED = re.compile(
+    r"--grep|--only-changed|--last-failed|--repeat-each|\bseq\b|\bfor\b|\brelated\b"
+    r"|\.(?:spec|test)\.\w+|test_\w+\.py|\$specs"
+)  # keep equal to verify_gate.E2E_SCOPED
+
+
+def has_e2e_config() -> bool:
+    return (ROOT / "e2e").is_dir() or any(ROOT.glob("playwright.config.*"))
+
+
+def e2e_gap_note(milestone: list) -> None:
+    """MANUAL line when the repo has an E2E suite and `checks.milestone` lacks the full E2E entry or the
+    x3 repeat of the changed and flaky specs. adopt never re-locks: the engineer approves again."""
+    cmds = [c["run"] if isinstance(c, dict) else c for c in milestone]
+    full = any(E2E_CMD.search(run) and not E2E_SCOPED.search(run) for run in cmds)
+    repeat = any(E2E_CMD.search(run) and re.search(r"--repeat-each|\bseq\s+3\b|\bin\s+1\s+2\s+3\b", run) for run in cmds)
+    if has_e2e_config() and not (full and repeat):
+        what = "no full E2E entry" if not full else "no repeat (x3) of the changed and flaky specs"
+        manual.append(
+            f"sdlc.json checks.milestone has {what} although the repo has an E2E suite: "
+            "add the full E2E command and a repeat (x3) of the changed and flaky specs "
+            "(the preset's `e2e` and `e2e-repeat` entries); the engineer approves the change "
+            "again, adopt never re-locks (an older lock only reports an upgrade gap)"
+        )
+
+
 def migrate_test_cost(cfg: dict, preset: str) -> None:
     """Bring an adopted repo's test cost in line with the preset (measured in leadhub: a
     `--repeat-each 3` over the whole suite took 59-71 min per gate, and the Stop hook fell back
@@ -789,7 +815,9 @@ def migrate_test_cost(cfg: dict, preset: str) -> None:
         cfg["verifyStop"] = npm
         wrote.append(f"sdlc.json: verifyStop `{stop}` -> `{npm}` (this repo uses npm)")
     preset_e2e = " ".join(
-        c for c in base.get("checks", {}).get("milestone", []) if E2E_CMD.search(c)
+        run
+        for c in base.get("checks", {}).get("milestone", [])
+        if E2E_CMD.search(run := c["run"] if isinstance(c, dict) else c)
     )
     found = MAX_FAILURES.search(preset_e2e)
     fail_fast = found.group(0) if found else "--max-failures=10"
@@ -797,7 +825,12 @@ def migrate_test_cost(cfg: dict, preset: str) -> None:
     moved = False
     for i, check in enumerate(milestone):
         cmd = check["run"] if isinstance(check, dict) else check
-        if not WHOLE_SUITE_REPEAT.search(cmd) or "--only-changed" in cmd or "--grep" in cmd:
+        if (
+            not WHOLE_SUITE_REPEAT.search(cmd)
+            or "--only-changed" in cmd
+            or "--grep" in cmd
+            or "flaky-specs" in cmd  # the preset's repeat of changed and flaky specs: leave it
+        ):
             continue
         new = WHOLE_SUITE_REPEAT.sub("", cmd)
         if not MAX_FAILURES.search(new):
@@ -808,6 +841,7 @@ def migrate_test_cost(cfg: dict, preset: str) -> None:
             milestone[i] = new
         wrote.append(f"sdlc.json: checks.milestone `{cmd}` -> `{new}`")
         moved = True
+    e2e_gap_note(milestone)
     if not moved:
         return
     changes = ROOT / cfg.get("changesDir", "changes")
@@ -842,35 +876,67 @@ def apply_tiers_answer(cfg: dict) -> None:
 # of either file adds its hash here; test_adopt.py walks the history and fails on a missing one.
 KIT_MARKS = {
     "0b01636d6dc4e428",
+    "141766b67443e974",
+    "1c753d2e8d90e632",
     "1d7b567db399b3f8",
+    "2643204887c6e1be",
+    "4dc39753a72de141",
+    "54684d37d2b5435c",
     "6c0c9f03e4eb5e80",
     "71e01d1d701f6c28",
+    "8504021b39d2f3c4",
     "9b9eb7671a9fee71",
+    "9e291aa9a4ca7939",
+    "a5be99c8d2b1e911",
+    "b35426f37e60f79f",
+    "b4861d544b8dcf5b",
     "c31c115f84e2d0cb",
     "d0b8c44c65ff9ef6",
     "da489951ced4b597",
+    "e9511caf3de9934b",
 }
 KIT_GATE = {
     "07797d2ae191453e",
+    "17c49f302fccaa95",
+    "196e2c2c20e79328",
     "1c17e460c91d2d3d",
+    "22d6de1fd42fa247",
     "25ea5841fdd27c8c",
+    "3144bebd00196d11",
     "3606423109411bd8",
     "36b65017727d487e",
+    "3a8e8a1d346b8e35",
+    "4167750b2c5b09ca",
     "440df872f222401d",
     "49c96180a9059469",
+    "4cd72bc3903a46ca",
     "4cf1a016840c1594",
     "5152ca52e4e6ae8b",
+    "51d17ecc782b117c",
     "573aee9b45171a4c",
+    "5c300c4704011c2a",
+    "5db2d9afd43c85b5",
     "642ef78693995803",
+    "74917c7957b4d561",
+    "78ccf4afbefea074",
     "96ef7a0baac1edad",
     "a0b381c0b945ecdb",
+    "a16cf77a6ddfdc38",
     "a7481173126f7752",
     "a872c162585a3302",
     "b4724f2bc5e40f08",
+    "bc17b21c814e7b87",
     "bff25d03c74642b8",
     "c53ff6ee7a8eb8d9",
+    "c7bf44c073864753",
+    "ca433e00cafb69b8",
+    "d1fecbcc9667465a",
+    "dbe9a6d4a1e59972",
     "dfbfa38f6cd4fec6",
     "f74bcd2c928e6244",
+    "f7c7ad9006898a5b",
+    "fb733e7ae3cac69d",
+    "fc6a42c9183280fb",
 }  # same, for scripts/verify_gate.py
 KIT_PR_GATE = {
     "0a76b3d09e108c32",
@@ -883,8 +949,11 @@ KIT_PR_GATE = {
     "5a07659427f3871f",
     "7a4751e7cea3d974",
     "8170d3b4f4ccc09d",
+    "9de062c4a0c5258c",
     "a7c80708a8719115",
     "ab23e9a14b74d511",
+    "ae1f77d4f3ba75d0",
+    "d2fe12eaec71434a",
     "dcfc6bfc90098077",
     "dea1af067e0edd92",
     "e68483445418d666",
@@ -892,11 +961,14 @@ KIT_PR_GATE = {
     "f9f78cded1337388",
 }  # same, for .claude/hooks/pr-gate.sh
 KIT_PASS_PROOF = {
+    "06947c4c80aa6dbe",
     "08655b8b92ba1cf3",
     "66d1b0004ebe5a4f",
     "6b49e80785b08cd1",
+    "9aee72ceddbbe6da",
     "9bf7560ec9b627d8",
     "ca615d048d30845c",
+    "d6433992382fc890",
     "dfd42c691cbeaf20",
     "faa52678825431ca",
 }  # same, for .claude/hooks/pass_proof.py
@@ -956,6 +1028,17 @@ def finish_upgrade() -> str:
                 )
                 continue
             wanted.append(other)
+    # The helpers a hook imports (`helper("<name>")`) come with a replace when the repo lacks them: a
+    # hook beside a missing helper blocks every push or edit, the repo's own hooks included. A
+    # helper the repo has stays.
+    if wanted:
+        hooks = {f".claude/hooks/{p.name}": p.read_text(encoding="utf-8") for p in (ROOT / ".claude/hooks").glob("*.sh")}
+        hooks.update({rel: pending[rel][0] for rel in wanted if rel.endswith(".sh") and rel in pending})
+        for source in hooks.values():
+            for name in re.findall(r'helper\("(\w+)"\)', source):
+                dep = f".claude/hooks/{name}.py"
+                if dep in pending and not (ROOT / dep).exists() and dep not in wanted:
+                    wanted.append(dep)
     for rel in wanted:
         if rel not in pending and rel not in REPLACE:
             continue  # the partner is already the kit's copy
@@ -1044,10 +1127,12 @@ def main() -> int:
             wrote.append("sdlc.json: claude removed (no Claude in CI since sdlc-run 3.7.0)")
         if not UPGRADE:
             migrate_test_cost(cfg, preset)
-        elif "--repeat-each" in json.dumps(cfg.get("checks", {})):
-            manual.append(
-                "sdlc.json: checks.milestone repeats the whole suite (--repeat-each); `adopt` rewrites it, --upgrade leaves it"
-            )
+        else:
+            if "--repeat-each" in json.dumps(cfg.get("checks", {})):
+                manual.append(
+                    "sdlc.json: checks.milestone repeats the whole suite (--repeat-each); `adopt` rewrites it, --upgrade leaves it"
+                )
+            e2e_gap_note(cfg.get("checks", {}).get("milestone", []))
         stamp_version(cfg, fresh=False)
     changed = UPGRADE and json.dumps(cfg, sort_keys=True) != cfg_before
     if (changed and not DRY_RUN) or (
@@ -1090,6 +1175,29 @@ def main() -> int:
         if not DRY:
             review_md.write_text(
                 review_md.read_text(encoding="utf-8").replace(".changes/", changes_dir + "/"),
+                encoding="utf-8",
+            )
+    # The one known template sentence that sent the closer to `review-fix-run` (a second review):
+    # replaced in place; every custom rule of the repo's REVIEW.md stays.
+    old_review = re.compile(
+        r"The review \(`cct:review-code-run` with one `review-fix-run` round\) runs once per milestone,"
+    )
+    if UPGRADE and review_md.exists() and old_review.search(review_md.read_text(encoding="utf-8")):
+        manual.append(
+            "REVIEW.md: the template sentence `The review (`cct:review-code-run` with one `review-fix-run` round) "
+            "runs once per milestone,` starts a second review; --upgrade never edits REVIEW.md (it is yours), so "
+            "replace it by hand with `The review (`cct:review-code-run changes <parent> --codex`, then one fix "
+            "round on its findings) runs once per milestone,`, or run `adopt` (without --upgrade), which does it"
+        )
+    if not UPGRADE and review_md.exists() and old_review.search(review_md.read_text(encoding="utf-8")):
+        wrote.append("REVIEW.md: review-fix-run sentence -> review-code-run changes, then one fix round")
+        if not DRY:
+            review_md.write_text(
+                old_review.sub(
+                    "The review (`cct:review-code-run changes <parent> --codex`, then one fix round "
+                    "on its findings) runs once per milestone,",
+                    review_md.read_text(encoding="utf-8"),
+                ),
                 encoding="utf-8",
             )
     docs = cfg.get("docs", "docs/sdlc.md")

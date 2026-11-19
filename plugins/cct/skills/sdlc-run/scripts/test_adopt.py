@@ -1701,6 +1701,63 @@ def test_adopt_removes_a_generated_decision4_workflow_only(tmp_path: Path) -> No
     assert wf.exists(), "a repo's own workflow is not ours to delete"
 
 
+def test_adopt_reports_a_milestone_list_without_the_full_e2e_and_keeps_the_presets_repeat(
+    tmp_path: Path,
+) -> None:
+    """Review finding 1: a repo with an E2E suite and no full E2E entry gets a MANUAL line (adopt
+    never re-locks), and the preset's own x3 repeat is not rewritten as a whole-suite repeat."""
+    repo = _upgrade_fixture(tmp_path)
+    (repo / "e2e").mkdir()
+    (repo / "e2e" / "a.spec.ts").write_text("x")
+    preset = json.loads((SCRIPTS.parent / "templates/presets/node.json").read_text())
+    repeat = next(
+        c for c in preset["checks"]["milestone"] if isinstance(c, dict) and c["name"] == "e2e-repeat"
+    )
+    cfg = json.loads((repo / "sdlc.json").read_text())
+    cfg["checks"]["milestone"] = ["pnpm test", repeat]
+    (repo / "sdlc.json").write_text(json.dumps(cfg, indent=2) + "\n")
+    res = _adopt(repo)
+    assert res.returncode == 0, res.stderr
+    assert any("no full E2E entry" in m for m in _sections(res.stdout)["MANUAL"])
+    assert json.loads((repo / "sdlc.json").read_text())["checks"]["milestone"][1] == repeat
+
+
+def test_the_scoped_e2e_pattern_is_the_same_in_adopt_and_the_gate() -> None:
+    find = lambda path: re.search(r"^E2E_SCOPED = re\.compile\(\n(.*?)\n\)", path.read_text(), re.M | re.S).group(1)  # noqa: E731
+    assert find(ADOPT) == find(SCRIPTS.parent / "templates/scripts/verify_gate.py")
+
+
+OLD_REVIEW_SENTENCE = "The review (`cct:review-code-run` with one `review-fix-run` round) runs once per milestone,"
+NEW_REVIEW_SENTENCE = (
+    "The review (`cct:review-code-run changes <parent> --codex`, then one fix round on its "
+    "findings) runs once per milestone,"
+)
+
+
+def test_adopt_migrates_the_old_review_fix_run_sentence_and_keeps_the_custom_rules(tmp_path: Path) -> None:
+    """Review finding 17: REVIEW.md is repo-owned and kept, but the one known template sentence
+    that starts `review-fix-run` (a second review) is replaced in place."""
+    repo = _repo(tmp_path, "node")
+    (repo / "REVIEW.md").write_text(
+        f"# Review\n\n{OLD_REVIEW_SENTENCE}\non the milestone diff.\n\n## Mine\n\nNever flag semicolons.\n"
+    )
+    res = _adopt(repo)
+    assert res.returncode == 0, res.stderr
+    text = (repo / "REVIEW.md").read_text()
+    assert NEW_REVIEW_SENTENCE in text and "review-fix-run" not in text
+    assert "## Mine\n\nNever flag semicolons." in text
+    assert any("REVIEW.md: review-fix-run sentence" in w for w in _sections(res.stdout)["WROTE"])
+    again = _sections(_adopt(repo).stdout)
+    assert not any("REVIEW.md" in w for w in again["WROTE"])  # idempotent
+
+
+def test_the_plan_template_does_not_tell_the_closer_to_run_unit_and_e2e_beside_the_gate() -> None:
+    plan = " ".join((SCRIPTS.parent / "templates/change/plan.md").read_text().split())
+    branch = plan.split("**One milestone**", 1)[1].split("**Feature PRs**", 1)[0]
+    assert "unit, E2E (changed and flaky specs ×3) and" not in branch
+    assert "only runner of the full suite" in branch
+
+
 def _kit_marks_of_3_20_1() -> bytes:
     """The marks.py the 3.20.1 kit shipped: a previous kit version, read from history."""
     out = subprocess.run(
@@ -1869,3 +1926,44 @@ def test_replacing_the_gate_leaves_an_edited_hook_and_names_it_3_20_5(tmp_path: 
     assert res.returncode == 0, res.stderr
     assert hook.read_text() == mine
     assert ".claude/hooks/pr-gate.sh is customised" in "\n".join(_sections(res.stdout)["MANUAL"])
+
+
+def _missing_hook_helpers(repo: Path) -> list[str]:
+    """Every `helper("<name>")` a hook in the repo imports that the repo does not hold."""
+    hooks = repo / ".claude/hooks"
+    gone = []
+    for sh in sorted(hooks.glob("*.sh")):
+        for name in re.findall(r'helper\("(\w+)"\)', sh.read_text()):
+            if not (hooks / f"{name}.py").exists():
+                gone.append(f"{sh.name} needs {name}.py")
+    return gone
+
+
+@pytest.mark.parametrize("replaced", ["scripts/verify_gate.py", ".claude/hooks/pr-gate.sh"])
+def test_a_selective_replace_brings_every_helper_the_hook_imports(tmp_path: Path, replaced: str) -> None:
+    repo = _upgrade_fixture(tmp_path)
+    for helper in ("goal_active.py", "pass_proof.py", "block_state.py"):
+        (repo / ".claude/hooks" / helper).unlink()  # a repo adopted before these helpers existed
+    hook = repo / ".claude/hooks/pr-gate.sh"
+    hook.write_text(hook.read_text() + "\n# the repo's own edit\n")
+    res = _adopt(repo, "--upgrade", "--apply", "--replace", replaced)
+    assert res.returncode == 0, res.stderr
+    assert _missing_hook_helpers(repo) == []
+
+
+def test_upgrade_reports_the_e2e_gap_and_the_old_review_sentence(tmp_path: Path) -> None:
+    """`--upgrade` hid two migrations that a plain adopt reports: the repo-specific E2E gap and the
+    REVIEW.md sentence that starts a second review."""
+    repo = _upgrade_fixture(tmp_path)
+    (repo / "e2e").mkdir()
+    (repo / "e2e" / "a.spec.ts").write_text("x")
+    cfg = json.loads((repo / "sdlc.json").read_text())
+    cfg["checks"]["milestone"] = ["pnpm test"]
+    (repo / "sdlc.json").write_text(json.dumps(cfg, indent=2) + "\n")
+    (repo / "REVIEW.md").write_text(f"# Review\n\n{OLD_REVIEW_SENTENCE}\non the milestone diff.\n")
+    res = _adopt(repo, "--upgrade")
+    assert res.returncode == 0, res.stderr
+    manual = _sections(res.stdout)["MANUAL"]
+    assert any("no full E2E entry" in m for m in manual), manual
+    assert any("REVIEW.md" in m and "review-fix-run" in m and NEW_REVIEW_SENTENCE in m for m in manual), manual
+    assert (repo / "REVIEW.md").read_text().count("review-fix-run") == 1  # --upgrade writes nothing

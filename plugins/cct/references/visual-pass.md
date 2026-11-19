@@ -158,10 +158,15 @@ them without a decision record.
   Critical (P0) is unchanged.
 - **One defect list per screen, frozen after the first review.** Later reviews tick items off and
   may add only a High item or a regression.
-- **Two fix rounds per screen per design-system release.** After that, a side-by-side list goes to
+- **Two fix rounds per screen per design-system release** while a screen is built; at milestone
+  close there is one fix round, and the QA is report-only. After that, a side-by-side list goes to
   the owner to accept or send back.
 - **Capture from one build per milestone version**, from a worktree pinned to one commit, never
   the live milestone branch: merges moved the branch mid-capture and ruined a batch. Capture each
   screen in one batch, twice, for stability.
+
+- **One capture manifest.** One assessment owns every capture in `verify/shots/manifest.json`,
+  keyed by build SHA, reference revision, screen, state, width and zoom; specialists reuse those
+  captures, and a fix captures only the affected cells again.
 
 The sdlc-run reference `convergence.md` has the full rules.

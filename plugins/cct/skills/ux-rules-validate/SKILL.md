@@ -15,6 +15,8 @@ background: false
 # cct:ux-rules-validate
 
 **Arguments:** `spec <change>` or `[pr-number | pr-url | branch | paths]  (defaults to the current branch's open PR)`
+or the local form `base=<ref> head=<ref> worktree=<path>` (no PR: the diff is
+`git -C <worktree> diff <base>...<head>`, and `gh` is never called).
 
 Keeps the accepted rules from drifting. It checks; it does not fix.
 
@@ -65,7 +67,7 @@ Without images, label the result text-only. Then stop: steps 1 to 3 are for code
 
 ## 1. What changed
 
-Resolve the target: a PR (`gh pr view`, `gh pr diff`), a branch against the default branch, or
+Resolve the target: a PR (`gh pr view`, `gh pr diff`), the local base and head, a branch against the default branch, or
 the given paths. Keep interface files only; if none changed, say so and stop.
 
 ## 2. Check

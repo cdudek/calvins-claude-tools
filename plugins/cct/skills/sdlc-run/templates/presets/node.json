@@ -88,7 +88,12 @@
       "pnpm lint",
       "pnpm typecheck",
       "pnpm test",
-      "pnpm test:e2e --max-failures=10"
+      {"name": "e2e", "run": "pnpm test:e2e --max-failures=10"},
+      {
+        "name": "e2e-repeat",
+        "after": ["e2e"],
+        "run": "changed=$(git diff --name-only --diff-filter=d {base}...HEAD -- 'e2e/*.spec.*') || exit 1; specs=$( { printf '%s\\n' \"$changed\"; sed 's/[[:space:]]*#.*//' e2e/flaky-specs.txt 2>/dev/null; } | awk 'NF' | sort -u ); [ -z \"$specs\" ] || pnpm exec playwright test --repeat-each=3 $specs"
+      }
     ]
   },
   "product": ""
