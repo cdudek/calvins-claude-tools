@@ -625,14 +625,15 @@ def planned_in_history(root: Path, cfg: dict, change_id: str) -> int:
 
 
 def goal_removed(
-    root: Path, change_id: str, scope: str, n: int | None, gh=gh_json, total: int = 0
+    root: Path, change_id: str, scope: str, n: int | None, gh=gh_json, total: int = 0, default_only: bool = False
 ) -> tuple[int, str] | None:
     """The folder is gone: the owner's rule removes it after merge, so that is the normal end state.
     Merged PRs from the change's milestone branches are the proof; None when they do not prove it.
     `--milestone n` needs milestone n merged. The whole goal needs every planned milestone merged
     (the plan is read from history), or, with no plan left, a merged PR into the default branch: a
     milestone merged into a project branch counts only with the project's own PR merged there.
-    `total` is the planned milestone count when the folder is still there to read it from."""
+    `total` is the planned milestone count when the folder is still there to read it from; `default_only`
+    counts nothing merged into another branch than the default (the sweep, which removes only released work)."""
     cfg = config(root) if (root / "sdlc.json").exists() else {}
     if scope != "milestone" or Path(change_id).name != change_id or change_id in ("", "..", "archive"):
         return None
@@ -655,7 +656,7 @@ def goal_removed(
         if project:
             last = project
         elif total:
-            if not set(range(1, total + 1)) <= {num for num, _ in merged} or parents != {default}:
+            if not set(range(1, total + 1)) <= {num for num, _ in merged} or (default_only and parents != {default}):
                 return None
         elif not any(p.get("baseRefName") == default for _, p in merged):
             return None
@@ -1145,7 +1146,7 @@ def sweep_merged(root: Path, apply: bool = False, gh=gh_json) -> list[str]:
     for folder in sorted((root / rel).iterdir()) if (root / rel).is_dir() else []:
         if not folder.is_dir() or folder.name == "archive" or (branch and slug_of(folder.name) in branch):
             continue
-        if not goal_removed(root, folder.name, "milestone", None, gh, total=max(planned(folder), 1)):
+        if not goal_removed(root, folder.name, "milestone", None, gh, max(planned(folder), 1), default_only=True):
             continue
         readers = git(root, "grep", "-l", "-F", f"{rel}/{folder.name}/", "--", ".", f":!{rel}").splitlines()
         if readers:

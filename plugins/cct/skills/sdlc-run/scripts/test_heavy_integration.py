@@ -567,6 +567,11 @@ def test_adopt_writes_a_first_plan_for_the_one_go_mode_without_leftover_markers(
 
     repo = adopt_repo(tmp_path, "node")
     assert _adopt(repo).returncode == 0
+    # a fresh adoption seeds layout 4 (one spec.md); this is the layout 3 plan template, so go back to it
+    shutil.rmtree(next(repo.glob("changes/*-adopt-sdlc")))
+    cfg = json.loads((repo / "sdlc.json").read_text())
+    (repo / "sdlc.json").write_text(json.dumps({k: v for k, v in cfg.items() if k != "layout"}))
+    assert _adopt(repo).returncode == 0
     (plan,) = repo.glob("changes/*/plan.md")
     text = plan.read_text(encoding="utf-8")
     assert "Stop after 150 turns" in text and "{{#" not in text and "{{/" not in text
