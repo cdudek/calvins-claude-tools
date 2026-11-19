@@ -254,7 +254,9 @@ Skipped for size `none` and for `sdlc.json` `ux: off`, with one printed line.
   **How to run** (the process of the build, from `templates/change/plan.md`), and **Goal
   handover**: a kickoff prompt plus the `/goal` line. One go: the filled
   `templates/goal/run.txt` (turns from `goal.runTurns`); feature PRs, one filled
-  `templates/goal/feature.txt` per feature (`goal.featureTurns`).
+  `templates/goal/feature.txt` per feature (`goal.featureTurns`). **Done** and its turn cap are
+  rendered for the delivery mode: keep the `{{#ONE_GO}}` or the `{{#FEATURE_PRS}}` block of
+  `templates/change/plan.md`, fill the caps from `goal`, and drop the markers.
 - `done.json`: facts with their tags, pages, states, widths, turn caps — the criteria as data.
 - **Decisions get their own file.** A choice worth its reasons in a year is a new ADR,
   `<designsDir>/<date>-adr-<slug>.md`, with `supersedes` when it replaces one; set the old

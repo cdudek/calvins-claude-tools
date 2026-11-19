@@ -381,3 +381,46 @@ def test_the_audit_inventories_helper_guard_registered_and_executable(tmp_path: 
     settings.write_text(json.dumps(data))
     out = _audit(repo, env).stdout
     assert "hook helper-guard.sh: installed=yes invoked by [PreToolUse Bash]" in out, out
+
+
+# ---------------------------------------------------------------- plan.md: Done and turn caps per delivery mode
+
+import importlib.util  # noqa: E402
+
+PLAN = SCRIPTS.parent / "change" / "plan.md"
+
+
+def _render(**values: str) -> str:
+    spec = importlib.util.spec_from_file_location("adopt_under_test", SCRIPTS.parents[1] / "scripts" / "adopt.py")
+    mod = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(mod)
+    base = {"CHANGE": "2026-11-19-x", "LINEAR": "none", "DESIGN": "null", "AUTHOR": "a", "DATE": "d", "TITLE": "t"}
+    return mod.render(PLAN.read_text(encoding="utf-8"), {**base, **values})
+
+
+def _done(text: str) -> str:
+    return text.split("## Done")[1].split("## How to run")[0]
+
+
+def test_done_and_turn_caps_follow_the_delivery_mode() -> None:
+    one = _render(ONE_GO="1", RUN_TURNS="150", FEATURE_TURNS="40", MILESTONE_TURNS="30")
+    assert "verify_gate.py milestone 2026-11-19-x` ends `VERIFY PASS` once" in _done(one)
+    assert "verify_gate.py feature" not in _done(one)  # a feature is a commit, not a gate
+    assert "Stop after 150 turns" in _done(one) and "40 turns" not in _done(one)
+    feature = _render(FEATURE_PRS="1", RUN_TURNS="150", FEATURE_TURNS="40", MILESTONE_TURNS="30")
+    assert "verify_gate.py feature 2026-11-19-x` ends `VERIFY PASS` for every feature" in _done(feature)
+    assert "Stop after 40 turns per feature and 30 for the milestone close" in _done(feature)
+    assert "150" not in _done(feature)
+    for text in (one, feature):
+        assert "{{" not in text and "}}" not in text.replace("${{", ""), text[:200]
+
+
+def test_adopt_writes_a_first_plan_for_the_one_go_mode_without_leftover_markers(tmp_path: Path) -> None:
+    from test_adopt import _adopt, _repo as adopt_repo
+
+    repo = adopt_repo(tmp_path, "node")
+    assert _adopt(repo).returncode == 0
+    (plan,) = repo.glob("changes/*/plan.md")
+    text = plan.read_text(encoding="utf-8")
+    assert "Stop after 150 turns" in text and "{{#" not in text and "{{/" not in text
+    assert "verify_gate.py feature" not in text.split("## Done")[1].split("## How to run")[0]

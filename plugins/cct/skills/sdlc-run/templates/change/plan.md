@@ -111,13 +111,20 @@ What must hold, as data in [done.json](done.json) (facts, test tags, pages, stat
 below ends on the status line of `sdlc_status.py goal` (from the sdlc-run plugin), which reads the verify gate and the PRs,
 so every line here is proven by a check, not by a claim.
 
+{{#FEATURE_PRS}}
 - `python3 scripts/verify_gate.py feature {{CHANGE}}` ends `VERIFY PASS` for every feature.
+{{/FEATURE_PRS}}
 - `python3 scripts/verify_gate.py milestone {{CHANGE}}` ends `VERIFY PASS` once, on the milestone.
 - <file> exists / contains `<string>`.
 - Every fact passes by its named check.
 - Nothing outside `## Files that change` is edited.
 - Stop and report as soon as a step cannot proceed. Never work around a blocker.
-- Stop after 40 turns if not met. Report what is missing.
+{{#ONE_GO}}
+- Stop after {{RUN_TURNS}} turns if not met. Report what is missing.
+{{/ONE_GO}}
+{{#FEATURE_PRS}}
+- Stop after {{FEATURE_TURNS}} turns per feature and {{MILESTONE_TURNS}} for the milestone close if not met. Report what is missing.
+{{/FEATURE_PRS}}
 
 ## How to run
 
@@ -213,8 +220,14 @@ before any check or push: it owns local iteration, failures and the final full c
 Two blocks, filled when the gate returns approved and committed verbatim, so the handover is not
 one chat message. The kickoff prompt tells the run what to do. The `/goal` line holds only the end
 state: the status command prints `GOAL <ID> DONE` or `GOAL <ID> BLOCKED`, and the run stops after
-`<TURNS>` turns (`goal.runTurns`). Feature PRs: one `/goal` per feature from
-`templates/goal/feature.txt`.
+`<TURNS>` turns.
+{{#ONE_GO}}
+`<TURNS>` is `goal.runTurns`, {{RUN_TURNS}} here.
+{{/ONE_GO}}
+{{#FEATURE_PRS}}
+One `/goal` per feature from `templates/goal/feature.txt`: `<TURNS>` is `goal.featureTurns`, {{FEATURE_TURNS}}
+here; the milestone close uses `goal.milestoneTurns`, {{MILESTONE_TURNS}}.
+{{/FEATURE_PRS}}
 
 The guardrail test fails an approved plan whose section is empty. Write `none —
 <why>` rather than leaving it blank: an empty section is a skip, a section that

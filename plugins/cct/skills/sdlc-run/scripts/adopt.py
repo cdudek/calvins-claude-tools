@@ -615,6 +615,20 @@ def render(text: str, values: dict[str, str]) -> str:
     return re.sub(r"\{\{([A-Z_]+)\}\}", lambda m: values.get(m.group(1), m.group(0)), text)
 
 
+def delivery_values(cfg: dict) -> dict[str, str]:
+    """What plan.md's `Done` and turn caps render by: one block per delivery mode, and the caps from
+    `goal` (defaults 150 for a whole run, 40 per feature, 30 for a milestone close)."""
+    goal = cfg.get("goal") if isinstance(cfg.get("goal"), dict) else {}
+    feature_prs = cfg.get("delivery") == "feature-prs"
+    return {
+        "ONE_GO": "" if feature_prs else "1",
+        "FEATURE_PRS": "1" if feature_prs else "",
+        "RUN_TURNS": str(goal.get("runTurns", 150)),
+        "FEATURE_TURNS": str(goal.get("featureTurns", 40)),
+        "MILESTONE_TURNS": str(goal.get("milestoneTurns", 30)),
+    }
+
+
 E2E_CMD = re.compile(r"playwright|test:e2e")
 # `--repeat-each` is a Playwright flag, so it marks an E2E check even behind a wrapper script
 # (samplewerk: `sh scripts/e2e.sh --repeat-each 3`). The match covers its own value.
@@ -1700,6 +1714,7 @@ def main() -> int:
             "DATE": today,
             "TITLE": f"Adopt the AI-native SDLC in {ROOT.name}",
             "VERIFY": cfg["verify"],
+            **delivery_values(cfg),
         }
         for name in ("intent.md", "facts.md", "plan.md"):
             write(first / name, render((TPL / "change" / name).read_text(encoding="utf-8"), cvals))
