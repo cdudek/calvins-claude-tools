@@ -156,15 +156,20 @@ def criteria_hash(change: Path, checks: object, plan: bool = True) -> dict[str, 
     """Hashes of what approval locks: facts.md, done.json, the checks and (from 3.21.0) the plan's
     `## Milestones` section, which decides which facts each milestone must prove. `plan=False`
     reads an older lock, which lacks that key."""
+    v4 = spec.applies(change)
     hashes = {
         name: hashlib.sha256((change / name).read_bytes()).hexdigest()
-        for name in LOCKED
+        for name in (("done.json",) if v4 else LOCKED)
         if (change / name).exists()
     }
+    if v4:  # the spec, the design and the task rows replace facts.md and the plan's milestones
+        hashes.update(
+            {name: hashlib.sha256(text.encode("utf-8")).hexdigest() for name, text in spec.lock_inputs(change).items()}
+        )
     hashes["checks"] = hashlib.sha256(
         json.dumps(checks, sort_keys=True).encode("utf-8")
     ).hexdigest()
-    if plan:
+    if plan and not v4:
         hashes["plan.milestones"] = hashlib.sha256(
             section(read(change / "plan.md"), "Milestones").encode("utf-8")
         ).hexdigest()
@@ -676,19 +681,47 @@ def branch_mode_problems(change: Path, cfg: dict) -> list[str]:
     return []
 
 
+def v4_done(change: Path) -> dict:
+    """done.json of a layout-4 change, derived from the spec: one fact per rule the change adds or
+    changes (id R<n>, tag @R<n>), with the screens and states its UX table names."""
+    ux = spec.table(read(change / "spec.md"), "UX")
+    facts = []
+    for n, rule in sorted(spec.change_rules(change).items()):
+        if rule["change"] == "removed":
+            continue
+        rows = [r for r in ux if re.search(rf"\bR{n}\b", spec._cell(r, "rule"))]
+        facts.append(
+            {
+                "id": f"R{n}",
+                "tag": f"@R{n}",
+                "screens": sorted({spec._cell(r, "screen") for r in rows}),
+                "states": sorted({spec._cell(r, "state") for r in rows}),
+            }
+        )
+    return {"facts": facts}
+
+
 def approve(change: Path, cfg: dict) -> int:
+    v4 = spec.applies(change)
     problems = lint_problems(change) + approval_blockers(change)  # the cheap pure check first
-    problems += [f"{name} is missing: approval locks it" for name in ("facts.md", "plan.md") if not (change / name).is_file()]
-    problems += graph_problems(read(change / "plan.md")) + branch_mode_problems(change, cfg)
+    if v4:  # the spec, its rule files and the diff against the parent agree before anyone locks it
+        base = parent_ref(change, cfg, root())
+        problems += spec.consistency(change, "approve", root(), base) + spec.check(root(), base)
+    else:
+        problems += [f"{name} is missing: approval locks it" for name in ("facts.md", "plan.md") if not (change / name).is_file()]
+        problems += graph_problems(read(change / "plan.md"))
+    problems += branch_mode_problems(change, cfg)
     if gap := full_e2e_gap((cfg.get("checks") or {}).get("milestone") or [], root()):
         problems.append(gap)
-    if not (change / "done.json").exists():  # approval requires its artifacts
+    if not v4 and not (change / "done.json").exists():  # approval requires its artifacts
         problems.append("done.json is missing: the approved facts cannot be locked without it")
-    elif approved_facts(change)[1]:
+    elif not v4 and approved_facts(change)[1]:
         problems.append("done.json is unreadable or has no `facts` list")
     if problems:
         print("\n".join(problems[:TAIL]))
         return end(f"APPROVE FAIL {change.name} problems={len(problems)}", 1)
+    if v4:
+        (change / "done.json").write_text(json.dumps(v4_done(change), indent=2) + "\n", encoding="utf-8")
     lock = {
         "approved_at": dt.datetime.now(dt.timezone.utc).isoformat(timespec="seconds"),  # noqa: UP017 -- runs on macOS python3 3.9
         "sha": sh("git", "rev-parse", "HEAD"),
@@ -1016,7 +1049,7 @@ def run(
         lock = json.loads(lock_path.read_text(encoding="utf-8"))
         locked = lock["criteria"]
         declared = lock.get("order") != "cost"
-        old_plan = lock.get("format", 0) < LOCK_FORMAT or "plan.milestones" not in locked
+        old_plan = lock.get("format", 0) < LOCK_FORMAT or ("plan.milestones" not in locked and not spec.applies(change))
         now = criteria_hash(change, cfg.get("checks", {}))
         for key in ("plan.milestones", "decisions.routing"):
             if key not in locked:
