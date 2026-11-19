@@ -775,6 +775,22 @@ def has_e2e_config() -> bool:
     return (ROOT / "e2e").is_dir() or any(ROOT.glob("playwright.config.*"))
 
 
+def e2e_gap_note(milestone: list) -> None:
+    """MANUAL line when the repo has an E2E suite and `checks.milestone` lacks the full E2E entry or the
+    x3 repeat of the changed and flaky specs. adopt never re-locks: the engineer approves again."""
+    cmds = [c["run"] if isinstance(c, dict) else c for c in milestone]
+    full = any(E2E_CMD.search(run) and not E2E_SCOPED.search(run) for run in cmds)
+    repeat = any(E2E_CMD.search(run) and re.search(r"--repeat-each|\bseq\s+3\b|\bin\s+1\s+2\s+3\b", run) for run in cmds)
+    if has_e2e_config() and not (full and repeat):
+        what = "no full E2E entry" if not full else "no repeat (x3) of the changed and flaky specs"
+        manual.append(
+            f"sdlc.json checks.milestone has {what} although the repo has an E2E suite: "
+            "add the full E2E command and a repeat (x3) of the changed and flaky specs "
+            "(the preset's `e2e` and `e2e-repeat` entries); the engineer approves the change "
+            "again, adopt never re-locks (an older lock only reports an upgrade gap)"
+        )
+
+
 def migrate_test_cost(cfg: dict, preset: str) -> None:
     """Bring an adopted repo's test cost in line with the preset (measured in leadhub: a
     `--repeat-each 3` over the whole suite took 59-71 min per gate, and the Stop hook fell back
@@ -825,16 +841,7 @@ def migrate_test_cost(cfg: dict, preset: str) -> None:
             milestone[i] = new
         wrote.append(f"sdlc.json: checks.milestone `{cmd}` -> `{new}`")
         moved = True
-    if has_e2e_config() and not any(
-        E2E_CMD.search(run := c["run"] if isinstance(c, dict) else c) and not E2E_SCOPED.search(run)
-        for c in milestone
-    ):
-        manual.append(
-            "sdlc.json checks.milestone has no full E2E entry although the repo has an E2E suite: "
-            "add the full E2E command and a repeat (x3) of the changed and flaky specs "
-            "(the preset's `e2e` and `e2e-repeat` entries); the engineer approves the change "
-            "again, adopt never re-locks (an older lock only reports an upgrade gap)"
-        )
+    e2e_gap_note(milestone)
     if not moved:
         return
     changes = ROOT / cfg.get("changesDir", "changes")
@@ -1082,10 +1089,12 @@ def main() -> int:
             wrote.append("sdlc.json: claude removed (no Claude in CI since sdlc-run 3.7.0)")
         if not UPGRADE:
             migrate_test_cost(cfg, preset)
-        elif "--repeat-each" in json.dumps(cfg.get("checks", {})):
-            manual.append(
-                "sdlc.json: checks.milestone repeats the whole suite (--repeat-each); `adopt` rewrites it, --upgrade leaves it"
-            )
+        else:
+            if "--repeat-each" in json.dumps(cfg.get("checks", {})):
+                manual.append(
+                    "sdlc.json: checks.milestone repeats the whole suite (--repeat-each); `adopt` rewrites it, --upgrade leaves it"
+                )
+            e2e_gap_note(cfg.get("checks", {}).get("milestone", []))
         stamp_version(cfg, fresh=False)
     changed = UPGRADE and json.dumps(cfg, sort_keys=True) != cfg_before
     if (changed and not DRY_RUN) or (
@@ -1135,6 +1144,13 @@ def main() -> int:
     old_review = re.compile(
         r"The review \(`cct:review-code-run` with one `review-fix-run` round\) runs once per milestone,"
     )
+    if UPGRADE and review_md.exists() and old_review.search(review_md.read_text(encoding="utf-8")):
+        manual.append(
+            "REVIEW.md: the template sentence `The review (`cct:review-code-run` with one `review-fix-run` round) "
+            "runs once per milestone,` starts a second review; --upgrade never edits REVIEW.md (it is yours), so "
+            "replace it by hand with `The review (`cct:review-code-run changes <parent> --codex`, then one fix "
+            "round on its findings) runs once per milestone,`, or run `adopt` (without --upgrade), which does it"
+        )
     if not UPGRADE and review_md.exists() and old_review.search(review_md.read_text(encoding="utf-8")):
         wrote.append("REVIEW.md: review-fix-run sentence -> review-code-run changes, then one fix round")
         if not DRY:

@@ -1949,3 +1949,21 @@ def test_a_selective_replace_brings_every_helper_the_hook_imports(tmp_path: Path
     res = _adopt(repo, "--upgrade", "--apply", "--replace", replaced)
     assert res.returncode == 0, res.stderr
     assert _missing_hook_helpers(repo) == []
+
+
+def test_upgrade_reports_the_e2e_gap_and_the_old_review_sentence(tmp_path: Path) -> None:
+    """`--upgrade` hid two migrations that a plain adopt reports: the repo-specific E2E gap and the
+    REVIEW.md sentence that starts a second review."""
+    repo = _upgrade_fixture(tmp_path)
+    (repo / "e2e").mkdir()
+    (repo / "e2e" / "a.spec.ts").write_text("x")
+    cfg = json.loads((repo / "sdlc.json").read_text())
+    cfg["checks"]["milestone"] = ["pnpm test"]
+    (repo / "sdlc.json").write_text(json.dumps(cfg, indent=2) + "\n")
+    (repo / "REVIEW.md").write_text(f"# Review\n\n{OLD_REVIEW_SENTENCE}\non the milestone diff.\n")
+    res = _adopt(repo, "--upgrade")
+    assert res.returncode == 0, res.stderr
+    manual = _sections(res.stdout)["MANUAL"]
+    assert any("no full E2E entry" in m for m in manual), manual
+    assert any("REVIEW.md" in m and "review-fix-run" in m and NEW_REVIEW_SENTENCE in m for m in manual), manual
+    assert (repo / "REVIEW.md").read_text().count("review-fix-run") == 1  # --upgrade writes nothing
