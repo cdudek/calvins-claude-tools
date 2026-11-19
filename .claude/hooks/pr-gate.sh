@@ -302,6 +302,13 @@ RIDE = (
 )
 
 
+CONFLICT = (
+    "Feature PRs need a published milestone branch, and local milestones never publish one. Choose one in "
+    'sdlc.json: remote feature PRs (milestones.merge "pr") or local feature commits (delivery "one-go"). '
+    "`preflight.py` and `adopt` refuse the same pair."
+)
+
+
 def local_merge_route(project: str, milestone: str) -> str:
     return (
         "Local milestones (sdlc.json milestones.merge): a milestone merges on this machine, after "
@@ -348,6 +355,8 @@ def check_push(repo: Repo, args: list[str]) -> None:
         if dst == repo.default:
             block(f"a push to {dst}.", "The default branch moves only through a merged PR.")
         if dst.startswith(repo.m):
+            if repo.feature_prs and repo.local:
+                block(f"a push of {dst}: sdlc.json asks for feature PRs and for local milestones.", CONFLICT, "sdlc.json")
             if repo.local and (project := repo.project_of(dst)):
                 block(f"a push of {dst} in local milestones mode.", local_merge_route(project, dst))
             if not repo.feature_prs and not repo.passed(sha, branch=dst, owner=repo.project_of(dst, sha)):
@@ -408,6 +417,8 @@ def check_pr(repo: Repo, args: list[str]) -> None:
     if repo.hotfix and head.startswith("hotfix/") and base == repo.default:
         return
     if base.startswith(repo.m):
+        if repo.feature_prs and repo.local:
+            block(f"a PR from {head} into {base}: sdlc.json asks for feature PRs and for local milestones.", CONFLICT, "sdlc.json")
         if repo.feature_prs:
             return
         block(f"a PR from {head} into {base}.", RIDE)

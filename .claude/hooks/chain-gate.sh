@@ -266,7 +266,64 @@ def branch_name() -> str:
     return ""
 
 
+def git_dir() -> Path | None:
+    out = subprocess.run(["git", "-C", str(root), "rev-parse", "--absolute-git-dir"], capture_output=True, text=True)
+    return Path(out.stdout.strip()) if out.returncode == 0 and out.stdout.strip() else None
+
+
+def dispatched_change() -> tuple[str, Path, dict] | None:
+    """The change a dispatch named: `<git dir>/sdlc-change` (the supervisor writes it into the
+    builder's worktree) or SDLC_CHANGE. Never guessed from a branch name; an id with no folder is ignored."""
+    ids = []
+    gd = git_dir()
+    if gd and (gd / "sdlc-change").is_file():
+        ids.append((gd / "sdlc-change").read_text(encoding="utf-8").strip())
+    ids.append(os.environ.get("SDLC_CHANGE", "").strip())
+    for change_id in ids:
+        if re.fullmatch(r"[\w.-]+", change_id) and (root / changes / change_id).is_dir():
+            return change_id, root / changes / change_id, load_decisions(root / changes / change_id)
+    return None
+
+
+def authorized(target: str, change_id: str, change_dir: Path, decisions: dict) -> bool:
+    """Does `protectedEdit` allow this edit of `target`? An entry is a quote (a string) or
+    `{"path", "words", "sha"}`: `path` limits it to one file, `sha` to the lock it was given for. It
+    is spent by the edit it allows (the key is kept in the git dir), so each edit needs its own
+    quote. A quote with no words authorizes nothing."""
+    import hashlib
+
+    raw = decisions.get("protectedEdit")
+    entries = raw if isinstance(raw, list) else [raw] if raw else []
+    try:
+        lock_sha = str(json.loads(state_file(change_dir, "lock.json").read_text(encoding="utf-8")).get("sha", ""))
+    except (OSError, ValueError, AttributeError):
+        lock_sha = ""
+    gd = git_dir()
+    used_path = gd / "sdlc-protected-used.json" if gd else None
+    try:
+        used = json.loads(used_path.read_text(encoding="utf-8")) if used_path and used_path.exists() else []
+    except (OSError, ValueError):
+        used = []
+    spent = False
+    for entry in entries:
+        path, words, sha = (entry.get("path"), str(entry.get("words", "")), entry.get("sha")) if isinstance(entry, dict) else (None, str(entry), None)
+        if not words.strip() or (path and path.lstrip("./") != target) or (sha and sha != lock_sha):
+            continue
+        key = hashlib.sha256(f"{change_id}\0{path or '*'}\0{words}\0{lock_sha}".encode()).hexdigest()
+        if key in used:
+            spent = True
+            continue
+        if used_path:
+            used_path.write_text(json.dumps([*used, key]), encoding="utf-8")
+        return True
+    if spent:
+        print(f"chain-gate: the protectedEdit quote for {target} is already used; ask the engineer again and record new words.", file=sys.stderr)
+    return False
+
+
 def branch_change() -> tuple[str, Path, dict] | None:
+    if dispatched := dispatched_change():
+        return dispatched
     branch = branch_name()
     if not branch:
         return None
@@ -316,7 +373,7 @@ if len(parts) >= 3 and parts[0] == changes:
                     return json.loads(text).get("layout", "none")
                 except (ValueError, AttributeError):
                     return "unreadable"
-            if layout_of(new) != layout_of(now) and not load_decisions(change_dir).get("protectedEdit"):
+            if layout_of(new) != layout_of(now) and not authorized(rel, change_id, change_dir, load_decisions(change_dir)):
                 deny(
                     f"{changes}/{change_id}/decisions.json `layout` is locked since the engineer approved the "
                     "change. Stop and ask; record their words as `protectedEdit` first.",
@@ -338,7 +395,7 @@ if len(parts) >= 3 and parts[0] == changes:
 
     if is_milestone(decisions) or v4:
         if inside in protected_files(change_dir, decisions) and (state_file(change_dir, "lock.json")).exists():
-            if decisions.get("protectedEdit"):
+            if authorized(rel, change_id, change_dir, decisions):
                 sys.exit(0)
             deny(
                 f"{changes}/{change_id}/{inside} is locked since the engineer approved the plan. "
@@ -432,10 +489,10 @@ if re.fullmatch(rf"{re.escape(str(cfg.get('livingSpecs') or 'specs'))}/[^/]+/rul
     # the living spec: rule files and the id floor change by script or git, not by a direct edit,
     # once a layout-4 change is approved. Flipping a rule's `status:` line is the one open edit.
     found = branch_change()
-    if found and is_v4(found[1], found[2]) and (state_file(found[1], "lock.json")).exists() and not found[2].get("protectedEdit"):
+    if found and is_v4(found[1], found[2]) and (state_file(found[1], "lock.json")).exists():
         tool = payload.get("tool_input") or {}
         flip = all(re.fullmatch(r"\s*status:\s*\w+\s*", str(tool.get(k, "\n"))) for k in ("old_string", "new_string"))
-        if not flip:
+        if not flip and not authorized(rel, found[0], found[1], found[2]):
             deny(
                 f"{rel} is protected since the engineer approved the change. Rule files and the id floor "
                 "change by script (`spec.py new`, `spec.py last-id --write`) or by git; to edit one "
@@ -466,7 +523,7 @@ if v3 and decisions.get("kind") == "bug" and decisions.get("testLocked") is True
             source=f"{changes}/{change_id}/decisions.json"
         )
 
-if v3 and not skipped(decisions, "prototype"):
+if v3 and not skipped(decisions, "prototype") and not (state_file(change_dir, "lock.json")).exists():  # design only
     for proto in cfg.get("prototypeDirs", []):
         p = proto.rstrip("/")
         if rel == p or rel.startswith(p + "/"):
@@ -475,7 +532,7 @@ if v3 and not skipped(decisions, "prototype"):
 if is_milestone(decisions) or is_v4(change_dir, decisions):
     locked = (state_file(change_dir, "lock.json")).exists()
     v4 = is_v4(change_dir, decisions)
-    if locked and match_any(rel, cfg.get("protected", PROTECTED_GLOBS)) and not decisions.get("protectedEdit"):
+    if locked and match_any(rel, cfg.get("protected", PROTECTED_GLOBS)) and not authorized(rel, change_id, change_dir, decisions):
         deny(
             f"{rel} is a protected path since the plan was approved. Stop and ask; record the "
             f"engineer's words as `protectedEdit` in {changes}/{change_id}/decisions.json first.",

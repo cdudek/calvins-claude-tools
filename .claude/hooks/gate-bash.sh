@@ -51,7 +51,22 @@ esac
 fields=()
 while IFS= read -r -d '' f; do fields+=("$f"); done < <(
   printf '%s' "$payload" | "$SDLC_PY" -c '
-import json, sys
+import json, os, sys
+def owner(cfg_path):
+    """Who owns sdlc.json: the last CODEOWNERS line for it (or for `*`), else a plain description."""
+    here = os.path.dirname(os.path.abspath(cfg_path))
+    found = ""
+    for rel in (".github/CODEOWNERS", "CODEOWNERS", "docs/CODEOWNERS"):
+        try:
+            lines = open(os.path.join(here, rel), encoding="utf-8").read().splitlines()
+        except OSError:
+            continue
+        for line in lines:
+            parts = line.split("#")[0].split()
+            if len(parts) > 1 and parts[0].lstrip("/") in ("sdlc.json", "*"):
+                found = " ".join(parts[1:])
+        break
+    return found or "the owner of sdlc.json"
 try:
     cmd = (json.load(sys.stdin).get("tool_input") or {}).get("command") or ""
     cfg = json.load(open(sys.argv[1], encoding="utf-8"))
@@ -60,7 +75,13 @@ try:
     for i, r in enumerate(rules):
         # one bad rule is reported and skipped; the valid ones still apply
         if isinstance(r, dict) and isinstance(r.get("match"), str) and r["match"]:
-            out += [r["match"], str(r.get("message", ""))]
+            message = str(r.get("message", ""))
+            if not message.strip():  # a refusal with no route: still a refusal, but it names who fixes the rule
+                message = (
+                    f"sdlc.json blocked[{i}] refuses this command but has no message, so it names no route. "
+                    f"Config owner: {owner(sys.argv[1])}. Fix: give the rule a `message` saying who does what instead."
+                )
+            out += [r["match"], message]
         else:
             sys.stderr.write("sdlc.json blocked[%d] has no `match` string: skipped\n" % i)
 except (OSError, ValueError, KeyError, AttributeError, TypeError):

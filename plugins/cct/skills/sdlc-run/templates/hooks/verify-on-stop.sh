@@ -13,6 +13,8 @@
 #   5. inside an active /goal the milestone gate (verify_gate.py) is the check. The signal is
 #      read by goal_active.py, the one reading chain-gate.sh and pr-gate.sh share. It parses the
 #      whole transcript, so it runs last. Unreadable -> verify runs. No helper -> exit 2.
+# A failed run also writes <git dir>/sdlc-stop-status.json (status failed|verified): step 4 lets the
+# next stop end the session, and this file keeps the tree reading as unverified until a run passes.
 # A missing turn-start snapshot (first turn after an upgrade) skips step 3 only.
 # Interpreter starts: one on every Stop (payload + sdlc.json), a second only at step 5, on the
 # path that is about to run `verify` for seconds anyway.
@@ -77,11 +79,21 @@ if [ ! -f "$helper" ]; then
 fi
 if [ -n "$transcript" ] && python3 "$helper" "$transcript" 2>/dev/null; then exit 0; fi
 
+# The stamp above lets a session end on a tree that already failed (anti-recursion); this file is
+# what a reader asks instead, so a stop is never read as a pass: `sdlc_status.py` prints it.
+write_status() { # $1 verified|failed, $2 the output tail
+  printf '%s' "$2" | "$SDLC_PY" -c '
+import json, sys, time
+json.dump({"status": sys.argv[1], "hash": sys.argv[2], "verify": sys.argv[3], "ts": int(time.time()), "tail": sys.stdin.read()}, open(sys.argv[4], "w"))
+' "$1" "$now" "$verify" "$gitdir/sdlc-stop-status.json" 2>/dev/null || true
+}
 if out=$(eval "$verify" 2>&1); then
   printf '%s pass\n' "$now" >"$stamp"
+  write_status verified ""
   exit 0
 fi
 printf '%s fail\n' "$now" >"$stamp"
+write_status failed "$(printf '%s\n' "$out" | tail -40)"
 {
   echo "verify-on-stop FAILED (\`$verify\`) with uncommitted source changes -- fix the code, not the test, then stop again:"
   printf '%s\n' "$out" | tail -40

@@ -73,6 +73,7 @@ def test_marks_py_runs_without_spec_py_unless_layout_4_is_in_use(tmp_path: Path)
 # ---------------------------------------------------------------- the gate runs under the queue
 
 import os  # noqa: E402
+import shutil  # noqa: E402
 import shlex  # noqa: E402
 import time  # noqa: E402
 
@@ -154,3 +155,229 @@ def test_a_failed_preflight_stops_the_gate_before_the_first_heavy_command(tmp_pa
     assert r.returncode == 3 and _last(r) == "VERIFY BLOCKED reason=env", r.stdout + r.stderr
     assert "no-such-tool-for-this-test" in r.stdout and not ran.exists()
     assert os.path.exists(repo / "changes" / GID / "verify" / "report.json")
+
+
+# ---------------------------------------------------------------- S4: a refusal with no route
+
+import pytest  # noqa: E402
+from test_chain_gate import ID as CID  # noqa: E402
+from test_chain_gate import _edit as chain_edit  # noqa: E402
+from test_chain_gate import repo as chain_repo  # noqa: E402, F401
+from test_gate_bash import _bash  # noqa: E402
+from test_gate_bash import repo as bash_repo  # noqa: E402, F401
+from test_goal_active import ID as GAID  # noqa: E402
+from test_goal_active import _project, _stop, _transcript  # noqa: E402
+from test_pr_gate import _run as pr_run  # noqa: E402
+from test_pr_gate import repo as pr_repo  # noqa: E402, F401
+
+
+def test_a_rule_with_no_message_refuses_and_names_the_config_owner(bash_repo: Path) -> None:
+    (bash_repo / ".github").mkdir()
+    (bash_repo / ".github" / "CODEOWNERS").write_text("* @everyone\nsdlc.json @config-owners\n")
+    (bash_repo / "sdlc.json").write_text(json.dumps({"blocked": [{"match": "uv[[:space:]]+add"}]}))
+    r = _bash(bash_repo, "uv add httpx")
+    assert r.returncode == 2 and "@config-owners" in r.stderr, r.stderr
+    assert "blocked[0]" in r.stderr and "message" in r.stderr
+
+
+def test_a_rule_with_no_message_and_no_codeowners_still_names_a_route(bash_repo: Path) -> None:
+    (bash_repo / "sdlc.json").write_text(json.dumps({"blocked": [{"match": "uv[[:space:]]+add", "message": "  "}]}))
+    r = _bash(bash_repo, "uv add httpx")
+    assert r.returncode == 2 and "owner of sdlc.json" in r.stderr and "blocked[0]" in r.stderr
+
+
+# ---------------------------------------------------------------- D4: the hook says why
+
+
+def test_feature_prs_with_local_milestones_is_refused_with_the_two_choices(pr_repo: Path) -> None:
+    cfg = json.loads((pr_repo / "sdlc.json").read_text())
+    cfg.update(delivery="feature-prs", milestones={"merge": "local"})
+    (pr_repo / "sdlc.json").write_text(json.dumps(cfg))
+    for command in (
+        "git push -u origin milestone/trial-1",
+        "gh pr create --base milestone/trial-1 --head feat/x --title t --body b",
+    ):
+        r = pr_run(pr_repo, command)
+        assert r.returncode == 2, command
+        assert 'milestones.merge "pr"' in r.stderr and 'delivery "one-go"' in r.stderr, r.stderr
+
+
+# ---------------------------------------------------------------- F3: authorization is bound and spent
+
+
+def _protect(repo: Path, value: object) -> None:
+    path = repo / "changes" / CID / "decisions.json"
+    path.write_text(json.dumps({**json.loads(path.read_text()), "protectedEdit": value}))
+
+
+def test_a_protected_edit_is_allowed_for_its_path_once(chain_repo: Path) -> None:
+    facts = f"changes/{CID}/facts.md"
+    _protect(chain_repo, {"path": facts, "words": "owner: edit the facts"})
+    assert chain_edit(chain_repo, f"changes/{CID}/done.json", "active").returncode == 2  # another path
+    assert chain_edit(chain_repo, facts, "active").returncode == 0
+    again = chain_edit(chain_repo, facts, "active")
+    assert again.returncode == 2 and "already used" in again.stderr and "protectedEdit" in again.stderr
+
+
+def test_a_quote_with_no_path_is_spent_by_its_first_edit(chain_repo: Path) -> None:
+    _protect(chain_repo, "owner: change it")
+    assert chain_edit(chain_repo, f"changes/{CID}/facts.md", "active").returncode == 0
+    assert chain_edit(chain_repo, "sdlc.json", "active").returncode == 2
+
+
+def test_a_quote_for_a_revision_ends_when_the_plan_is_approved_again(chain_repo: Path) -> None:
+    facts = f"changes/{CID}/facts.md"
+    lock = chain_repo / "changes" / CID / "lock.json"
+    lock.write_text(json.dumps({"sha": "aaa"}))
+    _protect(chain_repo, {"path": facts, "words": "owner: edit the facts", "sha": "bbb"})
+    assert chain_edit(chain_repo, facts, "active").returncode == 2  # the quote names another lock
+    lock.write_text(json.dumps({"sha": "bbb"}))
+    assert chain_edit(chain_repo, facts, "active").returncode == 0
+
+
+def test_the_dispatch_names_the_change_when_the_branch_name_does_not(chain_repo: Path) -> None:
+    subprocess.run(["git", "branch", "-m", "worktree-agent-4f2a"], cwd=chain_repo, check=True)
+    assert chain_edit(chain_repo, "src/app.ts", "none").returncode == 0  # no slug in the branch: no opinion
+    gitdir = subprocess.run(
+        ["git", "rev-parse", "--absolute-git-dir"], cwd=chain_repo, capture_output=True, text=True, check=True
+    ).stdout.strip()
+    (Path(gitdir) / "sdlc-change").write_text(CID + "\n")
+    r = chain_edit(chain_repo, "src/app.ts", "none")
+    assert r.returncode == 2 and "inside /goal" in r.stderr
+    assert chain_edit(chain_repo, "src/app.ts", "active").returncode == 0
+
+
+def test_the_prototype_exemption_ends_at_the_lock(chain_repo: Path) -> None:
+    cfg = json.loads((chain_repo / "sdlc.json").read_text())
+    (chain_repo / "sdlc.json").write_text(json.dumps({**cfg, "prototypeDirs": ["proto"]}))
+    r = chain_edit(chain_repo, "proto/x.ts", "none")
+    assert r.returncode == 2 and "inside /goal" in r.stderr  # the change is locked: not design any more
+    (chain_repo / "changes" / CID / "lock.json").unlink()
+    (chain_repo / "changes" / CID / "plan.md").write_text("---\nstatus: draft\n---\n")
+    assert chain_edit(chain_repo, "proto/x.ts", "none").returncode == 0  # design: open
+
+
+# ---------------------------------------------------------------- F5: a stop is not a pass
+
+
+def _gitdir(repo: Path) -> Path:
+    return Path(
+        subprocess.run(
+            ["git", "rev-parse", "--absolute-git-dir"], cwd=repo, capture_output=True, text=True, check=True
+        ).stdout.strip()
+    )
+
+
+def test_a_failed_stop_leaves_a_durable_failed_status_that_the_next_stop_keeps(tmp_path: Path) -> None:
+    repo = _project(tmp_path)
+    t = _transcript(tmp_path, {"type": "user"}, {"type": "assistant"})  # no goal running: verify runs
+    first = _stop(repo, t)
+    assert first.returncode == 2 and "verify-ran" in first.stderr
+    status = json.loads((_gitdir(repo) / "sdlc-stop-status.json").read_text())
+    assert status["status"] == "failed" and "verify-ran" in status["tail"]
+    second = _stop(repo, t)  # the anti-recursion stamp lets the session end ...
+    assert second.returncode == 0
+    assert json.loads((_gitdir(repo) / "sdlc-stop-status.json").read_text())["status"] == "failed"  # ... not read as verified
+
+
+def test_status_reads_the_failed_stop_and_the_heavy_queue(tmp_path: Path) -> None:
+    repo = _project(tmp_path)
+    t = _transcript(tmp_path, {"type": "user"}, {"type": "assistant"})
+    assert _stop(repo, t).returncode == 2
+    change = repo / "changes" / GAID
+    (change / "milestone.md").write_text("---\nmilestone: trial\n---\n\n## Features\n\n| # | Change | Feature | PR | State |\n|---|---|---|---|---|\n")
+    scripts = repo / "scripts"
+    scripts.mkdir()
+    (scripts / "heavy.py").write_text((SCRIPTS / "heavy.py").read_text())
+    queue = tmp_path / "queue"
+    env = {**_env(), "SDLC_HEAVY_DIR": str(queue), "SDLC_HEAVY_SLOTS": "1"}
+    holder = subprocess.Popen(
+        [sys.executable, str(scripts / "heavy.py"), "run", "--", "sleep", "20"], cwd=repo, env=env,
+        stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL,
+    )  # fmt: skip
+    try:
+        for _ in range(100):
+            if list(queue.glob("*")):
+                break
+            time.sleep(0.1)
+        status_py = SCRIPTS.parents[1] / "scripts" / "sdlc_status.py"
+        out = subprocess.run([sys.executable, str(status_py), "map", GAID], cwd=repo, capture_output=True, text=True, env=env).stdout
+        shell = subprocess.run(["bash", str(SCRIPTS.parents[1] / "scripts" / "status.sh"), GAID], cwd=repo, capture_output=True, text=True, env={**env, "CLAUDE_PROJECT_DIR": str(repo)}).stdout
+    finally:
+        holder.kill()
+        holder.wait()
+    assert "verify FAILED" in out and "not a pass" in out, out
+    assert "holding slot 0" in out and "sleep" in out, out
+    assert "heavy=holding slot 0" in shell, shell
+
+
+# ---------------------------------------------------------------- helper-guard.sh
+
+
+def _helper_guard(tmp_path: Path, payload: object, install: bool = True) -> subprocess.CompletedProcess[str]:
+    repo = tmp_path / "guarded"
+    (repo / ".claude" / "hooks").mkdir(parents=True, exist_ok=True)
+    (repo / "scripts").mkdir(exist_ok=True)
+    shutil.copy(SCRIPTS.parent / "hooks" / "helper-guard.sh", repo / ".claude" / "hooks" / "helper-guard.sh")
+    if install:
+        shutil.copy(HEAVY, repo / "scripts" / "heavy.py")
+    subprocess.run(["git", "init", "-q"], cwd=repo, check=True)
+    return subprocess.run(
+        ["bash", str(repo / ".claude" / "hooks" / "helper-guard.sh")],
+        input=payload if isinstance(payload, str) else json.dumps(payload),
+        capture_output=True, text=True, cwd=repo, env={**_env(), "CLAUDE_PROJECT_DIR": str(repo)},
+    )  # fmt: skip
+
+
+def _bash_call(command: str, **extra: object) -> dict:
+    return {"tool_input": {"command": command}, "cwd": ".", **extra}
+
+
+@pytest.mark.parametrize(
+    ("payload", "code"),
+    [
+        (_bash_call("pnpm build", agent_id="a1", agent_type="builder"), 2),  # a helper, heavy, no queue
+        (_bash_call("cd app && npx playwright test", agent_id="a1"), 2),
+        (_bash_call("python3 scripts/heavy.py run -- pnpm build", agent_id="a1"), 0),  # in the queue
+        (_bash_call("python3 scripts/heavy.py submit -- pnpm build", agent_id="a1"), 0),
+        (_bash_call("pnpm lint", agent_id="a1"), 0),  # light
+        (_bash_call('git commit -m "fix the build"', agent_id="a1"), 0),  # a word, not a build
+        (_bash_call("pnpm build"), 0),  # the owner's own session: the fields are absent
+        (_bash_call("pnpm build", agent_id=None), 0),
+        (_bash_call("pnpm build", agent_id=""), 0),
+        ("not json", 0),
+        ("[1, 2]", 0),
+        ({"tool_input": None, "agent_id": "a1"}, 0),
+    ],
+)
+def test_the_guard_refuses_only_a_subagents_heavy_call_outside_the_queue(
+    tmp_path: Path, payload: object, code: int
+) -> None:
+    r = _helper_guard(tmp_path, payload)
+    assert r.returncode == code, r.stderr
+    if code:
+        assert "heavy.py run -- pnpm build" in r.stderr or "heavy.py run --" in r.stderr
+
+
+def test_the_guard_has_no_opinion_in_a_repo_adopted_before_the_queue(tmp_path: Path) -> None:
+    assert _helper_guard(tmp_path, _bash_call("pnpm build", agent_id="a1"), install=False).returncode == 0
+
+
+# ---------------------------------------------------------------- the audit inventory sees the guard
+
+from test_verify_gate import _audit, _audit_repo  # noqa: E402
+
+
+def test_the_audit_inventories_helper_guard_registered_and_executable(tmp_path: Path) -> None:
+    repo, env = _audit_repo(tmp_path, ["echo lint-it"], required=["check"])
+    hook = repo / ".claude" / "hooks" / "helper-guard.sh"
+    shutil.copy(SCRIPTS.parent / "hooks" / "helper-guard.sh", hook)
+    assert "helper-guard.sh: installed but not registered" in _audit(repo, env).stdout
+    settings = repo / ".claude" / "settings.json"
+    data = json.loads(settings.read_text())
+    data["hooks"].setdefault("PreToolUse", []).append(
+        {"matcher": "Bash", "hooks": [{"type": "command", "command": '"$CLAUDE_PROJECT_DIR"/.claude/hooks/helper-guard.sh'}]}
+    )
+    settings.write_text(json.dumps(data))
+    out = _audit(repo, env).stdout
+    assert "hook helper-guard.sh: installed=yes invoked by [PreToolUse Bash]" in out, out
