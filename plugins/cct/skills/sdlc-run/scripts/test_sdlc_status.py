@@ -888,9 +888,10 @@ def test_an_ask_pr_armed_or_not_is_never_done_without_the_owners_acceptance(
 def test_a_recorded_hold_blocks_done_and_arming(repo: Path, tmp_path: Path, monkeypatch) -> None:
     _gate(repo, PASS)
     _owner(repo, tmp_path, "PR7", "Hold", monkeypatch)
-    for pr in (_pr("OPEN", armed=True, labels=("ask",)), _pr("OPEN", labels=("ask",))):  # the transcript is read for ask PRs
-        assert _goal(repo, {BRANCH: pr}) == (1, f"GOAL {ID} OPEN pr-7-held")
-    for pr in (_pr("OPEN", armed=True, labels=("ship", "hold")), _pr("OPEN", labels=("show", "hold"))):  # others: the label
+    for pr in (
+        _pr("OPEN", armed=True, labels=("ship",)), _pr("OPEN", labels=("ask",)), _pr("OPEN", labels=("show",)),
+        _pr("OPEN", armed=True, labels=("ship", "hold")),  # the label alone holds as well
+    ):
         assert _goal(repo, {BRANCH: pr}) == (1, f"GOAL {ID} OPEN pr-7-held")
     assert "nothing arms it" in sdlc_status.blocker(ID, f"GOAL {ID} OPEN pr-7-held")
     assert "gh pr merge" not in sdlc_status.blocker(ID, f"GOAL {ID} OPEN pr-7-held")
@@ -1124,37 +1125,45 @@ def test_a_local_receipt_for_another_project_or_moved_tip_is_not_done_3_20_5(rep
 
 # --- a kept older gate never writes change/owner/milestone: its reports are read the old way ----
 
-
-def _repo_gate(repo: Path, text: str) -> None:
-    (repo / "scripts").mkdir(exist_ok=True)
-    (repo / "scripts" / "verify_gate.py").write_text(text)
+BINDINGS = ("change", "milestone", "owner")
 
 
-def _strip_bindings(repo: Path) -> None:
+def _strip_bindings(repo: Path, drop=BINDINGS, keep_format: bool = False) -> None:
     _gate(repo, PASS)
     path = repo / "changes" / ID / "verify" / "report.json"
     data = json.loads(path.read_text())
-    path.write_text(json.dumps({k: v for k, v in data.items() if k not in ("change", "milestone", "owner")}))
+    data = {k: v for k, v in data.items() if k not in drop and (keep_format or k != "format")}
+    path.write_text(json.dumps(data))
 
 
-def test_a_report_from_a_kept_older_gate_is_read_the_old_way(repo: Path) -> None:
-    _repo_gate(repo, "def finish(report):\n    report['result'] = 'x'\n")  # a gate that never binds
-    _strip_bindings(repo)
+def test_a_report_with_no_format_and_no_binding_key_is_read_the_old_way(repo: Path) -> None:
+    _strip_bindings(repo)  # what a kept 3.20.0-3.20.4... gate wrote
     assert _goal(repo, {BRANCH: _pr()})[0] == 0
 
 
-@pytest.mark.parametrize(
-    "gate",
-    [
-        "report['change'], report['owner'] = a, b\n",
-        'report["owner"] = project_branch(change, cfg)\n',
-        "WRITES_BINDINGS = True  # report names change, owner, milestone\n",
-    ],
-)
-def test_the_bindings_are_required_when_the_installed_gate_writes_them(repo: Path, gate: str) -> None:
-    _repo_gate(repo, gate)
-    _strip_bindings(repo)
+def test_the_checkout_text_of_the_gate_never_decides_the_mode(repo: Path) -> None:
+    (repo / "scripts").mkdir()
+    (repo / "scripts" / "verify_gate.py").write_text("# an edit that mentions nothing\n")
+    _gate(repo, PASS)  # a report that carries its bindings is strict whatever the file says
+    path = repo / "changes" / ID / "verify" / "report.json"
+    data = json.loads(path.read_text())
+    path.write_text(json.dumps({k: v for k, v in data.items() if k != "owner"}))
     assert _goal(repo, {BRANCH: _pr()}) == (1, f"GOAL {ID} OPEN milestone-gate-pass")
+
+
+@pytest.mark.parametrize("dropped", [BINDINGS, ("change", "milestone"), ("owner",)])
+def test_a_report_of_the_new_format_must_carry_every_binding(repo: Path, dropped: tuple) -> None:
+    _gate(repo, PASS, format=2)
+    path = repo / "changes" / ID / "verify" / "report.json"
+    data = json.loads(path.read_text())
+    path.write_text(json.dumps({k: v for k, v in data.items() if k not in dropped}))
+    assert _goal(repo, {BRANCH: _pr()}) == (1, f"GOAL {ID} OPEN milestone-gate-pass")
+
+
+def test_the_gate_writes_the_report_format() -> None:
+    import verify_gate
+
+    assert verify_gate.REPORT_FORMAT >= 2
 
 
 # --- a deleted milestone branch: the merge that brought it in is proven, not just contained ----

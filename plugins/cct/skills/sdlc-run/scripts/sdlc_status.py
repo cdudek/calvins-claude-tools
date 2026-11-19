@@ -52,8 +52,7 @@ from change_docs import MARKER, ids, readme
 for _sub in ("scripts", "hooks"):
     sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "templates" / _sub))
 
-from pass_proof import bound as _bound  # noqa: E402
-from pass_proof import proves, writes_bindings  # noqa: E402
+from pass_proof import bound, proves  # noqa: E402
 
 STAGES = ("Intent", "UX plan", "Facts", "Tech plan", "Build", "Milestone", "Outcome")
 
@@ -216,11 +215,6 @@ def contains(root: Path, sha: str, into: str) -> bool:
     )
 
 
-def bound(root: Path, data: dict, scope: str, subject: str, number: int | None, owner: str | None) -> bool:
-    """pass_proof.bound, with a report from a kept older gate (one that never writes the bindings) read the old way."""
-    return _bound(data, scope, subject, number, owner, legacy=not writes_bindings(root))
-
-
 def same_head(root: Path, cfg: dict, gated: str, head: str) -> bool:
     """What the gate passed still holds at `head` (pass_proof.py, the rule pr-gate.sh applies)."""
     return proves(root, str(cfg.get("changesDir", "changes")), gated, head)
@@ -343,7 +337,7 @@ def goal(
     # a pass counts for the milestone it was gated as (the goal's last one without --milestone) and
     # the project the change belongs to: M1's pass never finishes M2, nor another project's
     number = (n or max(planned(change), 1)) if scope == "milestone" else None
-    if passed and scope != "project" and not bound(root, report, scope, subject, number, project):
+    if passed and scope != "project" and not bound(report, scope, subject, number, project):
         passed = None
     missing = [] if passed else [f"{scope}-gate-pass"]
     local = scope == "milestone" and project and merges_locally(cfg)
@@ -372,7 +366,7 @@ def goal(
                 tip = git(root, "rev-parse", "--verify", "--quiet", f"{b}^{{commit}}")
                 if receipt:
                     # a receipt counts only for its own milestone and change, never a copy
-                    ok = bound(root, receipt, "milestone", change.name, int(i), project)
+                    ok = bound(receipt, "milestone", change.name, int(i), project)
                     if not (ok and contains(root, str(receipt.get("sha", "")), into)):
                         missing.append(f"receipt-not-merged:{i}")
                         continue
@@ -411,9 +405,10 @@ def goal(
         pr = found[0]
         merged = pr.get("state") == "MERGED" or bool(pr.get("mergedAt"))
         answer = ""
-        if {"ask", "awaiting-owner"} & {str(x.get("name", "")).lower() for x in pr.get("labels") or []} and pr.get("state") != "CLOSED":
-            # the owner's answer to `Change <id>, finding PR<n>: ...` (Accept milestone | Hold); read
-            # only for an ask or awaiting-owner PR, and only once per process (marks.answers)
+        if pr.get("state") == "OPEN":
+            # the owner's answer to `Change <id>, finding PR<n>: ...` (Accept milestone | Hold), for
+            # every open PR: a Hold blocks at any tier. Parsed once per process, from sessions newer
+            # than the change (marks.answers)
             from marks import owner_decisions
 
             answer = owner_decisions(root, change.name).get(f"PR{pr['number']}", ("",))[0]

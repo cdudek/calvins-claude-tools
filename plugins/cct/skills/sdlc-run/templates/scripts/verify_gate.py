@@ -102,7 +102,7 @@ REASONS = {
     "not-converged",  # findings.md ## Converge has no `Converged:` line
 }
 LOCKED = ("facts.md", "done.json")
-WRITES_BINDINGS = True  # the report names change, owner and milestone (hooks/pass_proof.py reads this line)
+REPORT_FORMAT = 2  # a report of this format names its change, owner and milestone; hooks/pass_proof.py requires them
 LOCK_FORMAT = 3  # written by `approve` into lock.json; strict records apply to locks of this version or later
 ROUTING = ("size", "visualSource")  # decisions.json fields that route the gate, locked at approval
 TAIL = 60  # stdout lines of a failing check
@@ -884,6 +884,7 @@ def run(
 
     def finish(line: str, code: int) -> int:
         report["result"] = line
+        report["format"] = REPORT_FORMAT
         report["sha"] = sh("git", "rev-parse", "HEAD")
         if scope != "project":  # what the hook and the goal check bind a pass to
             report["change"], report["owner"] = change.name, project_branch(change, cfg)

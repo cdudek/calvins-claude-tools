@@ -88,8 +88,7 @@ def test_every_pr_state_is_done_or_names_a_command_that_leaves_it(
     _gate(repo, PASS)
     code, line = _goal(repo, {BRANCH: _table_pr(labels, state, failed)})
     gating = "ask" in labels
-    asked = gating or "awaiting-owner" in labels  # the transcript is read for these PRs only
-    held = (answer == "hold" and asked) or "hold" in labels
+    held = (answer == "hold" and state in ("armed", "unarmed")) or "hold" in labels  # a Hold blocks at any tier (open PRs are read)
     if code == 0:  # DONE: only a merged or an armed PR, never an unsigned ask, never a held one
         assert state in ("merged", "armed"), line
         assert not held, line

@@ -36,33 +36,20 @@ def milestone_of(branch: str, prefix: str, slug: str) -> int | None:
     return int(found[1]) if found else None
 
 
-def writes_bindings(repo: Path) -> bool:
-    """The repo's own scripts/verify_gate.py writes `change`, `owner` and `milestone` into its report
-    (3.20.5 and later). A kept older gate does not, and its reports are read the way the old reader
-    read them. The writer is detected from its source: the `WRITES_BINDINGS = True` constant (a
-    trailing comment is fine) or the assignment of `report["owner"]`. No gate file: assume it does."""
-    try:
-        text = (repo / "scripts" / "verify_gate.py").read_text(encoding="utf-8")
-    except OSError:
-        return True
-    return bool(
-        re.search(r"^WRITES_BINDINGS\s*=\s*True\b", text, re.M)
-        or re.search(r"report\[\s*[\"']owner[\"']\s*\]", text)
-    )
-
-
 def bound(
-    data: dict, scope: str, subject: str, number: int | None = None, owner: str | None = None, legacy: bool = False
+    data: dict, scope: str, subject: str, number: int | None = None, owner: str | None = None
 ) -> bool:
     """A gate report is a pass for this subject: `VERIFY PASS <scope> <subject> <sha>` naming the
     sha it records, and for a milestone the change and the number it was gated as (an unnumbered
     branch is 1; a report with no number is a pass for no numbered milestone). `owner`, when given,
-    is the project branch the caller needs: the report must name the same one. `legacy`: the gate that
-    wrote it never wrote those fields (writes_bindings), so only the result line is compared."""
+    is the project branch the caller needs: the report must name the same one. A report with no `format`
+    and none of the binding keys (change, owner, milestone) was written by a gate from before they
+    existed (a kept older gate): only its result line is compared. Any other report must carry every
+    binding and match it. The mode comes from the report, never from the checkout's gate text."""
     result, sha = str(data.get("result", "")), data.get("sha")
     if not sha or data.get("scope", scope) != scope or result != f"VERIFY PASS {scope} {subject} {sha}":
         return False
-    if legacy:
+    if "format" not in data and not {"change", "owner", "milestone"} & data.keys():
         return True
     if scope == "milestone" and (data.get("change") != subject or number is None or data.get("milestone") != number):
         return False

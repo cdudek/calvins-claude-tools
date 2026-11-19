@@ -240,7 +240,7 @@ class Repo:
             except (OSError, ValueError):
                 continue
             for subject, number in subjects:
-                if subject and proof("bound")(data, scope, subject, number, owner, not proof("writes_bindings")(self.top)):
+                if subject and proof("bound")(data, scope, subject, number, owner):
                     if proof("proves")(self.dir, rel, data["sha"], sha):
                         return str(data["sha"])
         return ""
@@ -251,15 +251,16 @@ class Repo:
         return bool(self.pass_sha(sha, scope, slug, branch, owner))
 
     def owners(self, milestone: str, *refs: str, live: bool = True) -> set[str]:
-        """The project branch each matching change record names for this milestone branch: "" for
-        a change without a project branch. Read from the records of the gated ref (with `live` off,
-        only those), so a checkout that does not hold the milestone's change yet still knows who
-        owns it, and an edit made after the gate does not change whom the pass was for."""
+        """The project branch each matching change record names for this milestone branch. Read from
+        the records of the gated ref (with `live` off, only those), so a checkout that does not hold
+        the milestone's change yet still knows who owns it, and an edit made after the gate does not
+        change whom the pass was for. A change with no project branch (one that joined the
+        milestone through Stage 1 `existing`, or a milestone with no project) names no owner."""
         out = set()
         for _, found in self.matching(milestone, *refs, live=live):
             project = found.get("project")
-            ok = isinstance(project, dict) and project.get("slug") and project.get("branch", True)
-            out.add(f"{self.p}{project['slug']}" if ok else "")
+            if isinstance(project, dict) and project.get("slug") and project.get("branch", True):
+                out.add(f"{self.p}{project['slug']}")
         return out
 
     def project_of(self, milestone: str, *refs: str) -> str:
@@ -453,14 +454,14 @@ def check_merge(repo: Repo, args: list[str], current: str = "") -> None:
                     f"Create or check out {into} first (`git switch {into}`), then merge.",
                 )
             owners = repo.owners(ref, gated, live=False)  # the change record as the gate saw it
-            if len(owners) != 1:
+            if len(owners) > 1 or not repo.matching(ref, gated, live=False):
                 block(
                     f"a merge of {ref} into {into}: its change record names no single owner.",
                     "Commit the milestone's decisions.json (milestone.slug and project.slug) on "
                     f"{ref}, one change per branch name, then merge.",
                     "decisions.json on the milestone ref",
                 )
-            parent = next(iter(owners))
+            parent = next(iter(owners), "")
             if parent != into:
                 block(
                     f"a merge of {ref} into {into}: it belongs to {parent or 'no project'}.",
