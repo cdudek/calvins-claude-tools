@@ -906,6 +906,8 @@ def apply_tiers_answer(cfg: dict) -> None:
 # file of that name: adopt writes one of them over an existing file only when the file is one of
 # these (unedited kit copy). test_adopt.py walks the history and fails on a missing hash.
 KIT_SPEC = {
+    "10c861037f2649ee",
+    "b5c5f0e0f76c6562",
     "132e4bf85fcacc3e",
     "2371a851cf373336",
     "52f000090cb648ad",
