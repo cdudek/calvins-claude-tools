@@ -877,13 +877,16 @@ def test_an_ask_pr_armed_or_not_is_never_done_without_the_owners_acceptance(
     pr = _pr("OPEN", armed=armed, labels=("ask",))
     assert _goal(repo, {BRANCH: pr}) == (1, f"GOAL {ID} OPEN pr-7-awaits-owner")
     _owner(repo, tmp_path, "PR7", "Accept milestone", monkeypatch)
+    sys.modules["marks"]._ANSWERS.clear()  # one process per call in real use; this test spans two
     assert _goal(repo, {BRANCH: _pr("OPEN", armed=True, labels=("ask",))})[0] == 0
 
 
 def test_a_recorded_hold_blocks_done_and_arming(repo: Path, tmp_path: Path, monkeypatch) -> None:
     _gate(repo, PASS)
     _owner(repo, tmp_path, "PR7", "Hold", monkeypatch)
-    for pr in (_pr("OPEN", armed=True, labels=("ship",)), _pr("OPEN", labels=("ask",)), _pr("OPEN", labels=("ship",))):
+    for pr in (_pr("OPEN", armed=True, labels=("ask",)), _pr("OPEN", labels=("ask",))):  # the transcript is read for ask PRs
+        assert _goal(repo, {BRANCH: pr}) == (1, f"GOAL {ID} OPEN pr-7-held")
+    for pr in (_pr("OPEN", armed=True, labels=("ship", "hold")), _pr("OPEN", labels=("show", "hold"))):  # others: the label
         assert _goal(repo, {BRANCH: pr}) == (1, f"GOAL {ID} OPEN pr-7-held")
     assert "nothing arms it" in sdlc_status.blocker(ID, f"GOAL {ID} OPEN pr-7-held")
     assert "gh pr merge" not in sdlc_status.blocker(ID, f"GOAL {ID} OPEN pr-7-held")
@@ -942,7 +945,7 @@ def test_an_unarmed_ask_pr_waits_for_a_person_not_for_an_arm_command_F2(repo: Pa
     code = _open_pr_goal(repo, {}, ("ask",))  # askGatesMerge defaults to on
     assert code == "pr-7-awaits-owner"
     sentence = sdlc_status.blocker(ID, f"GOAL {ID} OPEN {code}")
-    assert "gh pr merge" not in sentence and "you read it and decide" in sentence
+    assert "gh pr merge" not in sentence and "AskUserQuestion" in sentence
 
 
 def test_ask_that_does_not_gate_the_merge_is_left_to_the_workflow_F2(repo: Path) -> None:
@@ -1113,3 +1116,38 @@ def test_a_local_receipt_for_another_project_or_moved_tip_is_not_done_3_20_5(rep
     _sh(repo, "branch", "-f", "project/big", "milestone/redesign-r2-2")
     got = sdlc_status.goal(repo, repo / "changes" / ID, "milestone", None, gh=_no_gh)
     assert got[0] == 1 and "gate-sha-not-tip:milestone/redesign-r2-2" in got[1]
+
+
+# --- a kept older gate never writes change/owner/milestone: its reports are read the old way ----
+
+
+def _repo_gate(repo: Path, text: str) -> None:
+    (repo / "scripts").mkdir(exist_ok=True)
+    (repo / "scripts" / "verify_gate.py").write_text(text)
+
+
+def _strip_bindings(repo: Path) -> None:
+    _gate(repo, PASS)
+    path = repo / "changes" / ID / "verify" / "report.json"
+    data = json.loads(path.read_text())
+    path.write_text(json.dumps({k: v for k, v in data.items() if k not in ("change", "milestone", "owner")}))
+
+
+def test_a_report_from_a_kept_older_gate_is_read_the_old_way(repo: Path) -> None:
+    _repo_gate(repo, "def finish(report):\n    report['result'] = 'x'\n")  # a gate that never binds
+    _strip_bindings(repo)
+    assert _goal(repo, {BRANCH: _pr()})[0] == 0
+
+
+@pytest.mark.parametrize(
+    "gate",
+    [
+        "report['change'], report['owner'] = a, b\n",
+        'report["owner"] = project_branch(change, cfg)\n',
+        "WRITES_BINDINGS = True  # report names change, owner, milestone\n",
+    ],
+)
+def test_the_bindings_are_required_when_the_installed_gate_writes_them(repo: Path, gate: str) -> None:
+    _repo_gate(repo, gate)
+    _strip_bindings(repo)
+    assert _goal(repo, {BRANCH: _pr()}) == (1, f"GOAL {ID} OPEN milestone-gate-pass")

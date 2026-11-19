@@ -260,3 +260,42 @@ def test_audit_understands_the_preset_repeat_and_its_base_placeholder(tmp_path: 
     (verify / "report.json").write_text(json.dumps({"sha": "abc1234def", "checks": [{"name": "e2e-repeat", "run": expanded, "status": "pass"}]}))
     r = _audit(repo, env)
     assert "never ran" not in r.stdout and "does not exist" not in r.stdout, r.stdout
+
+
+def _commit_at(repo: Path, message: str, stamp: str) -> None:
+    stamp = stamp.replace("Z", "+00:00")
+    _git(repo, "add", "-A")
+    subprocess.run(
+        ["git", "-c", "user.name=t", "-c", "user.email=t@t", "commit", "-qm", message],
+        cwd=repo, check=True, capture_output=True, env={**_env(), "GIT_COMMITTER_DATE": stamp},
+    )  # fmt: skip
+
+
+def test_fix_it_now_passes_only_after_the_box_is_ticked_again(tmp_path: Path) -> None:
+    from test_verify_gate import _dialog, _dispose, _later, _owner_gate
+
+    repo = _milestone_repo(tmp_path)
+    open_item = "## Blocking\n\n- [ ] **B2** the card overflows at 320\n\n"
+    ticked = open_item.replace("[ ]", "[x]")
+    _dispose(repo, ticked)
+    answers = _dialog(label="Block the close", n=1) + _dialog(label="Fix it now", n=2)
+    assert _last(_owner_gate(repo, answers)) == "VERIFY BLOCKED reason=findings-open"
+    (repo / "changes" / ID / "findings.md").write_text(open_item)  # the fix round reopens it
+    _commit_at(repo, "reopen", _later(300))
+    (repo / "changes" / ID / "findings.md").write_text(ticked)  # and ticks it after the fix
+    _commit_at(repo, "fixed", _later(400))
+    assert _last(_owner_gate(repo, answers)).startswith(f"VERIFY PASS milestone {ID}")
+
+
+def test_a_visual_run_does_not_touch_the_milestone_number(tmp_path: Path) -> None:
+    """The visual loop used the same variable as the milestone number: M2 was recorded as M1."""
+    repo = _milestone_repo(tmp_path)
+    _git(repo, "checkout", "-q", "-b", "milestone/trial-2")
+    checker = tmp_path / "checker.py"
+    checker.write_text("import sys\nsys.exit(0)\n")
+    _commit_files(repo, validation_md="| F1 | x | y | z | met |\n")
+    r = _gate(repo, "milestone", ID, "--visual-check", str(checker), "--visual-run", "run1")
+    assert _last(r).startswith(f"VERIFY PASS milestone {ID}"), r.stdout
+    verify = repo / "changes" / ID / "verify"
+    assert json.loads((verify / "report.json").read_text())["milestone"] == 2
+    assert (verify / "milestone-2.json").exists() and not (verify / "milestone-1.json").exists()

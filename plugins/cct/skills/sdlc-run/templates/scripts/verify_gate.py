@@ -102,6 +102,7 @@ REASONS = {
     "not-converged",  # findings.md ## Converge has no `Converged:` line
 }
 LOCKED = ("facts.md", "done.json")
+WRITES_BINDINGS = True  # the report names change, owner and milestone (hooks/pass_proof.py reads this line)
 LOCK_FORMAT = 3  # written by `approve` into lock.json; strict records apply to locks of this version or later
 ROUTING = ("size", "visualSource")  # decisions.json fields that route the gate, locked at approval
 TAIL = 60  # stdout lines of a failing check
@@ -552,7 +553,7 @@ def milestone_blockers(change: Path, number: int | None = None) -> tuple[str, li
         repo = Path(sh("git", "-C", str(change), "rev-parse", "--show-toplevel") or ".")
         from marks import owner_decisions
 
-        decided = owner_decisions(repo, change.name, change / "findings.md", "**{}**")
+        decided = owner_decisions(repo, change.name, change / "findings.md", "**{}**", with_time=True)
     # a terminal `Block the close` answer counts against every finding, ticked or not: a ticked
     # box is no evidence against the owner's block; a later answer from the owner resolves it
     blocked = [
@@ -563,11 +564,21 @@ def milestone_blockers(change: Path, number: int | None = None) -> tuple[str, li
     if blocked:
         return "findings-blocked", blocked
     open_ids = [k for (mark, _), k in zip(items, ids) if mark == " "]
+
+    def ticked_after_fix(k: str) -> bool:
+        """`Fix it now` is an instruction: a ticked box counts only if it was ticked after it."""
+        from marks import first_seen
+
+        stamp = decided[k][2]
+        began = first_seen(repo, change / "findings.md", f"[x] **{k}**")
+        return bool(began and began > stamp)
+
     # an answer binds to exactly one open item: an id shared by two open items settles neither
     open_items = [
         text
         for (mark, text), k in zip(items, ids)
-        if mark == " " and not (k and open_ids.count(k) == 1 and decided.get(k, ("",))[0] in SETTLED)
+        if (mark == " " and not (k and open_ids.count(k) == 1 and decided.get(k, ("",))[0] in SETTLED))
+        or (mark == "x" and k and decided.get(k, ("",))[0] == "fix" and not ticked_after_fix(k))
     ]
     if open_items:
         return "findings-open", [f"findings.md: open: {i[:80]}" for i in open_items]
@@ -1037,10 +1048,10 @@ def run(
                 "dialog `Change <id>, finding visual-skip: ...` answered Skip visual evidence)",
             )
         )
-    for number, visual_run in enumerate(visual_runs or [], 1):
+    for k, visual_run in enumerate(visual_runs or [], 1):  # not `number`: finish() reads the milestone number
         evidence.append(
             {
-                "name": f"ux-visual-{number}",
+                "name": f"ux-visual-{k}",
                 "cache": False,
                 "run": shlex.join(
                     [

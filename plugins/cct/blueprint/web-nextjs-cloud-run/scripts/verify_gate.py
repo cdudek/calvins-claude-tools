@@ -102,6 +102,7 @@ REASONS = {
     "not-converged",  # findings.md ## Converge has no `Converged:` line
 }
 LOCKED = ("facts.md", "done.json")
+WRITES_BINDINGS = True  # the report names change, owner and milestone (hooks/pass_proof.py reads this line)
 LOCK_FORMAT = 3  # written by `approve` into lock.json; strict records apply to locks of this version or later
 ROUTING = ("size", "visualSource")  # decisions.json fields that route the gate, locked at approval
 TAIL = 60  # stdout lines of a failing check
@@ -288,6 +289,9 @@ E2E_SCOPED = re.compile(
 )
 
 
+E2E_REPEAT = re.compile(r"--repeat-each|\bseq\s+3\b|\bin\s+1\s+2\s+3\b|--count[= ]3")
+
+
 def has_e2e_config(repo: Path) -> bool:
     """The repo has an E2E suite of its own: a playwright config or an e2e/ folder."""
     return (repo / "e2e").is_dir() or any(repo.glob("playwright.config.*"))
@@ -299,11 +303,16 @@ def full_e2e_gap(checks: list, repo: Path) -> str:
     if not has_e2e_config(repo):
         return ""
     cmds = [c["run"] if isinstance(c, dict) else c for c in checks]
-    if any(E2E_ENTRY.search(c) and not E2E_SCOPED.search(c) for c in cmds):
+    full = any(E2E_ENTRY.search(c) and not E2E_SCOPED.search(c) for c in cmds)
+    repeat = any(E2E_ENTRY.search(c) and E2E_REPEAT.search(c) for c in cmds)
+    if full and repeat:
         return ""
     return (
-        "sdlc.json checks.milestone has no full E2E entry although the repo has an E2E suite: add "
-        "the full E2E command (the stack's, run once) and a repeat (x3) of the changed and flaky specs"
+        "sdlc.json checks.milestone has no full E2E entry and a repeat (x3) of the changed and flaky specs "
+        "although the repo has an E2E suite: add the full E2E command (the stack's, run once) and the repeat"
+        if not full
+        else "sdlc.json checks.milestone has a full E2E entry but no repeat (x3) of the changed and flaky specs "
+        "although the repo has an E2E suite: add the repeat"
     )
 
 
@@ -335,12 +344,28 @@ def unsafe_substitutions(change_id: str, cfg: dict) -> str:
     return ""
 
 
-def expand(cmd: str, change_id: str, cfg: dict) -> str:
-    """`{id}` is the change, `{base}` the default branch on origin (the diff base of a repeat run).
-    Both go into a command run by a shell, so only plain names are substituted."""
+def parent_ref(change: Path, cfg: dict, repo: Path) -> str:
+    """The ref a milestone's diff base is: the project branch it merges into (origin's, or the
+    local one in local mode) when the change has a project branch that exists, else the default
+    branch on origin."""
+    if (pb := project_branch(change, cfg)) and plain_branch(pb):
+        local = merges_locally(cfg) and sh("git", "-C", str(repo), "rev-parse", "--verify", "--quiet", f"{pb}^{{commit}}")
+        if local:
+            return pb
+        if sh("git", "-C", str(repo), "rev-parse", "--verify", "--quiet", f"origin/{pb}^{{commit}}"):
+            return f"origin/{pb}"
+    return f"origin/{cfg.get('defaultBranch') or 'main'}"
+
+
+def expand(cmd: str, change_id: str, cfg: dict, base: str = "") -> str:
+    """`{id}` is the change, `{base}` the diff base of a repeat run: `base` (the real parent ref,
+    see parent_ref) or else the default branch on origin. Both go into a command run by a shell,
+    so only plain names are substituted."""
     if why := unsafe_substitutions(change_id, cfg):
         raise ValueError(why)
-    base = f"origin/{cfg.get('defaultBranch') or 'main'}"
+    base = base or f"origin/{cfg.get('defaultBranch') or 'main'}"
+    if not plain_branch(base):
+        raise ValueError(f"the diff base {base!r} is not a plain ref")
     return cmd.replace("{id}", shlex.quote(change_id)).replace("{base}", shlex.quote(base))
 
 
@@ -528,7 +553,7 @@ def milestone_blockers(change: Path, number: int | None = None) -> tuple[str, li
         repo = Path(sh("git", "-C", str(change), "rev-parse", "--show-toplevel") or ".")
         from marks import owner_decisions
 
-        decided = owner_decisions(repo, change.name, change / "findings.md", "**{}**")
+        decided = owner_decisions(repo, change.name, change / "findings.md", "**{}**", with_time=True)
     # a terminal `Block the close` answer counts against every finding, ticked or not: a ticked
     # box is no evidence against the owner's block; a later answer from the owner resolves it
     blocked = [
@@ -539,11 +564,21 @@ def milestone_blockers(change: Path, number: int | None = None) -> tuple[str, li
     if blocked:
         return "findings-blocked", blocked
     open_ids = [k for (mark, _), k in zip(items, ids) if mark == " "]
+
+    def ticked_after_fix(k: str) -> bool:
+        """`Fix it now` is an instruction: a ticked box counts only if it was ticked after it."""
+        from marks import first_seen
+
+        stamp = decided[k][2]
+        began = first_seen(repo, change / "findings.md", f"[x] **{k}**")
+        return bool(began and began > stamp)
+
     # an answer binds to exactly one open item: an id shared by two open items settles neither
     open_items = [
         text
         for (mark, text), k in zip(items, ids)
-        if mark == " " and not (k and open_ids.count(k) == 1 and decided.get(k, ("",))[0] in SETTLED)
+        if (mark == " " and not (k and open_ids.count(k) == 1 and decided.get(k, ("",))[0] in SETTLED))
+        or (mark == "x" and k and decided.get(k, ("",))[0] == "fix" and not ticked_after_fix(k))
     ]
     if open_items:
         return "findings-open", [f"findings.md: open: {i[:80]}" for i in open_items]
@@ -954,6 +989,10 @@ def run(
     suite = "milestone" if scope == "project" else scope
     checks = cfg.get("checks", {}).get(suite, [])
     if suite == "milestone" and (gap := full_e2e_gap(checks, repo)):
+        if current_format(change) and scope == "milestone":
+            # a suite added after approval: the locked checks cannot prove it, the engineer approves again
+            print(gap)
+            return finish("VERIFY BLOCKED reason=env", 3)
         # an approval made before this rule keeps working: report, never fail
         print(f"upgrade gap: {gap}")
         report.setdefault("upgrade_gaps", []).append(gap)
@@ -1009,10 +1048,10 @@ def run(
                 "dialog `Change <id>, finding visual-skip: ...` answered Skip visual evidence)",
             )
         )
-    for number, visual_run in enumerate(visual_runs or [], 1):
+    for k, visual_run in enumerate(visual_runs or [], 1):  # not `number`: finish() reads the milestone number
         evidence.append(
             {
-                "name": f"ux-visual-{number}",
+                "name": f"ux-visual-{k}",
                 "cache": False,
                 "run": shlex.join(
                     [
@@ -1027,6 +1066,7 @@ def run(
         )
     checks = evidence + checks
 
+    diff_base = parent_ref(change, cfg, repo) if scope == "milestone" else ""
     cache_path = out_dir / "cache.json"
     cache = json.loads(cache_path.read_text()) if cache_path.exists() else {}
     tree = sh("git", "rev-parse", "HEAD^{tree}")
@@ -1056,7 +1096,7 @@ def run(
     first_failure: tuple[str, str, str] | None = None  # --keep-going: the verdict names the first
     for check in checks:
         name = check["name"]
-        cmd = expand(check["run"], change.name, cfg)
+        cmd = expand(check["run"], change.name, cfg, diff_base)
         key = cache_key(tree, cmd, now) if check.get("cache", True) and tree else ""
         if key in cache:
             report["checks"].append(
@@ -1133,6 +1173,7 @@ def run(
 def checker_exists(cmd: str, repo: Path) -> bool:
     """The program a check runs exists. shortcut: reads only the first command of a `a && b`
     line, so a broken second command is not seen; split it into two checks to audit both."""
+    cmd = re.sub(r"^(?:\s*\w+=\$\(\s*(?:\{\s*)?)+", "", cmd)  # `specs=$( { git diff ...`: a shell fragment
     try:
         words = shlex.split(cmd)
     except ValueError:
@@ -1240,7 +1281,7 @@ def audit(cfg: dict, repo: Path, evidence: bool = True) -> int:
         for i, check in enumerate(checks, 1):
             check = check if isinstance(check, dict) else {"run": check}
             cmd, name = check["run"], check.get("name") or f"check-{i}"
-            prefix = cmd.split("{id}")[0].strip()
+            prefix = cmd.split("{id}")[0].split("{base}")[0].strip()  # receipts hold the expanded line
             mine = [j for j in jobs if prefix and prefix in j["body"]]
             when = next((v for k, v in sorted(runs.items()) if k.startswith(prefix)), None)
             if not mine:

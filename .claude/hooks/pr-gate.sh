@@ -240,7 +240,7 @@ class Repo:
             except (OSError, ValueError):
                 continue
             for subject, number in subjects:
-                if subject and proof("bound")(data, scope, subject, number, owner):
+                if subject and proof("bound")(data, scope, subject, number, owner, not proof("writes_bindings")(self.top)):
                     if proof("proves")(self.dir, rel, data["sha"], sha):
                         return str(data["sha"])
         return ""

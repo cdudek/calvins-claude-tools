@@ -52,7 +52,8 @@ from change_docs import MARKER, ids, readme
 for _sub in ("scripts", "hooks"):
     sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "templates" / _sub))
 
-from pass_proof import bound, proves  # noqa: E402
+from pass_proof import bound as _bound  # noqa: E402
+from pass_proof import proves, writes_bindings  # noqa: E402
 
 STAGES = ("Intent", "UX plan", "Facts", "Tech plan", "Build", "Milestone", "Outcome")
 
@@ -215,6 +216,11 @@ def contains(root: Path, sha: str, into: str) -> bool:
     )
 
 
+def bound(root: Path, data: dict, scope: str, subject: str, number: int | None, owner: str | None) -> bool:
+    """pass_proof.bound, with a report from a kept older gate (one that never writes the bindings) read the old way."""
+    return _bound(data, scope, subject, number, owner, legacy=not writes_bindings(root))
+
+
 def same_head(root: Path, cfg: dict, gated: str, head: str) -> bool:
     """What the gate passed still holds at `head` (pass_proof.py, the rule pr-gate.sh applies)."""
     return proves(root, str(cfg.get("changesDir", "changes")), gated, head)
@@ -260,16 +266,56 @@ def parent_of(change: Path, cfg: dict, scope: str, head: str = "") -> str:
     return f"{(cfg.get('milestones') or {}).get('branchPrefix', 'milestone/')}{slug}"
 
 
-def waiting_on(root: Path, cfg: dict, pr: dict) -> str:
-    """Why an open PR is not armed: the reader decides an `ask` PR while askGatesMerge is on, the
-    tier workflow arms the others into the default branch, and only a repo without that workflow
-    leaves arming to the agent."""
-    if "ask" in {str(x.get("name")) for x in pr.get("labels") or []} and cfg.get("askGatesMerge", True):
-        return "awaits-owner"
+def waiting_on(root: Path, cfg: dict, pr: dict, accepted: bool = False) -> str:
+    """Why an open PR is not armed: the reader decides an `ask` PR while askGatesMerge is on (until
+    the owner accepts: the tier workflow never arms an ask PR, so after the acceptance the agent
+    does), the tier workflow arms the others into the default branch, and only a repo without that
+    workflow leaves arming to the agent."""
+    ask = "ask" in {str(x.get("name")).lower() for x in pr.get("labels") or []}
+    if ask and cfg.get("askGatesMerge", True):
+        return "not-merged-or-armed" if accepted else "awaits-owner"
     workflow = (root / ".github" / "workflows" / "ship-show-ask.yml").exists()
     if workflow and pr.get("baseRefName") == (cfg.get("defaultBranch") or "main"):
         return "awaits-workflow"
     return "not-merged-or-armed"
+
+
+FAILED_CHECKS = {"FAILURE", "TIMED_OUT", "CANCELLED", "ACTION_REQUIRED", "STARTUP_FAILURE", "ERROR"}
+
+
+def pr_flag(root: Path, cfg: dict, pr: dict, answer: str = "") -> tuple[str, str]:
+    """(phase, flag) of one PR. Phases: merged, awaiting-ci (armed, nothing left for the agent),
+    published (open, not armed), awaiting-owner, held, failed (red CI) and closed. The flag is the
+    word after `pr-<n>-` in the goal line, empty for the two phases that are done. `answer` is the
+    owner's latest answer to `Change <id>, finding PR<n>: ...` (accepted | hold | ""), read only for
+    an ask PR."""
+    names = {str(x.get("name", "")).lower() for x in pr.get("labels") or []}
+    merged = pr.get("state") == "MERGED" or bool(pr.get("mergedAt"))
+    armed = pr.get("state") == "OPEN" and bool(pr.get("autoMergeRequest"))
+    gating = "ask" in names and cfg.get("askGatesMerge", True)
+    accepted = answer == "accepted"
+    if answer == "hold" or "hold" in names:
+        return "held", "held"
+    if pr.get("state") == "CLOSED":
+        return "closed", "closed"
+    if gating and not accepted:  # a merge that outran the owner is still unsigned
+        return "awaiting-owner", "awaits-owner"
+    if merged:
+        return "merged", ""
+    if "awaiting-owner" in names:
+        return ("published", "label-awaiting-owner") if accepted else ("awaiting-owner", "awaits-owner")
+    if any(str(c.get("conclusion", "")).upper() in FAILED_CHECKS for c in pr.get("statusCheckRollup") or [] if isinstance(c, dict)):
+        return "failed", "ci-failed"
+    if armed:
+        return "awaiting-ci", ""
+    tiered = (
+        pr.get("baseRefName") == (cfg.get("defaultBranch") or "main")
+        and cfg.get("tiers") is not False
+        and (root / ".github" / "workflows" / "ship-show-ask.yml").exists()  # it sets the label
+    )
+    if tiered and not names & {"ask", "show", "ship"}:
+        return "published", "awaits-tier"
+    return "published", waiting_on(root, cfg, pr, accepted)
 
 
 def goal(
@@ -297,7 +343,7 @@ def goal(
     # a pass counts for the milestone it was gated as (the goal's last one without --milestone) and
     # the project the change belongs to: M1's pass never finishes M2, nor another project's
     number = (n or max(planned(change), 1)) if scope == "milestone" else None
-    if passed and scope != "project" and not bound(report, scope, subject, number, project):
+    if passed and scope != "project" and not bound(root, report, scope, subject, number, project):
         passed = None
     missing = [] if passed else [f"{scope}-gate-pass"]
     local = scope == "milestone" and project and merges_locally(cfg)
@@ -316,7 +362,7 @@ def goal(
                 tip = git(root, "rev-parse", "--verify", "--quiet", f"{b}^{{commit}}")
                 if receipt:
                     # a receipt counts only for its own milestone and change, never a copy
-                    ok = bound(receipt, "milestone", change.name, int(i), project)
+                    ok = bound(root, receipt, "milestone", change.name, int(i), project)
                     if not (ok and contains(root, str(receipt.get("sha", "")), into)):
                         missing.append(f"receipt-not-merged:{i}")
                         continue
@@ -339,7 +385,7 @@ def goal(
         found = gh(
             root,
             *("pr", "list", "--head", branch, "--state", "all", "--limit", "1"),
-            *("--json", "number,headRefOid,state,autoMergeRequest,mergedAt,baseRefName,labels"),
+            *("--json", "number,headRefOid,state,autoMergeRequest,mergedAt,baseRefName,labels,statusCheckRollup"),
         )
         if found is None:
             return 1, f"{name} OPEN gh-unavailable"
@@ -348,32 +394,14 @@ def goal(
             continue
         pr = found[0]
         merged = pr.get("state") == "MERGED" or bool(pr.get("mergedAt"))
-        armed = pr.get("state") == "OPEN" and bool(pr.get("autoMergeRequest"))
-        names_on = {str(x.get("name", "")).lower() for x in pr.get("labels") or []}
-        flag = ""
-        if not merged and pr.get("state") == "OPEN":
-            # the owner's answer to `Change <id>, finding PR<n>: ...` (Accept milestone | Hold)
+        answer = ""
+        if {"ask", "awaiting-owner"} & {str(x.get("name", "")).lower() for x in pr.get("labels") or []} and pr.get("state") != "CLOSED":
+            # the owner's answer to `Change <id>, finding PR<n>: ...` (Accept milestone | Hold); read
+            # only for an ask or awaiting-owner PR, and only once per process (marks.answers)
             from marks import owner_decisions
 
             answer = owner_decisions(root, change.name).get(f"PR{pr['number']}", ("",))[0]
-            if answer == "hold":
-                flag = "held"
-            elif "ask" in names_on and answer != "accepted" and cfg.get("askGatesMerge", True):
-                flag = "awaits-owner"  # armed or not: auto-merge must not win the race
-        if not flag and not (merged or armed):
-            # arming comes after the owner's disposition and after the tier label: a closed PR and
-            # a tiered PR still without its label are never recommended for `gh pr merge --auto`
-            tiered = (
-                pr.get("baseRefName") == (cfg.get("defaultBranch") or "main")
-                and cfg.get("tiers") is not False
-                and (root / ".github" / "workflows" / "ship-show-ask.yml").exists()  # it sets the label
-            )
-            if pr.get("state") == "CLOSED":
-                flag = "closed"
-            elif tiered and not names_on & {"ask", "show", "ship"}:
-                flag = "awaits-tier"
-            else:
-                flag = waiting_on(root, cfg, pr)
+        _, flag = pr_flag(root, cfg, pr, answer)
         if pr.get("baseRefName") != parent_of(change, cfg, scope, branch):
             missing.append(f"pr-{pr['number']}-wrong-base")  # first: arming it would merge elsewhere
         if flag:
@@ -382,7 +410,7 @@ def goal(
     if prs and passed and not same_head(root, cfg, passed.group(1), prs[-1][0].get("headRefOid", "")):
         missing.append(f"gate-sha-not-pr-{prs[-1][0]['number']}-head")
     if scope == "milestone":
-        if blocker := milestone_blockers(change):  # the gate's own record rules, one definition
+        if blocker := milestone_blockers(change, number):  # the gate's own record rules, one definition
             missing.append(blocker[0])
     if missing:
         return 1, f"{name} OPEN " + ",".join(missing)
@@ -579,18 +607,30 @@ def blocker(subject: str, line: str, scope: str = "milestone", base: str = "") -
             fill = {"scope": scope, "id": subject, "n": n, "base": base or "<parent branch>"}
             return f"Blocking: {what.format(**fill)}, because {why}; {who} runs `{step.format(**fill)}`."
     waits = re.fullmatch(
-        r"pr-(\d+)-(closed|held|awaits-tier|awaits-owner|awaits-workflow|wrong-base)", first
+        r"pr-(\d+)-(closed|held|awaits-tier|awaits-owner|awaits-workflow|wrong-base|ci-failed|label-awaiting-owner)", first
     )
     if waits and waits[2] == "awaits-owner":
         return (
-            f"Blocking: PR {waits[1]} is labelled ask and waits for its owner's acceptance, because "
-            f"askGatesMerge is on; you read it and decide (Accept milestone or Hold), no one arms auto-merge."
+            f"Blocking: PR {waits[1]} waits for its owner's acceptance, because it is labelled ask "
+            f"(or awaiting-owner) and askGatesMerge is on; the agent asks the owner "
+            f"`AskUserQuestion` \"Change {subject}, finding PR{waits[1]}: ...\" with the options "
+            f"Accept milestone and Hold, and arms nothing before the answer."
+        )
+    if waits and waits[2] == "label-awaiting-owner":
+        return (
+            f"Blocking: PR {waits[1]} is accepted but still carries the awaiting-owner label, which "
+            f"stops the tier workflow; the agent runs `gh pr edit {waits[1]} --remove-label awaiting-owner`."
+        )
+    if waits and waits[2] == "ci-failed":
+        return (
+            f"Blocking: a check of PR {waits[1]} failed, so arming it would never merge; the agent "
+            f"runs `gh pr checks {waits[1]}`, fixes the failure on the branch and pushes."
         )
     if waits and waits[2] == "awaits-workflow":
         return (
             f"Blocking: PR {waits[1]} is open without auto-merge, because the tier workflow arms ship "
-            f"and show PRs into the default branch; the workflow runs "
-            f"`gh pr view {waits[1]} --json labels,autoMergeRequest` to check it."
+            f"and show PRs into the default branch; the agent runs "
+            f"`gh pr view {waits[1]} --json labels,autoMergeRequest` to see whether it ran."
         )
     if waits and waits[2] == "wrong-base":
         return (
@@ -598,12 +638,22 @@ def blocker(subject: str, line: str, scope: str = "milestone", base: str = "") -
             f"{base or 'its parent'}; the agent runs `gh pr edit {waits[1]} --base {base or '<parent branch>'}`."
         )
     if waits:
-        what, step, who = {
-            "closed": ("closed without merging, so there is nothing to arm", "opens a new PR for the gated head", "the agent"),
-            "held": ("on Hold, so nothing arms it", "decides what is left", "you"),
-            "awaits-tier": ("waiting for its tier label, so nothing arms it", "waits for the workflow to set it", "the agent"),
+        what, step = {
+            "closed": (
+                "closed without merging, so there is nothing to arm",
+                f"the agent runs `gh pr create --base {base or '<parent branch>'} --fill` for the gated head",
+            ),
+            "held": (
+                "on Hold, so nothing arms it",
+                f"you decide: `gh pr edit {waits[1]} --remove-label hold` for a label, or answer "
+                f"the dialog \"Change {subject}, finding PR{waits[1]}: ...\" with Accept milestone",
+            ),
+            "awaits-tier": (
+                "waiting for its tier label, so nothing arms it",
+                f"the agent runs `gh pr view {waits[1]} --json labels` until the workflow has set it",
+            ),
         }[waits[2]]
-        return f"Blocking: PR {waits[1]} is {what}; {who} {step}."
+        return f"Blocking: PR {waits[1]} is {what}; {step}."
     pr = re.fullmatch(r"pr-(\d+)-not-merged-or-armed", first)
     if pr:
         flag = "--merge" if scope in ("milestone", "project") else "--squash"  # as the tier workflow

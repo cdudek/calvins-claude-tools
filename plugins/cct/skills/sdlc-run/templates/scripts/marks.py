@@ -233,8 +233,8 @@ def _answers_in(lines: list[str], change_id: str) -> list[tuple[str, tuple[str, 
 
 
 def owner_decisions(
-    repo: Path, change_id: str, record: Path | None = None, needle: str = "{}"
-) -> dict[str, tuple[str, str]]:
+    repo: Path, change_id: str, record: Path | None = None, needle: str = "{}", with_time: bool = False
+) -> dict[str, tuple]:
     """finding id -> (kind, detail) from the owner's answers to AskUserQuestion dialogs whose
     question starts `Change <change id>, finding <id>: ` and whose options include the selected
     label (a trailing `(Recommended)` is ignored). kind is fix | accepted | deferred (detail: the milestone) | blocked | hold. Only the
@@ -252,6 +252,8 @@ def owner_decisions(
             continue  # said before this incarnation of the finding existed
         if fid not in found or (stamp, order) > found[fid][0]:
             found[fid] = ((stamp, order), kind)
+    if with_time:  # (kind, detail, when it was answered)
+        return {fid: (*kind, stamp) for fid, ((stamp, _), kind) in found.items()}
     return {fid: kind for fid, (_, kind) in found.items()}
 
 

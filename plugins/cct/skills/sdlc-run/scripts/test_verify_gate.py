@@ -1068,7 +1068,9 @@ def test_a_ticked_item_cannot_override_a_block_until_the_owner_answers_again(tmp
     r = _owner_gate(repo, block)
     assert r.returncode == 3 and _verdict(r) == "VERIFY BLOCKED reason=findings-blocked"
     assert "B2" in r.stdout and "ticked" in r.stdout
-    assert _verdict(_owner_gate(repo, block + _dialog(label="Fix it now", n=2))).startswith("VERIFY PASS")
+    # "Fix it now" is an instruction, not a settlement: the box must be ticked again after it
+    fix = _verdict(_owner_gate(repo, block + _dialog(label="Fix it now", n=2)))
+    assert fix == "VERIFY BLOCKED reason=findings-open"
 
 
 def test_a_convergence_id_is_dispositioned_through_the_gate(tmp_path: Path) -> None:
