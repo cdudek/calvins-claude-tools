@@ -469,6 +469,19 @@ def milestone_facts(change: Path, number: int | None = None) -> tuple[list[str],
     milestone `number`, the `## Milestones` row of `plan.md` selects them and a missing or empty row is
     a problem; an older lock uses every approved fact (its plan rows were never locked)."""
     facts, problems = approved_facts(change)
+    if number and facts and spec.applies(change):  # layout 4: the rules of this milestone's tasks
+        tasks = spec.table(read(change / "tasks.md"), "Tasks")
+        if not tasks:  # a scope S change has no task table: one milestone, every rule
+            return facts, problems
+        mine = {
+            f"R{n}"
+            for t in tasks
+            if re.match(rf"M?{number}\b", spec._cell(t, "milestone"))
+            for n in re.findall(r"R(\d+)", spec._cell(t, "rules", "satisf"))
+        }
+        if not mine & set(facts):
+            return [], problems + [f"validation.md: tasks.md has no task for M{number} that lists approved rules"]
+        return [f for f in facts if f in mine], problems
     if number and facts and current_format(change):
         mine = row_facts(read(change / "plan.md"), number, facts)
         if not mine:
@@ -1103,6 +1116,10 @@ def run(
             print("  git fetch origin && " + " && ".join(f"git merge {b}" for b in behind))
             return finish(f"VERIFY FAIL {scope} {change.name} check=parent-sync", 1)
 
+    if scope == "milestone" and spec.applies(change):  # the living spec: rules, tags and the diff
+        if drift := spec.check(repo, parent_ref(change, cfg, repo)):
+            print("\n".join(drift[:TAIL]))
+            return finish(f"VERIFY FAIL {scope} {change.name} check=spec", 1)
     if scope == "milestone" and (blocker := milestone_blockers(change, number)):
         print("\n".join(blocker[1][:TAIL]))
         return finish(f"VERIFY BLOCKED reason={blocker[0]}", 3)

@@ -79,3 +79,46 @@ def test_approve_refuses_what_the_consistency_check_refuses(tmp_path: Path) -> N
     r = gate(repo, "approve", ID)
     assert r.returncode == 1 and "still pending" in r.stdout
     assert last(r).startswith("APPROVE FAIL") and not (c / "lock.json").exists()
+
+
+# ------------------------------------------------------------------ milestone
+
+VALIDATION = "| R1 | retry | ran | tests/test_retry.py::test_retry | met |\n"
+
+
+def approved(repo: Path, c: Path) -> None:
+    commit(repo)
+    assert gate(repo, "approve", ID).returncode == 0
+    (c / "validation.md").write_text(VALIDATION)
+    (c / "findings.md").write_text("## Converge\n\nConverged: round 1\n")
+    commit(repo)
+
+
+def test_milestone_takes_its_facts_from_the_tasks_and_passes_when_the_rule_is_live_and_tested(
+    tmp_path: Path,
+) -> None:
+    repo = base_repo(tmp_path)
+    c = v4(repo)
+    approved(repo, c)
+    rule(repo, "billing", 1)  # planned to live at the milestone
+    tfile(repo, "test_retry.py", "# @R1", "def test_retry(): pass")
+    commit(repo)
+    r = gate(repo, "milestone", ID)
+    assert last(r).startswith(f"VERIFY PASS milestone {ID}"), r.stdout
+
+
+def test_milestone_fails_on_spec_drift_a_changed_rule_without_its_test(tmp_path: Path) -> None:
+    repo = base_repo(tmp_path, on_master=True)
+    sh(repo, "git", "checkout", "-q", "milestone/retry")
+    c = _change(repo, "S", tasks=TASKS)
+    (c / "spec.md").write_text((c / "spec.md").read_text().replace("| new |", "| changed |"))
+    rule(repo, "billing", 1, "When x, the system shall z.", status="planned")
+    approved(repo, c)
+    rule(repo, "billing", 1, "When x, the system shall z.")
+    commit(repo)
+    r = gate(repo, "milestone", ID)
+    assert last(r) == f"VERIFY FAIL milestone {ID} check=spec", r.stdout
+    assert "R1 changed but no test tagged @R1 changed with it" in r.stdout
+    tfile(repo, "test_retry.py", "# @R1", "def test_retry(): assert True")
+    commit(repo)
+    assert last(gate(repo, "milestone", ID)).startswith(f"VERIFY PASS milestone {ID}")
