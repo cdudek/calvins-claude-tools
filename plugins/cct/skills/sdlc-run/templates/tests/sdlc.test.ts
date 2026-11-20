@@ -69,6 +69,7 @@ const INTENT_SECTIONS = [
 ];
 const PLAN_SECTIONS = ["## Order of work", "## Done", "## Revisions"];
 const V3_SIZES = new Set(["none", "S", "M", "L"]);
+const NO_DESIGN = new Set(["null", "none", "spec"]); // a `design:` that names no separate design document
 const NO_UX_STAGE = new Set(["none", "S"]); // sizes with no UX stage: every activity is skipped (spec.py NO_UX_STAGE)
 const V3_KINDS = new Set(["feature", "bug", "refactor", "docs", "chore"]);
 const V3_ACTIVITIES = ["brief", "ia", "interaction", "screens", "prototype", "conformance", "validation"];
@@ -280,7 +281,7 @@ function checkChange(parent: string, id: string, archived: boolean) {
       expect(fm.change, `${a}: change`).toBe(id);
       if (!v4 || a === "spec.md") {
         expect(fm.design, `${a}: design`).toBeTruthy();
-        if (fm.design !== "null") expect(existsSync(join(ROOT, fm.design)), `${a}: design ${fm.design} does not exist`).toBe(true);
+        if (!NO_DESIGN.has(fm.design)) expect(existsSync(join(ROOT, fm.design)), `${a}: design ${fm.design} does not exist`).toBe(true);
       }
       if (archived && !v4) expect(fm.archived_at, `${a}: archived_at`).toMatch(/^\d{4}-\d{2}-\d{2}$/);
     }
@@ -338,7 +339,7 @@ function checkChange(parent: string, id: string, archived: boolean) {
   });
   it(`${id}: its design lists it under Milestones`, () => {
     const fm = frontmatter(join(dir, isV4(dir) ? "spec.md" : "plan.md"));
-    if (fm.design === "null") return;
+    if (NO_DESIGN.has(fm.design)) return;
     const design = readFileSync(join(ROOT, fm.design), "utf8");
     expect(design.includes(slug), `${fm.design} does not mention ${slug}`).toBe(true);
   });

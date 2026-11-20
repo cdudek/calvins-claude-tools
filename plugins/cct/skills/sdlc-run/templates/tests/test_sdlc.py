@@ -50,6 +50,7 @@ INTENT_SECTIONS = (
 PLAN_SECTIONS = ("## Order of work", "## Done", "## Revisions")
 V3_SIZES = {"none", "S", "M", "L"}
 NO_UX_STAGE = {"none", "S"}  # sizes with no UX stage: every activity is skipped (spec.py NO_UX_STAGE)
+NO_DESIGN = {"null", "none", "spec"}  # a `design:` that names no separate design document
 V3_KINDS = {"feature", "bug", "refactor", "docs", "chore"}
 V3_ACTIVITIES = (
     "brief",
@@ -240,7 +241,7 @@ def test_frontmatter_names_issue_change_and_spec(change: Path, archived: bool) -
         assert fm.get("change") == change.name, f"{change.name}/{a}: change"
         if not v4 or a == "spec.md":
             assert fm.get("design"), f"{change.name}/{a}: design"
-            if fm["design"] != "null":
+            if fm["design"] not in NO_DESIGN:
                 assert (REPO_ROOT / fm["design"]).is_file(), (
                     f"{change.name}/{a}: design {fm['design']} does not exist"
                 )
@@ -393,7 +394,7 @@ def test_v3_approved_plan_has_spec_guardrails(change: Path, archived: bool) -> N
 )
 def test_spec_lists_the_change_under_milestones(change: Path, archived: bool) -> None:
     fm = _frontmatter(change / ("spec.md" if _v4(change) else "plan.md"))
-    if fm["design"] == "null":
+    if fm["design"] in NO_DESIGN:
         return
     slug = _parts(change)["slug"]
     assert slug in (REPO_ROOT / fm["design"]).read_text(encoding="utf-8"), (
