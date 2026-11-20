@@ -445,7 +445,11 @@ ROW = '{"id": "a", "route": "/a", "design": ["b1"]}'
         {"old_string": "not in the file", "new_string": "x"},
         {"old_string": ROW},  # no new_string
         {"new_string": NOTE},  # no old_string
-        {"content": NOTE, "new_source": "[]"},  # two shapes at once
+        {"content": f"[{NOTE}]", "new_source": "[]"},  # a valid deviation-only write plus a field the hook does not model
+        {"old_string": ROW, "new_string": NOTE, "new_source": "[]"},
+        {"old_string": ROW, "new_string": NOTE, "surprise": "x"},
+        {"edits": [{"old_string": ROW, "new_string": NOTE, "surprise": "x"}]},
+        {"edits": [{"old_string": ROW, "new_string": NOTE}], "surprise": "x"},
         {"content": ["list"]},
         {},
     ],
@@ -485,3 +489,18 @@ def test_the_hook_and_the_gate_read_screens_json_without_its_deviations_the_same
 
 def test_the_routing_fields_are_the_gates(tmp_path: Path) -> None:
     assert pass_proof.ROUTING == verify_gate.ROUTING
+
+
+@pytest.mark.parametrize("name", ["Screens.json", "SCREENS.JSON", "screens/APPROVED.json", "Screens/approved.json", "Design.json"])
+def test_the_locked_files_are_matched_whatever_the_capitalization(tmp_path: Path, name: str) -> None:
+    repo, _ = _inventory_change(tmp_path)  # a case-insensitive volume opens the locked file under any spelling
+    r = edit(repo, f"changes/{ID}/{name}", content="[]")
+    assert r.returncode == 2 and "protectedEdit" in r.stderr, name
+
+
+def test_a_multi_edit_cannot_change_the_layout_of_a_locked_change(tmp_path: Path) -> None:
+    repo = make(tmp_path)
+    file = f"changes/{ID}/decisions.json"
+    text = (repo / file).read_text()
+    assert edit(repo, file, edits=[{"old_string": '"layout": 4', "new_string": '"layout": 3'}]).returncode == 2
+    assert edit(repo, file, edits=[{"old_string": '"size": "M"', "new_string": '"size": "M", "note": "x"'}]).returncode == 0, text

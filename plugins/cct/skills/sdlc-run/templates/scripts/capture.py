@@ -580,7 +580,7 @@ def uncovered(change: Path, approved: dict) -> list[str]:
     batches = data["batches"] if isinstance(data.get("batches"), dict) else {}
     log = [r for r in data["log"] if isinstance(r, dict)] if isinstance(data.get("log"), list) else []
     lock = next((d for rel in ("state/lock.json", "lock.json") if isinstance(d := read_json(change / rel), dict)), {})
-    out = [f"decision log: {p}" for p in chain_problems(log, data.get("head"), strict="design" in lock)]  # 3.26.1: the lock says how strict
+    out = [f"decision log: {p}" for p in chain_problems(log, data.get("head"), strict="design" in lock or "head" in data)]  # 3.26.1: a 3.26 lock, or the `head` 3.26.0 wrote into every approved.json
     repo = Path(subprocess.run(["git", "-C", str(change), "rev-parse", "--show-toplevel"], capture_output=True, text=True).stdout.strip() or ".")
     sys.dont_write_bytecode = True  # the gate checks that the tree is clean afterwards: no __pycache__ from here
     try:

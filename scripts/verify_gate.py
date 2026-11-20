@@ -194,6 +194,28 @@ def criteria_hash(change: Path, checks: object, plan: bool = True, design: bool 
     return hashes
 
 
+# the checks of capture.py a close relies on (evidence.py keeps the same list for the gallery): a kept older file lacking one is refused
+CAPTURE_CHECKS = ("binding_tag", "deviation_tag", "lock_sha", "image_problems", "link", "replayed", "board_file", "design_problems", "uncovered")
+
+
+def stale_capture(script: Path) -> str:
+    """"" when scripts/capture.py has every check and the strict chain; else the refusal line naming what is missing."""
+    import importlib.util
+
+    spec_ = importlib.util.spec_from_file_location("capture_close_probe", script)
+    try:
+        module = importlib.util.module_from_spec(spec_)
+        sys.dont_write_bytecode = True
+        spec_.loader.exec_module(module)
+    except Exception as err:  # an unreadable file is as stale as an old one
+        return f"scripts/capture.py cannot be loaded ({type(err).__name__}): run `adopt --migrate`"
+    missing = [n for n in CAPTURE_CHECKS if not hasattr(module, n)]
+    chain = getattr(module, "chain_problems", None)
+    if not missing and (chain is None or "strict" not in chain.__code__.co_varnames):
+        missing = ["chain_problems"]
+    return f"scripts/capture.py is older than this gate and lacks `{missing[0]}`: run `adopt --migrate`" if missing else ""
+
+
 def screens_core(text: str) -> str:
     """screens.json without the entries' `deviates` text: the one field of an entry the build may change after approval.
     hooks/pass_proof.py holds the same rule; test_passes keeps them equal."""
@@ -1710,10 +1732,11 @@ def run_close(
         )
     if app:  # one capture batch inside this close: preview reachability, two passes, the approved baselines
         script = Path(__file__).with_name("capture.py")
+        stale = stale_capture(script) if script.is_file() else ""
         evidence.append(
             {"name": "app-screens", "cache": False, "run": shlex.join([sys.executable, str(script), "run", str(change), "--group", *(["--upto", str(upto)] if (upto := capture_upto(change, number)) else [])])}
-            if script.is_file()
-            else refusal("app-screens", "scripts/capture.py is missing: run `adopt --upgrade` to install it")
+            if script.is_file() and not stale
+            else refusal("app-screens", stale or "scripts/capture.py is missing: run `adopt --upgrade` to install it")
         )
     if visual_check and (
         Path(visual_check).name != "visual-check.py"

@@ -2338,6 +2338,25 @@ def test_many_screens_need_no_design_system_audit_in_the_app_flow(tmp_path: Path
     assert _gate(repo, "approve", ID).returncode == 0
 
 
+def test_a_milestone_close_refuses_an_older_capture_py_and_names_the_missing_check(tmp_path: Path) -> None:
+    repo = _repo(tmp_path, [])
+    (repo / "sdlc.json").write_text(json.dumps({"checks": {"milestone": ["true"]}, "ux": "on"}))
+    (repo / "changes" / ID / "decisions.json").write_text(json.dumps(VISUAL))
+    _screens_json(repo)
+    _approve(repo)
+    path = repo / "scripts" / "capture.py"
+    path.write_text(path.read_text().replace("def replayed(", "def _gone_replayed("))
+    _git(repo, "add", ".")
+    _git(repo, "commit", "-qm", "an older capture.py")
+    r = _gate(repo, "milestone", ID)
+    assert "`replayed`" in r.stdout and "adopt --migrate" in r.stdout and "VERIFY BLOCKED" not in _last(r), r.stdout
+    assert r.returncode != 0
+    import evidence
+    import verify_gate
+
+    assert set(evidence.CHECKS) <= set(verify_gate.CAPTURE_CHECKS)
+
+
 def test_editing_screens_json_after_approval_blocks_the_milestone(tmp_path: Path) -> None:
     repo = _repo(tmp_path, ["true"])
     (repo / "sdlc.json").write_text(json.dumps({"checks": {"milestone": ["true"]}}))

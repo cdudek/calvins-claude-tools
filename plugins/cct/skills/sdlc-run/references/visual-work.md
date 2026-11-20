@@ -72,6 +72,8 @@ it is part of the batch the owner dialog names, and the question says how many d
 Board images are embedded: the page stays one offline file. The decision log is a hash chain (each entry
 holds the hash of the one before it and the lock sha; `approved.json` holds the last as `head`), and the
 gate refuses a trimmed or rewritten log and a batch a later send back spent.
+Known limit: the chain lives in the repo, so an older, whole `approved.json` put back (or a deleted one) is a
+rollback it cannot see without an anchor outside the repo; the owner's answers in their own transcript still bind each batch.
 
 Retired for these changes: design-bundle pinning, `marks.py` rows against bundles and references, the
 six-layer geometry tolerances and the design-system audit tied to board counts (the design-system pin

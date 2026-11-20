@@ -569,6 +569,27 @@ def test_a_ledger_path_counts_only_with_the_proof_a_live_worktree_has(tmp_path: 
     assert "screens-outside" not in decided and "screens-moved" not in decided
 
 
+def test_a_session_file_counts_only_when_its_own_records_carry_an_in_tree_cwd(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    import marks
+
+    main = tmp_path / "main"
+    (main / "changes" / ID).mkdir(parents=True)
+    (main / "changes" / ID / "screens.json").write_text("[]")
+    git = ["git", "-c", "user.name=t", "-c", "user.email=t@t"]
+    for cmd in (["git", "init", "-q"], ["git", "add", "."], [*git, "commit", "-qm", "i"]):
+        subprocess.run(cmd, cwd=main, check=True, capture_output=True)
+    home = tmp_path / "home"
+    monkeypatch.setenv("HOME", str(home))
+    ghost = main / ".worktrees" / "ghost"  # removed before the ledger existed
+    owner_answers(ghost, "screens-real", home=home, cwd=ghost)
+    folder = home / ".claude/projects" / re.sub(r"[^A-Za-z0-9]", "-", str(ghost.resolve()))
+    other = folder / "forged.jsonl"  # a second file in the folder whose records name no folder at all
+    forged = [json.loads(x) for x in (folder / "session.jsonl").read_text().replace("screens-real", "screens-forged").splitlines()]
+    other.write_text("".join(json.dumps({k: v for k, v in rec.items() if k != "cwd"}) + "\n" for rec in forged))
+    marks._ANSWERS.clear()
+    assert "screens-forged" not in marks.owner_decisions(main, ID) and "screens-real" not in marks.owner_decisions(main, ID)
+
+
 def test_an_early_close_checks_coverage_only_for_the_entries_due(tmp_path: Path) -> None:
     ents = [{**e, "milestone": 2 if e["id"].startswith("deals") else 1} for e in ENTRIES]
     repo = _repo(tmp_path, ents)

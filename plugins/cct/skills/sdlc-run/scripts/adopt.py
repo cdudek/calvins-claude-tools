@@ -1794,7 +1794,7 @@ def main() -> int:
         ("PreToolUse", "Bash", "gate-bash.sh", 5),
         ("PreToolUse", "Bash", "pr-gate.sh", 20),
         ("PreToolUse", "Bash", "helper-guard.sh", 5),
-        ("PreToolUse", "Edit|Write", "chain-gate.sh", 5),
+        ("PreToolUse", "Edit|MultiEdit|Write", "chain-gate.sh", 5),
         ("PostToolUse", "Edit|Write", "lint-on-edit.sh", 30),
         ("Stop", None, "verify-on-stop.sh", 300),
     ]
@@ -1806,6 +1806,10 @@ def main() -> int:
             "timeout": timeout,
         }
         if any(script in h.get("command", "") for g in groups for h in g.get("hooks", [])):
+            if script == "chain-gate.sh":  # 3.26.1: a gate registered for Edit|Write alone never saw a MultiEdit
+                for g in groups:
+                    if g.get("matcher") == "Edit|Write" and any(script in h.get("command", "") for h in g.get("hooks", [])):
+                        g["matcher"] = matcher
             continue
         group = {"hooks": [entry]}
         if matcher:

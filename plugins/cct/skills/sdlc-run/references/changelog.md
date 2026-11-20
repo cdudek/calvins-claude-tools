@@ -13,7 +13,8 @@ the engineer. A version with no migration lines needs nothing but a re-run of `a
 - **No check is ever stubbed.** `evidence.py` stubs only presentation helpers of an older `capture.py`; if a check is missing (`link`, `replayed`, `image_problems` and the others) it stops and names the function.
 - **The worktree ledger is proven.** A path from `sdlc/worktrees.json` counts only inside the repo's own `.worktrees` folder and only when the sessions recorded under it ran there.
 - **Runners are read through `-c` / `--call`**, and `bunx`, `bun x` / `bun run`, `pipx run`, `pdm run` and `rye run` join the list. What a runner runs is judged as a command of its own, and a runner option the parser cannot read makes the call a possible writer in the main folder (never a heavy one).
-- Mechanical: re-running `adopt --migrate` replaces `heavy.py`, `evidence.py`, `capture.py`, `marks.py`, `verify_gate.py` and `chain-gate.sh`, and stamps `sdlcVersion` 3.26.1.
+- **Review round:** the edit gate is registered for `Edit|MultiEdit|Write` (adopt widens an older registration) and refuses any payload with a field it does not model; locked file names match whatever the capitalization; the milestone close refuses an older `capture.py` like the gallery does; the strict log applies to any 3.26 approval (a `head` in `approved.json`); a session file counts only with its own in-tree `cwd`.
+- Mechanical: re-running `adopt --migrate` replaces `heavy.py`, `evidence.py`, `capture.py`, `marks.py`, `verify_gate.py` and `chain-gate.sh`, widens the `chain-gate.sh` matcher in `.claude/settings.json`, and stamps `sdlcVersion` 3.26.1.
 - Manual: none.
 
 ## 3.26.0 — the design is binding for what exists

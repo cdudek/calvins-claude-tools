@@ -168,7 +168,7 @@ def test_pretooluse_keeps_every_hook(tmp_path: Path) -> None:
     assert any("pr-gate.sh" in c for c in pre), pre
     assert any("helper-guard.sh" in c for c in pre), pre  # a helper's heavy call outside the queue
     matchers = {g.get("matcher") for g in settings["hooks"]["PreToolUse"]}
-    assert matchers == {"Bash", "Edit|Write"}, matchers
+    assert matchers == {"Bash", "Edit|MultiEdit|Write"}, matchers  # MultiEdit is an edit tool: the gate must see it
     # And a second adopt does not append them again.
     _adopt(repo)
     again = json.loads((repo / ".claude" / "settings.json").read_text(encoding="utf-8"))
@@ -2725,3 +2725,20 @@ def test_a_leftover_lockfile_cannot_mask_the_active_one(tmp_path: Path) -> None:
     out = _adopt(wt)
     assert out.returncode == 0 and not (repo / "prettier-argv.txt").exists()
     assert any("prettier is not installed in this worktree" in m for m in _sections(out.stdout)["MANUAL"])
+
+
+def test_adopt_widens_an_older_chain_gate_matcher_and_the_dogfood_settings_register_multi_edit(tmp_path: Path) -> None:
+    repo = _repo(tmp_path, "node")
+    _adopt(repo)
+    path = repo / ".claude" / "settings.json"
+    settings = json.loads(path.read_text(encoding="utf-8"))
+    for g in settings["hooks"]["PreToolUse"]:
+        if any("chain-gate.sh" in h["command"] for h in g["hooks"]):
+            g["matcher"] = "Edit|Write"  # what 3.26.0 and before registered
+    path.write_text(json.dumps(settings))
+    _adopt(repo)
+    again = json.loads(path.read_text(encoding="utf-8"))
+    gate = [g["matcher"] for g in again["hooks"]["PreToolUse"] if any("chain-gate.sh" in h["command"] for h in g["hooks"])]
+    assert gate == ["Edit|MultiEdit|Write"]
+    own = json.loads((Path(__file__).resolve().parents[5] / ".claude" / "settings.json").read_text(encoding="utf-8"))
+    assert [g["matcher"] for g in own["hooks"]["PreToolUse"] if any("chain-gate.sh" in h["command"] for h in g["hooks"])] == ["Edit|MultiEdit|Write"]

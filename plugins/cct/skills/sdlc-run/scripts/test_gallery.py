@@ -498,3 +498,15 @@ def test_a_board_image_outside_the_change_is_neither_hashed_nor_embedded(tmp_pat
     assert capture.image_digests(change) == {"b1": "", "b2": sha(PNG + b"ok")}
     entries = [{"id": "s", "design": ["b1", "b2"]}]
     assert any("board b1" in p and "image" in p for p in capture.design_problems(change, entries))
+
+
+def test_a_lock_of_3_26_0_without_a_design_reads_the_log_strictly_through_the_head_it_always_wrote(repo: Path) -> None:
+    approved_json = ch(repo) / "screens" / "approved.json"
+    approved_json.parent.mkdir(exist_ok=True)
+    entry = {"sha256": "x", "decision": "b"}
+    plain = [{"entry": "leads.list.empty", "answer": "accept", "batch": "b"}]
+    body = {"format": 1, "entries": {"leads.list.empty": entry}, "batches": {}, "log": plain}
+    approved_json.write_text(json.dumps({**body, "head": ""}))  # 3.26.0 wrote `head` for every app change, `design` or not
+    assert any(p.startswith("decision log") for p in capture.uncovered(ch(repo), {"leads.list.empty": entry}))
+    approved_json.write_text(json.dumps(body))  # a 3.25 file has no head: it keeps its path
+    assert not any(p.startswith("decision log") for p in capture.uncovered(ch(repo), {"leads.list.empty": entry}))

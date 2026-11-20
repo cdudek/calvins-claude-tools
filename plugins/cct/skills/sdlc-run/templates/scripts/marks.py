@@ -170,17 +170,18 @@ def transcript_dirs(repo: Path) -> list[Path]:
 
 
 def sessions_under(base: Path, folder: Path) -> bool:
-    """Every session file of `base` that records a `cwd` records one inside `folder`, and at least one does."""
+    """Every session file of `base` records a `cwd` of its own, inside `folder`, and there is at least one: a file that
+    names no folder does not borrow the proof of its neighbour."""
     seen = False
     for path in base.glob("*.jsonl"):
         try:
+            if path.stat().st_size == 0:
+                continue
             with path.open(encoding="utf-8") as fh:
                 cwd = next((c for c in (json.loads(line).get("cwd") for line in fh if line.strip()) if isinstance(c, str)), None)
         except (OSError, ValueError, AttributeError):
             return False
-        if cwd is None:
-            continue
-        if not Path(os.path.realpath(cwd)).is_relative_to(folder.resolve()):
+        if cwd is None or not Path(os.path.realpath(cwd)).is_relative_to(folder.resolve()):
             return False
         seen = True
     return seen
