@@ -5,6 +5,18 @@ version warning, the **Mechanical** lines are what `adopt` does for you (it adds
 with the stack's defaults and never overwrites a value), the **Manual** lines are printed for
 the engineer. A version with no migration lines needs nothing but a re-run of `adopt`.
 
+## 3.26.1 — close seven gate bypasses
+
+- **The edit hook fails closed on a payload it cannot simulate.** The `deviates` exception for a locked `screens.json` applies only to a `content` write, an `old_string` that occurs in the file with a `new_string`, or an `edits` list applied in order with the same rule for every element; any other shape (missing fields, `new_source`, another tool) keeps the lock. It also needs the lock to declare `"design": "inventory"`, not just a `design.json` beside it.
+- **The decision log is a full chain from a 3.26 lock on.** A lock that carries a `design` key (`inventory`, or `none` for a change with no design input) refuses a log with any unhashed entry, a hashed and unhashed mix, or a `head` that is not the last entry's hash, even when nothing is hashed. Changes locked before keep their path.
+- **Board images are plain files of the change.** The digest, the gallery and the lock read a board image only when it is a relative path that stays inside the change folder and passes no symlink; otherwise the digest is empty and `design.json` is reported.
+- **No check is ever stubbed.** `evidence.py` stubs only presentation helpers of an older `capture.py`; if a check is missing (`link`, `replayed`, `image_problems` and the others) it stops and names the function.
+- **The worktree ledger is proven.** A path from `sdlc/worktrees.json` counts only inside the repo's own `.worktrees` folder and only when the sessions recorded under it ran there.
+- **Runners are read through `-c` / `--call`**, and `bunx`, `bun x` / `bun run`, `pipx run`, `pdm run` and `rye run` join the list. What a runner runs is judged as a command of its own, and a runner option the parser cannot read makes the call a possible writer in the main folder (never a heavy one).
+- **Review round:** the edit gate is registered for `Edit|MultiEdit|Write` (adopt widens an older registration) and refuses any payload with a field it does not model; locked file names match whatever the capitalization; the milestone close refuses an older `capture.py` like the gallery does; the strict log applies to any 3.26 approval (a `head` in `approved.json`); a session file counts only with its own in-tree `cwd`.
+- Mechanical: re-running `adopt --migrate` replaces `heavy.py`, `evidence.py`, `capture.py`, `marks.py`, `verify_gate.py` and `chain-gate.sh`, widens the `chain-gate.sh` matcher in `.claude/settings.json`, and stamps `sdlcVersion` 3.26.1.
+- Manual: none.
+
 ## 3.26.0 — the design is binding for what exists
 
 - **Every board is accounted for.** A change with a design input (`visualSource`, or files in `asks/design/`) gets a `design.json` from the UX plan: the source and every board of it. Each board is named by a `screens.json` entry's `design` list or dropped with a reason; `verify_gate.py approve` fails naming each unmapped board and each entry that names an unknown one. The owner confirms the whole inventory in one dialog bound to a hash of the board list and the dropped list (`Confirm inventory`), so a dropped board is never the agent's call; the lock records it (`"design": "inventory"`, `"inventory": <id>`) and the sha256 of every board image, and `design.json` is locked like `screens.json`. A design input (`visualSource`, or a file in `asks/design/`) makes it an app change whatever the size.

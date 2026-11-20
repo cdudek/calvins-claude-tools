@@ -109,9 +109,16 @@ def when(text: object) -> dt.datetime | None:
     return stamp if stamp.tzinfo else stamp.replace(tzinfo=dt.timezone.utc)  # noqa: UP017 -- macOS python3 3.9
 
 
+def slug(path: Path) -> str:
+    """Claude Code's project folder name for a path."""
+    return re.sub(r"[^A-Za-z0-9]", "-", str(path))
+
+
 def worktree_paths(repo: Path) -> set[Path]:
     """Every worktree of the repo by exact path: the ones git lists now, plus the ones it listed before and has since
-    removed (a ledger in the common git dir, `sdlc/worktrees.json`, grows each time this runs)."""
+    removed (a ledger in the common git dir, `sdlc/worktrees.json`, grows each time this runs). The ledger is a file
+    an agent can write, so a ledger-only path counts only inside the repo's own `.worktrees` folder and only when
+    the sessions recorded under it ran there (the proof a worktree removed before the ledger needs as well)."""
     git = lambda *a: subprocess.run(["git", "-C", str(repo), *a], capture_output=True, text=True).stdout  # noqa: E731
     found = {Path(line[9:]).resolve() for line in git("worktree", "list", "--porcelain").splitlines() if line.startswith("worktree ")}
     common = git("rev-parse", "--path-format=absolute", "--git-common-dir").strip()
@@ -130,7 +137,13 @@ def worktree_paths(repo: Path) -> set[Path]:
             os.replace(tmp, ledger)  # atomic: a concurrent reader sees the old list or the new one, never half
         except OSError:
             pass  # a read-only git dir: the listed worktrees still count
-    return known | found
+    folder = Path(common).parent.resolve() / ".worktrees" if common.endswith("/.git") else repo.resolve() / ".worktrees"
+    projects = Path.home() / ".claude/projects"
+    return found | {p for p in known - found if p.resolve() == p and p.is_relative_to(folder) and _plain_sessions(projects / slug(p), folder)}
+
+
+def _plain_sessions(base: Path, folder: Path) -> bool:
+    return base.is_dir() and not any(p.is_symlink() for p in (base, base.parent, base.parent.parent)) and sessions_under(base, folder)
 
 
 def transcript_dirs(repo: Path) -> list[Path]:
@@ -138,7 +151,6 @@ def transcript_dirs(repo: Path) -> list[Path]:
     path (the owner may have spoken in any of them, a removed one included). A folder is read only if neither it
     nor a parent is a link (a link could point at a folder the agent wrote) and it is ours."""
     projects = Path.home() / ".claude/projects"
-    slug = lambda path: re.sub(r"[^A-Za-z0-9]", "-", str(path))  # noqa: E731
     paths = {repo.resolve(), *worktree_paths(repo)}
     found = []
     for name in sorted({slug(root) for root in paths}):
@@ -158,17 +170,18 @@ def transcript_dirs(repo: Path) -> list[Path]:
 
 
 def sessions_under(base: Path, folder: Path) -> bool:
-    """Every session file of `base` that records a `cwd` records one inside `folder`, and at least one does."""
+    """Every session file of `base` records a `cwd` of its own, inside `folder`, and there is at least one: a file that
+    names no folder does not borrow the proof of its neighbour."""
     seen = False
     for path in base.glob("*.jsonl"):
         try:
+            if path.stat().st_size == 0:
+                continue
             with path.open(encoding="utf-8") as fh:
                 cwd = next((c for c in (json.loads(line).get("cwd") for line in fh if line.strip()) if isinstance(c, str)), None)
         except (OSError, ValueError, AttributeError):
             return False
-        if cwd is None:
-            continue
-        if not Path(os.path.realpath(cwd)).is_relative_to(folder.resolve()):
+        if cwd is None or not Path(os.path.realpath(cwd)).is_relative_to(folder.resolve()):
             return False
         seen = True
     return seen

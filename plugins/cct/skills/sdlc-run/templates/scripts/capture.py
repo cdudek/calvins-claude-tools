@@ -171,12 +171,22 @@ def inventory_id(design: dict) -> str:
     return "inventory-" + hashlib.sha256(canon({"boards": boards, "count": len(boards), "dropped": dropped}).encode()).hexdigest()[:16]
 
 
+def board_file(change: Path, image: object) -> Path | None:
+    """The board image as a file of the change, or None: a relative path that stays inside the change folder, passes no
+    symlink and is a file. An absolute path, a `..` that leaves, a symlink or a symlinked folder is no board image."""
+    if not isinstance(image, str) or not image or Path(image).is_absolute():
+        return None
+    base = Path(change).resolve()
+    path = base / image
+    real = path.resolve()
+    return real if real.is_relative_to(base) and os.path.normpath(path) == str(real) and real.is_file() else None
+
+
 def board_digest(change: Path, design: dict, board_id: str) -> str:
-    """sha256 of a board's image file, "" when it has none (or the file is missing)."""
+    """sha256 of a board's image file, "" when it has none (or the file is missing or leaves the change: design_problems says so)."""
     board = next((b for b in boards_of(design) if b["id"] == board_id), {})
-    image = board.get("image")
-    path = Path(change) / image if isinstance(image, str) else None
-    return hashlib.sha256(path.read_bytes()).hexdigest() if path and path.is_file() else ""
+    path = board_file(change, board.get("image"))
+    return hashlib.sha256(path.read_bytes()).hexdigest() if path else ""
 
 
 def image_digests(change: Path) -> dict[str, str]:
@@ -234,7 +244,7 @@ def design_problems(change: Path, entries: list[dict], required: bool = False) -
         else:
             ids.append(name)
         image = b.get("image") if isinstance(b, dict) else None
-        if image is not None and not (isinstance(image, str) and (change / image).is_file() and (change / image).resolve().is_relative_to(change.resolve())):
+        if image is not None and board_file(change, image) is None:
             problems.append(f"design.json board {name}: image {image!r} is not a file of the change")
     dropped = design.get("dropped", [])
     ok = isinstance(dropped, list) and all(isinstance(d, dict) and d.get("board") in ids and isinstance(d.get("reason"), str) and d["reason"].strip() for d in dropped)
@@ -277,21 +287,24 @@ def link(log: list, record: dict, lock: str) -> dict:
     return body
 
 
-def chain_problems(log: list, head: object = None) -> list[str]:
+def chain_problems(log: list, head: object = None, strict: bool = False) -> list[str]:
     """A log written before 3.26.0 has no hashes and is read as it is; once an entry is hashed, every later one is,
-    each names the hash of the one before it, and the file's `head` is the last. A trimmed or rewritten log fails."""
+    each names the hash of the one before it, and the file's `head` is the last. A trimmed or rewritten log fails.
+    `strict` (a 3.26+ lock): every entry is hashed, none is missing from the chain, and `head` is the last entry's
+    hash even when no entry is hashed."""
     out, prev, hashed = [], "", False
     for i, rec in enumerate(log):
         if "hash" not in rec:
-            if hashed:
-                out.append(f"log entry {i + 1} has no hash after a hashed one")
+            if hashed or strict:
+                out.append(f"log entry {i + 1} has no hash" + (" after a hashed one" if hashed else ""))
             continue
         body = {k: v for k, v in rec.items() if k != "hash"}
         want = hashlib.sha256(json.dumps(body, sort_keys=True).encode()).hexdigest()
         if rec.get("prev") != prev or rec["hash"] != want:
             out.append(f"log entry {i + 1} ({rec.get('entry')}) does not follow the one before it: the log was changed")
         prev, hashed = rec["hash"], True
-    if hashed and head != prev:
+    last = log[-1].get("hash", "") if log else ""
+    if (hashed or strict) and (head or "") != (prev if hashed else last):
         out.append("the log does not end where approved.json says it does: entries were removed")
     return out
 
@@ -566,7 +579,8 @@ def uncovered(change: Path, approved: dict) -> list[str]:
     data = data if isinstance(data, dict) else {}
     batches = data["batches"] if isinstance(data.get("batches"), dict) else {}
     log = [r for r in data["log"] if isinstance(r, dict)] if isinstance(data.get("log"), list) else []
-    out = [f"decision log: {p}" for p in chain_problems(log, data.get("head"))]
+    lock = next((d for rel in ("state/lock.json", "lock.json") if isinstance(d := read_json(change / rel), dict)), {})
+    out = [f"decision log: {p}" for p in chain_problems(log, data.get("head"), strict="design" in lock or "head" in data)]  # 3.26.1: a 3.26 lock, or the `head` 3.26.0 wrote into every approved.json
     repo = Path(subprocess.run(["git", "-C", str(change), "rev-parse", "--show-toplevel"], capture_output=True, text=True).stdout.strip() or ".")
     sys.dont_write_bytecode = True  # the gate checks that the tree is clean afterwards: no __pycache__ from here
     try:

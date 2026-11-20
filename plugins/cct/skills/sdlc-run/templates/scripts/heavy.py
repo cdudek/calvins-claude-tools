@@ -92,6 +92,8 @@ def program_heavy(argv: list[str]) -> bool:
     prog, rest = os.path.basename(argv[0]), argv[1:]
     stem = os.path.splitext(prog)[0]
     w = words(rest)
+    if (parsed := runner_parse(prog, rest)) and any(program_heavy(c) for c in parsed[0] if c):
+        return True  # `npx -c "pnpm build"`, `bunx playwright test`, `pipx run vite build`
     if prog in PACKAGE_MANAGERS:
         if w[:1] == ["workspace"]:  # yarn workspace NAME run build
             w = w[2:]
@@ -730,35 +732,87 @@ def inline_code(prog: str, args: list[str]) -> bool:
     return not {"--version", "-V", "--help", "-h", "-VV"} & set(args)
 
 
-RUNNERS = {"uv": {"run"}, "poetry": {"run"}, "hatch": {"run"}, "pnpm": {"exec", "dlx"}, "yarn": {"dlx", "exec"}, "npm": {"exec"}, "npx": set()}
+RUNNERS = {
+    "uv": {"run"}, "poetry": {"run"}, "hatch": {"run"}, "pnpm": {"exec", "dlx"}, "yarn": {"dlx", "exec"}, "npm": {"exec"}, "npx": set(),
+    "bunx": set(), "pnpx": set(), "bun": {"x", "run"}, "pipx": {"run"}, "pdm": {"run"}, "rye": {"run"},
+}  # fmt: skip
 RUNNER_VALUE_OPTIONS = {
     "--with", "--with-requirements", "--with-editable", "--python", "-p", "--project", "--directory", "--env-file", "--extra", "--group",
     "--package", "--filter", "-F", "-C", "--prefix", "--cwd", "-e", "--env", "--index", "--index-url", "--from", "--only-group", "--no-group",
+    "--spec", "--registry", "--cache",
 }  # fmt: skip
+# options of a runner known to take no value; an option in neither set is a shape this parser cannot read (`-w` is one: a flag
+# for pnpm, a value option for npm), and what follows it may be the program or its value
+RUNNER_FLAGS = {
+    "--", "-y", "--yes", "--no", "-q", "--quiet", "--silent", "-v", "--verbose", "--no-install", "--offline", "--no-sync", "--frozen", "--locked",
+    "--isolated", "--no-project", "--no-cache", "--no-config", "--no-workspace", "--active", "--no-dev", "--dev", "--no-progress", "--refresh",
+    "--reinstall", "--exact", "--ignore-scripts", "--prefer-offline", "--prefer-online", "--no-warnings", "--no-env-file", "--all-extras",
+    "--no-editable", "--no-install-project", "--all-groups", "--bun", "--no-default-groups", "--only-dev", "--include-workspace-root",
+}  # fmt: skip
+SHELL_OPTIONS = {"-c", "--call", "--shell-mode"}  # the value is a shell command line
+
+
+def shell_commands(line: str) -> list[list[str]]:
+    return [argv for seg in shell_segments(line) for argv in inner_argv(seg)]
+
+
+def runner_parse(prog: str, rest: list[str]) -> tuple[list[list[str]], bool] | None:
+    """What a runner (`npx`, `uv run`, `pnpm exec`, `bunx`, `pipx run` ...) runs: (the commands, whether its arguments were
+    understood), None when `prog` is no runner or runs nothing. A `-c` / `--call` value is a shell line and is parsed as one; an
+    option the parser knows neither as taking a value nor as a flag makes the shape unreadable, and the caller treats that as a
+    possible writer."""
+    subs = RUNNERS.get(prog)
+    if subs is None:
+        return None
+    tail = rest
+    if subs:
+        at = next((i for i, a in enumerate(rest) if a in subs), None)
+        if at is None:
+            return None
+        tail = rest[at + 1 :]
+    cmds: list[list[str]] = []
+    i, ok = 0, True
+    while i < len(tail) and tail[i].startswith("-") and tail[i] != "-":
+        o = tail[i]
+        flag, _, attached = o.partition("=")
+        if flag in SHELL_OPTIONS and attached:
+            cmds += shell_commands(attached)
+        elif o in SHELL_OPTIONS:
+            ok &= i + 1 < len(tail)
+            cmds += shell_commands(tail[i + 1]) if i + 1 < len(tail) else []
+            i += 1
+        elif re.fullmatch(r"-c.+", o):
+            cmds += shell_commands(o[2:])
+        elif o in RUNNER_VALUE_OPTIONS:
+            i += 1
+        elif not (o in RUNNER_FLAGS or "=" in o):
+            ok = False
+        i += 1
+    if i < len(tail) and not cmds:
+        operands = tail[i:]
+        if prog == "yarn" and len(operands) == 1 and " " in operands[0]:  # `yarn exec "cmd args"` runs a shell line
+            cmds += shell_commands(operands[0])
+        else:
+            cmds.append(operands)
+    return cmds, ok
 
 
 def runner_inline(prog: str, rest: list[str]) -> bool:
     """`uv run python -c ...`, `npx tsx -e ...`, `pnpm exec node -`: inline code or a stdin program behind a runner. The
     runner's own options are read through (those that take a value skip it) to the executable; its operands are
     never read as commands (`uv run rg python -c` searches, it does not run python)."""
-    subs = RUNNERS.get(prog)
-    if subs is None:
-        return False
-    tail = rest
-    if subs:
-        at = next((i for i, a in enumerate(rest) if a in subs), None)
-        if at is None:
-            return False
-        tail = rest[at + 1 :]
-    i = 0
-    while i < len(tail) and tail[i].startswith("-") and tail[i] != "-":
-        i += 2 if tail[i] in RUNNER_VALUE_OPTIONS else 1
-    if i >= len(tail):
-        return False
-    name = os.path.basename(tail[i])
-    if name.startswith("python") or name in ("node", "tsx", "ts-node", "deno"):
-        return inline_code(name, tail[i + 1 :])
+    parsed = runner_parse(prog, rest)
+    for cmd in parsed[0] if parsed else []:
+        name = os.path.basename(cmd[0])
+        if (name.startswith("python") or name in ("node", "tsx", "ts-node", "deno")) and inline_code(name, cmd[1:]):
+            return True
     return False
+
+
+def runner_writes(prog: str, rest: list[str], cfg: dict) -> bool:
+    """A runner may write: its arguments are a shape this parser cannot read, or what it runs mutates."""
+    parsed = runner_parse(prog, rest)
+    return bool(parsed) and (not parsed[1] or any(mutates(c, cfg) for c in parsed[0] if c))
 
 
 def resolve_path(cwd: str | None, path: str) -> str | None:
@@ -776,6 +830,8 @@ def mutates(argv: list[str], cfg: dict) -> bool:
     prog, rest = os.path.basename(argv[0]), argv[1:]
     if inline_code(prog, rest) or runner_inline(prog, rest):
         return True  # inline code may write anything: unknown, so a writer where the main folder is at stake
+    if runner_writes(prog, rest, cfg):
+        return True  # what a runner runs is read like a command of its own; a shape it cannot read is a possible writer
     if prog == "git":
         sub, args, _ = git_parts(rest)
         if sub == "worktree":

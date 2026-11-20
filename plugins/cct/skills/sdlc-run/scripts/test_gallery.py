@@ -430,20 +430,83 @@ def test_a_board_named_without_a_design_json_is_a_problem_and_hashes_bind_record
     assert capture.approval_id([["a", "b c"]]) != capture.approval_id([["a b", "c"]])
 
 
-def test_a_kept_older_capture_py_takes_the_old_path_without_a_design_and_stops_with_one(repo: Path, tmp_path: Path) -> None:
-    old = tmp_path / "old"
-    old.mkdir()
-    keep = {"load_design", "boards_of", "dropped_of", "mapped", "design_counts", "binding_tag", "deviation_tag", "lock_sha",
-            "image_problems", "link", "replayed", "design_problems"}  # fmt: skip
-    src = (EVIDENCE.parent / "capture.py").read_text()
-    for name in keep:  # a 3.25 capture.py has none of the design helpers
-        src = src.replace(f"def {name}(", f"def _gone_{name}(")
-    (old / "capture.py").write_text(src)
-    for name in ("evidence.py", "marks.py"):
-        (old / name).write_bytes((EVIDENCE.parent / name).read_bytes())
+def test_a_kept_older_capture_py_is_refused_never_stubbed(repo: Path, tmp_path: Path) -> None:
+    """A capture.py without a check (link, replayed, image_problems ...) cannot be stood in for: the command stops and
+    names the missing function, with or without a design. Only the presentation helpers may be stubbed."""
     env = {**os.environ, "HOME": str(repo.parent / "home")}
-    run = lambda *a: subprocess.run([sys.executable, str(old / "evidence.py"), *a], cwd=repo, capture_output=True, text=True, env=env)  # noqa: E731
-    assert run("gallery", str(ch(repo))).returncode == 0  # no design: the older path
-    with_design(repo)
-    out = run("gallery", str(ch(repo)))
-    assert out.returncode == 1 and "adopt --upgrade --replace scripts/capture.py --apply" in out.stderr
+    checks = ["binding_tag", "deviation_tag", "lock_sha", "image_problems", "link", "replayed", "board_file"]
+    for gone in [*checks, "design_problems"]:
+        old = tmp_path / f"old-{gone}"
+        old.mkdir()
+        src = (EVIDENCE.parent / "capture.py").read_text()
+        assert f"def {gone}(" in src
+        (old / "capture.py").write_text(src.replace(f"def {gone}(", f"def _gone_{gone}("))
+        for name in ("evidence.py", "marks.py"):
+            (old / name).write_bytes((EVIDENCE.parent / name).read_bytes())
+        out = subprocess.run([sys.executable, str(old / "evidence.py"), "gallery", str(ch(repo))], cwd=repo, capture_output=True, text=True, env=env)
+        assert out.returncode == 1 and f"`{gone}`" in out.stderr and "adopt --migrate" in out.stderr, (gone, out.stderr)
+    gallery(repo)  # the current capture.py: no refusal
+
+
+def _chained(n: int) -> list[dict]:
+    log: list[dict] = []
+    for i in range(n):
+        log.append(capture.link(log, {"entry": f"e{i}", "answer": "accept", "batch": "b"}, "sha"))
+    return log
+
+
+def test_a_3_26_log_refuses_unhashed_entries_a_mixed_log_and_a_head_that_is_not_the_last_entry() -> None:
+    plain = [{"entry": "x", "answer": "accept", "batch": "b"}]
+    assert capture.chain_problems(plain, None, strict=True)  # nothing is hashed: the whole log is an agent's text
+    assert capture.chain_problems(plain, None) == []  # a log before 3.26 keeps its path
+    log = _chained(2)
+    assert capture.chain_problems(log, log[-1]["hash"], strict=True) == []
+    assert capture.chain_problems([], None, strict=True) == [] and capture.chain_problems([], "", strict=True) == []
+    assert capture.chain_problems(log + plain, log[-1]["hash"], strict=True)  # hashed then unhashed
+    assert capture.chain_problems(plain + log, log[-1]["hash"], strict=True)  # unhashed then hashed
+    assert capture.chain_problems([], "forged", strict=True)  # a head with no entries
+    assert any("removed" in p for p in capture.chain_problems(plain, "forged", strict=True))  # head vs last, nothing hashed
+
+
+def test_the_gate_reads_the_log_strictly_when_the_lock_is_3_26_and_loosely_before(repo: Path) -> None:
+    approved_json = ch(repo) / "screens" / "approved.json"
+    approved_json.parent.mkdir(exist_ok=True)
+    entry = {"sha256": "x", "decision": "b"}
+    approved_json.write_text(json.dumps({"format": 1, "entries": {"leads.list.empty": entry}, "batches": {}, "log": [{"entry": "leads.list.empty", "answer": "accept", "batch": "b"}]}))
+    old = capture.uncovered(ch(repo), {"leads.list.empty": entry})
+    assert not any(p.startswith("decision log") for p in old)  # locked before 3.26: read as it is
+    (ch(repo) / "lock.json").write_text(json.dumps({"visual": "app", "criteria": {}, "design": "none"}))
+    assert any(p.startswith("decision log") for p in capture.uncovered(ch(repo), {"leads.list.empty": entry}))
+
+
+@pytest.mark.parametrize("how", ["absolute", "parent", "symlink", "symlinked-folder"])
+def test_a_board_image_outside_the_change_is_neither_hashed_nor_embedded(tmp_path: Path, how: str) -> None:
+    change = tmp_path / "changes" / "c1"
+    (change / "asks" / "design").mkdir(parents=True)
+    secret = tmp_path / "secret.png"
+    secret.write_bytes(PNG + b"secret")
+    inside = change / "asks" / "design" / "ok.png"
+    inside.write_bytes(PNG + b"ok")
+    image = {"absolute": str(secret), "parent": "../../secret.png", "symlink": "asks/design/link.png", "symlinked-folder": "asks/out/secret.png"}[how]
+    if how == "symlink":
+        (change / "asks" / "design" / "link.png").symlink_to(secret)
+    if how == "symlinked-folder":
+        (change / "asks" / "out").symlink_to(tmp_path)
+    design = {"source": "x", "boards": [{"id": "b1", "name": "B", "image": image}, {"id": "b2", "name": "C", "image": "asks/design/ok.png"}]}
+    (change / "design.json").write_text(json.dumps(design))
+    assert capture.board_digest(change, design, "b1") == ""
+    assert capture.image_digests(change) == {"b1": "", "b2": sha(PNG + b"ok")}
+    entries = [{"id": "s", "design": ["b1", "b2"]}]
+    assert any("board b1" in p and "image" in p for p in capture.design_problems(change, entries))
+
+
+def test_a_lock_of_3_26_0_without_a_design_reads_the_log_strictly_through_the_head_it_always_wrote(repo: Path) -> None:
+    approved_json = ch(repo) / "screens" / "approved.json"
+    approved_json.parent.mkdir(exist_ok=True)
+    entry = {"sha256": "x", "decision": "b"}
+    plain = [{"entry": "leads.list.empty", "answer": "accept", "batch": "b"}]
+    body = {"format": 1, "entries": {"leads.list.empty": entry}, "batches": {}, "log": plain}
+    approved_json.write_text(json.dumps({**body, "head": ""}))  # 3.26.0 wrote `head` for every app change, `design` or not
+    assert any(p.startswith("decision log") for p in capture.uncovered(ch(repo), {"leads.list.empty": entry}))
+    approved_json.write_text(json.dumps(body))  # a 3.25 file has no head: it keeps its path
+    assert not any(p.startswith("decision log") for p in capture.uncovered(ch(repo), {"leads.list.empty": entry}))

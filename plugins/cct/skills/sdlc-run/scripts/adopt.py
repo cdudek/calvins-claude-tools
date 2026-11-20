@@ -1081,6 +1081,7 @@ KIT_HEAVY = {
     "a13b3e0ac5548a40",
     "133511d3c4625790",
     "d5f94641e353c11a",
+    "05955f42a11347dc",
 }
 KIT_DB = {
     "b34ea79ae0841fc5",
@@ -1099,6 +1100,8 @@ KIT_EVIDENCE = {
     "ac196d166bdc401d",
     "9cb41cc57637e80a",
     "06688e12102ccf68",
+    "d3f6a873494adeca",
+    "dfc08b78731101be",
 }
 KIT_PREFLIGHT = {
     "848114ac6dd4a375",
@@ -1117,6 +1120,9 @@ KIT_CAPTURE = {
     "9cd5bdc59852d1a6",
     "2b0aa4a315b83122",
     "ebdfb586c6d92fc8",
+    "acc567b4cf0b1bea",
+    "cfcdc16841326037",
+    "2da4931def130e10",
 }
 KIT_HELPER_GUARD = {
     "ca26ffb8ad16e8b3",
@@ -1791,7 +1797,7 @@ def main() -> int:
         ("PreToolUse", "Bash", "gate-bash.sh", 5),
         ("PreToolUse", "Bash", "pr-gate.sh", 20),
         ("PreToolUse", "Bash", "helper-guard.sh", 5),
-        ("PreToolUse", "Edit|Write", "chain-gate.sh", 5),
+        ("PreToolUse", "Edit|MultiEdit|Write", "chain-gate.sh", 5),
         ("PostToolUse", "Edit|Write", "lint-on-edit.sh", 30),
         ("Stop", None, "verify-on-stop.sh", 300),
     ]
@@ -1803,6 +1809,10 @@ def main() -> int:
             "timeout": timeout,
         }
         if any(script in h.get("command", "") for g in groups for h in g.get("hooks", [])):
+            if script == "chain-gate.sh":  # 3.26.1: a gate registered for Edit|Write alone never saw a MultiEdit
+                for g in groups:
+                    if g.get("matcher") == "Edit|Write" and any(script in h.get("command", "") for h in g.get("hooks", [])):
+                        g["matcher"] = matcher
             continue
         group = {"hooks": [entry]}
         if matcher:

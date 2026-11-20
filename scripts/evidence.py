@@ -559,7 +559,8 @@ def app_status_line(change: str | Path) -> str:
     approved = read_approved(change)
     import capture
 
-    shim_old_capture(capture)
+    if missing := shim_old_capture(capture):
+        return f"screens: unavailable, {stale_capture(missing)}"
     design = capture.load_design(Path(change))
     states = [app_state(change, e["id"], approved, tag=capture.binding_tag(Path(change), design, e)) for e in app_entries(change)]
     if not states:
@@ -601,29 +602,32 @@ def inside(change: Path, path: Path) -> bool:
     return path.resolve().is_relative_to(change.resolve())
 
 
-def shim_old_capture(capture) -> None:
-    """A kept older scripts/capture.py (3.25) lacks the design helpers: for a change with no design input they have
-    one honest meaning, so the older path runs. design.json with such a capture.py is refused by gallery_cmd."""
-    none = {
-        "load_design": lambda change: {}, "boards_of": lambda design: [], "dropped_of": lambda design: [], "mapped": lambda entry: [],
-        "design_counts": lambda change, entries: None, "binding_tag": lambda change, design, entry: "",
-        "deviation_tag": lambda text: "", "lock_sha": lambda change: "", "image_problems": lambda change: [],
-        "link": lambda log, record, lock: record, "replayed": lambda log, entry, bid: False,
-    }  # fmt: skip
+CHECKS = ("binding_tag", "deviation_tag", "lock_sha", "image_problems", "link", "replayed", "board_file", "design_problems")
+
+
+def shim_old_capture(capture) -> list[str]:
+    """Stands in for the presentation helpers a kept older scripts/capture.py (3.25) lacks and returns the CHECKS it
+    lacks: a check is never stubbed, because a stub that says "fine" is the approval an agent could not give itself."""
+    none = {"load_design": lambda change: {}, "boards_of": lambda design: [], "dropped_of": lambda design: [], "mapped": lambda entry: [],
+            "design_counts": lambda change, entries: None}  # fmt: skip
     for name, fn in none.items():
         if not hasattr(capture, name):
             setattr(capture, name, fn)
+    return [n for n in CHECKS if not hasattr(capture, n)]
+
+
+def stale_capture(missing: list[str]) -> str:
+    return f"scripts/capture.py is older than this script and lacks `{missing[0]}`: run `adopt --migrate`"
 
 
 def gallery_cmd(args) -> int:
     sys.dont_write_bytecode = True  # a checkout stays clean: no __pycache__ from importing the kit's scripts
     import capture  # the one id rule; both scripts sit in the same folder
 
-    shim_old_capture(capture)
-    change = resolve_change(args.change)
-    if (change / "design.json").is_file() and not hasattr(capture, "design_problems"):
-        print("evidence: scripts/capture.py is older than this script and cannot read design.json: run `adopt --upgrade --replace scripts/capture.py --apply`", file=sys.stderr)
+    if missing := shim_old_capture(capture):
+        print(f"evidence: {stale_capture(missing)}", file=sys.stderr)
         return 1
+    change = resolve_change(args.change)
     if bad := capture.image_problems(change):
         print("\n".join(f"evidence: {p}" for p in bad), file=sys.stderr)
         return 1
@@ -641,9 +645,9 @@ def boards_html(change: Path, design: dict, entry: dict) -> str:
     known, out = {b["id"]: b for b in capture.boards_of(design)}, []
     for bid in capture.mapped(entry):
         board = known.get(bid, {"id": bid, "name": bid})
-        image = change / board["image"] if isinstance(board.get("image"), str) else None
+        image = capture.board_file(change, board.get("image"))
         mime = mimetypes.guess_type(str(image))[0] if image else None
-        if image and mime and image.is_file() and inside(change, image):
+        if image and mime:
             data = base64.b64encode(image.read_bytes()).decode()
             out.append(f'<img alt="design {html.escape(bid, quote=True)}" src="data:{mime};base64,{data}">')
         else:

@@ -417,6 +417,62 @@ def test_the_build_may_record_a_deviation_and_nothing_else_in_a_locked_screens_j
     assert edit(repo, f"changes/{ID}/design.json", old_string="B", new_string="C").returncode == 2  # design.json is locked too
 
 
+def _inventory_change(tmp_path: Path, design: str | None = "inventory") -> tuple[Path, str]:
+    repo = make(tmp_path)
+    change = repo / "changes" / ID
+    lock = {"layout": 4, "visual": "app", "criteria": {}, **({"design": design} if design else {})}
+    (change / "lock.json").write_text(json.dumps(lock))
+    (change / "screens.json").write_text(ROWS)
+    (change / "design.json").write_text('{"source": "x", "boards": [{"id": "b1", "name": "B"}]}')
+    return repo, f"changes/{ID}/screens.json"
+
+
+NOTE = '{"id": "a", "route": "/a", "design": ["b1"], "deviates": "no filter bar"}'
+ROW = '{"id": "a", "route": "/a", "design": ["b1"]}'
+
+
+@pytest.mark.parametrize(
+    "tool",
+    [
+        {"edits": [{"old_string": '"/a"', "new_string": '"/b"'}]},  # MultiEdit: not simulated, was a no-op to the gate
+        {"edits": [{"old_string": ROW, "new_string": NOTE}, {"old_string": '"/a"', "new_string": '"/b"'}]},
+        {"edits": [{"old_string": ROW, "new_string": NOTE}, {"old_string": "", "new_string": "x"}]},
+        {"edits": [{"old_string": ROW, "new_string": NOTE}, {"old_string": "nowhere", "new_string": "x"}]},
+        {"edits": [{"old_string": ROW}]},
+        {"edits": "x"},
+        {"new_source": "[]"},  # a notebook-style payload
+        {"old_string": "", "new_string": "[]"},
+        {"old_string": "not in the file", "new_string": "x"},
+        {"old_string": ROW},  # no new_string
+        {"new_string": NOTE},  # no old_string
+        {"content": f"[{NOTE}]", "new_source": "[]"},  # a valid deviation-only write plus a field the hook does not model
+        {"old_string": ROW, "new_string": NOTE, "new_source": "[]"},
+        {"old_string": ROW, "new_string": NOTE, "surprise": "x"},
+        {"edits": [{"old_string": ROW, "new_string": NOTE, "surprise": "x"}]},
+        {"edits": [{"old_string": ROW, "new_string": NOTE}], "surprise": "x"},
+        {"content": ["list"]},
+        {},
+    ],
+)
+def test_a_payload_that_cannot_be_simulated_exactly_keeps_screens_json_locked(tmp_path: Path, tool: dict) -> None:
+    repo, file = _inventory_change(tmp_path)
+    assert edit(repo, file, **tool).returncode == 2
+
+
+def test_an_edits_list_is_applied_in_order_and_may_only_add_deviations(tmp_path: Path) -> None:
+    repo, file = _inventory_change(tmp_path)
+    ok = {"edits": [{"old_string": ROW, "new_string": NOTE}, {"old_string": "no filter bar", "new_string": "fewer columns"}]}
+    assert edit(repo, file, **ok).returncode == 0
+
+
+def test_the_deviation_path_needs_the_lock_to_declare_the_inventory(tmp_path: Path) -> None:
+    for design in (None, "other", "yes"):  # design.json exists, the lock never declared it
+        repo, file = _inventory_change(tmp_path / str(design), design)
+        assert edit(repo, file, old_string=ROW, new_string=NOTE).returncode == 2
+    repo, file = _inventory_change(tmp_path / "ok")
+    assert edit(repo, file, old_string=ROW, new_string=NOTE).returncode == 0
+
+
 def test_a_deviation_edit_is_allowed_by_the_plan_lock_but_voids_the_pass(tmp_path: Path) -> None:
     lock = json.dumps({"criteria": {}, "visual": "app"})
     files = {"facts.md": "# f\n", "lock.json": lock, "screens.json": ROWS, "design.json": "{}"}
@@ -433,3 +489,18 @@ def test_the_hook_and_the_gate_read_screens_json_without_its_deviations_the_same
 
 def test_the_routing_fields_are_the_gates(tmp_path: Path) -> None:
     assert pass_proof.ROUTING == verify_gate.ROUTING
+
+
+@pytest.mark.parametrize("name", ["Screens.json", "SCREENS.JSON", "screens/APPROVED.json", "Screens/approved.json", "Design.json"])
+def test_the_locked_files_are_matched_whatever_the_capitalization(tmp_path: Path, name: str) -> None:
+    repo, _ = _inventory_change(tmp_path)  # a case-insensitive volume opens the locked file under any spelling
+    r = edit(repo, f"changes/{ID}/{name}", content="[]")
+    assert r.returncode == 2 and "protectedEdit" in r.stderr, name
+
+
+def test_a_multi_edit_cannot_change_the_layout_of_a_locked_change(tmp_path: Path) -> None:
+    repo = make(tmp_path)
+    file = f"changes/{ID}/decisions.json"
+    text = (repo / file).read_text()
+    assert edit(repo, file, edits=[{"old_string": '"layout": 4', "new_string": '"layout": 3'}]).returncode == 2
+    assert edit(repo, file, edits=[{"old_string": '"size": "M"', "new_string": '"size": "M", "note": "x"'}]).returncode == 0, text

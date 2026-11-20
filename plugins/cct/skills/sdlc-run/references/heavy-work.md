@@ -163,7 +163,10 @@ decision.
   a pipe or redirect, any interpreter with no script operand), and so does inline code behind a
   runner (`uv run`, `poetry run`, `hatch run`, `npx`, `pnpm exec`, `yarn dlx`): the runner's options
   are read through (those with a value skip it) to the executable, and the executable's operands are
-  never read as commands (`uv run rg python -c` is a search). `cd` options (`--`, `-P`, `-L`) are read before the operand,
+  never read as commands (`uv run rg python -c` is a search). The runners also include `bunx`, `bun x` / `bun run`,
+  `pipx run`, `pdm run` and `rye run`; a `-c` / `--call` value is read as a shell line, and what a runner runs is judged like a
+  command of its own (`uv run cp a b` writes). A runner option the parser knows neither as a flag nor as taking a value
+  makes the whole call a possible writer, never a heavy one. `cd` options (`--`, `-P`, `-L`) are read before the operand,
   and an absolute redirect target or `git -C` path names its own folder even after an unresolved `cd`. The payload carries
   `agent_id` for a subagent, and an absent, empty or unreadable field is the owner's own session,
   which is never refused. The command is split into real segments and wrappers (`env`, `timeout`,

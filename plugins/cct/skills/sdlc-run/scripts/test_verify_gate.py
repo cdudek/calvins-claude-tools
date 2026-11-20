@@ -2208,6 +2208,7 @@ def test_approval_locks_the_app_flow_the_screens_and_the_design_system_pin(tmp_p
     assert lock["criteria"]["screens.json"] == hashlib.sha256((repo / "changes" / ID / "screens.json").read_bytes()).hexdigest()
     assert lock["scopeFolders"] == ["src/screens"]
     assert lock["designSystem"]["version"] == "1.2.0"
+    assert lock["design"] == "none"  # 3.26.1: the lock says it is 3.26 or later, so the decision log must be a full chain
 
 
 def _design_repo(tmp_path: Path, monkeypatch: pytest.MonkeyPatch, boards: tuple[str, ...] = ("b1", "b2", "b3")) -> Path:
@@ -2335,6 +2336,25 @@ def test_many_screens_need_no_design_system_audit_in_the_app_flow(tmp_path: Path
     repo = _ds_repo(tmp_path, auditAbove=2)
     _screens_json(repo, [{**SCREENS[0], "id": f"s{i}", "route": f"/preview/s{i}"} for i in range(30)])
     assert _gate(repo, "approve", ID).returncode == 0
+
+
+def test_a_milestone_close_refuses_an_older_capture_py_and_names_the_missing_check(tmp_path: Path) -> None:
+    kit = tmp_path / "kit"
+    kit.mkdir()
+    for f in GATE.parent.glob("*.py"):
+        (kit / f.name).write_text(f.read_text())
+    (kit / "capture.py").write_text((kit / "capture.py").read_text().replace("def replayed(", "def _gone_replayed("))
+    repo = _repo(tmp_path, [])
+    (repo / "sdlc.json").write_text(json.dumps({"checks": {"milestone": ["true"]}, "ux": "on"}))
+    (repo / "changes" / ID / "decisions.json").write_text(json.dumps(VISUAL))
+    _screens_json(repo)
+    _approve(repo)
+    r = subprocess.run([sys.executable, str(kit / "verify_gate.py"), "milestone", ID], cwd=repo, capture_output=True, text=True, env=_env())
+    assert "`replayed`" in r.stdout and "adopt --migrate" in r.stdout and "check=app-screens" in _last(r), r.stdout + r.stderr
+    import evidence
+    import verify_gate
+
+    assert set(evidence.CHECKS) <= set(verify_gate.CAPTURE_CHECKS)
 
 
 def test_editing_screens_json_after_approval_blocks_the_milestone(tmp_path: Path) -> None:
