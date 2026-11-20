@@ -1120,6 +1120,7 @@ KIT_CAPTURE = {
     "2b0aa4a315b83122",
     "ebdfb586c6d92fc8",
     "acc567b4cf0b1bea",
+    "cfcdc16841326037",
 }
 KIT_HELPER_GUARD = {
     "ca26ffb8ad16e8b3",
