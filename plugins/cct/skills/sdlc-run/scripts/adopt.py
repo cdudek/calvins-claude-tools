@@ -1029,6 +1029,7 @@ KIT_HEAVY = {
     "f411b8feb66c33ed",
     "1bb86e7356aa80e0",
     "aa80c7f1cdab2e74",
+    "a09c60909df8931b",
 }
 KIT_DB = {
     "b34ea79ae0841fc5",
@@ -1302,8 +1303,13 @@ def migrate_script_lists(plan: dict, cfg: dict) -> None:
             at = next((i for i, line in enumerate(lines) if entry.match(line)), None)
             if at is not None:
                 m = entry.match(lines[at])
-                lines.insert(at + 1, f"{m[1]}{script}{m[3]}")
-                wrote.append(f"{rel}: added {script} after {m[2]} (the repo lists kit scripts)")
+                if m[3].rstrip().endswith((",", "\\")):
+                    lines.insert(at + 1, f"{m[1]}{script}{m[3]}")
+                else:  # no separator: it may be the last element, so the new line goes before it and takes the list's separator
+                    before = lines[at - 1].rstrip() if at else ""
+                    sep = "," if not before or before.endswith(("[", "(", "{", ",")) else (" \\" if before.endswith("\\") else "")
+                    lines.insert(at, f"{m[1]}{script}{m[3].rstrip()}{sep}")
+                wrote.append(f"{rel}: added {script} next to {m[2]} (the repo lists kit scripts)")
             elif any(len({x for x in inline.findall(line)}) > 1 for line in lines):
                 manual.append(f"{rel}: lists kit scripts on one line, a shape adopt cannot copy; add {script} to it by hand if it must list them all")
         if not DRY and "\n".join(lines) != text:

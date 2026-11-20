@@ -541,8 +541,26 @@ def test_the_hook_fails_closed_on_a_cd_it_cannot_resolve(tmp_path: Path) -> None
 
 
 @pytest.mark.parametrize("cmd", ["python3 -c print(1)", "node -e 1", "node --eval 1", "node -p 1", "python3 -c pass"])
-def test_inline_interpreter_code_is_unknown_so_heavy(cmd: str) -> None:
-    assert _heavy_classify(cmd) == "heavy"
+def test_inline_interpreter_code_is_light_for_the_queue(cmd: str) -> None:
+    assert _heavy_classify(cmd) == "light"
+
+
+def test_inline_interpreter_code_counts_as_a_writer_only_in_the_main_folder(tmp_path: Path) -> None:
+    main = tmp_path / "main"
+    main.mkdir()
+    _git(main, "init", "-q")
+    _git(main, "-c", "user.name=t", "-c", "user.email=t@t", "commit", "-q", "--allow-empty", "-m", "i")
+    wt = tmp_path / "wt"
+    _git(main, "worktree", "add", "-q", "-b", "feat", str(wt))
+
+    def call(cmd: str, cwd: Path) -> int:
+        return _guard(cwd, {"cwd": str(cwd), "agent_id": "a1", "tool_input": {"command": cmd}}).returncode
+
+    for inline in ("python3 -c 'open(\"x\", \"w\")'", "node -e 1", "node --eval 1", "node -p 1"):
+        assert call(inline, main) == 2, inline
+        assert call(inline, wt) == 0, inline
+    assert call("cd $X && python3 -c pass", wt) == 2
+    assert call(f"cd {wt} && python3 -c pass", main) == 0
 
 
 @pytest.mark.parametrize("cmd", [

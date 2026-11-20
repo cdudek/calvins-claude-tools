@@ -32,6 +32,7 @@ from __future__ import annotations
 
 import argparse
 import fcntl
+import itertools
 import json
 import os
 import re
@@ -127,7 +128,7 @@ def program_heavy(argv: list[str]) -> bool:
             if a == "-m":
                 return heavy_name(next(it, "").split(".")[0])
             if a in ("-c", "-e", "--eval", "-p"):
-                return True  # inline code is unknown: it may run anything, so it is heavy until queued
+                return False  # inline code is quick; `mutates` treats it as a possible writer
             if not a.startswith("-"):
                 name = os.path.splitext(os.path.basename(a))[0]
                 if name == "verify_gate":
@@ -700,6 +701,8 @@ def mutates(argv: list[str], cfg: dict) -> bool:
     if not argv:
         return False
     prog, rest = os.path.basename(argv[0]), argv[1:]
+    if (prog.startswith("python") or prog in ("node", "tsx", "ts-node", "deno")) and any(a in ("-c", "-e", "--eval", "-p") for a in itertools.takewhile(lambda x: x.startswith("-") and x != "-m", rest)):
+        return True  # inline code may write anything: unknown, so a writer where the main folder is at stake
     if prog == "git":
         sub, args, _ = git_parts(rest)
         if sub == "worktree":

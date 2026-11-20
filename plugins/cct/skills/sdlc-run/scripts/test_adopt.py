@@ -2238,6 +2238,22 @@ def test_migrate_adds_a_new_kit_script_to_the_repos_own_lists(tmp_path: Path) ->
     assert (repo / "pyproject.toml").read_text() == before  # the script is installed now: nothing to add twice
 
 
+def test_migrate_adds_a_new_kit_script_before_the_last_element_of_a_list(tmp_path: Path) -> None:
+    repo = _stamped_3_18(tmp_path)
+    subprocess.run(["git", "rm", "-q", "scripts/capture.py"], cwd=repo, check=True, env=_env())
+    (repo / "pyproject.toml").write_text('[tool.ruff]\nextend-exclude = [\n    "src/x.py",\n    "scripts/db.py"\n]\n')
+    (repo / "tests").mkdir(exist_ok=True)
+    (repo / "tests/test_kit.py").write_text('KIT_OWNED = (\n    "tests/a.py",\n    "scripts/db.py"\n)\nONLY = [\n    "scripts/db.py"\n]\nPLAIN = [\n    a\n    scripts/db.py\n]\n')
+    _commit_everything(repo)
+    res = _migrate(repo, _fake_gh(tmp_path, "milestone/merged-one-1"))
+    assert res.returncode == 0, res.stderr
+    assert (repo / "pyproject.toml").read_text() == '[tool.ruff]\nextend-exclude = [\n    "src/x.py",\n    "scripts/capture.py",\n    "scripts/db.py"\n]\n'
+    assert (repo / "tests/test_kit.py").read_text() == (
+        'KIT_OWNED = (\n    "tests/a.py",\n    "scripts/capture.py",\n    "scripts/db.py"\n)\n'
+        'ONLY = [\n    "scripts/db.py"\n]\nPLAIN = [\n    a\n    scripts/db.py\n]\n'
+    )  # one file takes one insertion: the first list
+
+
 def test_migrate_dry_run_reports_the_list_edit_without_making_it(tmp_path: Path) -> None:
     repo = _stamped_3_18(tmp_path)
     _lists_kit_scripts(repo)
