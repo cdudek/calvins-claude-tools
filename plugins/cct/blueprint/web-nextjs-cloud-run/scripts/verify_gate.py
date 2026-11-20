@@ -177,6 +177,8 @@ def criteria_hash(change: Path, checks: object, plan: bool = True) -> dict[str, 
         hashes["plan.milestones"] = hashlib.sha256(
             section(read(change / "plan.md"), "Milestones").encode("utf-8")
         ).hexdigest()
+    if plan and (change / "screens.json").is_file():  # from 3.25.0 the screens to prove are approved too
+        hashes["screens.json"] = hashlib.sha256((change / "screens.json").read_bytes()).hexdigest()
     if plan:  # every layout locks the routing fields
         hashes["decisions.routing"] = hashlib.sha256(
             json.dumps(routing(change), sort_keys=True).encode("utf-8")
@@ -255,6 +257,20 @@ def milestone_number(change: Path, cfg: dict, branch: str) -> int | None:
         return 1
     found = re.fullmatch(re.escape(slug) + r"-(\d+)", name)
     return int(found[1]) if found else None
+
+
+def last_milestone(change: Path) -> int | None:
+    """The highest M<n> of the `## Milestones` table (plan.md, or tasks.md on layout 4), None when none is named."""
+    rows = [r for name in ("plan.md", "tasks.md") for r in table_rows(section(read(change / name), "Milestones"))[1:]]
+    ids = [int(m[1]) for r in rows if r and (m := re.match(r"M(\d+)\b", r[0]))]
+    return max(ids) if ids else None
+
+
+def capture_upto(change: Path, number: int | None) -> int | None:
+    """What a milestone close asks capture.py for: the entries due by `number`, or None (all of them) for the
+    last milestone, an unnumbered branch, or a plan that does not say which one is last."""
+    last = last_milestone(change)
+    return number if number and last and number < last else None
 
 
 def project_branch(change: Path, cfg: dict) -> str:
@@ -886,42 +902,6 @@ def design_system_moves(lock: dict, cfg: dict, repo: Path) -> list[str]:
     return out
 
 
-def screen_count(change: Path) -> int:
-    """The approved screen inventory across every input type: a note, a loose reference image and
-    each html page of a bundle count one each (marks.py's `screen_ids`)."""
-    try:
-        from marks import screen_ids  # absent in an older marks.py: count the bundle pages then
-
-        return len(screen_ids(change))
-    except (ImportError, OSError, ValueError):
-        pass
-    try:
-        declared = json.loads(spec.state_path(change, "decisions.json").read_text(encoding="utf-8"))
-        folder = change / declared["visualSource"]["path"]
-    except (OSError, ValueError, KeyError, TypeError, AttributeError):
-        folder = change / "asks"
-    return sum(1 for h in folder.rglob("*.html") if h.name != "gallery.html")
-
-
-def audit_problems(change: Path, cfg: dict) -> list[str]:
-    """A change with many screens names the design-system parts it needs before the first batch:
-    `design-system-audit.md`, rows of group | part | have or gap. A gap is closed by one release.
-    Every data row says have or gap: a pending or blank row is a problem, not a skipped line."""
-    limit = int((cfg.get("designSystem") or {}).get("auditAbove", 20))
-    if screen_count(change) <= limit:
-        return []
-    rows = table_rows(read(change / "design-system-audit.md"))[1:]  # the header is the first row
-    if not rows:
-        return [
-            f"design-system-audit.md is missing or empty: more than {limit} screens need a table of the "
-            "design-system parts per screen group, status have or gap"
-        ]
-    if bad := [f"{r[0]}: {r[1] if len(r) > 2 else ''} is {r[-1] or 'blank'}" for r in rows if r[-1].lower() not in ("have", "gap")]:
-        return [f"design-system-audit.md: every row must end in have or gap: ({'; '.join(bad)})"]
-    gaps = [f"{r[0]}: {r[1]}" for r in rows if r[-1].lower() == "gap"]
-    return [f"design-system-audit.md still has gaps ({'; '.join(gaps)}): ship one design-system release that closes them all, then approve"] if gaps else []
-
-
 def approve(change: Path, cfg: dict) -> int:
     v4 = spec.applies(change)
     problems = lint_problems(change) + approval_blockers(change)  # the cheap pure check first
@@ -934,9 +914,13 @@ def approve(change: Path, cfg: dict) -> int:
     else:
         problems += [f"{name} is missing: approval locks it" for name in ("facts.md", "plan.md") if not (change / name).is_file()]
         problems += graph_problems(read(change / "plan.md"))
-    visual = visual_run_required(change, cfg, root())
-    if visual:
-        problems += audit_problems(change, cfg)
+    # from 3.25.0 visual work is proved in the real app: screens.json lists every screen and state, the
+    # lock says `"visual": "app"` and the gate captures them. No design bundle, marks rows or audit table.
+    app = visual_run_required(change, cfg, root()) or (change / "screens.json").is_file()
+    if app:
+        import capture  # 3.25.0: scripts/capture.py, imported only here so a kept older install still runs the other scopes
+
+        problems += capture.load_screens(change)[1]
     if gap := full_e2e_gap((cfg.get("checks") or {}).get("milestone") or [], root()):
         problems.append(gap)
     if not v4 and not spec.state_path(change, "done.json").exists():  # approval requires its artifacts
@@ -957,8 +941,8 @@ def approve(change: Path, cfg: dict) -> int:
         "format": LOCK_FORMAT,  # strict validation rows and records apply to this lock and later ones
         "layout": 4 if v4 else 3,  # the hooks read the layout here, not from files an edit can change
     }
-    if visual:  # from 3.23.0: the milestone gate holds visual work to its screens
-        lock["screens"] = "required"
+    if app:
+        lock["visual"] = "app"
         # the folders the plan says new files go in: the chain-gate scope guard reads this snapshot, not the plan
         found = re.findall(r"`([^`]+/)`", section(read(change / "plan.md"), "Where things go") + section(read(change / "design.md"), "Where things go"))
         lock["scopeFolders"] = sorted({f.strip("/") for f in found if f.strip("/") and ".." not in f.split("/")})
@@ -1494,7 +1478,7 @@ def run_close(
         declared = lock.get("order") != "cost"
         old_plan = lock.get("format", 0) < LOCK_FORMAT or ("plan.milestones" not in locked and not spec.applies(change))
         now = criteria_hash(change, cfg.get("checks", {}))
-        for key in ("plan.milestones", "decisions.routing"):
+        for key in ("plan.milestones", "decisions.routing", "screens.json"):
             if key not in locked:
                 now.pop(key, None)  # an older lock never hashed it: reported below, not a move
         if old_plan and scope == "milestone":
@@ -1556,7 +1540,10 @@ def run_close(
     if scope == "milestone" and (blocker := milestone_blockers(change, number)):
         print("\n".join(blocker[1][:TAIL]))
         return finish(f"VERIFY BLOCKED reason={blocker[0]}", 3)
-    if scope == "milestone" and legacy_marks() and has_bundle_inputs(change):
+    # approved from 3.25.0: no bundles, marks or tolerances. A hotfix has no milestone close: its feature gate is the final one.
+    hotfix = scope == "feature" and branch_now.startswith("hotfix/") and cfg.get("hotfix", True) and hotfix_change(change)
+    app = (scope == "milestone" or bool(hotfix)) and lock.get("visual") == "app"
+    if scope == "milestone" and not app and legacy_marks() and has_bundle_inputs(change):
         print("scripts/marks.py is older than this gate (it has no `bundles`): it cannot inventory")
         print("this milestone's design bundles, and an empty inventory would pass an unrendered one.")
         print("If sdlc.json `keep` lists scripts/marks.py, remove it from `keep` first, then run")
@@ -1609,7 +1596,7 @@ def run_close(
                 "run": f"{shlex.join([sys.executable, str(preflight)])} || {{ echo 'VERIFY BLOCKED reason=env'; exit 1; }}",
             }
         )
-    if scope == "milestone" and (has_owner_marks(change) or lock.get("screens") == "required"):
+    if scope == "milestone" and not app and (has_owner_marks(change) or lock.get("screens") == "required"):
         evidence.append(
             {
                 "name": "owner-marks",
@@ -1630,6 +1617,7 @@ def run_close(
         )
     elif (
         scope == "milestone"
+        and not app
         and not (visual_check and visual_runs)
         and visual_run_required(change, cfg, repo)
     ):
@@ -1641,6 +1629,13 @@ def run_close(
                 "owner attest a skip (decisions.json skips.visual `skip -- <reason>` plus the "
                 "dialog `Change <id>, finding visual-skip: ...` answered Skip visual evidence)",
             )
+        )
+    if app:  # one capture batch inside this close: preview reachability, two passes, the approved baselines
+        script = Path(__file__).with_name("capture.py")
+        evidence.append(
+            {"name": "app-screens", "cache": False, "run": shlex.join([sys.executable, str(script), "run", str(change), "--group", *(["--upto", str(upto)] if (upto := capture_upto(change, number)) else [])])}
+            if script.is_file()
+            else refusal("app-screens", "scripts/capture.py is missing: run `adopt --upgrade` to install it")
         )
     if visual_check and (
         Path(visual_check).name != "visual-check.py"

@@ -6,6 +6,47 @@ budgets, the severity scale and the owner's answer stay in convergence. The laye
 live in `../../ux-build-validate/references/build.md` (Measurements) and the shared
 `visual-pass.md` (section 5).
 
+## Changes approved from 3.25.0: the app's own screenshots (lock `"visual": "app"`)
+
+A design tool is direction, never a gate. The screens are built in the real app and the owner approves
+screenshots of the real app; the approved shots become exact visual tests (the same renderer against
+itself).
+
+1. **Plan (Stage 2).** The UX plan writes `screens.json` in the change folder: one entry per screen and
+   state, `{"id": "leads.list.empty", "route": "/preview/leads?state=empty", "viewport": [1440, 900],
+   "fixture": "<scenario name>"}`, and names the one sample-data fixture the app seeds.
+2. **Build (Stage 5).** Every entry gets a preview page in the app that renders that screen and state
+   with the fixture (dev and test builds only; the repo decides how, for example a `/preview` route
+   behind an environment flag). A milestone whose `screens.json` has an entry with no reachable
+   preview is refused.
+3. **Capture (Stage 6, one batch).** Every entry is shot at its viewport, twice; two different shots of
+   one entry mean the page is unstable, which is a problem to fix. The latest shots are
+   `verify/shots/<entry>.png`.
+4. **Approval.** `python3 scripts/evidence.py gallery <change>` writes `verify/gallery.html`: one
+   offline file, every shot grouped by screen, with its route and accept / send back. The owner
+   downloads `answers.json` and the agent runs `evidence.py gallery <change> --import answers.json`:
+   an accepted shot is copied to `screens/<entry>.png` (tracked) and its sha256 goes into
+   `screens/approved.json` with the approver and the date; a send back removes the entry and prints
+   `reopened: <entry>`. An answer for a shot that changed after the gallery was made is refused.
+   Regenerating the gallery never touches an approval.
+   Each entry may carry `"milestone": N` (default 1): a milestone close captures the entries with
+   milestone <= N and the last milestone requires all of them, so an early close never needs a screen
+   a later milestone builds. Two entries never share a route and viewport (the fixture shows only
+   through the route), ids differ by more than case, and `visual.threshold` is a number from 0 to 1.
+5. **Exact tests.** From then on the gate compares each entry's capture with its approved sha256
+   (zero tolerance; `visual.threshold` in `sdlc.json`, default 0). A difference fails with the entry
+   name and a diff image path, and needs a new approval.
+6. **Status.** `screens: N of M approved · K changed since approval · L not captured`.
+
+Retired for these changes: design-bundle pinning, `marks.py` rows against bundles and references, the
+six-layer geometry tolerances and the design-system audit tied to board counts (the design-system pin
+stays).
+
+## Changes approved before 3.25.0
+
+A change whose lock has no `"visual": "app"` keeps the process below unchanged. Read the lock, not the
+version of the skill.
+
 ## Capture headless, never in the owner's browser
 
 Capture real screenshots headless: `agent-browser` CLI first, or Playwright

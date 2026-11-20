@@ -30,6 +30,7 @@ LOCKED_FILES = {
 }
 TICKED_FILES = ("tasks.md",)  # a tick or a handover edit is not an edit: only its task rows are locked
 LOCKED = {name for names in LOCKED_FILES.values() for name in names}
+APP_LOCKED_FILES = ("screens.json",)  # locked too once the lock says `"visual": "app"` or hashed it (3.25.0)
 EVIDENCE_FILES = {"marks.json"}
 EVIDENCE_DIRS = {"asks", "evidence", "shots", "screens"}  # screens/: the per-screen records (3.23.0)
 OUTCOMES = ".sdlc/outcomes/"  # a record of the success measure (spec.py outcome write): records only
@@ -277,6 +278,21 @@ def _lock_keys(repo: Path, tree: dict[str, tuple[str, str]]) -> set[str]:
     return set(criteria) if isinstance(criteria, dict) else set()
 
 
+def app_locked(lock: object) -> bool:
+    """The lock protects screens.json: it says `"visual": "app"` or hashed the file (chain-gate.sh reads the same rule)."""
+    if not isinstance(lock, dict):
+        return False
+    criteria = lock.get("criteria")
+    return lock.get("visual") == "app" or "screens.json" in (criteria if isinstance(criteria, dict) else {})
+
+
+def _app_locked(repo: Path, tree: dict[str, tuple[str, str]]) -> bool:
+    try:
+        return app_locked(json.loads(_text(repo, tree.get("state/lock.json") or tree.get("lock.json"))))
+    except (ValueError, TypeError):
+        return False
+
+
 def proves(repo: Path, changes_dir: str, gated: str, head: str) -> bool:
     """True when a pass gated at `gated` still holds at `head`."""
     if not gated or not head:
@@ -307,6 +323,8 @@ def proves(repo: Path, changes_dir: str, gated: str, head: str) -> bool:
         mine = [{k.split("/", 1)[1]: v for k, v in tree.items() if k.startswith(cid + "/")} for tree in (before, after)]
         keys = _lock_keys(repo, mine[0])
         if "decisions.routing" in keys and _routing(repo, mine[0]) != _routing(repo, mine[1]):
+            return False
+        if _app_locked(repo, mine[0]) and any((mine[0].get(f) or ("",))[0] != (mine[1].get(f) or ("",))[0] for f in APP_LOCKED_FILES):
             return False
         if "plan.milestones" in keys and _plan_milestones(repo, mine[0]) != _plan_milestones(repo, mine[1]):
             return False

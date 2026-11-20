@@ -152,6 +152,8 @@ def _visual_milestone(tmp_path: Path) -> Path:
     (repo / "changes" / ID / "decisions.json").write_text(
         json.dumps({"size": "M", "visualSource": "https://example.test/design"})
     )
+    entry = {"id": "home.full", "route": "/preview/home", "viewport": [1440, 900], "fixture": "seed"}
+    (repo / "changes" / ID / "screens.json").write_text(json.dumps({"entries": [entry]}))  # from 3.25.0 approval needs it
     _git(repo, "add", "-A")
     _git(repo, "commit", "-qm", "visual")
     _approve(repo)
@@ -161,7 +163,8 @@ def _visual_milestone(tmp_path: Path) -> Path:
 
 def test_editing_size_after_approval_cannot_waive_the_visual_review(tmp_path: Path) -> None:
     repo = _visual_milestone(tmp_path)
-    assert _last(_gate(repo, "milestone", ID)) == f"VERIFY FAIL milestone {ID} check=ux-visual-required"
+    r = _gate(repo, "milestone", ID)  # from 3.25.0 the visual review is the app capture, here without a start command
+    assert _last(r) == "VERIFY BLOCKED reason=env" and "FAIL app-screens" in r.stdout
     path = repo / "changes" / ID / "decisions.json"
     path.write_text(json.dumps({"size": "none", "visualSource": "https://example.test/design"}))
     _git(repo, "commit", "-qam", "size none")

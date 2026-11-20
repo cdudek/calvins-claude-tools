@@ -18,6 +18,13 @@ bundle:asks/export/home; the file name is made from it by one shared rule):
     python3 scripts/evidence.py status CHANGE                   # the "screens: 62 of 271 done" line
     python3 scripts/evidence.py sheet CHANGE [--import]         # changes/<id>/owner-sheet.md; --import records its answers
 
+Changes approved from 3.25.0 (`"visual": "app"`, a screens.json in the change folder) approve shots of the
+real app instead: `gallery CHANGE` writes one offline page (verify/gallery.html) with every latest shot and
+an accept / send back choice; the owner downloads answers.json, and `gallery CHANGE --import answers.json
+[--by NAME]` copies each accepted shot to screens/<entry>.png and records its sha256 in screens/approved.json
+(a send back removes the entry and prints `reopened: <entry>`). `status` then prints
+`screens: N of M approved · K changed since approval · L not captured`.
+
 The first review writes the defect list and a snapshot of it; it is frozen after that: a later
 review ticks items or adds a High or a flagged regression. A screen is done when it was reviewed
 against the approved design-system release (lock.json), has a full build sha and a capture of that
@@ -30,9 +37,11 @@ from the kit; edit the kit, not this copy. stdlib only.
 from __future__ import annotations
 
 import argparse
+import base64
 import contextlib
 import fcntl
 import hashlib
+import html
 import json
 import os
 import re
@@ -398,7 +407,19 @@ def universe(change: str | Path, records: list[dict]) -> int:
     return len(ids | (set(expected(change)) if strict(change) else set()))
 
 
+def app_locked(change: str | Path) -> bool:
+    """The approval lock says `"visual": "app"` (3.25.0): a draft screens.json in an older change changes nothing."""
+    for rel in ("state/lock.json", "lock.json"):
+        try:
+            return json.loads((Path(change) / rel).read_text("utf-8")).get("visual") == "app"
+        except (OSError, ValueError, AttributeError):
+            continue
+    return False
+
+
 def status_line(change: str | Path) -> str:
+    if app_locked(change) and (Path(change) / "screens.json").is_file():
+        return app_status_line(change)
     records = load_screens(change)
     total = universe(change, records)
     if not total:
@@ -460,6 +481,178 @@ def sheet_cmd(args) -> int:
     return 0
 
 
+# --- the app flow (lock "visual": "app"): screens.json, shots of the real app, approved.json ---------
+
+def app_entries(change: str | Path) -> list[dict]:
+    """The entries of screens.json (a list, or {"entries": [...]}); [] when absent or unreadable."""
+    try:
+        data = json.loads((Path(change) / "screens.json").read_text("utf-8"))
+    except (OSError, ValueError):
+        return []
+    rows = data.get("entries") if isinstance(data, dict) else data
+    return [r for r in rows or [] if isinstance(r, dict) and isinstance(r.get("id"), str)]
+
+
+def shot_of(change: str | Path, entry: str) -> Path:
+    return Path(change) / "verify" / "shots" / f"{entry}.png"
+
+
+def approved_path(change: str | Path) -> Path:
+    return screens_dir(change) / "approved.json"
+
+
+def read_approved(change: str | Path) -> dict:
+    try:
+        data = json.loads(approved_path(change).read_text("utf-8"))
+    except (OSError, ValueError):
+        return {}
+    return data.get("entries", {}) if isinstance(data, dict) and isinstance(data.get("entries"), dict) else {}
+
+
+def write_approved(change: str | Path, entries: dict) -> None:
+    path = approved_path(change)
+    path.parent.mkdir(parents=True, exist_ok=True)
+    tmp = path.with_name(f".{path.name}.{os.getpid()}.tmp")
+    tmp.write_text(json.dumps({"format": 1, "entries": entries}, indent=2, sort_keys=True) + "\n", encoding="utf-8")
+    os.replace(tmp, path)
+
+
+def sha_of(path: Path) -> str:
+    return hashlib.sha256(path.read_bytes()).hexdigest() if path.is_file() else ""
+
+
+def app_state(change: str | Path, entry: str, approved: dict, digest: str | None = None) -> str:
+    """approved | changed | new | not captured, for one entry (`digest`: the shot's, when the caller already read it)."""
+    shot, ok = sha_of(shot_of(change, entry)) if digest is None else digest, approved.get(entry)
+    if ok:
+        return "changed" if shot and shot != ok.get("sha256") else "approved"
+    return "new" if shot else "not captured"
+
+
+def app_status_line(change: str | Path) -> str:
+    approved = read_approved(change)
+    states = [app_state(change, e["id"], approved) for e in app_entries(change)]
+    if not states:
+        return ""
+    return (f"screens: {states.count('approved')} of {len(states)} approved · {states.count('changed')} changed since approval"
+            f" · {states.count('not captured')} not captured")
+
+
+PAGE = """<!doctype html><meta charset="utf-8"><title>Screens to approve</title>
+<style>body{font:15px system-ui;margin:2rem auto;max-width:1100px;padding:0 1rem}h2{margin-top:2.5rem}
+figure{border:1px solid #ccc;border-radius:8px;padding:1rem;margin:1rem 0}img{max-width:100%;border:1px solid #ddd}
+code{background:#eee;padding:0 .3rem}.changed{color:#b00}label{margin-right:1rem}</style>
+<h1>Screens to approve</h1><p>Change <code>__CHANGE__</code>. Pick accept or send back per screen, then download your answers.</p>
+<p><label>Your name <input id="by"></label> <button onclick="dl()">Download answers</button></p>
+__BODY__
+<script>function dl(){var a={};document.querySelectorAll('figure[data-id]').forEach(function(f){var c=f.querySelector('input[type=radio]:checked');
+if(c)a[f.dataset.id]={answer:c.value,sha256:f.dataset.sha}});var b=new Blob([JSON.stringify({format:1,approvedBy:document.getElementById('by').value,answers:a},null,2)],{type:'application/json'});
+var l=document.createElement('a');l.href=URL.createObjectURL(b);l.download='answers.json';l.click()}</script>
+"""
+
+
+def resolve_change(arg: str) -> Path:
+    """The change folder: the path given, else a bare id under sdlc.json `changesDir` (default changes)."""
+    if Path(arg).is_dir():
+        return Path(arg)
+    try:
+        folder = json.loads(Path("sdlc.json").read_text("utf-8")).get("changesDir") or "changes"
+    except (OSError, ValueError, AttributeError):
+        folder = "changes"
+    return Path(folder) / arg if (Path(folder) / arg).is_dir() else Path(arg)
+
+
+def inside(change: Path, path: Path) -> bool:
+    return path.resolve().is_relative_to(change.resolve())
+
+
+def gallery_cmd(args) -> int:
+    import capture  # the one id rule; both scripts sit in the same folder
+
+    change = resolve_change(args.change)
+    entries, problems = capture.load_screens(change)
+    if problems:
+        print("\n".join(f"evidence: {p}" for p in problems), file=sys.stderr)
+        return 1
+    return gallery_import(args, change, entries) if args.do_import else gallery_write(change, entries)
+
+
+def gallery_write(change: Path, entries: list[dict]) -> int:
+    approved, body, seen = read_approved(change), [], []
+    for e in entries:
+        group = e["id"].rpartition(".")[0] or e["id"]
+        if group not in seen:
+            seen.append(group)
+            body.append(f"<h2>{html.escape(group)}</h2>")
+        shot = shot_of(change, e["id"])
+        raw = shot.read_bytes() if shot.is_file() and inside(change, shot) else None  # read once: shown, hashed and approved alike
+        digest = hashlib.sha256(raw).hexdigest() if raw is not None else ""
+        state = app_state(change, e["id"], approved, digest)
+        head = f"<b>{html.escape(e['id'])}</b> <code>{html.escape(str(e.get('route', '')))}</code> "
+        if raw is not None:
+            data = base64.b64encode(raw).decode()
+            cls = ' class="changed"' if state == "changed" else ""
+            body.append(
+                f'<figure data-id="{html.escape(e["id"], quote=True)}" data-sha="{digest}">{head}<span{cls}>'
+                f'{"changed since approval" if state == "changed" else state}</span><br>'
+                f'<img alt="{html.escape(e["id"], quote=True)}" src="data:image/png;base64,{data}"><br>'
+                f'<label><input type="radio" name="{html.escape(e["id"], quote=True)}" value="accept"> accept</label>'
+                f'<label><input type="radio" name="{html.escape(e["id"], quote=True)}" value="send back"> send back</label></figure>')
+        else:
+            body.append(f"<figure>{head}<span>not captured</span></figure>")
+    out = change / "verify" / "gallery.html"
+    out.parent.mkdir(parents=True, exist_ok=True)
+    out.write_text(PAGE.replace("__CHANGE__", html.escape(change.name)).replace("__BODY__", "\n".join(body)), encoding="utf-8")
+    print(f"wrote {out}")
+    return 0
+
+
+def gallery_import(args, change: Path, entries: list[dict]) -> int:
+    try:
+        data = json.loads(Path(args.do_import).read_text("utf-8"))
+        answers = data["answers"]
+        if not isinstance(answers, dict):
+            raise ValueError
+    except (OSError, ValueError, KeyError, TypeError):
+        print(f"evidence: {args.do_import} is not an answers file", file=sys.stderr)
+        return 1
+    by = data.get("approvedBy") or args.by
+    if not by:
+        print("evidence: the answers name nobody; fill in the name on the page or pass --by", file=sys.stderr)
+        return 1
+    known, bad, reopened = {e["id"] for e in entries}, [], []
+    with writing(change, approved_path(change)):  # two imports never overwrite each other's decisions
+        approved = read_approved(change)
+        before = dict(approved)
+        for entry, a in answers.items():
+            answer = ANSWERS.get(str((a or {}).get("answer", "")).lower()) if isinstance(a, dict) else None
+            if entry not in known or not answer:
+                bad.append(f"{entry}: not an entry of screens.json or not an answer")
+                continue
+            shot = shot_of(change, entry)
+            raw = shot.read_bytes() if shot.is_file() and inside(change, shot) else None  # read once: checked, copied and hashed alike
+            digest = hashlib.sha256(raw).hexdigest() if raw is not None else ""
+            if raw is None or digest != a.get("sha256"):  # an old answer never acts on a newer shot, send back included
+                bad.append(f"{entry}: the shot changed since the gallery was made; regenerate it")
+            elif answer == "send-back":
+                if approved.pop(entry, None):
+                    (screens_dir(change) / f"{entry}.png").unlink(missing_ok=True)
+                reopened.append(entry)
+            else:
+                screens_dir(change).mkdir(parents=True, exist_ok=True)
+                (screens_dir(change) / f"{entry}.png").write_bytes(raw)
+                approved[entry] = {"sha256": digest, "file": f"screens/{entry}.png", "approvedBy": by,
+                                   "date": time.strftime("%Y-%m-%d")}  # fmt: skip
+        if approved != before:
+            write_approved(change, approved)
+    for r in reopened:
+        print(f"reopened: {r}")
+    print(f"approved {len(approved)} of {len(entries)}")
+    for b in bad:
+        print(f"evidence: {b}", file=sys.stderr)
+    return 1 if bad else 0
+
+
 def main(argv: list[str]) -> int:
     if argv[:1] in (["-h"], ["--help"]):
         print(__doc__)
@@ -482,6 +675,10 @@ def main(argv: list[str]) -> int:
     for verb in ("status", "sheet"):
         sub.add_parser(verb).add_argument("change")
     sub.choices["sheet"].add_argument("--import", dest="do_import", action="store_true")
+    g = sub.add_parser("gallery")
+    g.add_argument("change")
+    g.add_argument("--import", dest="do_import", metavar="ANSWERS_JSON")
+    g.add_argument("--by", default="")
     sc = sub.choices["screen"]
     sc.add_argument("--status", choices=STATUSES)
     sc.add_argument("--group")
@@ -501,7 +698,7 @@ def main(argv: list[str]) -> int:
             print(line)
         return 0
     verbs = {"record": record, "stale": stale, "screen": screen_cmd, "review": review_cmd,
-             "round": round_cmd, "sheet": sheet_cmd}  # fmt: skip
+             "round": round_cmd, "sheet": sheet_cmd, "gallery": gallery_cmd}  # fmt: skip
     return verbs[args.verb](args)
 
 
