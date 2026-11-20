@@ -69,6 +69,21 @@ def _approve(repo: Path) -> None:
     _git(repo, "commit", "-qm", "approved")
 
 
+def _approve_legacy(repo: Path) -> None:
+    """A change approved before 3.25.0 (no `"visual": "app"`): the six-layer path keeps working for it.
+    Approve with a placeholder screens.json, then rewrite the lock the way 3.24 wrote it."""
+    change = repo / "changes" / ID
+    (change / "screens.json").write_text('[{"id": "x", "route": "/x", "viewport": [1, 1], "fixture": "f"}]')
+    assert _gate(repo, "approve", ID).returncode == 0
+    (change / "screens.json").unlink()
+    lock = json.loads((change / "lock.json").read_text())
+    lock.pop("visual"), lock["criteria"].pop("screens.json")
+    lock["screens"] = "required"
+    (change / "lock.json").write_text(json.dumps(lock, indent=2) + "\n")
+    _git(repo, "add", ".")
+    _git(repo, "commit", "-qm", "approved before 3.25.0")
+
+
 def _last(r: subprocess.CompletedProcess[str]) -> str:
     return r.stdout.strip().splitlines()[-1]
 
@@ -1402,7 +1417,7 @@ def test_missing_evidence_fails_before_the_suite_starts(tmp_path: Path) -> None:
     export = repo / "changes" / ID / "asks/export"
     export.mkdir(parents=True)
     (export / "index.html").write_text("<html>screen</html>")
-    _approve(repo)
+    _approve_legacy(repo)
     result = _gate(repo, "milestone", ID)
     assert _last(result) == f"VERIFY FAIL milestone {ID} check=owner-marks"
     assert not ran.exists()
@@ -1414,7 +1429,7 @@ def test_a_supplied_bundle_requires_a_valid_ledger_at_milestone(tmp_path: Path) 
     export = repo / "changes" / ID / "asks/export"
     export.mkdir(parents=True)
     (export / "index.html").write_text("<html>screen</html>")
-    _approve(repo)
+    _approve_legacy(repo)
     result = _gate(repo, "milestone", ID)
     assert _last(result) == f"VERIFY FAIL milestone {ID} check=owner-marks"
 
@@ -1630,6 +1645,14 @@ def test_a_default_branch_that_is_not_a_plain_ref_is_refused(tmp_path: Path) -> 
 # --- Review finding 7: the required visual runs come from the UX decision and the sources -----
 
 
+def _visual_repo_unapproved(tmp_path: Path, decisions: dict | None, ux: str = "on") -> Path:
+    repo = _repo(tmp_path, [])
+    (repo / "sdlc.json").write_text(json.dumps({"checks": {"milestone": ["true"]}, "ux": ux}))
+    if decisions is not None:
+        (repo / "changes" / ID / "decisions.json").write_text(json.dumps(decisions))
+    return repo
+
+
 def _visual_repo(
     tmp_path: Path, decisions: dict | None, ux: str = "on", loose_reference: bool = False
 ) -> Path:
@@ -1642,7 +1665,7 @@ def _visual_repo(
     if loose_reference:
         (change / "asks").mkdir()
         (change / "asks/wireframe.png").write_bytes(b"reference")
-    _approve(repo)
+    (_approve_legacy if ux != "off" and (decisions and decisions.get("visualSource") or loose_reference) else _approve)(repo)
     return repo
 
 
@@ -2129,24 +2152,72 @@ def _screens(repo: Path, n: int) -> None:
     _git(repo, "commit", "-qm", "screens")
 
 
-def test_approval_locks_the_design_system_pin_and_screens_flag(tmp_path: Path) -> None:
+SCREENS = [
+    {"id": f"{s}.list.{st}", "route": f"/preview/{s}?state={st}", "viewport": [1440, 900], "fixture": "seed-1"}
+    for s in ("leads", "deals")
+    for st in ("empty", "full")
+]
+
+
+def _screens_json(repo: Path, entries: list | None = None) -> None:
+    (repo / "changes" / ID / "screens.json").write_text(json.dumps(SCREENS if entries is None else entries))
+    _git(repo, "add", ".")
+    _git(repo, "commit", "-qm", "screens.json")
+
+
+def test_approval_locks_the_app_flow_the_screens_and_the_design_system_pin(tmp_path: Path) -> None:
     repo = _ds_repo(tmp_path)
-    _screens(repo, 2)
+    _screens_json(repo)
     (repo / "changes" / ID / "plan.md").write_text(
         (repo / "changes" / ID / "plan.md").read_text() + "\n## Where things go\n\n- `src/screens/`: x\n- `../out/`: y\n"
     )
     _approve(repo)
     lock = _lock(repo)
-    assert lock["screens"] == "required"
+    assert lock["visual"] == "app" and "screens" not in lock
+    assert lock["criteria"]["screens.json"] == hashlib.sha256((repo / "changes" / ID / "screens.json").read_bytes()).hexdigest()
     assert lock["scopeFolders"] == ["src/screens"]
-    assert lock["designSystem"] == {
-        "name": "@acme/ds",
-        "version": "1.2.0",
-        "consumers": [
-            {"path": "package.json", "pin": "1.2.0", "resolved": ""},
-            {"path": "apps/x/package.json", "pin": "1.2.0", "resolved": ""},
-        ],
-    }
+    assert lock["designSystem"]["version"] == "1.2.0"
+
+
+def test_a_visual_change_without_screens_json_is_refused_at_approval(tmp_path: Path) -> None:
+    repo = _visual_repo_unapproved(tmp_path, VISUAL)
+    r = _gate(repo, "approve", ID)
+    assert r.returncode == 1 and "screens.json is missing" in r.stdout
+
+
+def test_a_bad_screens_json_is_refused_at_approval(tmp_path: Path) -> None:
+    repo = _repo(tmp_path, ["true"])
+    _screens_json(repo, [{"id": "a", "route": "nope", "viewport": [1, 1], "fixture": "f"}])
+    r = _gate(repo, "approve", ID)
+    assert r.returncode == 1 and "route must start" in r.stdout
+
+
+def test_many_screens_need_no_design_system_audit_in_the_app_flow(tmp_path: Path) -> None:
+    repo = _ds_repo(tmp_path, auditAbove=2)
+    _screens_json(repo, [{**SCREENS[0], "id": f"s{i}"} for i in range(30)])
+    assert _gate(repo, "approve", ID).returncode == 0
+
+
+def test_editing_screens_json_after_approval_blocks_the_milestone(tmp_path: Path) -> None:
+    repo = _repo(tmp_path, ["true"])
+    (repo / "sdlc.json").write_text(json.dumps({"checks": {"milestone": ["true"]}}))
+    _screens_json(repo)
+    _approve(repo)
+    _screens_json(repo, SCREENS[:1])
+    r = _gate(repo, "milestone", ID)
+    assert _last(r) == "VERIFY BLOCKED reason=protected-path" and "screens.json" in r.stdout
+
+
+def test_an_app_milestone_runs_the_capture_and_never_the_bundle_checks(tmp_path: Path) -> None:
+    repo = _repo(tmp_path, [])
+    (repo / "sdlc.json").write_text(json.dumps({"checks": {"milestone": ["true"]}, "ux": "on"}))
+    (repo / "changes" / ID / "decisions.json").write_text(json.dumps(VISUAL))
+    _screens_json(repo)
+    _approve(repo)  # no visual run, no marks rows, no bundle: only screens.json
+    r = _gate(repo, "milestone", ID)
+    names = [c["name"] for c in json.loads((repo / "changes" / ID / "verify/report.json").read_text())["checks"]]
+    assert names[:1] == ["app-screens"] and "owner-marks" not in names and "ux-visual-required" not in names
+    assert _last(r) == "VERIFY BLOCKED reason=env" and "visual.start" in r.stdout  # no app configured here
 
 
 def test_no_design_system_key_or_no_visual_work_records_nothing(tmp_path: Path) -> None:
@@ -2158,7 +2229,7 @@ def test_no_design_system_key_or_no_visual_work_records_nothing(tmp_path: Path) 
 def test_a_moved_pin_blocks_the_milestone_until_reapproved(tmp_path: Path) -> None:
     repo = _ds_repo(tmp_path)
     _screens(repo, 2)
-    _approve(repo)
+    _approve_legacy(repo)
     _pkg(repo, "apps/x/package.json", "1.3.0")
     _git(repo, "commit", "-qam", "bump")
     r = _gate(repo, "milestone", ID)
@@ -2167,30 +2238,9 @@ def test_a_moved_pin_blocks_the_milestone_until_reapproved(tmp_path: Path) -> No
     assert "re-approve with the new release" in r.stdout
     _pkg(repo, "package.json", "1.3.0")  # re-approval locks the new release
     _git(repo, "commit", "-qam", "bump root")
+    _screens_json(repo)  # a re-approval from 3.25.0 on is an app approval: it needs screens.json
     assert _gate(repo, "approve", ID).returncode == 0
     assert _lock(repo)["designSystem"]["version"] == "1.3.0"
-
-
-def test_a_large_visual_change_needs_a_design_system_audit(tmp_path: Path) -> None:
-    repo = _ds_repo(tmp_path)
-    _screens(repo, 21)
-    r = _gate(repo, "approve", ID)
-    assert r.returncode == 1 and "design-system-audit.md" in r.stdout
-    audit = repo / "changes" / ID / "design-system-audit.md"
-    audit.write_text("| group | part | status |\n|---|---|---|\n| forms | Input | have |\n| forms | Select | gap |\n")
-    r = _gate(repo, "approve", ID)
-    assert r.returncode == 1 and "one design-system release" in r.stdout and "Select" in r.stdout
-    audit.write_text("| group | part | status |\n|---|---|---|\n| forms | Input | have |\n| forms | Select | have |\n")
-    assert _gate(repo, "approve", ID).returncode == 0
-
-
-def test_the_audit_threshold_is_a_setting(tmp_path: Path) -> None:
-    repo = _ds_repo(tmp_path, auditAbove=2)
-    _screens(repo, 3)
-    assert _gate(repo, "approve", ID).returncode == 1
-    repo2 = _ds_repo(tmp_path / "b", auditAbove=50)
-    _screens(repo2, 30)
-    assert _gate(repo2, "approve", ID).returncode == 0
 
 
 def test_the_milestone_schedules_marks_from_the_lock_not_from_the_inputs(tmp_path: Path) -> None:
@@ -2253,7 +2303,7 @@ def test_the_pin_records_the_resolved_version_and_a_lockfile_move_blocks(tmp_pat
     _pkg(repo, "apps/x/package.json", "^1.2.0")
     _lockfile(repo, "package-lock.json", NPM_LOCK % "1.2.4")
     _screens(repo, 2)
-    _approve(repo)
+    _approve_legacy(repo)
     ds = _lock(repo)["designSystem"]
     assert ds["version"] == "1.2.4" and [c["resolved"] for c in ds["consumers"]] == ["1.2.4", "1.2.4"]
     _lockfile(repo, "package-lock.json", NPM_LOCK % "1.2.9")  # the range is unchanged, the install moved
@@ -2265,7 +2315,7 @@ def test_the_pin_records_the_resolved_version_and_a_lockfile_move_blocks(tmp_pat
 def test_another_package_or_an_unchecked_consumer_blocks_the_milestone(tmp_path: Path) -> None:
     repo = _ds_repo(tmp_path)
     _screens(repo, 2)
-    _approve(repo)
+    _approve_legacy(repo)
     cfg = json.loads((repo / "sdlc.json").read_text())
     cfg["designSystem"]["consumers"].append("apps/y/package.json")
     (repo / "sdlc.json").write_text(json.dumps(cfg))
@@ -2297,22 +2347,38 @@ def test_lockfile_readers_for_pnpm_and_yarn(tmp_path: Path) -> None:
     assert verify_gate._lock_version("yarn.lock", berry, "@acme/ds", ".", "^1.2.0") == "1.2.8"
 
 
-def test_the_audit_threshold_counts_loose_reference_images(tmp_path: Path) -> None:
-    repo = _ds_repo(tmp_path)
-    asks = repo / "changes" / ID / "asks"
-    asks.mkdir(parents=True)
-    for i in range(21):
-        (asks / f"s{i}.png").write_bytes(b"x")
+
+
+def test_the_milestone_gate_captures_the_fixture_app_end_to_end(tmp_path: Path) -> None:
+    """Close job: one app start, every entry twice; no baseline blocks, an approved baseline passes,
+    a changed page fails with the entry name. The browser is the fake driver of test_capture.py."""
+    import hashlib
+
+    import test_capture as tc
+
+    repo = _repo(tmp_path, [])
+    (repo / "app.py").write_text(tc.APP)
+    (repo / "driver.py").write_text(tc.DRIVER)
+    visual = {"start": f"{sys.executable} app.py", "driver": f"{sys.executable} driver.py", "startTimeout": 20}
+    (repo / "sdlc.json").write_text(json.dumps({"checks": {"milestone": ["true"]}, "ux": "on", "visual": visual}))
+    _screens_json(repo, tc.ENTRIES)
+    _approve(repo)
+    r = _gate(repo, "milestone", ID)
+    assert _last(r) == "VERIFY BLOCKED reason=needs-baseline" and "4 of 4 entries have no approved shot" in r.stdout
+    change = repo / "changes" / ID
+    (change / "screens").mkdir()
+    entries = {}
+    for e in tc.ENTRIES:
+        shot = change / "verify/shots" / f"{e['id']}.png"
+        (change / "screens" / f"{e['id']}.png").write_bytes(shot.read_bytes())
+        entries[e["id"]] = {"sha256": hashlib.sha256(shot.read_bytes()).hexdigest(), "file": f"screens/{e['id']}.png"}
+    (change / "screens/approved.json").write_text(json.dumps({"format": 1, "entries": entries}))
     _git(repo, "add", ".")
-    _git(repo, "commit", "-qm", "images")
-    r = _gate(repo, "approve", ID)
-    assert r.returncode == 1 and "design-system-audit.md" in r.stdout
-
-
-def test_an_audit_row_that_is_neither_have_nor_gap_is_a_problem(tmp_path: Path) -> None:
-    repo = _ds_repo(tmp_path)
-    _screens(repo, 21)
-    audit = repo / "changes" / ID / "design-system-audit.md"
-    audit.write_text("| group | part | status |\n|---|---|---|\n| forms | Input | have |\n| forms | Select | pending |\n")
-    r = _gate(repo, "approve", ID)
-    assert r.returncode == 1 and "every row must end in have or gap" in r.stdout and "forms: Select is pending" in r.stdout
+    _git(repo, "commit", "-qm", "owner approved the screens")
+    r = _gate(repo, "milestone", ID)
+    assert _last(r).startswith(f"VERIFY PASS milestone {ID}"), r.stdout
+    (repo / "app.py").write_text(tc.APP.replace("'MARK', ''", "'MARK', 'x'"))
+    _git(repo, "commit", "-qam", "the page changed")
+    r = _gate(repo, "milestone", ID)
+    assert _last(r) == f"VERIFY FAIL milestone {ID} check=app-screens"
+    assert "leads.list.empty: differs from the approved shot" in r.stdout

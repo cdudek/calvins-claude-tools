@@ -1167,7 +1167,7 @@ def test_adopt_copies_marks_script_verbatim(tmp_path: Path) -> None:
 def test_adopt_copies_the_heavy_work_scripts_verbatim(tmp_path: Path) -> None:
     repo = _repo(tmp_path, "python")
     assert _adopt(repo).returncode == 0
-    for name in ("heavy.py", "db.py", "evidence.py", "preflight.py"):
+    for name in ("heavy.py", "db.py", "evidence.py", "preflight.py", "capture.py"):
         source = ADOPT.parents[1] / "templates/scripts" / name
         assert (repo / "scripts" / name).read_bytes() == source.read_bytes(), name
 
@@ -1885,6 +1885,7 @@ def _listed(name: str) -> set[str]:
         ("scripts/db.py", "KIT_DB"),
         ("scripts/evidence.py", "KIT_EVIDENCE"),
         ("scripts/preflight.py", "KIT_PREFLIGHT"),
+        ("scripts/capture.py", "KIT_CAPTURE"),
         ("hooks/helper-guard.sh", "KIT_HELPER_GUARD"),
     ],
 )
@@ -1942,6 +1943,7 @@ NEW_KIT_PATHS = [
     "scripts/db.py",
     "scripts/evidence.py",
     "scripts/preflight.py",
+    "scripts/capture.py",
     ".claude/hooks/helper-guard.sh",
 ]
 

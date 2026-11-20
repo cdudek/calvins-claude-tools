@@ -1038,6 +1038,10 @@ KIT_PREFLIGHT = {
     "020f538fc743c5b0",
     "800076649e5cd346",
 }
+KIT_CAPTURE = {
+    "55464dcaa9fb571a",
+    "b83541819543ec15",
+}
 KIT_HELPER_GUARD = {
     "ca26ffb8ad16e8b3",
 }
@@ -1047,6 +1051,7 @@ KIT_PARTS = {
     "scripts/db.py": KIT_DB,
     "scripts/evidence.py": KIT_EVIDENCE,
     "scripts/preflight.py": KIT_PREFLIGHT,
+    "scripts/capture.py": KIT_CAPTURE,
     ".claude/hooks/helper-guard.sh": KIT_HELPER_GUARD,
 }
 # Files a 3.18 kit did not ship: a repo may have its own file at the path.
@@ -1056,6 +1061,7 @@ NEW_KIT_FILES = {
     "scripts/db.py",
     "scripts/evidence.py",
     "scripts/preflight.py",
+    "scripts/capture.py",
     ".claude/hooks/helper-guard.sh",
 }
 
@@ -1609,6 +1615,7 @@ def main() -> int:
         "db.py",
         "evidence.py",
         "preflight.py",
+        "capture.py",
     ):
         _write(ROOT / "scripts" / script, (TPL / "scripts" / script).read_text(encoding="utf-8"))
     # sdlc_status.py runs from the plugin now and is never copied into a repo.
