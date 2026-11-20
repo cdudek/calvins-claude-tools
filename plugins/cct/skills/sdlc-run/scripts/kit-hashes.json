@@ -48,6 +48,7 @@
   "e0e2d00d14a13156",
   "e571d72396252fa4",
   "edf017663d7895e0",
+  "f9747885b0e750ba",
   "feed9700c8097a39"
  ],
  ".claude/hooks/gate-bash.sh": [
@@ -203,9 +204,11 @@
  ],
  "scripts/capture.py": [
   "2b0aa4a315b83122",
+  "2da4931def130e10",
   "55464dcaa9fb571a",
   "76f341df1ef81a00",
   "9cd5bdc59852d1a6",
+  "acc567b4cf0b1bea",
   "b66771e69e06e46f",
   "b83541819543ec15",
   "df45ac2d5c99d0bb",
@@ -234,10 +237,13 @@
   "a2ad7046f8557477",
   "ac196d166bdc401d",
   "c90008dbca3b8a29",
-  "d1ca5373b45d3068"
+  "d1ca5373b45d3068",
+  "d3f6a873494adeca",
+  "dfc08b78731101be"
  ],
  "scripts/heavy.py": [
   "050107783daa70ff",
+  "05955f42a11347dc",
   "133511d3c4625790",
   "1bb86e7356aa80e0",
   "40e40233bf70ec93",
@@ -261,6 +267,7 @@
   "1c753d2e8d90e632",
   "1d7b567db399b3f8",
   "2643204887c6e1be",
+  "28bc4d10aadaed09",
   "319562d2b66830cb",
   "38a78e806a7d33d2",
   "4dc39753a72de141",
@@ -400,10 +407,12 @@
   "b9eb1981bd731186",
   "bbc064235901f9db",
   "bc17b21c814e7b87",
+  "bf7a319c097dc6c7",
   "bfd163a148354f0b",
   "bfe5283e8dc8f52a",
   "bff25d03c74642b8",
   "c1648dc7f9d8401d",
+  "c302c7fd6be36da8",
   "c53ff6ee7a8eb8d9",
   "c7bf44c073864753",
   "ca433e00cafb69b8",
