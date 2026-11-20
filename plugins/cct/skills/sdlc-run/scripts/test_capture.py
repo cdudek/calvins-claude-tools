@@ -506,7 +506,7 @@ def test_an_owner_answer_recorded_in_a_sibling_worktree_counts(tmp_path: Path, m
     home = tmp_path / "home"
     monkeypatch.setenv("HOME", str(home))
     (tmp_path / "other-repo").mkdir()
-    owner_answers(main / ".worktrees" / "a", "screens-abc", home=home)
+    owner_answers(main / ".worktrees" / "a", "screens-abc", home=home, cwd=main / ".worktrees" / "a")
     owner_answers(tmp_path / "other-repo", "screens-other", home=home)  # another repo's answer is never read
     marks._ANSWERS.clear()
     decided = marks.owner_decisions(main / ".worktrees" / "b", ID)
@@ -541,6 +541,32 @@ def test_a_worktree_removed_before_the_ledger_counts_only_if_its_sessions_ran_un
     assert decided.get("screens-real", ("",))[0] == "screens" and "screens-fake" not in decided
     ledger = main / ".git" / "sdlc" / "worktrees.json"
     assert not list(ledger.parent.glob(".*.tmp")) if ledger.parent.exists() else True  # the ledger is replaced atomically
+
+
+def test_a_ledger_path_counts_only_with_the_proof_a_live_worktree_has(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    """The ledger is a file an agent can write: a path in it outside the repo's worktree folder, or inside it with
+    sessions that ran somewhere else, is ignored, so a transcript folder the agent made up is never read."""
+    import marks
+
+    main = tmp_path / "main"
+    (main / "changes" / ID).mkdir(parents=True)
+    (main / "changes" / ID / "screens.json").write_text("[]")
+    git = ["git", "-c", "user.name=t", "-c", "user.email=t@t"]
+    for cmd in (["git", "init", "-q"], ["git", "add", "."], [*git, "commit", "-qm", "i"]):
+        subprocess.run(cmd, cwd=main, check=True, capture_output=True)
+    home = tmp_path / "home"
+    monkeypatch.setenv("HOME", str(home))
+    outside, moved, real = tmp_path / "planted", main / ".worktrees" / "moved", main / ".worktrees" / "real"
+    owner_answers(outside, "screens-outside", home=home, cwd=outside)  # the agent wrote this folder and listed its path
+    owner_answers(moved, "screens-moved", home=home, cwd=tmp_path / "elsewhere")
+    owner_answers(real, "screens-real", home=home, cwd=real)
+    ledger = main / ".git" / "sdlc" / "worktrees.json"
+    ledger.parent.mkdir(exist_ok=True)
+    ledger.write_text(json.dumps([str(outside), str(moved), str(real)]))
+    marks._ANSWERS.clear()
+    decided = marks.owner_decisions(main, ID)
+    assert decided.get("screens-real", ("",))[0] == "screens"
+    assert "screens-outside" not in decided and "screens-moved" not in decided
 
 
 def test_an_early_close_checks_coverage_only_for_the_entries_due(tmp_path: Path) -> None:
