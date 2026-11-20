@@ -171,12 +171,22 @@ def inventory_id(design: dict) -> str:
     return "inventory-" + hashlib.sha256(canon({"boards": boards, "count": len(boards), "dropped": dropped}).encode()).hexdigest()[:16]
 
 
+def board_file(change: Path, image: object) -> Path | None:
+    """The board image as a file of the change, or None: a relative path that stays inside the change folder, passes no
+    symlink and is a file. An absolute path, a `..` that leaves, a symlink or a symlinked folder is no board image."""
+    if not isinstance(image, str) or not image or Path(image).is_absolute():
+        return None
+    base = Path(change).resolve()
+    path = base / image
+    real = path.resolve()
+    return real if real.is_relative_to(base) and os.path.normpath(path) == str(real) and real.is_file() else None
+
+
 def board_digest(change: Path, design: dict, board_id: str) -> str:
-    """sha256 of a board's image file, "" when it has none (or the file is missing)."""
+    """sha256 of a board's image file, "" when it has none (or the file is missing or leaves the change: design_problems says so)."""
     board = next((b for b in boards_of(design) if b["id"] == board_id), {})
-    image = board.get("image")
-    path = Path(change) / image if isinstance(image, str) else None
-    return hashlib.sha256(path.read_bytes()).hexdigest() if path and path.is_file() else ""
+    path = board_file(change, board.get("image"))
+    return hashlib.sha256(path.read_bytes()).hexdigest() if path else ""
 
 
 def image_digests(change: Path) -> dict[str, str]:
@@ -234,7 +244,7 @@ def design_problems(change: Path, entries: list[dict], required: bool = False) -
         else:
             ids.append(name)
         image = b.get("image") if isinstance(b, dict) else None
-        if image is not None and not (isinstance(image, str) and (change / image).is_file() and (change / image).resolve().is_relative_to(change.resolve())):
+        if image is not None and board_file(change, image) is None:
             problems.append(f"design.json board {name}: image {image!r} is not a file of the change")
     dropped = design.get("dropped", [])
     ok = isinstance(dropped, list) and all(isinstance(d, dict) and d.get("board") in ids and isinstance(d.get("reason"), str) and d["reason"].strip() for d in dropped)

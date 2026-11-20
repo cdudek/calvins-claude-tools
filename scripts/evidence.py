@@ -641,9 +641,9 @@ def boards_html(change: Path, design: dict, entry: dict) -> str:
     known, out = {b["id"]: b for b in capture.boards_of(design)}, []
     for bid in capture.mapped(entry):
         board = known.get(bid, {"id": bid, "name": bid})
-        image = change / board["image"] if isinstance(board.get("image"), str) else None
+        image = capture.board_file(change, board.get("image"))
         mime = mimetypes.guess_type(str(image))[0] if image else None
-        if image and mime and image.is_file() and inside(change, image):
+        if image and mime:
             data = base64.b64encode(image.read_bytes()).decode()
             out.append(f'<img alt="design {html.escape(bid, quote=True)}" src="data:{mime};base64,{data}">')
         else:

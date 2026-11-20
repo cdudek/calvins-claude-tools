@@ -478,3 +478,24 @@ def test_the_gate_reads_the_log_strictly_when_the_lock_is_3_26_and_loosely_befor
     assert not any(p.startswith("decision log") for p in old)  # locked before 3.26: read as it is
     (ch(repo) / "lock.json").write_text(json.dumps({"visual": "app", "criteria": {}, "design": "none"}))
     assert any(p.startswith("decision log") for p in capture.uncovered(ch(repo), {"leads.list.empty": entry}))
+
+
+@pytest.mark.parametrize("how", ["absolute", "parent", "symlink", "symlinked-folder"])
+def test_a_board_image_outside_the_change_is_neither_hashed_nor_embedded(tmp_path: Path, how: str) -> None:
+    change = tmp_path / "changes" / "c1"
+    (change / "asks" / "design").mkdir(parents=True)
+    secret = tmp_path / "secret.png"
+    secret.write_bytes(PNG + b"secret")
+    inside = change / "asks" / "design" / "ok.png"
+    inside.write_bytes(PNG + b"ok")
+    image = {"absolute": str(secret), "parent": "../../secret.png", "symlink": "asks/design/link.png", "symlinked-folder": "asks/out/secret.png"}[how]
+    if how == "symlink":
+        (change / "asks" / "design" / "link.png").symlink_to(secret)
+    if how == "symlinked-folder":
+        (change / "asks" / "out").symlink_to(tmp_path)
+    design = {"source": "x", "boards": [{"id": "b1", "name": "B", "image": image}, {"id": "b2", "name": "C", "image": "asks/design/ok.png"}]}
+    (change / "design.json").write_text(json.dumps(design))
+    assert capture.board_digest(change, design, "b1") == ""
+    assert capture.image_digests(change) == {"b1": "", "b2": sha(PNG + b"ok")}
+    entries = [{"id": "s", "design": ["b1", "b2"]}]
+    assert any("board b1" in p and "image" in p for p in capture.design_problems(change, entries))
