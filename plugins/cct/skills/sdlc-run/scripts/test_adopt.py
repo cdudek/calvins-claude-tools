@@ -2058,26 +2058,43 @@ def test_a_plain_adopt_writes_a_new_kit_path_when_free_or_an_unedited_kit_copy_H
 
 
 # 3.21.0: `--migrate` is the one way across kit versions.
-def _fake_gh(tmp_path: Path, head: str, *more: str, open_heads: tuple[str, ...] = (), commit_prs: str = "[]") -> dict[str, str]:
-    """A gh whose merged PRs are the ones from branches `head` and `more` (REST `pulls?head=O:B&state=closed`
-    answers for exactly the branch asked), whose open PRs are `open_heads`, and whose
-    `commits/<sha>/pulls` answers `commit_prs` ("FAIL" makes gh exit 1). Every call is logged to `gh.log`."""
+def _fake_gh(tmp_path: Path, head: str, *more: str, open_heads: tuple[str, ...] = (), commit_prs: str = "[]",
+             pr_files: dict[int, str] | None = None, paged: bool = False) -> dict[str, str]:
+    """A gh that answers like GitHub's REST API for what adopt asks. Merged PRs are the ones from branches `head` and
+    `more`, matched on the exact head (`-f head=<owner>:<branch>`; a head put into the URL is cut at its first `&`, as
+    the server would). `paged`: the merged PR sits on page two (gh --paginate prints one array per page). Open PRs are
+    `open_heads`; `commits/<sha>/pulls` answers `commit_prs` ("FAIL": gh exits 1); `pulls/<n>/files` answers the
+    newline-separated names in `pr_files[n]` (default: a file outside changes/). Every call is logged to `gh.log`."""
     bin_dir = tmp_path / "bin"
     bin_dir.mkdir()
-    merged = " ".join((head, *more))
-    opened = ",".join(f'{{"headRefName": "{h}"}}' for h in open_heads)
-    commit_answer = "exit 1" if commit_prs == "FAIL" else f"echo '{commit_prs}'"
+    config = {"merged": [head, *more], "open": list(open_heads), "commit_prs": commit_prs, "files": pr_files or {}, "paged": paged}
+    (tmp_path / "gh.json").write_text(json.dumps(config))
     (bin_dir / "gh").write_text(
-        "#!/bin/sh\n"
-        f'echo "$*" >> "{tmp_path}/gh.log"\n'
-        'case "$*" in\n'
-        f'  "api repos/{{owner}}/{{repo}}/commits/"*"/pulls") {commit_answer} ;;\n'
-        '  "api "*"/pulls?head="*)\n'
-        '    b=${2#*head=}; b=${b#*:}; b=${b%%&*}\n'
-        f'    for m in {merged}; do [ "$m" = "$b" ] && {{ echo "[{{\\"merged_at\\": \\"2026-10-05T00:00:00Z\\"}}]"; exit 0; }}; done\n'
-        "    echo '[]' ;;\n"
-        f"  *) echo '[{opened}]' ;;\n"
-        "esac\n"
+        f"#!{sys.executable}\n"
+        "import json, sys\n"
+        "from urllib.parse import parse_qs, urlparse\n"
+        f"cfg = json.load(open({str(tmp_path / 'gh.json')!r}))\n"
+        "args = sys.argv[1:]\n"
+        f"open({str(tmp_path / 'gh.log')!r}, 'a').write(' '.join(args) + '\\n')\n"
+        "if args[:2] == ['repo', 'view']:\n"
+        "    print('acme/app')\n"
+        "elif args[:1] == ['api']:\n"
+        "    endpoint = next(a for a in args[1:] if a.startswith('repos/'))\n"
+        "    fields = {a.split('=', 1)[0]: a.split('=', 1)[1] for prev, a in zip(args, args[1:]) if prev == '-f'}\n"
+        "    if '/commits/' in endpoint:\n"
+        "        if cfg['commit_prs'] == 'FAIL':\n"
+        "            sys.exit(1)\n"
+        "        print(cfg['commit_prs'])\n"
+        "    elif '/files' in endpoint:\n"
+        "        n = endpoint.split('/pulls/')[1].split('/')[0]\n"
+        "        print(cfg['files'].get(n, 'src/app.py'))\n"
+        "    else:\n"
+        "        head = fields.get('head') or parse_qs(urlparse(endpoint).query).get('head', [''])[0]\n"
+        "        hit = head.split(':', 1)[-1] in cfg['merged']\n"
+        "        pr = json.dumps([{'merged_at': '2026-10-05T00:00:00Z'}] if hit else [])\n"
+        "        print('[]' + pr if cfg['paged'] else pr)\n"
+        "else:\n"
+        "    print(json.dumps([{'headRefName': h} for h in cfg['open']]))\n"
     )
     (bin_dir / "gh").chmod(0o755)
     return {**_env(), "PATH": f"{bin_dir}{os.pathsep}{os.environ['PATH']}"}
@@ -2430,9 +2447,9 @@ def test_migrate_asks_gh_about_each_archives_own_branch_over_rest_not_a_window_o
     res = _migrate(repo, env)
     assert res.returncode == 0, res.stderr
     log = (tmp_path / "gh.log").read_text().splitlines()
-    asked = [line for line in log if "/pulls?head=" in line]
-    assert any("head={owner}:milestone/merged-one-1&state=closed" in line for line in asked)
-    assert any("head={owner}:milestone/unmerged-one&state=closed" in line for line in asked)
+    asked = [line for line in log if "-f head=" in line]
+    assert any("head=acme:milestone/merged-one-1" in line and "--paginate" in line for line in asked)
+    assert any("head=acme:milestone/unmerged-one" in line for line in asked)
     assert not any(line.startswith("pr list") and "--state merged" in line for line in log)  # GraphQL is never asked for a merged PR
     kept = "\n".join(_sections(res.stdout)["MANUAL"])
     assert "2026-10-02-unmerged-one: kept, gh could not confirm a merged PR from 2026-10-02-unmerged-one's own branch (looked for the PR of the commit that added the archive, milestone/unmerged-one" in kept
@@ -2460,6 +2477,52 @@ def test_migrate_keeps_an_archive_whose_adding_commit_has_no_merged_pr_and_names
         kept = "\n".join(_sections(res.stdout)["MANUAL"])
         assert "2026-10-01-merged-one: kept, gh could not confirm a merged PR" in kept and "looked for the PR of the commit that added the archive" in kept
         assert ("gh could not answer" in kept) == (answer == "FAIL")
+
+
+def test_a_records_only_pr_does_not_confirm_the_change_merged(tmp_path: Path) -> None:
+    repo = _stamped_3_18(tmp_path)  # the PR that carried the archive changed nothing outside changes/
+    files = {184: "changes/archive/2026/2026-10/2026-10-01-merged-one/plan.md\nchanges/2026-10-01-merged-one/plan.md"}
+    res = _migrate(repo, _fake_gh(tmp_path, "nothing/matches", commit_prs=MERGED_PR, pr_files=files), "--dry-run")
+    assert res.returncode == 0, res.stderr
+    assert (repo / "changes/archive/2026/2026-10/2026-10-01-merged-one").exists()
+    assert "2026-10-01-merged-one: kept" in "\n".join(_sections(res.stdout)["MANUAL"])
+    ok = _migrate(repo, _fake_gh(_again(tmp_path), "nothing/matches", commit_prs=MERGED_PR, pr_files={184: files[184] + "\nsrc/app.py"}))
+    assert ok.returncode == 0, ok.stderr
+    assert not (repo / "changes/archive/2026/2026-10/2026-10-01-merged-one").exists()
+
+
+def test_a_records_only_pr_still_lets_the_branch_fallback_confirm(tmp_path: Path) -> None:
+    repo = _stamped_3_18(tmp_path)
+    files = {184: "changes/archive/2026/2026-10/2026-10-01-merged-one/plan.md"}
+    res = _migrate(repo, _fake_gh(tmp_path, "milestone/merged-one-1", commit_prs=MERGED_PR, pr_files=files))
+    assert res.returncode == 0, res.stderr
+    assert not (repo / "changes/archive/2026/2026-10/2026-10-01-merged-one").exists()
+
+
+def test_a_branch_name_with_an_ampersand_is_never_put_into_a_url(tmp_path: Path) -> None:
+    import adopt
+
+    env = _fake_gh(tmp_path, "feature/reports")  # a merged PR from feature/reports, none from the ampersand branch
+    old = os.environ["PATH"]
+    os.environ["PATH"] = env["PATH"]
+    try:
+        assert adopt.merged_pr(tmp_path, "feature/reports&export") is False
+        assert adopt.merged_pr(tmp_path, "feature/reports") is True
+    finally:
+        os.environ["PATH"] = old
+    assert "head=acme:feature/reports&export" in (tmp_path / "gh.log").read_text()
+
+
+def test_a_merged_pr_on_the_second_page_is_found(tmp_path: Path) -> None:
+    import adopt
+
+    env = _fake_gh(tmp_path, "feature/reports", paged=True)
+    old = os.environ["PATH"]
+    os.environ["PATH"] = env["PATH"]
+    try:
+        assert adopt.merged_pr(tmp_path, "feature/reports") is True
+    finally:
+        os.environ["PATH"] = old
 
 
 def test_migrate_removes_a_flat_layout_archive_in_the_same_run(tmp_path: Path) -> None:

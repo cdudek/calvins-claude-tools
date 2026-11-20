@@ -37,6 +37,7 @@ missing optional keys unless the selected preset already contains them.
 from __future__ import annotations
 
 import datetime as dt
+import functools
 import hashlib
 import importlib.util
 import json
@@ -1224,25 +1225,58 @@ def finish_upgrade() -> str:
     return "\n".join(out)
 
 
-def gh_json(root: Path, endpoint: str) -> object | None:
-    """A GET over REST (`gh api`; gh fills `{owner}` and `{repo}` in from the repo's remote). None when gh cannot answer."""
+def gh_api(root: Path, *args: str) -> str | None:
+    """`gh api <args>` over REST (gh fills `{owner}` and `{repo}` in an endpoint from the repo's remote). None when gh cannot answer."""
     try:
-        out = subprocess.run(["gh", "api", endpoint], cwd=root, capture_output=True, text=True, timeout=60)
-        return json.loads(out.stdout or "null") if out.returncode == 0 else None
-    except (OSError, ValueError, subprocess.TimeoutExpired):
+        out = subprocess.run(["gh", "api", *args], cwd=root, capture_output=True, text=True, timeout=120)
+        return out.stdout if out.returncode == 0 else None
+    except (OSError, subprocess.TimeoutExpired):
         return None
 
 
+def gh_json(root: Path, *args: str) -> list | None:
+    """The JSON list `gh api` answers; `--paginate` prints one array per page back to back, and they are joined here."""
+    text = gh_api(root, *args)
+    if text is None:
+        return None
+    items, pos, decoder = [], 0, json.JSONDecoder()
+    try:
+        while text[pos:].strip():
+            page, pos = decoder.raw_decode(text, pos + len(text[pos:]) - len(text[pos:].lstrip()))
+            if not isinstance(page, list):
+                return None
+            items += page
+    except ValueError:
+        return None
+    return items
+
+
+@functools.lru_cache(maxsize=None)
+def repo_owner(root: Path) -> str | None:
+    """The owner of the repo's remote, asked of gh once per repo."""
+    try:
+        out = subprocess.run(["gh", "repo", "view", "--json", "nameWithOwner", "-q", ".nameWithOwner"], cwd=root, capture_output=True, text=True, timeout=60)
+    except (OSError, subprocess.TimeoutExpired):
+        return None
+    return out.stdout.strip().split("/")[0] or None if out.returncode == 0 else None
+
+
 def merged_pr(root: Path, branch: str) -> bool | None:
-    """True when a merged PR came from exactly `branch` (asked over REST: GraphQL's rate limit does not touch it), None when gh cannot say."""
-    prs = gh_json(root, f"repos/{{owner}}/{{repo}}/pulls?head={{owner}}:{branch}&state=closed&per_page=100")
-    return any(isinstance(p, dict) and p.get("merged_at") for p in prs) if isinstance(prs, list) else None
+    """True when a merged PR came from exactly `branch` (asked over REST: GraphQL's rate limit does not touch it), None when gh cannot say.
+    The branch goes in as a `-f` field, which gh encodes: a name with `&` or `#` never changes the query.
+    shortcut: the head is `<this repo's owner>:<branch>`, so a PR from a fork is not found; upgrade when forks merge changes here."""
+    owner = repo_owner(root)
+    if not owner:
+        return None
+    prs = gh_json(root, "-X", "GET", "repos/{owner}/{repo}/pulls", "-f", f"head={owner}:{branch}", "-f", "state=closed", "-f", "per_page=100", "--paginate")
+    return any(isinstance(p, dict) and p.get("merged_at") for p in prs) if prs is not None else None
 
 
-def archive_pr_merged(root: Path, default: str, *paths: Path) -> bool | None:
-    """True when the commit that added the archive folder to the default branch sits in a merged PR, whatever that
-    PR's branch was called. The first of `paths` that git has a commit for is asked. False when no merged PR holds
-    it (a direct push, or no commit found), None when gh cannot say."""
+def archive_pr_merged(root: Path, default: str, records: str, *paths: Path) -> bool | None:
+    """True when the commit that added the archive folder to the default branch sits in a merged PR that also changed a
+    file outside `records` (the changes folder): a housekeeping PR that only moves folders confirms nothing. The first of
+    `paths` that git has a commit for is asked. False when no such PR holds it (a direct push, a records-only PR, or no
+    commit found), None when gh cannot say."""
     base = f"origin/{default}" if subprocess.run(
         ["git", "rev-parse", "--verify", "-q", f"origin/{default}"], cwd=root, capture_output=True
     ).returncode == 0 else default  # fmt: skip
@@ -1251,9 +1285,19 @@ def archive_pr_merged(root: Path, default: str, *paths: Path) -> bool | None:
             ["git", "log", base, "--no-renames", "--diff-filter=A", "--format=%H", "--reverse", "--", str(path)],
             cwd=root, capture_output=True, text=True,
         )  # fmt: skip
-        if sha := (out.stdout.split() or [""])[0]:
-            prs = gh_json(root, f"repos/{{owner}}/{{repo}}/commits/{sha}/pulls")
-            return any(isinstance(p, dict) and p.get("merged_at") for p in prs) if isinstance(prs, list) else None
+        if not (sha := (out.stdout.split() or [""])[0]):
+            continue
+        prs = gh_json(root, f"repos/{{owner}}/{{repo}}/commits/{sha}/pulls")
+        if prs is None:
+            return None
+        unsure = False
+        for pr in (p for p in prs if isinstance(p, dict) and p.get("merged_at") and isinstance(p.get("number"), int)):
+            names = gh_api(root, "--paginate", f"repos/{{owner}}/{{repo}}/pulls/{pr['number']}/files", "--jq", ".[].filename")
+            if names is None:
+                unsure = True
+            elif any(n and not n.startswith(records.rstrip("/") + "/") for n in names.splitlines()):
+                return True
+        return None if unsure else False
     return False
 
 
@@ -1361,7 +1405,7 @@ def migrate_plan(cfg: dict) -> dict:
     for folder in folders:
         branches = own_branches(folder, cfg)
         # first, the PR that carried the archive commit onto the default branch (any branch name); then the guessed branches
-        answers = [archive_pr_merged(ROOT, cfg.get("defaultBranch") or "main", folder.relative_to(ROOT), changes.relative_to(ROOT) / folder.name)]
+        answers = [archive_pr_merged(ROOT, cfg.get("defaultBranch") or "main", changes.relative_to(ROOT).as_posix(), folder.relative_to(ROOT), changes.relative_to(ROOT) / folder.name)]
         for branch in () if answers[0] else branches:  # one question each; the first merged PR settles it
             answers.append(merged_pr(ROOT, branch))
             if answers[-1]:
