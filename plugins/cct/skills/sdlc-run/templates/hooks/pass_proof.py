@@ -280,13 +280,16 @@ def _lock_keys(repo: Path, tree: dict[str, tuple[str, str]]) -> set[str]:
 
 def app_locked(lock: object) -> bool:
     """The lock protects screens.json: it says `"visual": "app"` or hashed the file (chain-gate.sh reads the same rule)."""
-    return isinstance(lock, dict) and (lock.get("visual") == "app" or "screens.json" in (lock.get("criteria") or {}))
+    if not isinstance(lock, dict):
+        return False
+    criteria = lock.get("criteria")
+    return lock.get("visual") == "app" or "screens.json" in (criteria if isinstance(criteria, dict) else {})
 
 
 def _app_locked(repo: Path, tree: dict[str, tuple[str, str]]) -> bool:
     try:
         return app_locked(json.loads(_text(repo, tree.get("state/lock.json") or tree.get("lock.json"))))
-    except ValueError:
+    except (ValueError, TypeError):
         return False
 
 

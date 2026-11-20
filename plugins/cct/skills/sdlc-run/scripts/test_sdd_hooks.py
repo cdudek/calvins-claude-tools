@@ -353,6 +353,30 @@ def test_a_visual_app_lock_protects_screens_json_even_without_the_criteria_key(t
     assert not pass_proof.proves(tmp_path, "changes", gated, _commit_all(tmp_path))
 
 
+@pytest.mark.parametrize("criteria", [["screens.json"], "screens.json", 7, None])
+def test_an_odd_typed_criteria_never_crashes_the_receipt_or_the_decision(tmp_path: Path, criteria: object) -> None:
+    assert pass_proof.app_locked({"criteria": criteria}) is False  # not a dict: no key to find
+    assert pass_proof.app_locked({"criteria": criteria, "visual": "app"}) is True
+    lock = json.dumps({"criteria": criteria})
+    gated = _gated_files(tmp_path, {"facts.md": "# f\n", "lock.json": lock, "screens.json": "[1]"})
+    (tmp_path / "changes" / ID / "screens.json").write_text("[2]")
+    assert pass_proof.proves(tmp_path, "changes", gated, _commit_all(tmp_path)) is True
+
+
+@pytest.mark.parametrize("text", ["{not json", "[1, 2]", "7"])
+def test_chain_gate_denies_when_the_lock_cannot_be_read_as_an_object(tmp_path: Path, text: str) -> None:
+    repo = make(tmp_path)
+    (repo / "changes" / ID / "lock.json").write_text(text)
+    r = edit(repo, f"changes/{ID}/screens.json")
+    assert r.returncode == 2 and "lock.json" in r.stderr
+
+
+def test_chain_gate_survives_an_odd_typed_criteria(tmp_path: Path) -> None:
+    repo = make(tmp_path)
+    (repo / "changes" / ID / "lock.json").write_text(json.dumps({"layout": 4, "criteria": ["screens.json"]}))
+    assert edit(repo, f"changes/{ID}/screens.json").returncode == 0
+
+
 def test_chain_gate_protects_screens_json_after_an_app_approval(tmp_path: Path) -> None:
     repo = make(tmp_path)
     lock = repo / "changes" / ID / "lock.json"

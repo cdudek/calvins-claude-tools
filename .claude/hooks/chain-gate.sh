@@ -210,10 +210,18 @@ def protected_files(change_dir: Path, decisions: dict) -> tuple[str, ...]:
         names = [n for files in locked.values() for n in files]
     else:
         names = locked[4 if is_v4(change_dir, decisions) else 3]
-    try:
-        lock = json.loads(state_file(change_dir, "lock.json").read_text(encoding="utf-8"))
-    except (OSError, ValueError):
-        lock = None
+    lock = None
+    if state_file(change_dir, "lock.json").exists():  # no lock yet: nothing is locked
+        try:
+            lock = json.loads(state_file(change_dir, "lock.json").read_text(encoding="utf-8"))
+        except (OSError, ValueError):
+            lock = False
+        if not isinstance(lock, dict):  # cannot tell whether screens.json is locked: refuse, never fail open
+            deny(
+                f"{changes}/{change_dir.name}/lock.json is unreadable or not a JSON object, so the hook cannot tell what it locks.",
+                source=f"{changes}/{change_dir.name}/lock.json",
+                action="restore lock.json from git or run `verify_gate.py approve` again",
+            )
     if proof.app_locked(lock):  # 3.25.0: the screens to prove are approved with the plan
         names = [*names, *proof.APP_LOCKED_FILES]
     return tuple(dict.fromkeys(n for n in names if n not in ticked))
