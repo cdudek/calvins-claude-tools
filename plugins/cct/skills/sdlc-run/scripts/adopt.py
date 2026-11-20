@@ -1254,8 +1254,12 @@ def gh_json(root: Path, *args: str) -> list | None:
 
 @functools.cache
 def repo_owner(root: Path) -> str | None:
-    """The owner of the repo's remote, asked of gh once per repo."""
+    """The owner of the repo's origin: read from its URL (https or ssh), and only when that says nothing asked of gh
+    (`gh repo view` goes through GraphQL, which may be out of quota)."""
     try:
+        url = subprocess.run(["git", "remote", "get-url", "origin"], cwd=root, capture_output=True, text=True).stdout.strip()
+        if found := re.search(r"[:/]([^/:]+)/[^/]+?(?:\.git)?/?$", url):
+            return found[1]
         out = subprocess.run(["gh", "repo", "view", "--json", "nameWithOwner", "-q", ".nameWithOwner"], cwd=root, capture_output=True, text=True, timeout=60)
     except (OSError, subprocess.TimeoutExpired):
         return None
@@ -1264,12 +1268,13 @@ def repo_owner(root: Path) -> str | None:
 
 def merged_pr(root: Path, branch: str) -> bool | None:
     """True when a merged PR came from exactly `branch` (asked over REST: GraphQL's rate limit does not touch it), None when gh cannot say.
-    The branch goes in as a `-f` field, which gh encodes: a name with `&` or `#` never changes the query.
+    The branch goes in as a `-f` field, which gh encodes: a name with `&` or `#` never changes the query. Only the first page is read: a branch name reused
+    after an older merge must not find that merge.
     shortcut: the head is `<this repo's owner>:<branch>`, so a PR from a fork is not found; upgrade when forks merge changes here."""
     owner = repo_owner(root)
     if not owner:
         return None
-    prs = gh_json(root, "-X", "GET", "repos/{owner}/{repo}/pulls", "-f", f"head={owner}:{branch}", "-f", "state=closed", "-f", "per_page=100", "--paginate")
+    prs = gh_json(root, "-X", "GET", "repos/{owner}/{repo}/pulls", "-f", f"head={owner}:{branch}", "-f", "state=closed", "-f", "per_page=100")  # one page, the newest 100: an older merge of a reused name is not used
     return any(isinstance(p, dict) and p.get("merged_at") for p in prs) if prs is not None else None
 
 

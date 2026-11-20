@@ -2062,7 +2062,7 @@ def _fake_gh(tmp_path: Path, head: str, *more: str, open_heads: tuple[str, ...] 
              pr_files: dict[int, str] | None = None, paged: bool = False) -> dict[str, str]:
     """A gh that answers like GitHub's REST API for what adopt asks. Merged PRs are the ones from branches `head` and
     `more`, matched on the exact head (`-f head=<owner>:<branch>`; a head put into the URL is cut at its first `&`, as
-    the server would). `paged`: the merged PR sits on page two (gh --paginate prints one array per page). Open PRs are
+    the server would). `paged`: the merged PR sits on page two (gh prints page one alone; --paginate prints one array per page). Open PRs are
     `open_heads`; `commits/<sha>/pulls` answers `commit_prs` ("FAIL": gh exits 1); `pulls/<n>/files` answers the
     newline-separated names in `pr_files[n]` (default: a file outside changes/). Every call is logged to `gh.log`."""
     bin_dir = tmp_path / "bin"
@@ -2092,7 +2092,7 @@ def _fake_gh(tmp_path: Path, head: str, *more: str, open_heads: tuple[str, ...] 
         "        head = fields.get('head') or parse_qs(urlparse(endpoint).query).get('head', [''])[0]\n"
         "        hit = head.split(':', 1)[-1] in cfg['merged']\n"
         "        pr = json.dumps([{'merged_at': '2026-10-05T00:00:00Z'}] if hit else [])\n"
-        "        print('[]' + pr if cfg['paged'] else pr)\n"
+        "        print('[]' + pr if cfg['paged'] and '--paginate' in args else ('[]' if cfg['paged'] else pr))\n"
         "else:\n"
         "    print(json.dumps([{'headRefName': h} for h in cfg['open']]))\n"
     )
@@ -2448,7 +2448,7 @@ def test_migrate_asks_gh_about_each_archives_own_branch_over_rest_not_a_window_o
     assert res.returncode == 0, res.stderr
     log = (tmp_path / "gh.log").read_text().splitlines()
     asked = [line for line in log if "-f head=" in line]
-    assert any("head=acme:milestone/merged-one-1" in line and "--paginate" in line for line in asked)
+    assert any("head=acme:milestone/merged-one-1" in line and "--paginate" not in line for line in asked)
     assert any("head=acme:milestone/unmerged-one" in line for line in asked)
     assert not any(line.startswith("pr list") and "--state merged" in line for line in log)  # GraphQL is never asked for a merged PR
     kept = "\n".join(_sections(res.stdout)["MANUAL"])
@@ -2513,16 +2513,51 @@ def test_a_branch_name_with_an_ampersand_is_never_put_into_a_url(tmp_path: Path)
     assert "head=acme:feature/reports&export" in (tmp_path / "gh.log").read_text()
 
 
-def test_a_merged_pr_on_the_second_page_is_found(tmp_path: Path) -> None:
+def test_an_older_merge_beyond_the_first_page_is_not_used(tmp_path: Path) -> None:
     import adopt
 
-    env = _fake_gh(tmp_path, "feature/reports", paged=True)
+    env = _fake_gh(tmp_path, "feature/reports", paged=True)  # a reused branch name: the merge on page two is an older, unrelated PR
     old = os.environ["PATH"]
     os.environ["PATH"] = env["PATH"]
     try:
-        assert adopt.merged_pr(tmp_path, "feature/reports") is True
+        assert adopt.merged_pr(tmp_path, "feature/reports") is False
     finally:
         os.environ["PATH"] = old
+    assert "--paginate" not in next(line for line in (tmp_path / "gh.log").read_text().splitlines() if "-f head=" in line)
+
+
+@pytest.mark.parametrize("url", ["https://github.com/zed/app.git", "https://github.com/zed/app", "git@github.com:zed/app.git", "ssh://git@github.com/zed/app.git"])
+def test_the_owner_comes_from_the_origin_url_before_gh_is_asked(tmp_path: Path, url: str) -> None:
+    import adopt
+
+    subprocess.run(["git", "init", "-q"], cwd=tmp_path, check=True)
+    subprocess.run(["git", "remote", "add", "origin", url], cwd=tmp_path, check=True)
+    adopt.repo_owner.cache_clear()
+    (tmp_path / "x").mkdir()
+    env = _fake_gh(tmp_path / "x", "nothing/matches")
+    old = os.environ["PATH"]
+    os.environ["PATH"] = env["PATH"]
+    try:
+        assert adopt.merged_pr(tmp_path, "feature/reports") is False
+    finally:
+        os.environ["PATH"] = old
+    log = (tmp_path / "x" / "gh.log").read_text()
+    assert "head=zed:feature/reports" in log and "repo view" not in log
+
+
+def test_the_owner_falls_back_to_gh_when_origin_is_no_github_url(tmp_path: Path) -> None:
+    import adopt
+
+    subprocess.run(["git", "init", "-q"], cwd=tmp_path, check=True)  # no origin at all
+    adopt.repo_owner.cache_clear()
+    env = _fake_gh(tmp_path, "nothing/matches")
+    old = os.environ["PATH"]
+    os.environ["PATH"] = env["PATH"]
+    try:
+        assert adopt.merged_pr(tmp_path, "feature/reports") is False
+    finally:
+        os.environ["PATH"] = old
+    assert "head=acme:feature/reports" in (tmp_path / "gh.log").read_text()
 
 
 def test_migrate_removes_a_flat_layout_archive_in_the_same_run(tmp_path: Path) -> None:

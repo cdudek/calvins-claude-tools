@@ -9,8 +9,9 @@ the engineer. A version with no migration lines needs nothing but a re-run of `a
 
 - **A records-only PR confirms nothing.** The PR found through an archive's commit counts only when it also changed a file outside the changes folder; a housekeeping PR that only archives folders falls through to the branch lookup.
 - **A 3.25.1 batch id is read only while the decision log is empty.** Once any decision was logged, a send back of another batch included, an older legacy batch is no longer accepted.
-- **A branch name never enters a URL.** The fallback sends the head as a `-f` field, so `feature/reports&export` no longer matches `feature/reports`, and follows every page (`--paginate`).
+- **A branch name never enters a URL.** The fallback sends the head as a `-f` field, so `feature/reports&export` no longer matches `feature/reports`. It reads the newest 100 PRs of that head only, so an older merge of a reused name is never used. The repo owner comes from the `origin` URL (https or ssh) before `gh repo view` is asked.
 - **Known limits, written down:** a PR from a fork is not found; a search-only folder makes a board image count as missing (see `references/visual-work.md`).
+- **Known limits that keep an archive (fail-safe):** an archive renamed into `changes/` hides its source path from the commit lookup; a PR with more than 3,000 files is not fully listed; the new approval id after an upgrade invalidates an untouched 3.25.1 approval once the log has an entry, so re-approve it once.
 - Mechanical: re-running `adopt --migrate` replaces `capture.py` and stamps `sdlcVersion` 3.26.3.
 - Manual: none.
 
