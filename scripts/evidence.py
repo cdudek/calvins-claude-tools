@@ -602,7 +602,7 @@ def inside(change: Path, path: Path) -> bool:
     return path.resolve().is_relative_to(change.resolve())
 
 
-CHECKS = ("binding_tag", "deviation_tag", "lock_sha", "image_problems", "link", "replayed", "board_file", "design_problems")
+CHECKS = ("binding_tag", "deviation_tag", "lock_sha", "image_problems", "link", "replayed", "board_file", "read_board", "design_problems")
 
 
 def shim_old_capture(capture) -> list[str]:
@@ -645,10 +645,10 @@ def boards_html(change: Path, design: dict, entry: dict) -> str:
     known, out = {b["id"]: b for b in capture.boards_of(design)}, []
     for bid in capture.mapped(entry):
         board = known.get(bid, {"id": bid, "name": bid})
-        image = capture.board_file(change, board.get("image"))
-        mime = mimetypes.guess_type(str(image))[0] if image else None
-        if image and mime:
-            data = base64.b64encode(image.read_bytes()).decode()
+        raw = capture.read_board(change, board.get("image"))  # one handle: the bytes embedded are the bytes of a plain file inside the change
+        mime = mimetypes.guess_type(str(board.get("image")))[0] if raw is not None else None
+        if raw is not None and mime:
+            data = base64.b64encode(raw).decode()
             out.append(f'<img alt="design {html.escape(bid, quote=True)}" src="data:{mime};base64,{data}">')
         else:
             src = str(design.get("source", ""))

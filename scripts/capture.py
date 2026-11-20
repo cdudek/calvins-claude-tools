@@ -47,6 +47,7 @@ import shlex
 import shutil
 import signal
 import socket
+import stat
 import struct
 import subprocess
 import sys
@@ -182,11 +183,40 @@ def board_file(change: Path, image: object) -> Path | None:
     return real if real.is_relative_to(base) and os.path.normpath(path) == str(real) and real.is_file() else None
 
 
+def read_board(change: Path, image: object) -> bytes | None:
+    """The bytes of a board image, read once from one handle. `board_file` has the path checked; the file is then opened
+    folder by folder from the change with O_NOFOLLOW, so a path swapped for a symlink after the check is refused, and
+    what is read is the regular file that handle names. None when it is no board image or cannot be opened so."""
+    if board_file(change, image) is None:
+        return None
+    *folders, leaf = Path(str(image)).parts
+    fd = -1
+    try:
+        fd = os.open(Path(change).resolve(), os.O_RDONLY | os.O_DIRECTORY)
+        for name in folders:
+            nxt = os.open(name, os.O_RDONLY | os.O_DIRECTORY | os.O_NOFOLLOW, dir_fd=fd)
+            os.close(fd)
+            fd = nxt
+        nxt = os.open(leaf, os.O_RDONLY | os.O_NOFOLLOW | os.O_NONBLOCK, dir_fd=fd)  # a fifo swapped in must not block the read
+        os.close(fd)
+        fd = nxt
+        if not stat.S_ISREG(os.fstat(fd).st_mode):
+            return None
+        with os.fdopen(fd, "rb") as handle:
+            fd = -1
+            return handle.read()
+    except OSError:
+        return None
+    finally:
+        if fd >= 0:
+            os.close(fd)
+
+
 def board_digest(change: Path, design: dict, board_id: str) -> str:
     """sha256 of a board's image file, "" when it has none (or the file is missing or leaves the change: design_problems says so)."""
     board = next((b for b in boards_of(design) if b["id"] == board_id), {})
-    path = board_file(change, board.get("image"))
-    return hashlib.sha256(path.read_bytes()).hexdigest() if path else ""
+    data = read_board(change, board.get("image"))
+    return hashlib.sha256(data).hexdigest() if data is not None else ""
 
 
 def image_digests(change: Path) -> dict[str, str]:
