@@ -345,6 +345,19 @@ def test_a_legacy_id_is_refused_once_the_decision_log_cites_it(tmp_path: Path) -
     assert _last(r) == "CAPTURE FAIL approval" and "no recorded batch" in r.stdout
 
 
+def test_a_legacy_id_is_refused_once_any_decision_was_logged_after_it(tmp_path: Path) -> None:
+    """A send back of another batch is logged; the older legacy batch must not come back to life behind it."""
+    repo = _repo(tmp_path)
+    _run(repo)
+    _approve_all(repo, seal=_seal_3_25_1)
+    change = repo / "changes" / ID
+    data = json.loads((change / "screens/approved.json").read_text())
+    log = [capture.link([], {"entry": "leads.list.empty", "answer": "send-back", "batch": "screens-other", "time": "t"}, "")]
+    (change / "screens/approved.json").write_text(json.dumps({**data, "log": log, "head": log[-1]["hash"]}))
+    r = _run(repo)
+    assert _last(r) == "CAPTURE FAIL approval" and "no recorded batch" in r.stdout
+
+
 def test_an_edited_batch_or_a_held_dialog_does_not_cover_an_approval(tmp_path: Path) -> None:
     repo = _repo(tmp_path)
     _run(repo)
