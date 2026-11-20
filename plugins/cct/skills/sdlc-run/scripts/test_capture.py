@@ -84,10 +84,10 @@ def _last(r: subprocess.CompletedProcess[str]) -> str:
     return r.stdout.strip().splitlines()[-1]
 
 
-def owner_answers(repo: Path, bid: str, label: str = "Approve screens", n: int = 1, change_id: str = ID) -> None:
+def owner_answers(repo: Path, bid: str, label: str = "Approve screens", n: int = 1, change_id: str = ID, home: Path | None = None) -> None:
     """The owner's structured answer to the dialog that names approval `bid`, in the session transcript
     Claude Code keeps for this repo (the one place the gate believes an owner decision)."""
-    folder = repo.parent / "home" / ".claude/projects" / re.sub(r"[^A-Za-z0-9]", "-", str(repo.resolve()))
+    folder = (home or repo.parent / "home") / ".claude/projects" / re.sub(r"[^A-Za-z0-9]", "-", str(repo.resolve()))
     folder.mkdir(parents=True, exist_ok=True)
     question = f"Change {change_id}, finding {bid}: Approve these screens?"
     stamp = (dt.datetime.now(dt.timezone.utc) + dt.timedelta(seconds=60 + n)).isoformat()
@@ -486,3 +486,29 @@ def test_group_cleanup_spares_the_shell_that_leads_the_group(tmp_path: Path) -> 
     cmd = f"{sys.executable} {CAPTURE} run {repo / 'changes' / ID} --group; echo rc=$?"  # `; echo` keeps sh alive
     r = subprocess.run(["sh", "-c", cmd], cwd=repo, capture_output=True, text=True, env=e, start_new_session=True)
     assert r.returncode == 0 and "CAPTURE PASS 4" in r.stdout and "rc=0" in r.stdout, (r.returncode, r.stdout)
+
+
+def test_an_owner_answer_recorded_in_a_sibling_worktree_counts(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    """The owner answers in one worktree and the next milestone closes in another: every transcript folder of
+    the repo's main checkout and its `.worktrees/*` is read, removed worktrees included."""
+    import marks
+
+    main = tmp_path / "main"
+    (main / "changes" / ID).mkdir(parents=True)
+    (main / "changes" / ID / "screens.json").write_text("[]")
+    git = ["git", "-c", "user.name=t", "-c", "user.email=t@t"]
+    for cmd in (["git", "init", "-q"], ["git", "add", "."], [*git, "commit", "-qm", "i"],
+                [*git, "worktree", "add", "-q", "-b", "a", str(main / ".worktrees" / "a")],
+                [*git, "worktree", "add", "-q", "-b", "b", str(main / ".worktrees" / "b")]):  # fmt: skip
+        subprocess.run(cmd, cwd=main, check=True, capture_output=True)
+    home = tmp_path / "home"
+    monkeypatch.setenv("HOME", str(home))
+    (tmp_path / "other-repo").mkdir()
+    owner_answers(main / ".worktrees" / "a", "screens-abc", home=home)
+    owner_answers(tmp_path / "other-repo", "screens-other", home=home)  # another repo's answer is never read
+    marks._ANSWERS.clear()
+    decided = marks.owner_decisions(main / ".worktrees" / "b", ID)
+    assert decided.get("screens-abc", ("",))[0] == "screens" and "screens-other" not in decided
+    subprocess.run([*git, "worktree", "remove", "--force", str(main / ".worktrees" / "a")], cwd=main, check=True, capture_output=True)
+    marks._ANSWERS.clear()
+    assert marks.owner_decisions(main, ID).get("screens-abc", ("",))[0] == "screens"  # a removed worktree's answer stays
