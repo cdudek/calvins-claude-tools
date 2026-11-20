@@ -39,6 +39,15 @@ itself).
    (`batches`) and every entry names it (`decision`); the milestone gate (`capture.py`) fails with
    `CAPTURE FAIL approval` for an entry no owner answer covers, and the edit hook protects
    `screens/approved.json` and `screens/*.png` of an app-locked change like the other locked files.
+   A send back that removes an approval needs the owner's answer the same way, and every decision is
+   logged in order (`log`: entry, answer, batch, time); an owner answer that was given before a later
+   send back of the same screen is spent, so a screen sent back needs a new capture and a new batch.
+   An early close (`--upto N`) checks coverage only for the entries due; the last close checks every
+   approval. The owner's answers are read from the Claude Code transcripts of the repo's main checkout and
+   all its `.worktrees/*`, removed ones included.
+   **Known limit.** Owner decisions everywhere in sdlc-run trust the local session transcripts. An agent
+   with filesystem access could write a fake transcript; the check stops a careless agent, not a hostile
+   one. A real fix needs a signing key the agent cannot read.
    Each entry may carry `"milestone": N` (default 1): a milestone close captures the entries with
    milestone <= N and the last milestone requires all of them, so an early close never needs a screen
    a later milestone builds. Two entries never share a route and viewport (the fixture shows only

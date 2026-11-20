@@ -1236,6 +1236,7 @@ KIT_HEAVY = {
     "1bb86e7356aa80e0",
     "aa80c7f1cdab2e74",
     "a09c60909df8931b",
+    "a13b3e0ac5548a40",
 }
 
 

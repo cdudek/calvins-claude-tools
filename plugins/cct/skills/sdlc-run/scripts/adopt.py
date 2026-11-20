@@ -269,6 +269,9 @@ def migrate_archive_layout(changes: Path) -> None:
         new = bucket / name
         if new == old:
             continue
+        if old.name in PINNED_ARCHIVES:
+            manual.append(f"{old.relative_to(ROOT)}: not moved to {new.relative_to(ROOT)}, because a file links to it; move it and fix the link by hand")
+            continue
         if new.exists():
             wrote.append(
                 f"{old.relative_to(ROOT)} (SKIPPED: {new.relative_to(ROOT)} already exists)"
@@ -613,9 +616,16 @@ BIOME_SUFFIXES = {".ts", ".tsx", ".js", ".jsx", ".mjs", ".cjs", ".json", ".jsonc
 
 
 def uses_biome() -> bool:
-    """The repo's formatter is biome: a biome config, or @biomejs/biome in package.json."""
-    if (ROOT / "biome.json").exists() or (ROOT / "biome.jsonc").exists():
-        return True
+    """Biome is the repo's formatter: it is configured (a biome config, or @biomejs/biome in package.json)
+    and its formatter is not switched off in that config."""
+    for name in ("biome.json", "biome.jsonc"):
+        if (ROOT / name).exists():
+            try:
+                text = re.sub(r"^\s*//.*$", "", (ROOT / name).read_text(encoding="utf-8"), flags=re.M)
+                formatter = (json.loads(text) or {}).get("formatter") or {}
+            except (OSError, ValueError, AttributeError):
+                return True  # a config we cannot read: assume the default, formatter on
+            return formatter.get("enabled", True) is not False
     try:
         pkg = json.loads((ROOT / "package.json").read_text(encoding="utf-8"))
     except (OSError, ValueError):
@@ -624,7 +634,8 @@ def uses_biome() -> bool:
 
 
 def format_written() -> None:
-    """Run the repo's own formatter (biome when it is the repo's, else prettier) over what we just wrote.
+    """Run the repo's own formatter over what we just wrote, per file type: biome for the types it handles
+    when it is the repo's formatter, prettier for everything else.
 
     The templates cannot be formatted to suit every repo -- printWidth, quotes and plugins
     all differ -- so a repo with a format check rejects a freshly adopted file.
@@ -632,23 +643,21 @@ def format_written() -> None:
     if DRY:
         return
     biome = uses_biome()
-    suffixes = BIOME_SUFFIXES if biome else PRETTIER_SUFFIXES
-    targets = [p for p in written if p.suffix in suffixes]
-    written.clear()
-    name, flags = ("biome", ["format", "--write", "--no-errors-on-unmatched"]) if biome else ("prettier", ["--write", "--log-level", "warn"])
-    binary = ROOT / "node_modules" / ".bin" / name
-    if not targets or not binary.exists():
-        return
-    out = subprocess.run([str(binary), *flags, *(str(p) for p in targets)], cwd=ROOT, capture_output=True, text=True)
-    label = "biome format --write" if biome else "prettier --write"
-    if out.returncode == 0:
-        wrote.append(f"{label} on {len(targets)} written file(s)")
-    else:
-        detail = (out.stderr or out.stdout).strip().splitlines()
-        manual.append(
-            f"{name} failed on the files adopt wrote -- run `{label}` before committing"
-            + (f": {detail[-1]}" if detail else "")
-        )
+    todo, written[:] = list(written), []
+    groups = [
+        ("biome", "biome format --write", ["format", "--write", "--no-errors-on-unmatched"], [p for p in todo if p.suffix in BIOME_SUFFIXES] if biome else []),
+        ("prettier", "prettier --write", ["--write", "--log-level", "warn"], [p for p in todo if p.suffix in PRETTIER_SUFFIXES and not (biome and p.suffix in BIOME_SUFFIXES)]),
+    ]
+    for name, label, flags, targets in groups:
+        binary = ROOT / "node_modules" / ".bin" / name
+        if not targets or not binary.exists():
+            continue
+        out = subprocess.run([str(binary), *flags, *(str(p) for p in targets)], cwd=ROOT, capture_output=True, text=True)
+        if out.returncode == 0:
+            wrote.append(f"{label} on {len(targets)} written file(s)")
+        else:
+            detail = (out.stderr or out.stdout).strip().splitlines()
+            manual.append(f"{name} failed on the files adopt wrote -- run `{label}` before committing" + (f": {detail[-1]}" if detail else ""))
 
 
 # CLAUDE-section.md's tier sentence as rendered with tiers on, and what replaces it when
@@ -1030,6 +1039,7 @@ KIT_HEAVY = {
     "1bb86e7356aa80e0",
     "aa80c7f1cdab2e74",
     "a09c60909df8931b",
+    "a13b3e0ac5548a40",
 }
 KIT_DB = {
     "b34ea79ae0841fc5",
@@ -1045,6 +1055,7 @@ KIT_EVIDENCE = {
     "a2ad7046f8557477",
     "74b85435656e6566",
     "6c666865c4228267",
+    "ac196d166bdc401d",
 }
 KIT_PREFLIGHT = {
     "848114ac6dd4a375",
@@ -1060,6 +1071,7 @@ KIT_CAPTURE = {
     "76f341df1ef81a00",
     "b66771e69e06e46f",
     "e43a7d24e86cfe1f",
+    "9cd5bdc59852d1a6",
 }
 KIT_HELPER_GUARD = {
     "ca26ffb8ad16e8b3",
@@ -1212,21 +1224,28 @@ def own_branch(folder: Path, cfg: dict, head: str) -> bool:
     return "/" in head and re.search(rf"(?<![\w/.-]){re.escape(head)}(?![\w/-])", plan) is not None
 
 
-TALLY = "IMPORTANT: <n>  NITS: <m>"
+TALLY = "IMPORTANT: <n>  NITS: <m>  SHA: <head sha>"
+SHORT_TALLY = re.compile(r"IMPORTANT: <n>  NITS: <m>(?!  SHA: <head sha>)")
 
 
 def add_review_tally(review_md: Path) -> None:
-    """The guardrail test wants the tally line in the repo's own REVIEW.md. When it is missing, append it
-    to the end of the `## Cap the nits` section; with no such section, say so."""
+    """The guardrail test wants the full tally line (with the commit it binds to) in the repo's own REVIEW.md.
+    A shorter form is completed in place; a missing line is appended to the end of the `## Cap the nits`
+    section; with no such section, say so."""
     if not review_md.is_file() or TALLY in (text := review_md.read_text(encoding="utf-8")):
+        return
+    if SHORT_TALLY.search(text):
+        wrote.append("REVIEW.md: the review tally line now carries `SHA: <head sha>`")
+        if not DRY:
+            review_md.write_text(SHORT_TALLY.sub("IMPORTANT: <n>  NITS: <m>  SHA: <head sha>", text), encoding="utf-8")
         return
     m = re.search(r"^## Cap the nits[^\n]*\n(.*?)(?=^## |\Z)", text, re.M | re.S)
     if not m:
-        manual.append(f"REVIEW.md has no `## Cap the nits` section to hold the tally line the guardrail test needs: add `{TALLY}  SHA: <head sha>` to it by hand")
+        manual.append(f"REVIEW.md has no `## Cap the nits` section to hold the tally line the guardrail test needs: add `{TALLY}` to it by hand")
         return
     wrote.append("REVIEW.md: added the review tally line under `## Cap the nits`")
     if not DRY:
-        body = m[1].rstrip("\n") + "\n\nOpen the review with the tally in this exact shape on its own line, so the merge gate can read it:\n\n    " + TALLY + "  SHA: <head sha>\n\n"
+        body = m[1].rstrip("\n") + "\n\nOpen the review with the tally in this exact shape on its own line, so the merge gate can read it:\n\n    " + TALLY + "\n\n"
         review_md.write_text(text[: m.start(1)] + body + text[m.end(1) :], encoding="utf-8")
 
 
@@ -1250,8 +1269,9 @@ def migrate_plan(cfg: dict) -> dict:
     while moved:  # a kept folder's own files count as referrers for the others, so repeat until nothing moves
         moved = False
         for folder in list(remove_list):
-            if ref := referrer(folder.name, remove_list):
+            if ref := referrer(folder.name, remove_list, set(cfg.get("keep", []))):
                 remove_list.remove(folder)
+                PINNED_ARCHIVES.add(folder.name)
                 kept_lines.append(f"{folder.relative_to(ROOT)}: kept, referenced by {ref} (a link would break)")
                 moved = True
     return {
@@ -1262,11 +1282,29 @@ def migrate_plan(cfg: dict) -> dict:
     }
 
 
-def referrer(name: str, doomed: list[Path]) -> str | None:
-    """A tracked text file that names the folder `name` and is not inside a folder about to be removed."""
-    hits = subprocess.run(["git", "grep", "-lIF", "--", name], cwd=ROOT, capture_output=True, text=True).stdout.splitlines()
-    return next((h for h in hits if not any((ROOT / h).resolve().is_relative_to(d.resolve()) for d in doomed)), None)
+def referrer(name: str, doomed: list[Path], skip: set[str] = frozenset()) -> str | None:
+    """A tracked file that names the folder `name` (in its text, or as a symlink's target) and is not inside a
+    folder about to be removed. A search that fails counts as a hit: an incomplete scan keeps the folder."""
+    out = subprocess.run(["git", "grep", "-lIF", "--", name], cwd=ROOT, capture_output=True, text=True)
+    if out.returncode not in (0, 1):
+        return "(the reference search failed: the scan is incomplete)"
+    root = ROOT.resolve()
+    inside = lambda path: any(path.is_relative_to(d.resolve()) for d in doomed)  # noqa: E731
+    for hit in out.stdout.splitlines():  # the file itself, not what a link points at
+        if hit not in skip and not inside(root / hit):
+            return hit
+    for link in tracked_symlinks():  # git grep reads a link's own text, never what it points at
+        if link not in skip and not inside(root / link) and inside((root / link).parent.joinpath((root / link).readlink()).resolve()):
+            return link
+    return None
 
+
+def tracked_symlinks() -> list[str]:
+    out = subprocess.run(["git", "ls-files", "-s"], cwd=ROOT, capture_output=True, text=True).stdout
+    return [line.partition("\t")[2] for line in out.splitlines() if line.startswith("120000")]
+
+
+PINNED_ARCHIVES: set[str] = set()  # archives kept because something links to them: the layout step leaves them where they are
 
 def kit_script_paths() -> list[str]:
     return [f"scripts/{p.name}" for p in sorted((TPL / "scripts").glob("*")) if p.is_file()]
@@ -1287,10 +1325,10 @@ def migrate_script_lists(plan: dict, cfg: dict) -> None:
     entry = re.compile(r"^(\s*(?:[-*]\s+)?[\"']?)(" + "|".join(map(re.escape, old)) + r")([\"']?\s*[,\\]?\s*)$")
     inline = re.compile("|".join(r"[\"']" + re.escape(rel) + r"[\"']" for rel in old))
     tracked = subprocess.run(["git", "ls-files", "-z"], cwd=ROOT, capture_output=True, text=True).stdout.split("\0")
-    skip = {"sdlc.json", *kit, *(f".claude/hooks/{p.name}" for p in (TPL / "hooks").glob("*"))}
+    skip = {"sdlc.json", *cfg.get("keep", []), *kit, *(f".claude/hooks/{p.name}" for p in (TPL / "hooks").glob("*"))}
     for rel in filter(None, tracked):
         path = ROOT / rel
-        if rel in skip or rel.startswith(changes + "/") or rel.endswith((".lock", "-lock.json", ".lockb")):
+        if rel in skip or path.is_symlink() or rel.startswith(changes + "/") or rel.endswith((".lock", "-lock.json", ".lockb")):
             continue
         try:
             text = path.read_text(encoding="utf-8") if path.is_file() and path.stat().st_size < 1_000_000 else ""
@@ -1298,22 +1336,89 @@ def migrate_script_lists(plan: dict, cfg: dict) -> None:
             continue
         lines = text.split("\n")
         for script in new:
-            if script in text:
+            if script in "\n".join(lines):
                 continue
-            at = next((i for i, line in enumerate(lines) if entry.match(line)), None)
+            at = next((i for i, line in enumerate(lines) if entry.match(line) and list_line_ok(rel, lines, i)), None)
             if at is not None:
                 m = entry.match(lines[at])
-                if m[3].rstrip().endswith((",", "\\")):
-                    lines.insert(at + 1, f"{m[1]}{script}{m[3]}")
-                else:  # no separator: it may be the last element, so the new line goes before it and takes the list's separator
-                    before = lines[at - 1].rstrip() if at else ""
-                    sep = "," if not before or before.endswith(("[", "(", "{", ",")) else (" \\" if before.endswith("\\") else "")
-                    lines.insert(at, f"{m[1]}{script}{m[3].rstrip()}{sep}")
+                edited = insert_list_line(lines, at, f"{m[1]}{script}", m[3])
+                if not list_still_valid(rel, text, "\n".join(edited), script, m[2]):
+                    manual.append(f"{rel}: adding {script} next to {m[2]} would not leave a valid list; left untouched, add it by hand if it must list every kit script")
+                    continue
+                lines = edited
                 wrote.append(f"{rel}: added {script} next to {m[2]} (the repo lists kit scripts)")
             elif any(len({x for x in inline.findall(line)}) > 1 for line in lines):
                 manual.append(f"{rel}: lists kit scripts on one line, a shape adopt cannot copy; add {script} to it by hand if it must list them all")
         if not DRY and "\n".join(lines) != text:
             path.write_text("\n".join(lines), encoding="utf-8")
+
+
+def list_line_ok(rel: str, lines: list[str], i: int) -> bool:
+    """A Makefile takes an element only in a variable assignment (the head line or its `\\` continuations),
+    never in a tab-indented recipe, where a new line would be a new command."""
+    if Path(rel).name not in ("Makefile", "GNUmakefile", "makefile") and not rel.endswith((".mk", ".mak")):
+        return True
+    j = i
+    while j > 0 and lines[j - 1].rstrip().endswith("\\"):
+        j -= 1
+    return j < i and not lines[j].startswith("\t") and bool(re.match(r"\s*(export\s+)?[A-Za-z_][\w.-]*\s*[:+?!]*=", lines[j]))
+
+
+def insert_list_line(lines: list[str], at: int, head: str, tail: str) -> list[str]:
+    """The new element goes after the matched one when that has a separator, else before it (it may be the
+    last), above any comment that sits on it, taking the separator from the list's previous element."""
+    if tail.rstrip().endswith((",", "\\")):
+        return [*lines[: at + 1], head + tail, *lines[at + 1 :]]
+    j = at
+    while j > 0 and lines[j - 1].strip().startswith(("#", "//")):
+        j -= 1
+    k = j
+    while k > 0 and not lines[k - 1].strip():
+        k -= 1
+    before = lines[k - 1].rstrip() if k else ""
+    sep = "," if not before or before.endswith(("[", "(", "{", ",")) else (" \\" if before.endswith("\\") else "")
+    return [*lines[:j], f"{head}{tail.rstrip()}{sep}", *lines[j:]]
+
+
+def list_still_valid(rel: str, before: str, after: str, script: str, old: str) -> bool:
+    """For .py, .toml and .json: the edited file still parses, and both paths are separate string elements."""
+    suffix = Path(rel).suffix
+
+    def strings(text: str) -> set[str] | None:
+        try:
+            if suffix == ".py":
+                import ast
+
+                return {n.value for n in ast.walk(ast.parse(text)) if isinstance(n, ast.Constant) and isinstance(n.value, str)}
+            if suffix == ".toml":
+                import tomllib
+
+                data = tomllib.loads(text)
+            elif suffix == ".json":
+                data = json.loads(text)
+            else:
+                return set()
+        except (ImportError, SyntaxError, ValueError):
+            return None
+        found: set[str] = set()
+
+        def walk(node: object, in_list: bool) -> None:
+            if isinstance(node, dict):
+                for v in node.values():
+                    walk(v, False)
+            elif isinstance(node, list):
+                for v in node:
+                    walk(v, True)
+            elif isinstance(node, str) and in_list:
+                found.add(node)
+
+        walk(data, False)
+        return found
+
+    if suffix not in (".py", ".toml", ".json") or strings(before) is None:
+        return True  # nothing to check with (or the file did not parse before the edit)
+    got = strings(after)
+    return got is not None and script in got and old in got
 
 
 def migrate_archives(plan: dict) -> None:

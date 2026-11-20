@@ -157,7 +157,10 @@ decision.
   refused. A `cd` it cannot resolve (`$VAR`, a backtick, `-`) fails closed: what follows may be in the
   main folder, so a write there is refused until a literal `cd` follows. Inline interpreter code
   (`python3 -c`, `node -e`) is quick, not heavy, but it may write anything, so it is refused like other
-  writers when its folder may be the main one; elsewhere it runs normally. The payload carries
+  writers when its folder may be the main one; elsewhere it runs normally. The flags are read per
+  interpreter (python `-c` after `-X x` / `-W x`, attached `-cCODE`; node `-e`, `-p`, `--eval[=]`,
+  `--print[=]`; node `-c` only checks syntax). `cd` options (`--`, `-P`, `-L`) are read before the operand,
+  and an absolute redirect target or `git -C` path names its own folder even after an unresolved `cd`. The payload carries
   `agent_id` for a subagent, and an absent, empty or unreadable field is the owner's own session,
   which is never refused. The command is split into real segments and wrappers (`env`, `timeout`,
   `nice`, `xargs`, `sh -c`, `find -exec`) are read by their inner command. It stops a careless
