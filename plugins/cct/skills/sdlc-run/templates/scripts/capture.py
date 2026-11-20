@@ -233,21 +233,40 @@ def compare(a: Path, b: Path, diff: Path) -> float:
     return bad / (wa * ha)
 
 
+def group_others() -> list[int]:
+    """The other members of this process group, minus this process and its ancestors: the gate runs a check
+    as `sh -c`, and a shell that does not exec (dash) leads the group, so signalling the whole group kills it."""
+    out = subprocess.run(["ps", "-A", "-o", "pid=,ppid=,pgid="], capture_output=True, text=True).stdout
+    rows = {int(f[0]): (int(f[1]), int(f[2])) for f in (line.split() for line in out.splitlines()) if len(f) == 3}
+    mine, pid = set(), os.getpid()
+    while pid in rows and pid not in mine:
+        mine.add(pid)
+        pid = rows[pid][0]
+    return [p for p, (_, g) in rows.items() if g == os.getpgrp() and p not in mine]
+
+
 def stop(proc: subprocess.Popen, group: bool = False) -> None:
     """Stop the app. With `group` it shares this process's group (so the gate's group kill reaps it): signal the
-    whole group while ignoring our own SIGTERM; otherwise it has a group of its own."""
-    old = signal.signal(signal.SIGTERM, signal.SIG_IGN) if group else None
+    group's other members, never this process or the shell above it; otherwise it has a group of its own."""
+
+    def signal_app(sig: int) -> None:
+        if not group:
+            os.killpg(proc.pid, sig)
+            return
+        for pid in group_others():
+            try:
+                os.kill(pid, sig)
+            except OSError:  # already gone, such as the ps that listed it
+                pass
+
     try:
-        os.killpg(os.getpgrp() if group else proc.pid, signal.SIGTERM)
+        signal_app(signal.SIGTERM)
         proc.wait(timeout=10)
     except (OSError, subprocess.TimeoutExpired):
         try:
-            proc.kill() if group else os.killpg(proc.pid, signal.SIGKILL)
+            signal_app(signal.SIGKILL)
         except OSError:
             pass
-    finally:
-        if old is not None:
-            signal.signal(signal.SIGTERM, old)
 
 
 def valid_threshold(value: object) -> bool:

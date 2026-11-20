@@ -397,3 +397,15 @@ def test_the_milestone_bound_captures_only_the_entries_due(tmp_path: Path) -> No
 def test_the_handoff_names_the_real_change_path(tmp_path: Path) -> None:
     r = _run(_repo(tmp_path))
     assert f"python3 scripts/evidence.py gallery changes/{ID}" in r.stdout
+
+
+def test_group_cleanup_spares_the_shell_that_leads_the_group(tmp_path: Path) -> None:
+    """The gate runs a check as `sh -c <cmd>` in a new session; a shell that does not exec (dash) leads the group.
+    Stopping the app must not signal that shell, or a passing capture reads as a failure."""
+    repo = _repo(tmp_path)
+    _run(repo)
+    _approve_all(repo)
+    e = {k: v for k, v in os.environ.items() if not k.startswith("GIT_")}
+    cmd = f"{sys.executable} {CAPTURE} run {repo / 'changes' / ID} --group; echo rc=$?"  # `; echo` keeps sh alive
+    r = subprocess.run(["sh", "-c", cmd], cwd=repo, capture_output=True, text=True, env=e, start_new_session=True)
+    assert r.returncode == 0 and "CAPTURE PASS 4" in r.stdout and "rc=0" in r.stdout, (r.returncode, r.stdout)
