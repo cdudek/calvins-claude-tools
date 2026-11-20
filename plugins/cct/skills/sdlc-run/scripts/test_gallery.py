@@ -430,23 +430,22 @@ def test_a_board_named_without_a_design_json_is_a_problem_and_hashes_bind_record
     assert capture.approval_id([["a", "b c"]]) != capture.approval_id([["a b", "c"]])
 
 
-def test_a_kept_older_capture_py_takes_the_old_path_without_a_design_and_stops_with_one(repo: Path, tmp_path: Path) -> None:
-    old = tmp_path / "old"
-    old.mkdir()
-    keep = {"load_design", "boards_of", "dropped_of", "mapped", "design_counts", "binding_tag", "deviation_tag", "lock_sha",
-            "image_problems", "link", "replayed", "design_problems"}  # fmt: skip
-    src = (EVIDENCE.parent / "capture.py").read_text()
-    for name in keep:  # a 3.25 capture.py has none of the design helpers
-        src = src.replace(f"def {name}(", f"def _gone_{name}(")
-    (old / "capture.py").write_text(src)
-    for name in ("evidence.py", "marks.py"):
-        (old / name).write_bytes((EVIDENCE.parent / name).read_bytes())
+def test_a_kept_older_capture_py_is_refused_never_stubbed(repo: Path, tmp_path: Path) -> None:
+    """A capture.py without a check (link, replayed, image_problems ...) cannot be stood in for: the command stops and
+    names the missing function, with or without a design. Only the presentation helpers may be stubbed."""
     env = {**os.environ, "HOME": str(repo.parent / "home")}
-    run = lambda *a: subprocess.run([sys.executable, str(old / "evidence.py"), *a], cwd=repo, capture_output=True, text=True, env=env)  # noqa: E731
-    assert run("gallery", str(ch(repo))).returncode == 0  # no design: the older path
-    with_design(repo)
-    out = run("gallery", str(ch(repo)))
-    assert out.returncode == 1 and "adopt --upgrade --replace scripts/capture.py --apply" in out.stderr
+    checks = ["binding_tag", "deviation_tag", "lock_sha", "image_problems", "link", "replayed", "board_file"]
+    for gone in [*checks, "design_problems"]:
+        old = tmp_path / f"old-{gone}"
+        old.mkdir()
+        src = (EVIDENCE.parent / "capture.py").read_text()
+        assert f"def {gone}(" in src
+        (old / "capture.py").write_text(src.replace(f"def {gone}(", f"def _gone_{gone}("))
+        for name in ("evidence.py", "marks.py"):
+            (old / name).write_bytes((EVIDENCE.parent / name).read_bytes())
+        out = subprocess.run([sys.executable, str(old / "evidence.py"), "gallery", str(ch(repo))], cwd=repo, capture_output=True, text=True, env=env)
+        assert out.returncode == 1 and f"`{gone}`" in out.stderr and "adopt --migrate" in out.stderr, (gone, out.stderr)
+    gallery(repo)  # the current capture.py: no refusal
 
 
 def _chained(n: int) -> list[dict]:
