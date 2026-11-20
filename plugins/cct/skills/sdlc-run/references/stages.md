@@ -219,7 +219,11 @@ close still check the screen.
      screen's parts against the design system, one release with all the gaps, then freeze it. A
      screen done in the app that waits only on the design system gets the status
      `waits-on-design-system`, which is not a failure ([convergence](convergence.md)).
-- **Output:** `spec/*`. **Gate:** none.
+  8. **Screens (from 3.25.0, `"visual": "app"`).** Write `screens.json` (one entry per screen and
+     state: `id`, `route` of its preview page, `viewport`, `fixture`) and name the one sample-data
+     fixture the app seeds. Design canvases and images, if any, go to `asks/` as direction, never a
+     gate ([visual work](visual-work.md)).
+- **Output:** `spec/*`, `screens.json`. **Gate:** none.
 - **Failure modes:** a validation loop (the old process's cost), images drawn by default.
 
 ## Stage 3 — Facts
@@ -310,6 +314,10 @@ One `/goal` from `templates/goal/run.txt` (turns: `goal.runTurns`) runs Stage 5 
 for every milestone of the plan, back to back. The goal holds only the end state; the run
 follows the plan's `## How to run`, which is the steps below as the plan states them. The plan's `## Milestones` groups the features;
 a change small enough for one milestone has one.
+
+For a change with `screens.json`, every entry gets a preview page in the app that renders that screen
+and state with the named fixture (dev and test builds only); the close refuses an entry whose preview
+is not reachable.
 
 1. Milestone `n` works on a local `milestone/<slug>-<n>`, cut from fresh `origin/<parent>`, so it
    merges on its own. Only a milestone whose `## Milestones` row says `needs: M<k>` is cut from
@@ -522,6 +530,9 @@ Diffing a project's milestone against the trunk pulls in the sibling milestones 
 merged into the project branch, and reviews them again.
 
 Capture rules (headless, never the owner's browser) and the visual rules: [visual work](visual-work.md).
+For a change with `screens.json` the close takes **one capture batch** of every entry, then
+`evidence.py gallery <change>` writes one offline page for the owner; the owner's `answers.json` is
+imported with `gallery <change> --import`, and the approved shots become the exact tests of later runs.
 
 1. The same goal continues from Stage 5.
 2. Run on the diff, each once and in parallel: `cct:ux-assessment-run scope=change base=<parent>

@@ -5,6 +5,16 @@ version warning, the **Mechanical** lines are what `adopt` does for you (it adds
 with the stack's defaults and never overwrites a value), the **Manual** lines are printed for
 the engineer. A version with no migration lines needs nothing but a re-run of `adopt`.
 
+## 3.25.0 — design in the real app: the owner approves screenshots of the app, and they become exact tests
+
+- **A design tool is direction only.** For a change approved from 3.25.0 (lock `"visual": "app"`) a canvas, Figma file, export bundle or image goes to `asks/` and is never a gate: no bundle pinning, no `marks.py` rows against designs, no six-layer geometry tolerances, no design-system audit tied to board counts (the design-system pin stays).
+- **The UX plan writes `screens.json`** (one entry per screen and state: `id`, preview `route`, `viewport`, `fixture`) and names the one sample-data fixture; the build gives every entry a preview page in the app.
+- **One capture batch, one gallery.** `evidence.py gallery <change>` writes one offline HTML page with every shot and an accept / send back choice; `gallery <change> --import answers.json` copies accepted shots to `screens/<entry>.png` and records their sha256 in `screens/approved.json`. A send back reopens the entry; regenerating never drops an approval.
+- **Approved shots are exact tests.** Later captures are compared with the approved sha256 (zero tolerance, `visual.threshold`); a difference fails with the entry name and needs a new approval.
+- **Status line:** `screens: N of M approved · K changed since approval · L not captured`.
+- Mechanical: re-running `adopt` replaces `evidence.py` and `verify_gate.py` and stamps `sdlcVersion` 3.25.0.
+- Manual: a change approved before 3.25.0 keeps its old visual path unchanged. To use the new flow on a new change, add the preview pages the plan lists and set a fixture the app seeds.
+
 ## 3.24.0 — a lighter front: layout 4 by default, small changes skip the extra passes, one PR per change
 
 - **Layout 4 is the default for new adoptions.** Three documents per change (`spec.md`, `design.md`, `tasks.md`) and one file per rule. A repo that already has a `layout` keeps it; `adopt --upgrade` offers the switch once.

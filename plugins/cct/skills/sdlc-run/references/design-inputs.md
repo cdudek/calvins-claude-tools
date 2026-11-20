@@ -6,6 +6,15 @@ Stage 1 asks which design the change follows and records the answer once, in
 key out or writes `"none"`. This is the change's one **visual source of truth**. Every other
 input (more images, annotated screenshots, generated mockups, today's app) is a reference.
 
+## A design tool is direction only (changes approved from 3.25.0)
+
+For a change locked with `"visual": "app"` no design input is a gate. A canvas link, a Figma file,
+an export bundle, images or annotated screenshots go to `asks/` as direction the UX plan reads; they
+are not pinned, not compared with the app and not a `marks.py` row. What the owner approves is
+screenshots of the real app, one per entry of `screens.json`
+([visual work](visual-work.md)). The rest of this file, including the six layers, describes changes
+approved before 3.25.0.
+
 ## The six layers
 
 Build QA checks a screen on six layers, and the table below says which apply to each input.
