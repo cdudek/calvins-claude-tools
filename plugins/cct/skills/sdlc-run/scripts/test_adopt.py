@@ -2151,6 +2151,102 @@ def test_migrate_takes_the_branch_from_the_changes_own_decisions(tmp_path: Path)
     assert not folder.exists()
 
 
+def _commit_everything(repo: Path, message: str = "x") -> None:
+    subprocess.run(["git", "add", "-A"], cwd=repo, check=True, env=_env())
+    subprocess.run(["git", "-c", "user.name=t", "-c", "user.email=t@t", "commit", "-qm", message], cwd=repo, check=True, env=_env())
+
+
+def test_migrate_keeps_an_archive_a_tracked_file_outside_it_names(tmp_path: Path) -> None:
+    repo = _stamped_3_18(tmp_path)
+    (repo / "PRODUCT.md").write_text("See changes/archive/2026/2026-10/2026-10-01-merged-one/plan.md for the history.\n")
+    _commit_everything(repo)
+    res = _migrate(repo, _fake_gh(tmp_path, "milestone/merged-one-1", "milestone/unmerged-one-1"))
+    assert res.returncode == 0, res.stderr
+    assert (repo / "changes/archive/2026/2026-10/2026-10-01-merged-one/plan.md").exists()
+    assert "2026-10-01-merged-one: kept, referenced by PRODUCT.md" in "\n".join(_sections(res.stdout)["MANUAL"])
+    assert not (repo / "changes/archive/2026/2026-10/2026-10-02-unmerged-one").exists()  # nothing names this one
+
+
+def test_a_reference_from_another_removed_archive_does_not_keep_it(tmp_path: Path) -> None:
+    repo = _stamped_3_18(tmp_path)
+    other = repo / "changes/archive/2026/2026-10/2026-10-02-unmerged-one/plan.md"
+    other.write_text(other.read_text() + "\nBuilds on 2026-10-01-merged-one.\n")
+    _commit_everything(repo)
+    res = _migrate(repo, _fake_gh(tmp_path, "milestone/merged-one-1", "milestone/unmerged-one-1"))
+    assert res.returncode == 0, res.stderr
+    assert not (repo / "changes/archive/2026/2026-10/2026-10-01-merged-one").exists()
+    assert not other.exists()
+
+
+def _again(tmp_path: Path) -> Path:
+    (tmp_path / "again").mkdir()
+    return tmp_path / "again"
+
+
+def test_migrate_adds_the_review_tally_line_when_review_md_lacks_it(tmp_path: Path) -> None:
+    repo = _stamped_3_18(tmp_path)
+    (repo / "REVIEW.md").write_text("# Review\n\n## Cap the nits\n\nFive at most.\n\n## Do not report\n\n- lockfiles\n")
+    _commit_everything(repo)
+    res = _migrate(repo, _fake_gh(tmp_path, "milestone/merged-one-1"))
+    assert res.returncode == 0, res.stderr
+    text = (repo / "REVIEW.md").read_text()
+    assert "IMPORTANT: <n>  NITS: <m>" in text
+    assert text.index("Five at most.") < text.index("IMPORTANT: <n>") < text.index("## Do not report")
+    assert any("REVIEW.md" in w and "tally" in w for w in _sections(res.stdout)["WROTE"])
+    again = _migrate(repo, _fake_gh(_again(tmp_path), "milestone/merged-one-1"))
+    assert (repo / "REVIEW.md").read_text() == text and again.returncode == 0  # once
+
+
+def test_migrate_says_so_when_review_md_has_no_place_for_the_tally(tmp_path: Path) -> None:
+    repo = _stamped_3_18(tmp_path)
+    (repo / "REVIEW.md").write_text("# Review\n\nBe kind.\n")
+    _commit_everything(repo)
+    res = _migrate(repo, _fake_gh(tmp_path, "milestone/merged-one-1"))
+    assert (repo / "REVIEW.md").read_text() == "# Review\n\nBe kind.\n"
+    assert any("REVIEW.md" in m and "IMPORTANT: <n>  NITS: <m>" in m for m in _sections(res.stdout)["MANUAL"])
+
+
+def _lists_kit_scripts(repo: Path) -> None:
+    """Three files that list kit scripts for the repo's own tooling, and the new kit script (capture.py) is absent."""
+    subprocess.run(["git", "rm", "-q", "scripts/capture.py"], cwd=repo, check=True, env=_env())
+    (repo / "pyproject.toml").write_text('[tool.ruff]\nextend-exclude = [\n    "scripts/db.py",\n    "scripts/heavy.py",\n]\n')
+    (repo / "Makefile").write_text("GENERATED = \\\n\tscripts/db.py \\\n\tscripts/heavy.py\n")
+    (repo / "tests").mkdir(exist_ok=True)
+    (repo / "tests/test_kit.py").write_text('KIT_OWNED = ("scripts/db.py", "scripts/heavy.py")\n')
+    (repo / "changes/notes.md").write_text('    "scripts/db.py",\n')  # inside changes/: never touched
+    _commit_everything(repo)
+
+
+def test_migrate_adds_a_new_kit_script_to_the_repos_own_lists(tmp_path: Path) -> None:
+    repo = _stamped_3_18(tmp_path)
+    _lists_kit_scripts(repo)
+    res = _migrate(repo, _fake_gh(tmp_path, "milestone/merged-one-1"))
+    assert res.returncode == 0, res.stderr
+    assert (repo / "pyproject.toml").read_text() == (
+        '[tool.ruff]\nextend-exclude = [\n    "scripts/db.py",\n    "scripts/capture.py",\n    "scripts/heavy.py",\n]\n'
+    )
+    assert (repo / "Makefile").read_text() == "GENERATED = \\\n\tscripts/db.py \\\n\tscripts/capture.py \\\n\tscripts/heavy.py\n"
+    assert (repo / "changes/notes.md").read_text() == '    "scripts/db.py",\n'
+    assert "scripts/capture.py" not in (repo / "sdlc.json").read_text()
+    out = _sections(res.stdout)
+    assert any("pyproject.toml" in w and "scripts/capture.py" in w and "scripts/db.py" in w for w in out["WROTE"])
+    assert any("tests/test_kit.py" in m and "scripts/capture.py" in m for m in out["MANUAL"])  # an inline tuple it cannot copy
+    assert (repo / "tests/test_kit.py").read_text() == 'KIT_OWNED = ("scripts/db.py", "scripts/heavy.py")\n'
+    before = (repo / "pyproject.toml").read_text()
+    _commit_everything(repo, "migrated")
+    assert _migrate(repo, _fake_gh(_again(tmp_path), "milestone/merged-one-1")).returncode == 0
+    assert (repo / "pyproject.toml").read_text() == before  # the script is installed now: nothing to add twice
+
+
+def test_migrate_dry_run_reports_the_list_edit_without_making_it(tmp_path: Path) -> None:
+    repo = _stamped_3_18(tmp_path)
+    _lists_kit_scripts(repo)
+    before = (repo / "pyproject.toml").read_text()
+    res = _migrate(repo, _fake_gh(tmp_path, "milestone/merged-one-1"), "--dry-run")
+    assert (repo / "pyproject.toml").read_text() == before
+    assert any("pyproject.toml" in w and "scripts/capture.py" in w for w in _sections(res.stdout)["WROTE"])
+
+
 @pytest.mark.parametrize(
     ("decisions", "removed"),
     [

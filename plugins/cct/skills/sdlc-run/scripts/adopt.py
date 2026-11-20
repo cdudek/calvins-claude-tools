@@ -1208,6 +1208,24 @@ def own_branch(folder: Path, cfg: dict, head: str) -> bool:
     return "/" in head and re.search(rf"(?<![\w/.-]){re.escape(head)}(?![\w/-])", plan) is not None
 
 
+TALLY = "IMPORTANT: <n>  NITS: <m>"
+
+
+def add_review_tally(review_md: Path) -> None:
+    """The guardrail test wants the tally line in the repo's own REVIEW.md. When it is missing, append it
+    to the end of the `## Cap the nits` section; with no such section, say so."""
+    if not review_md.is_file() or TALLY in (text := review_md.read_text(encoding="utf-8")):
+        return
+    m = re.search(r"^## Cap the nits[^\n]*\n(.*?)(?=^## |\Z)", text, re.M | re.S)
+    if not m:
+        manual.append(f"REVIEW.md has no `## Cap the nits` section to hold the tally line the guardrail test needs: add `{TALLY}  SHA: <head sha>` to it by hand")
+        return
+    wrote.append("REVIEW.md: added the review tally line under `## Cap the nits`")
+    if not DRY:
+        body = m[1].rstrip("\n") + "\n\nOpen the review with the tally in this exact shape on its own line, so the merge gate can read it:\n\n    " + TALLY + "  SHA: <head sha>\n\n"
+        review_md.write_text(text[: m.start(1)] + body + text[m.end(1) :], encoding="utf-8")
+
+
 def migrate_plan(cfg: dict) -> dict:
     """The reads of `--migrate` (gh, branches, every decisions.json), made before anything is
     written, so a half-migrated tree cannot happen. Returns what to remove and what to list."""
@@ -1224,11 +1242,69 @@ def migrate_plan(cfg: dict) -> dict:
             kept_lines.append(
                 f"{folder.relative_to(ROOT)}: kept, gh could not confirm a merged PR from {folder.name}'s own branch"
             )
+    moved = True
+    while moved:  # a kept folder's own files count as referrers for the others, so repeat until nothing moves
+        moved = False
+        for folder in list(remove_list):
+            if ref := referrer(folder.name, remove_list):
+                remove_list.remove(folder)
+                kept_lines.append(f"{folder.relative_to(ROOT)}: kept, referenced by {ref} (a link would break)")
+                moved = True
     return {
         "remove": remove_list,
         "kept": kept_lines,
         "open": unmerged_branches(ROOT, cfg.get("defaultBranch") or "main", heads),
+        "had": {rel for rel in kit_script_paths() if (ROOT / rel).exists()},  # before this run writes any
     }
+
+
+def referrer(name: str, doomed: list[Path]) -> str | None:
+    """A tracked text file that names the folder `name` and is not inside a folder about to be removed."""
+    hits = subprocess.run(["git", "grep", "-lIF", "--", name], cwd=ROOT, capture_output=True, text=True).stdout.splitlines()
+    return next((h for h in hits if not any((ROOT / h).resolve().is_relative_to(d.resolve()) for d in doomed)), None)
+
+
+def kit_script_paths() -> list[str]:
+    return [f"scripts/{p.name}" for p in sorted((TPL / "scripts").glob("*")) if p.is_file()]
+
+
+def migrate_script_lists(plan: dict, cfg: dict) -> None:
+    """A repo that lists kit scripts for its own tooling (a lint exclude, a Makefile list, a test's tuple)
+    breaks when a release adds a script. For each tracked text file outside changes/ that lists the new
+    script's neighbours one per line (`  "scripts/db.py",`) and lacks the new one, the first such line is
+    copied with the new path right after it, same quoting and indentation. A line that holds several
+    scripts (an inline tuple) cannot be copied: it becomes a MANUAL line."""
+    kit = kit_script_paths()
+    new = [rel for rel in kit if rel not in plan["had"] and (rel in pending or (ROOT / rel).exists())]
+    old = [rel for rel in kit if rel in plan["had"]]
+    if not new or not old:
+        return
+    changes = cfg.get("changesDir", "changes")
+    entry = re.compile(r"^(\s*(?:[-*]\s+)?[\"']?)(" + "|".join(map(re.escape, old)) + r")([\"']?\s*[,\\]?\s*)$")
+    inline = re.compile("|".join(r"[\"']" + re.escape(rel) + r"[\"']" for rel in old))
+    tracked = subprocess.run(["git", "ls-files", "-z"], cwd=ROOT, capture_output=True, text=True).stdout.split("\0")
+    skip = {"sdlc.json", *kit, *(f".claude/hooks/{p.name}" for p in (TPL / "hooks").glob("*"))}
+    for rel in filter(None, tracked):
+        path = ROOT / rel
+        if rel in skip or rel.startswith(changes + "/") or rel.endswith((".lock", "-lock.json", ".lockb")):
+            continue
+        try:
+            text = path.read_text(encoding="utf-8") if path.is_file() and path.stat().st_size < 1_000_000 else ""
+        except (OSError, UnicodeDecodeError):
+            continue
+        lines = text.split("\n")
+        for script in new:
+            if script in text:
+                continue
+            at = next((i for i, line in enumerate(lines) if entry.match(line)), None)
+            if at is not None:
+                m = entry.match(lines[at])
+                lines.insert(at + 1, f"{m[1]}{script}{m[3]}")
+                wrote.append(f"{rel}: added {script} after {m[2]} (the repo lists kit scripts)")
+            elif any(len({x for x in inline.findall(line)}) > 1 for line in lines):
+                manual.append(f"{rel}: lists kit scripts on one line, a shape adopt cannot copy; add {script} to it by hand if it must list them all")
+        if not DRY and "\n".join(lines) != text:
+            path.write_text("\n".join(lines), encoding="utf-8")
 
 
 def migrate_archives(plan: dict) -> None:
@@ -1448,6 +1524,8 @@ def main() -> int:
                 ),
                 encoding="utf-8",
             )
+    if MIGRATE:
+        add_review_tally(review_md)
     docs = cfg.get("docs", "docs/sdlc.md")
     today = dt.date.today().isoformat()
     keep_paths = set(cfg.get("keep", []))
@@ -2032,6 +2110,7 @@ def main() -> int:
     )
     diffs = finish_upgrade() if UPGRADE else ""
     if MIGRATE:
+        migrate_script_lists(plan, cfg)
         migrate_report(cfg, plan)
     format_written()
 
