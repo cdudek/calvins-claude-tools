@@ -334,6 +334,8 @@ PLAN = "# p\n\n## Milestones\n\n| M | Facts |\n|---|---|\n| M1 | F1 |\n\n## Note
         ("decisions.json", '{"size": "M"}', '{"size": "M", "note": "x"}', ("decisions.routing",), True),
         ("decisions.json", '{"size": "M"}', '{"size": "S"}', (), True),
         ("state/intake.json", '{"size": "M"}', '{"size": "S"}', ("decisions.routing",), False),
+        ("screens.json", '[{"id": "a"}]', '[{"id": "a"}, {"id": "b"}]', ("screens.json",), False),  # 3.25.0 inventory
+        ("screens.json", '[{"id": "a"}]', '[{"id": "a"}, {"id": "b"}]', (), True),  # a lock that never hashed it
     ],
 )
 def test_the_pass_compares_what_the_lock_hashes_beyond_the_locked_files(
@@ -342,6 +344,23 @@ def test_the_pass_compares_what_the_lock_hashes_beyond_the_locked_files(
     gated = _gated_files(tmp_path, {"facts.md": "# f\n", "lock.json": _lock(*keys), file: old})
     (tmp_path / "changes" / ID / file).write_text(new)
     assert pass_proof.proves(tmp_path, "changes", gated, _commit_all(tmp_path)) is holds
+
+
+def test_a_visual_app_lock_protects_screens_json_even_without_the_criteria_key(tmp_path: Path) -> None:
+    lock = json.dumps({"criteria": {}, "visual": "app"})
+    gated = _gated_files(tmp_path, {"facts.md": "# f\n", "lock.json": lock, "screens.json": '[{"id": "a"}]'})
+    (tmp_path / "changes" / ID / "screens.json").write_text('[{"id": "b"}]')
+    assert not pass_proof.proves(tmp_path, "changes", gated, _commit_all(tmp_path))
+
+
+def test_chain_gate_protects_screens_json_after_an_app_approval(tmp_path: Path) -> None:
+    repo = make(tmp_path)
+    lock = repo / "changes" / ID / "lock.json"
+    file = f"changes/{ID}/screens.json"
+    assert edit(repo, file).returncode == 0  # an older lock never locked it
+    lock.write_text(json.dumps({"layout": 4, "visual": "app", "criteria": {"screens.json": "x"}}))
+    r = edit(repo, file)
+    assert r.returncode == 2 and "protectedEdit" in r.stderr
 
 
 def test_the_routing_fields_are_the_gates(tmp_path: Path) -> None:

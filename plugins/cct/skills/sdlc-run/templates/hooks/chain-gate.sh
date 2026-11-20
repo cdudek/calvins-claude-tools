@@ -210,6 +210,12 @@ def protected_files(change_dir: Path, decisions: dict) -> tuple[str, ...]:
         names = [n for files in locked.values() for n in files]
     else:
         names = locked[4 if is_v4(change_dir, decisions) else 3]
+    try:
+        lock = json.loads(state_file(change_dir, "lock.json").read_text(encoding="utf-8"))
+    except (OSError, ValueError):
+        lock = None
+    if proof.app_locked(lock):  # 3.25.0: the screens to prove are approved with the plan
+        names = [*names, *proof.APP_LOCKED_FILES]
     return tuple(dict.fromkeys(n for n in names if n not in ticked))
 
 
