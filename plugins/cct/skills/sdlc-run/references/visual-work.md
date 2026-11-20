@@ -29,6 +29,16 @@ itself).
    `screens/approved.json` with the approver and the date; a send back removes the entry and prints
    `reopened: <entry>`. An answer for a shot that changed after the gallery was made is refused.
    Regenerating the gallery never touches an approval.
+   **The owner approves, never the agent.** The answers file is only a list: an agent could write one
+   that accepts everything. So the import writes nothing until the owner has answered `Approve screens`
+   to a dialog of exactly that batch (the same transcript-backed owner answer the findings use). The
+   first import run prints the question to ask with `AskUserQuestion` (`Change <id>, finding
+   screens-<id of the batch>: Approve these N screens? ...`, options `Approve screens` | `Hold`); the
+   owner opens `verify/gallery.html`, picks per screen, downloads `answers.json`, and confirms the
+   import in that one dialog; the agent runs the import again. `approved.json` records the batch
+   (`batches`) and every entry names it (`decision`); the milestone gate (`capture.py`) fails with
+   `CAPTURE FAIL approval` for an entry no owner answer covers, and the edit hook protects
+   `screens/approved.json` and `screens/*.png` of an app-locked change like the other locked files.
    Each entry may carry `"milestone": N` (default 1): a milestone close captures the entries with
    milestone <= N and the last milestone requires all of them, so an early close never needs a screen
    a later milestone builds. Two entries never share a route and viewport (the fixture shows only

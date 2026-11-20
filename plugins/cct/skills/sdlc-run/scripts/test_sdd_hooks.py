@@ -387,5 +387,16 @@ def test_chain_gate_protects_screens_json_after_an_app_approval(tmp_path: Path) 
     assert r.returncode == 2 and "protectedEdit" in r.stderr
 
 
+@pytest.mark.parametrize("file", ["screens/approved.json", "screens/leads.list.empty.png"])
+def test_chain_gate_protects_the_approved_screens_of_an_app_change(tmp_path: Path, file: str) -> None:
+    repo = make(tmp_path)
+    lock = repo / "changes" / ID / "lock.json"
+    assert edit(repo, f"changes/{ID}/{file}").returncode == 0  # a change that never approved screens
+    lock.write_text(json.dumps({"layout": 4, "visual": "app", "criteria": {}}))
+    r = edit(repo, f"changes/{ID}/{file}")
+    assert r.returncode == 2 and "protectedEdit" in r.stderr
+    assert edit(repo, f"changes/{ID}/screens/some-record.json").returncode == 0  # the per-screen records stay open
+
+
 def test_the_routing_fields_are_the_gates(tmp_path: Path) -> None:
     assert pass_proof.ROUTING == verify_gate.ROUTING

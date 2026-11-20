@@ -22,7 +22,9 @@ Changes approved from 3.25.0 (`"visual": "app"`, a screens.json in the change fo
 real app instead: `gallery CHANGE` writes one offline page (verify/gallery.html) with every latest shot and
 an accept / send back choice; the owner downloads answers.json, and `gallery CHANGE --import answers.json
 [--by NAME]` copies each accepted shot to screens/<entry>.png and records its sha256 in screens/approved.json
-(a send back removes the entry and prints `reopened: <entry>`). `status` then prints
+(a send back removes the entry and prints `reopened: <entry>`). An agent cannot approve a screen: the import
+writes nothing until the owner has answered `Approve screens` to a dialog naming this batch (it prints the
+dialog to ask), and the gate refuses an entry no such answer covers. `status` then prints
 `screens: N of M approved · K changed since approval · L not captured`.
 
 The first review writes the defect list and a snapshot of it; it is frozen after that: a later
@@ -45,6 +47,7 @@ import html
 import json
 import os
 import re
+import subprocess
 import sys
 import time
 from pathlib import Path
@@ -509,11 +512,21 @@ def read_approved(change: str | Path) -> dict:
     return data.get("entries", {}) if isinstance(data, dict) and isinstance(data.get("entries"), dict) else {}
 
 
-def write_approved(change: str | Path, entries: dict) -> None:
+def read_batches(change: str | Path) -> dict:
+    """The owner approvals behind approved.json: {approval id: [[entry, sha256], ...]} (see capture.uncovered)."""
+    try:
+        data = json.loads(approved_path(change).read_text("utf-8"))
+    except (OSError, ValueError):
+        return {}
+    return data.get("batches", {}) if isinstance(data, dict) and isinstance(data.get("batches"), dict) else {}
+
+
+def write_approved(change: str | Path, entries: dict, batches: dict) -> None:
     path = approved_path(change)
     path.parent.mkdir(parents=True, exist_ok=True)
     tmp = path.with_name(f".{path.name}.{os.getpid()}.tmp")
-    tmp.write_text(json.dumps({"format": 1, "entries": entries}, indent=2, sort_keys=True) + "\n", encoding="utf-8")
+    kept = {b: p for b, p in batches.items() if any(a.get("decision") == b for a in entries.values())}  # drop a batch nothing cites
+    tmp.write_text(json.dumps({"format": 1, "entries": entries, "batches": kept}, indent=2, sort_keys=True) + "\n", encoding="utf-8")
     os.replace(tmp, path)
 
 
@@ -607,7 +620,26 @@ def gallery_write(change: Path, entries: list[dict]) -> int:
     return 0
 
 
+def owner_approved(change: Path, bid: str) -> bool:
+    """The owner answered `Approve screens` to the dialog of `bid` (marks.owner_decisions: the session transcript)."""
+    import marks
+
+    repo = Path(subprocess.run(["git", "-C", str(change), "rev-parse", "--show-toplevel"], capture_output=True, text=True).stdout.strip() or ".")
+    return marks.owner_decisions(repo, change.name).get(bid, ("",))[0] == "screens"
+
+
+def owner_dialog(change_id: str, bid: str, ids: list[str]) -> str:
+    return (
+        f"evidence: no owner decision covers these {len(ids)} screens, and an agent cannot approve a screen. Ask the owner "
+        "(AskUserQuestion, options Approve screens | Hold), the question starting exactly:\n"
+        f"  Change {change_id}, finding {bid}: Approve these {len(ids)} screens? {', '.join(ids)}\n"
+        "then run the import again. Nothing was written."
+    )
+
+
 def gallery_import(args, change: Path, entries: list[dict]) -> int:
+    import capture  # the one approval id rule
+
     try:
         data = json.loads(Path(args.do_import).read_text("utf-8"))
         answers = data["answers"]
@@ -620,10 +652,10 @@ def gallery_import(args, change: Path, entries: list[dict]) -> int:
     if not by:
         print("evidence: the answers name nobody; fill in the name on the page or pass --by", file=sys.stderr)
         return 1
-    known, bad, reopened = {e["id"] for e in entries}, [], []
+    known, bad, reopened, accepted, sent_back = {e["id"] for e in entries}, [], [], {}, []
     with writing(change, approved_path(change)):  # two imports never overwrite each other's decisions
-        approved = read_approved(change)
-        before = dict(approved)
+        approved, batches = read_approved(change), read_batches(change)
+        before, batches_before = dict(approved), dict(batches)
         for entry, a in answers.items():
             answer = ANSWERS.get(str((a or {}).get("answer", "")).lower()) if isinstance(a, dict) else None
             if entry not in known or not answer:
@@ -635,16 +667,27 @@ def gallery_import(args, change: Path, entries: list[dict]) -> int:
             if raw is None or digest != a.get("sha256"):  # an old answer never acts on a newer shot, send back included
                 bad.append(f"{entry}: the shot changed since the gallery was made; regenerate it")
             elif answer == "send-back":
-                if approved.pop(entry, None):
-                    (screens_dir(change) / f"{entry}.png").unlink(missing_ok=True)
-                reopened.append(entry)
+                sent_back.append(entry)
             else:
-                screens_dir(change).mkdir(parents=True, exist_ok=True)
-                (screens_dir(change) / f"{entry}.png").write_bytes(raw)
-                approved[entry] = {"sha256": digest, "file": f"screens/{entry}.png", "approvedBy": by,
-                                   "date": time.strftime("%Y-%m-%d")}  # fmt: skip
-        if approved != before:
-            write_approved(change, approved)
+                accepted[entry] = (digest, raw)
+        if accepted:  # only the owner approves a screen: their answer to the dialog of exactly this batch
+            pairs = sorted([e, d] for e, (d, _) in accepted.items())
+            bid = capture.approval_id(pairs)
+            if not owner_approved(change, bid):
+                print(owner_dialog(change.name, bid, [p[0] for p in pairs]), file=sys.stderr)
+                return 1
+            batches[bid] = pairs
+        for entry in sent_back:
+            if approved.pop(entry, None):
+                (screens_dir(change) / f"{entry}.png").unlink(missing_ok=True)
+            reopened.append(entry)
+        for entry, (digest, raw) in accepted.items():
+            screens_dir(change).mkdir(parents=True, exist_ok=True)
+            (screens_dir(change) / f"{entry}.png").write_bytes(raw)
+            approved[entry] = {"sha256": digest, "file": f"screens/{entry}.png", "approvedBy": by,
+                               "date": time.strftime("%Y-%m-%d"), "decision": bid}  # fmt: skip
+        if approved != before or batches != batches_before:
+            write_approved(change, approved, batches)
     for r in reopened:
         print(f"reopened: {r}")
     print(f"approved {len(approved)} of {len(entries)}")

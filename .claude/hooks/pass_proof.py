@@ -30,7 +30,8 @@ LOCKED_FILES = {
 }
 TICKED_FILES = ("tasks.md",)  # a tick or a handover edit is not an edit: only its task rows are locked
 LOCKED = {name for names in LOCKED_FILES.values() for name in names}
-APP_LOCKED_FILES = ("screens.json",)  # locked too once the lock says `"visual": "app"` or hashed it (3.25.0)
+APP_LOCKED_FILES = ("screens.json", "screens/approved.json")  # locked too once the lock says `"visual": "app"` or hashed it (3.25.0)
+APP_LOCKED_GLOBS = ("screens/*.png",)  # the approved baselines: the owner approves them, an edit needs the owner too
 EVIDENCE_FILES = {"marks.json"}
 EVIDENCE_DIRS = {"asks", "evidence", "shots", "screens"}  # screens/: the per-screen records (3.23.0)
 OUTCOMES = ".sdlc/outcomes/"  # a record of the success measure (spec.py outcome write): records only
