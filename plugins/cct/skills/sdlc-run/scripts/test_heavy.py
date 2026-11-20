@@ -614,6 +614,47 @@ def test_inline_code_behind_a_runner_and_a_program_from_stdin_are_possible_write
 
 
 @pytest.mark.parametrize("cmd", [
+    'npm exec -c "pnpm build"', "npm exec --call 'playwright test'", "npx -c 'vite build'", "npx --call='playwright test'",
+    "npx -cvite", "pnpm exec -c 'pnpm build'", 'yarn exec "pnpm build"', "yarn exec -c 'vite build'",
+    "bunx playwright test", "bun x vite build", "pipx run playwright test", "pdm run playwright test", "rye run playwright test",
+    "bun run build", "npx --yes -c 'sh -c \"pnpm test\"'",
+])  # fmt: skip
+def test_a_runner_command_string_and_the_newer_runners_are_read_for_heavy_work(cmd: str) -> None:
+    assert _heavy_classify(cmd) == "heavy", cmd
+
+
+@pytest.mark.parametrize("cmd", ["npm exec -c 'pnpm lint'", "npx -c 'echo build'", "bunx prettier --check .", "pipx run black --check .", "pdm run rg build", "bun x tsc --noEmit"])
+def test_a_runner_command_string_of_light_work_stays_light(cmd: str) -> None:
+    assert _heavy_classify(cmd) == "light", cmd
+
+
+def test_a_command_behind_any_runner_and_a_shape_the_parser_cannot_read_are_possible_writers(tmp_path: Path) -> None:
+    main = tmp_path / "main"
+    main.mkdir()
+    _git(main, "init", "-q")
+    _git(main, "-c", "user.name=t", "-c", "user.email=t@t", "commit", "-q", "--allow-empty", "-m", "i")
+    wt = tmp_path / "wt"
+    _git(main, "worktree", "add", "-q", "-b", "feat", str(wt))
+
+    def call(cmd: str, cwd: Path) -> int:
+        return _guard(cwd, {"cwd": str(cwd), "agent_id": "a1", "tool_input": {"command": cmd}}).returncode
+
+    for writer in (
+        'npm exec -c "rm -rf x"', "npm exec --call 'touch x'", "npx -c 'git commit -m x'", "npx --call='tee x'", "npx -ctouch", "pnpm exec -c 'rm x'",
+        "yarn exec 'rm -rf x'", "yarn exec -c 'cp a b'", "npx -c 'node -e 1'", "npx -c 'echo hi; rm x'", "npx -c 'sh -c \"rm x\"'",
+        "bunx cp a b", "bun x rm x", "bunx tsx -e 1", "bun x node -e 1", "pipx run rm x", "pipx run python -c 1", "pdm run rm x", "pdm run python -c pass",
+        "rye run cp a b", "rye run python -", "uv run cp a b", "poetry run rm x", "npx --yes rm x", "pnpm dlx touch x",
+        "npx --mystery-flag cp a b", "uv run --mystery cp a b", "pnpm exec -w cp a b", "npx -c",
+    ):  # fmt: skip
+        assert call(writer, main) == 2, writer
+        assert call(writer, wt) == 0, writer
+    for reader in ("npx -c 'echo hi'", "npx -y prettier --check .", "bunx cowsay hi", "bun x prettier --check .", "pipx run black --check .", "pdm run rg x",
+                   "rye run rg x", "npm exec -c 'ls'", "uv run --with rich rg node -e x", "pnpm exec node app.js -e 1", "yarn dlx cowsay hi", "npx --no-install prettier -c .",
+                   "npm exec --yes -- prettier --check ."):  # fmt: skip
+        assert call(reader, main) == 0, reader
+
+
+@pytest.mark.parametrize("cmd", [
     "cargo build", "cargo +nightly test", "uv build", "yarn workspace app run build", "go build ./...", "go test ./...",
     "mvn package", "./mvnw verify", "gradle build", "./gradlew test",
 ])  # fmt: skip
