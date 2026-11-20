@@ -609,33 +609,44 @@ def remove(path: Path, why: str) -> None:
 
 
 PRETTIER_SUFFIXES = {".ts", ".js", ".mjs", ".json", ".yml", ".yaml", ".md"}
+BIOME_SUFFIXES = {".ts", ".tsx", ".js", ".jsx", ".mjs", ".cjs", ".json", ".jsonc"}
+
+
+def uses_biome() -> bool:
+    """The repo's formatter is biome: a biome config, or @biomejs/biome in package.json."""
+    if (ROOT / "biome.json").exists() or (ROOT / "biome.jsonc").exists():
+        return True
+    try:
+        pkg = json.loads((ROOT / "package.json").read_text(encoding="utf-8"))
+    except (OSError, ValueError):
+        return False
+    return isinstance(pkg, dict) and any("@biomejs/biome" in (pkg.get(k) or {}) for k in ("dependencies", "devDependencies"))
 
 
 def format_written() -> None:
-    """Run the repo's own prettier over what we just wrote.
+    """Run the repo's own formatter (biome when it is the repo's, else prettier) over what we just wrote.
 
     The templates cannot be formatted to suit every repo -- printWidth, quotes and plugins
-    all differ -- so a repo with a `prettier --check` gate rejects a freshly adopted file.
-    The repo's formatter is the authority; we just call it. No prettier, nothing to do."""
+    all differ -- so a repo with a format check rejects a freshly adopted file.
+    The repo's formatter is the authority; we just call it. Not installed, nothing to do."""
     if DRY:
         return
-    targets = [p for p in written if p.suffix in PRETTIER_SUFFIXES]
+    biome = uses_biome()
+    suffixes = BIOME_SUFFIXES if biome else PRETTIER_SUFFIXES
+    targets = [p for p in written if p.suffix in suffixes]
     written.clear()
-    binary = ROOT / "node_modules" / ".bin" / "prettier"
+    name, flags = ("biome", ["format", "--write", "--no-errors-on-unmatched"]) if biome else ("prettier", ["--write", "--log-level", "warn"])
+    binary = ROOT / "node_modules" / ".bin" / name
     if not targets or not binary.exists():
         return
-    out = subprocess.run(
-        [str(binary), "--write", "--log-level", "warn", *(str(p) for p in targets)],
-        cwd=ROOT,
-        capture_output=True,
-        text=True,
-    )
+    out = subprocess.run([str(binary), *flags, *(str(p) for p in targets)], cwd=ROOT, capture_output=True, text=True)
+    label = "biome format --write" if biome else "prettier --write"
     if out.returncode == 0:
-        wrote.append(f"prettier --write on {len(targets)} written file(s)")
+        wrote.append(f"{label} on {len(targets)} written file(s)")
     else:
         detail = (out.stderr or out.stdout).strip().splitlines()
         manual.append(
-            "prettier failed on the files adopt wrote -- run `prettier --write` before committing"
+            f"{name} failed on the files adopt wrote -- run `{label}` before committing"
             + (f": {detail[-1]}" if detail else "")
         )
 

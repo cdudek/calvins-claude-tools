@@ -642,6 +642,41 @@ def test_runs_the_repos_own_prettier_over_what_it_wrote(tmp_path: Path) -> None:
     assert not any(a.endswith(".sh") for a in formatted), formatted
 
 
+@pytest.mark.parametrize("marker", ["biome.json", "biome.jsonc", "package.json"])
+def test_a_biome_repo_gets_its_own_biome_not_prettier(tmp_path: Path, marker: str) -> None:
+    """A repo whose formatter is biome (a biome config, or @biomejs/biome in package.json) rejects
+    unformatted kit files in its first CI run: adopt runs that biome, and no prettier."""
+    repo = _repo(tmp_path, "node")
+    if marker == "package.json":
+        (repo / marker).write_text('{"devDependencies": {"@biomejs/biome": "2.0.0"}}\n')
+    else:
+        (repo / marker).write_text("{}\n")
+    bin_dir = repo / "node_modules" / ".bin"
+    bin_dir.mkdir(parents=True)
+    for name in ("biome", "prettier"):
+        stub = bin_dir / name
+        stub.write_text(f'#!/bin/sh\nprintf "%s\\n" "$@" >> "$(dirname "$0")/../../{name}-argv.txt"\n')
+        stub.chmod(0o755)
+
+    out = _adopt(repo)
+
+    argv = (repo / "biome-argv.txt").read_text().splitlines()
+    assert argv[:2] == ["format", "--write"], argv[:3]
+    formatted = [a for a in argv if not a.startswith("--") and a != "format"]
+    assert any(a.endswith("tests/sdlc.test.ts") for a in formatted) and any(a.endswith("sdlc.json") for a in formatted), formatted
+    assert not any(a.endswith((".yml", ".md", ".sh")) for a in formatted), formatted  # biome does not format these
+    assert not (repo / "prettier-argv.txt").exists()
+    assert any(w.startswith("biome format --write on") for w in _sections(out.stdout)["WROTE"])
+
+
+def test_a_biome_repo_without_biome_installed_is_left_alone(tmp_path: Path) -> None:
+    repo = _repo(tmp_path, "node")
+    (repo / "biome.json").write_text("{}\n")
+    out = _adopt(repo)
+    assert out.returncode == 0, out.stderr
+    assert not any("biome" in w or "prettier" in w for w in _sections(out.stdout)["WROTE"])
+
+
 def test_without_prettier_installed_adopt_still_succeeds(tmp_path: Path) -> None:
     repo = _repo(tmp_path, "node")
     out = _adopt(repo)
