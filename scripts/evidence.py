@@ -521,12 +521,27 @@ def read_batches(change: str | Path) -> dict:
     return data.get("batches", {}) if isinstance(data, dict) and isinstance(data.get("batches"), dict) else {}
 
 
-def write_approved(change: str | Path, entries: dict, batches: dict) -> None:
+def read_log(change: str | Path) -> list:
+    """Every owner decision in the order it was applied: {entry, answer (accept | send-back), batch, time}."""
+    try:
+        data = json.loads(approved_path(change).read_text("utf-8"))
+    except (OSError, ValueError):
+        return []
+    return [r for r in data.get("log", []) if isinstance(r, dict)] if isinstance(data, dict) and isinstance(data.get("log"), list) else []
+
+
+def replayed(log: list, entry: str, bid: str) -> bool:
+    """`bid` already approved `entry`, and a send back of the entry came after it: that batch is spent."""
+    at = [i for i, r in enumerate(log) if r.get("entry") == entry and r.get("answer") == "accept" and r.get("batch") == bid]
+    return bool(at) and any(r.get("entry") == entry and r.get("answer") == "send-back" for r in log[at[0] + 1 :])
+
+
+def write_approved(change: str | Path, entries: dict, batches: dict, log: list) -> None:
     path = approved_path(change)
     path.parent.mkdir(parents=True, exist_ok=True)
     tmp = path.with_name(f".{path.name}.{os.getpid()}.tmp")
     kept = {b: p for b, p in batches.items() if any(a.get("decision") == b for a in entries.values())}  # drop a batch nothing cites
-    tmp.write_text(json.dumps({"format": 1, "entries": entries, "batches": kept}, indent=2, sort_keys=True) + "\n", encoding="utf-8")
+    tmp.write_text(json.dumps({"format": 1, "entries": entries, "batches": kept, "log": log}, indent=2, sort_keys=True) + "\n", encoding="utf-8")
     os.replace(tmp, path)
 
 
@@ -580,6 +595,7 @@ def inside(change: Path, path: Path) -> bool:
 
 
 def gallery_cmd(args) -> int:
+    sys.dont_write_bytecode = True  # a checkout stays clean: no __pycache__ from importing the kit's scripts
     import capture  # the one id rule; both scripts sit in the same folder
 
     change = resolve_change(args.change)
@@ -654,8 +670,8 @@ def gallery_import(args, change: Path, entries: list[dict]) -> int:
         return 1
     known, bad, reopened, accepted, sent_back = {e["id"] for e in entries}, [], [], {}, []
     with writing(change, approved_path(change)):  # two imports never overwrite each other's decisions
-        approved, batches = read_approved(change), read_batches(change)
-        before, batches_before = dict(approved), dict(batches)
+        approved, batches, log = read_approved(change), read_batches(change), read_log(change)
+        before, batches_before, log_before = dict(approved), dict(batches), len(log)
         for entry, a in answers.items():
             answer = ANSWERS.get(str((a or {}).get("answer", "")).lower()) if isinstance(a, dict) else None
             if entry not in known or not answer:
@@ -667,27 +683,35 @@ def gallery_import(args, change: Path, entries: list[dict]) -> int:
             if raw is None or digest != a.get("sha256"):  # an old answer never acts on a newer shot, send back included
                 bad.append(f"{entry}: the shot changed since the gallery was made; regenerate it")
             elif answer == "send-back":
-                sent_back.append(entry)
+                sent_back.append((entry, digest))
             else:
                 accepted[entry] = (digest, raw)
-        if accepted:  # only the owner approves a screen: their answer to the dialog of exactly this batch
-            pairs = sorted([e, d] for e, (d, _) in accepted.items())
-            bid = capture.approval_id(pairs)
+        # only the owner decides a screen: their answer to the dialog of exactly this batch, accepts and the
+        # send backs that remove an approval alike (a send back of a screen nobody approved changes nothing)
+        pairs = sorted([[e, d] for e, (d, _) in accepted.items()] + [[e, d, "send-back"] for e, d in sent_back if e in approved])
+        bid = capture.approval_id(pairs) if pairs else ""
+        if pairs:
+            if spent := [e for e in accepted if replayed(log, e, bid)]:
+                print(f"evidence: the owner's answer for {', '.join(spent)} was given before a later send back: a new batch is needed (capture the screen again and regenerate the gallery). Nothing was written.", file=sys.stderr)
+                return 1
             if not owner_approved(change, bid):
-                print(owner_dialog(change.name, bid, [p[0] for p in pairs]), file=sys.stderr)
+                print(owner_dialog(change.name, bid, [p[0] + (" (send back)" if len(p) == 3 else "") for p in pairs]), file=sys.stderr)
                 return 1
             batches[bid] = pairs
-        for entry in sent_back:
+        stamp = time.strftime("%Y-%m-%dT%H:%M:%S%z")
+        for entry, digest in sent_back:
             if approved.pop(entry, None):
                 (screens_dir(change) / f"{entry}.png").unlink(missing_ok=True)
+                log.append({"entry": entry, "answer": "send-back", "batch": bid, "time": stamp})
             reopened.append(entry)
         for entry, (digest, raw) in accepted.items():
+            log.append({"entry": entry, "answer": "accept", "batch": bid, "time": stamp})
             screens_dir(change).mkdir(parents=True, exist_ok=True)
             (screens_dir(change) / f"{entry}.png").write_bytes(raw)
             approved[entry] = {"sha256": digest, "file": f"screens/{entry}.png", "approvedBy": by,
                                "date": time.strftime("%Y-%m-%d"), "decision": bid}  # fmt: skip
-        if approved != before or batches != batches_before:
-            write_approved(change, approved, batches)
+        if approved != before or batches != batches_before or len(log) != log_before:
+            write_approved(change, approved, batches, log)
     for r in reopened:
         print(f"reopened: {r}")
     print(f"approved {len(approved)} of {len(entries)}")

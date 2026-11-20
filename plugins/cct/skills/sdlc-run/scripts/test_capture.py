@@ -512,3 +512,32 @@ def test_an_owner_answer_recorded_in_a_sibling_worktree_counts(tmp_path: Path, m
     subprocess.run([*git, "worktree", "remove", "--force", str(main / ".worktrees" / "a")], cwd=main, check=True, capture_output=True)
     marks._ANSWERS.clear()
     assert marks.owner_decisions(main, ID).get("screens-abc", ("",))[0] == "screens"  # a removed worktree's answer stays
+
+
+def test_an_early_close_checks_coverage_only_for_the_entries_due(tmp_path: Path) -> None:
+    ents = [{**e, "milestone": 2 if e["id"].startswith("deals") else 1} for e in ENTRIES]
+    repo = _repo(tmp_path, ents)
+    _run(repo)
+    _approve_all(repo)
+    change = repo / "changes" / ID
+    data = json.loads((change / "screens/approved.json").read_text())
+    for e in ("deals.list.empty", "deals.list.full"):  # approved by 3.25.0: no owner decision on record
+        del data["entries"][e]["decision"]
+    (change / "screens/approved.json").write_text(json.dumps(data))
+    env = {**os.environ, "HOME": str(tmp_path / "home")}
+    run = lambda *extra: subprocess.run([sys.executable, str(CAPTURE), "run", str(change), *extra], cwd=repo, capture_output=True, text=True, env=env)  # noqa: E731
+    early = run("--upto", "1")
+    assert _last(early) == "CAPTURE PASS 2", early.stdout
+    final = run()
+    assert _last(final) == "CAPTURE FAIL approval" and "deals.list.empty" in final.stdout
+
+
+def test_the_capture_leaves_no_bytecode_in_the_checkout(tmp_path: Path) -> None:
+    repo = _repo(tmp_path)
+    _run(repo)
+    _approve_all(repo)
+    cache = SCRIPTS / "__pycache__"
+    for pyc in cache.glob("marks*.pyc"):
+        pyc.unlink()
+    assert _last(_run(repo)) == "CAPTURE PASS 4"
+    assert not list(cache.glob("marks*.pyc"))

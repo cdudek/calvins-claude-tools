@@ -373,14 +373,14 @@ def run(change: Path, repo: Path, upto: int | None = None, group: bool = False) 
 def approval_id(pairs: list) -> str:
     """The id of one owner approval: `screens-` and 16 hex of the sorted `<entry> <sha256>` lines. The owner's
     dialog is `Change <id>, finding <this id>: ...`, so the answer covers exactly these shots and no others."""
-    lines = sorted(f"{e} {s}" for e, s in pairs)
+    lines = sorted(" ".join(p) for p in pairs)  # [entry, sha256] or [entry, sha256, "send-back"]
     return "screens-" + hashlib.sha256("\n".join(lines).encode()).hexdigest()[:16]
 
 
 def uncovered(change: Path, approved: dict) -> list[str]:
     """The approved entries no owner decision covers. approved.json is the owner's approval, so each entry
     names the batch (`decision`) its import was confirmed in: `batches[<id>]` lists that batch's
-    `[entry, sha256]` pairs, the id is their `approval_id`, and the owner answered `Approve screens` to the
+    `[entry, sha256]` pairs (a send back adds `"send-back"`), the id is their `approval_id`, and the owner answered `Approve screens` to the
     dialog of that id (`marks.owner_decisions`, the transcript). A file an agent wrote covers nothing."""
     try:
         data = json.loads((change / "screens" / "approved.json").read_text(encoding="utf-8"))
@@ -388,6 +388,7 @@ def uncovered(change: Path, approved: dict) -> list[str]:
     except (OSError, ValueError, KeyError, TypeError):
         batches = {}
     repo = Path(subprocess.run(["git", "-C", str(change), "rev-parse", "--show-toplevel"], capture_output=True, text=True).stdout.strip() or ".")
+    sys.dont_write_bytecode = True  # the gate checks that the tree is clean afterwards: no __pycache__ from here
     try:
         from marks import owner_decisions
 
@@ -398,7 +399,7 @@ def uncovered(change: Path, approved: dict) -> list[str]:
     for entry, a in approved.items():
         bid = a.get("decision")
         pairs = batches.get(bid) if isinstance(bid, str) else None
-        ok = isinstance(pairs, list) and all(isinstance(p, list) and len(p) == 2 for p in pairs)
+        ok = isinstance(pairs, list) and all(isinstance(p, list) and len(p) in (2, 3) for p in pairs)
         if not ok or approval_id(pairs) != bid or [entry, a.get("sha256")] not in pairs:
             out.append(f"{entry}: no recorded batch of an owner approval holds it")
         elif decided.get(bid, ("",))[0] != "screens":
@@ -435,7 +436,8 @@ def judge(change: Path, entries: list[dict], shots: Path, threshold: float, star
             + f"\nThe shots are in {shots}. Build the gallery (`python3 scripts/evidence.py gallery {where}`) and have the owner approve them."
         )
         return end("VERIFY BLOCKED reason=needs-baseline", 3)
-    if no_owner := uncovered(change, approved):
+    full = {e["id"] for e in load_screens(change)[0]}  # an early close checks the entries due, the last one every approval
+    if no_owner := uncovered(change, approved if set(ids) >= full else {i: a for i, a in approved.items() if i in ids}):
         print("approved.json holds approvals no owner decision covers (an agent cannot approve a screen):\n  " + "\n  ".join(no_owner)
               + "\nImport the gallery answers with `evidence.py gallery <change> --import`: it asks the owner, and records the answer.")
         return end("CAPTURE FAIL approval", 1)

@@ -274,3 +274,35 @@ def test_the_batch_is_recorded_so_the_gate_can_check_it(repo: Path, monkeypatch:
     assert data["batches"] == {bid: [["leads.list.empty", approved(repo)["leads.list.empty"]["sha256"]]]}
     assert capture.uncovered(ch(repo), approved(repo)) == []  # the owner's answer covers it
     assert capture.uncovered(ch(repo), {**approved(repo), "leads.list.full": approved(repo)["leads.list.empty"]})  # an entry the batch lacks
+
+
+def test_a_send_back_needs_the_owners_answer_too(repo: Path) -> None:
+    imp(repo, str(answers(repo, **{"leads.list.empty": "accept"})))
+    out = ev(repo, "gallery", str(ch(repo)), "--import", str(answers(repo, **{"leads.list.empty": "send back"})))
+    assert out.returncode == 1 and "AskUserQuestion" in out.stderr
+    assert "leads.list.empty" in approved(repo) and (ch(repo) / "screens/leads.list.empty.png").is_file()
+    assert imp(repo, str(answers(repo, **{"leads.list.empty": "send back"}))).returncode == 0
+    assert "leads.list.empty" not in approved(repo)
+
+
+def test_an_old_batch_cannot_undo_a_later_send_back(repo: Path) -> None:
+    (repo / "first.json").write_text(answers(repo, **{"leads.list.empty": "accept"}).read_text())  # kept: `answers` reuses its file
+    first = str(repo / "first.json")
+    imp(repo, first)
+    imp(repo, str(answers(repo, **{"leads.list.empty": "send back"})))
+    assert "leads.list.empty" not in approved(repo)
+    out = ev(repo, "gallery", str(ch(repo)), "--import", first)  # the owner's old yes still stands in the transcript
+    assert out.returncode == 1 and "send back" in out.stderr and "new batch" in out.stderr
+    assert "leads.list.empty" not in approved(repo)
+    shot = ch(repo) / "verify/shots/leads.list.empty.png"
+    shot.write_bytes(shot.read_bytes() + b"x")  # a new shot is a new batch, and it takes a new answer
+    assert imp(repo, str(answers(repo, **{"leads.list.empty": "accept"}))).returncode == 0
+    assert "leads.list.empty" in approved(repo)
+
+
+def test_every_decision_is_logged_in_order_with_its_batch(repo: Path) -> None:
+    imp(repo, str(answers(repo, **{"leads.list.empty": "accept"})))
+    imp(repo, str(answers(repo, **{"leads.list.empty": "send back"})))
+    log = json.loads((ch(repo) / "screens/approved.json").read_text())["log"]
+    assert [(r["entry"], r["answer"]) for r in log] == [("leads.list.empty", "accept"), ("leads.list.empty", "send-back")]
+    assert all(r["batch"].startswith("screens-") and r["time"] for r in log) and log[0]["batch"] != log[1]["batch"]
