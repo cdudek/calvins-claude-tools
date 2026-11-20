@@ -510,3 +510,56 @@ def test_a_lock_of_3_26_0_without_a_design_reads_the_log_strictly_through_the_he
     assert any(p.startswith("decision log") for p in capture.uncovered(ch(repo), {"leads.list.empty": entry}))
     approved_json.write_text(json.dumps(body))  # a 3.25 file has no head: it keeps its path
     assert not any(p.startswith("decision log") for p in capture.uncovered(ch(repo), {"leads.list.empty": entry}))
+
+
+def _board_change(tmp_path: Path) -> tuple[Path, Path]:
+    change = tmp_path / "changes" / "c1"
+    (change / "asks" / "design").mkdir(parents=True)
+    (change / "asks" / "design" / "ok.png").write_bytes(PNG + b"ok")
+    outside = tmp_path / "outside"
+    (outside / "design").mkdir(parents=True)
+    (outside / "design" / "ok.png").write_bytes(PNG + b"secret")
+    return change, outside
+
+
+def test_a_board_image_is_read_once_from_one_handle(tmp_path: Path) -> None:
+    change, _ = _board_change(tmp_path)
+    assert capture.read_board(change, "asks/design/ok.png") == PNG + b"ok"
+    assert capture.read_board(change, "asks/design/missing.png") is None
+    assert capture.read_board(change, "asks/design") is None  # a folder is no image
+
+
+@pytest.mark.parametrize("swap", ["leaf", "parent"])
+def test_a_board_image_swapped_for_a_symlink_after_the_check_is_not_read(tmp_path: Path, monkeypatch: pytest.MonkeyPatch, swap: str) -> None:
+    change, outside = _board_change(tmp_path)
+    checked = capture.board_file
+
+    def swapping(change_dir: Path, image: object) -> Path | None:
+        found = checked(change_dir, image)  # the containment check passes ...
+        folder = change / "asks" / "design"
+        if swap == "leaf":
+            (folder / "ok.png").unlink()
+            (folder / "ok.png").symlink_to(outside / "design" / "ok.png")
+        else:
+            (folder / "ok.png").rename(tmp_path / "moved.png")
+            folder.rmdir()
+            folder.symlink_to(outside / "design")
+        return found  # ... and only then is the path swapped
+
+    monkeypatch.setattr(capture, "board_file", swapping)
+    assert capture.read_board(change, "asks/design/ok.png") is None
+
+
+def test_a_board_image_swapped_for_a_fifo_after_the_check_does_not_hang_the_read(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    change, _ = _board_change(tmp_path)
+    checked = capture.board_file
+
+    def swapping(change_dir: Path, image: object) -> Path | None:
+        found = checked(change_dir, image)
+        (change / "asks" / "design" / "ok.png").unlink()
+        os.mkfifo(change / "asks" / "design" / "ok.png")
+        return found
+
+    monkeypatch.setattr(capture, "board_file", swapping)
+    assert capture.read_board(change, "asks/design/ok.png") is None
+

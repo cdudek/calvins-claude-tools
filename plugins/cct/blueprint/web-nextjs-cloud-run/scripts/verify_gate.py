@@ -195,7 +195,7 @@ def criteria_hash(change: Path, checks: object, plan: bool = True, design: bool 
 
 
 # the checks of capture.py a close relies on (evidence.py keeps the same list for the gallery): a kept older file lacking one is refused
-CAPTURE_CHECKS = ("binding_tag", "deviation_tag", "lock_sha", "image_problems", "link", "replayed", "board_file", "design_problems", "uncovered")
+CAPTURE_CHECKS = ("binding_tag", "deviation_tag", "lock_sha", "image_problems", "link", "replayed", "board_file", "read_board", "design_problems", "uncovered")
 
 
 def stale_capture(script: Path) -> str:
