@@ -354,16 +354,41 @@ def authorized(target: str, change_id: str, change_dir: Path, decisions: dict) -
     return False
 
 
+def simulated(now: str, tool: dict) -> str | None:
+    """The file text after the tool call, or None when the payload is not one of the three shapes that can be
+    simulated exactly: `content` (Write); `old_string` + `new_string` (Edit); an `edits` list (MultiEdit)."""
+    shapes = [k for k in ("content", "edits", "old_string", "new_string") if k in tool]
+    if shapes == ["content"]:
+        return tool["content"] if isinstance(tool["content"], str) else None
+    pairs = tool["edits"] if shapes == ["edits"] else [tool] if sorted(shapes) == ["new_string", "old_string"] else None
+    if not isinstance(pairs, list) or not pairs:
+        return None
+    for e in pairs:
+        old, new = (e.get("old_string"), e.get("new_string")) if isinstance(e, dict) else (None, None)
+        if not isinstance(old, str) or not old or not isinstance(new, str) or old not in now:
+            return None
+        if now.count(old) > 1 and e.get("replace_all") is not True:
+            return None  # the tool itself refuses an ambiguous match
+        now = now.replace(old, new)
+    return now
+
+
 def deviates_only(path: Path, tool: dict) -> bool:
     """The edit changes no more of screens.json than the entries' `deviates` text (the one field the lock leaves open)."""
     try:
         now = path.read_text(encoding="utf-8")
-        new = tool["content"] if "content" in tool else now.replace(
-            str(tool.get("old_string", "")), str(tool.get("new_string", "")), -1 if tool.get("replace_all") else 1 if tool.get("old_string") else 0
-        )
+        new = simulated(now, tool)
         core = helper("pass_proof").screens_core
-        return core(now) == core(new)
+        return new is not None and core(now) == core(new)
     except Exception:  # unreadable, or no pass_proof: the edit stays locked
+        return False
+
+
+def design_locked(change_dir: Path) -> bool:
+    """The lock says it holds the design inventory (3.26.0); design.json merely existing proves nothing."""
+    try:
+        return json.loads(state_file(change_dir, "lock.json").read_text(encoding="utf-8")).get("design") == "inventory"
+    except (OSError, ValueError, AttributeError):
         return False
 
 
@@ -455,7 +480,7 @@ if len(parts) >= 3 and parts[0] == changes:
         if any(fnmatch.fnmatchcase(inside, n) for n in protected_files(change_dir, decisions)) and (state_file(change_dir, "lock.json")).exists():
             if authorized(rel, change_id, change_dir, decisions):
                 sys.exit(0)
-            if inside == "screens.json" and (change_dir / "design.json").is_file() and deviates_only(change_dir / "screens.json", payload.get("tool_input") or {}):
+            if inside == "screens.json" and design_locked(change_dir) and (change_dir / "design.json").is_file() and deviates_only(change_dir / "screens.json", payload.get("tool_input") or {}):
                 sys.exit(0)  # 3.26.0: the build records where it departs from a board; nothing else in the entries moves
             deny(
                 f"{changes}/{change_id}/{inside} is locked since the engineer approved the plan. "
