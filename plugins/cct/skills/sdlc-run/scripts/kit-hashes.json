@@ -206,8 +206,10 @@
  "scripts/capture.py": [
   "2b0aa4a315b83122",
   "2da4931def130e10",
+  "31ba644af9d30580",
   "55464dcaa9fb571a",
   "76f341df1ef81a00",
+  "90175511a6b748fa",
   "9cd5bdc59852d1a6",
   "acc567b4cf0b1bea",
   "b66771e69e06e46f",
@@ -241,7 +243,8 @@
   "c90008dbca3b8a29",
   "d1ca5373b45d3068",
   "d3f6a873494adeca",
-  "dfc08b78731101be"
+  "dfc08b78731101be",
+  "e79b3688e6abf19b"
  ],
  "scripts/heavy.py": [
   "050107783daa70ff",
@@ -435,6 +438,7 @@
   "e70857e375a254ff",
   "ea65197b82c3a545",
   "eb7d4901a2509e0c",
+  "ed40f56fb8840431",
   "f532dc338d4cb2af",
   "f74bcd2c928e6244",
   "f7c7ad9006898a5b",

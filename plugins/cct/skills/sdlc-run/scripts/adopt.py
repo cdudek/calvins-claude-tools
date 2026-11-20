@@ -1102,6 +1102,7 @@ KIT_EVIDENCE = {
     "06688e12102ccf68",
     "d3f6a873494adeca",
     "dfc08b78731101be",
+    "e79b3688e6abf19b",
 }
 KIT_PREFLIGHT = {
     "848114ac6dd4a375",
@@ -1123,6 +1124,8 @@ KIT_CAPTURE = {
     "acc567b4cf0b1bea",
     "cfcdc16841326037",
     "2da4931def130e10",
+    "31ba644af9d30580",
+    "90175511a6b748fa",
 }
 KIT_HELPER_GUARD = {
     "ca26ffb8ad16e8b3",

@@ -5,6 +5,15 @@ version warning, the **Mechanical** lines are what `adopt` does for you (it adds
 with the stack's defaults and never overwrites a value), the **Manual** lines are printed for
 the engineer. A version with no migration lines needs nothing but a re-run of `adopt`.
 
+## 3.26.2 — archives of merged changes are found by their commit; two gate gaps closed
+
+- **The merged PR is found through the archive's own commit.** `adopt --migrate` finds the commit that added each archive folder to the default branch, asks GitHub over REST which PR holds it and removes the archive when that PR merged, whatever its branch was called. The guessed branch names (`milestone/<slug>`, `project/<slug>`, a `branch:` field) stay as a fallback, and they are asked over REST too, so GraphQL's rate limit no longer decides. A kept archive names what was looked for.
+- **A 3.25.1 baseline with its owner answer passes.** The gate recomputes a batch id with the 3.25.1 encoding for a batch no decision-log entry cites, and with the canonical encoding for every other.
+- **A board image is read from one handle.** The digest and the gallery open the file folder by folder from the change with `O_NOFOLLOW`, check that it is a regular file and read it there; a path swapped for a symlink or a fifo after the check is refused.
+- **Known limit, written down:** the decision-log head is not repeated in `lock.json` (see `references/visual-work.md`): an in-repo copy is restored with the file it anchors.
+- Mechanical: archives of merged changes are now found and removed on the next `adopt --migrate`; re-running it replaces `capture.py`, `evidence.py` and `verify_gate.py` and stamps `sdlcVersion` 3.26.2.
+- Manual: none.
+
 ## 3.26.1 — close seven gate bypasses
 
 - **The edit hook fails closed on a payload it cannot simulate.** The `deviates` exception for a locked `screens.json` applies only to a `content` write, an `old_string` that occurs in the file with a `new_string`, or an `edits` list applied in order with the same rule for every element; any other shape (missing fields, `new_source`, another tool) keeps the lock. It also needs the lock to declare `"design": "inventory"`, not just a `design.json` beside it.
