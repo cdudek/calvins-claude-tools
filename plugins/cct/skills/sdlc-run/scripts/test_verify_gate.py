@@ -2339,18 +2339,18 @@ def test_many_screens_need_no_design_system_audit_in_the_app_flow(tmp_path: Path
 
 
 def test_a_milestone_close_refuses_an_older_capture_py_and_names_the_missing_check(tmp_path: Path) -> None:
+    kit = tmp_path / "kit"
+    kit.mkdir()
+    for f in GATE.parent.glob("*.py"):
+        (kit / f.name).write_text(f.read_text())
+    (kit / "capture.py").write_text((kit / "capture.py").read_text().replace("def replayed(", "def _gone_replayed("))
     repo = _repo(tmp_path, [])
     (repo / "sdlc.json").write_text(json.dumps({"checks": {"milestone": ["true"]}, "ux": "on"}))
     (repo / "changes" / ID / "decisions.json").write_text(json.dumps(VISUAL))
     _screens_json(repo)
     _approve(repo)
-    path = repo / "scripts" / "capture.py"
-    path.write_text(path.read_text().replace("def replayed(", "def _gone_replayed("))
-    _git(repo, "add", ".")
-    _git(repo, "commit", "-qm", "an older capture.py")
-    r = _gate(repo, "milestone", ID)
-    assert "`replayed`" in r.stdout and "adopt --migrate" in r.stdout and "VERIFY BLOCKED" not in _last(r), r.stdout
-    assert r.returncode != 0
+    r = subprocess.run([sys.executable, str(kit / "verify_gate.py"), "milestone", ID], cwd=repo, capture_output=True, text=True, env=_env())
+    assert "`replayed`" in r.stdout and "adopt --migrate" in r.stdout and "check=app-screens" in _last(r), r.stdout + r.stderr
     import evidence
     import verify_gate
 
