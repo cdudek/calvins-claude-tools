@@ -260,8 +260,9 @@ def milestone_number(change: Path, cfg: dict, branch: str) -> int | None:
 
 
 def last_milestone(change: Path) -> int | None:
-    """The highest M<n> of the plan's `## Milestones` table, None when the plan names none."""
-    ids = [int(m[1]) for r in table_rows(section(read(change / "plan.md"), "Milestones"))[1:] if r and (m := re.match(r"M(\d+)\b", r[0]))]
+    """The highest M<n> of the `## Milestones` table (plan.md, or tasks.md on layout 4), None when none is named."""
+    rows = [r for name in ("plan.md", "tasks.md") for r in table_rows(section(read(change / name), "Milestones"))[1:]]
+    ids = [int(m[1]) for r in rows if r and (m := re.match(r"M(\d+)\b", r[0]))]
     return max(ids) if ids else None
 
 

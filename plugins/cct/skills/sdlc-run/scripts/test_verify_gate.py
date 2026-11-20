@@ -2418,3 +2418,5 @@ def test_an_early_milestone_asks_the_capture_only_for_the_entries_due(tmp_path: 
     assert verify_gate.capture_upto(change, None) is None  # no number: everything
     (change / "plan.md").write_text("# no milestone table\n")
     assert verify_gate.capture_upto(change, 1) is None  # cannot tell which is last: require all
+    (change / "tasks.md").write_text("## Milestones\n\n| Milestone | Tasks | needs |\n|---|---|---|\n| M1 a | T1 | none |\n| M2 b | T2 | M1 |\n")
+    assert verify_gate.capture_upto(change, 1) == 1  # layout 4 keeps the table in tasks.md
