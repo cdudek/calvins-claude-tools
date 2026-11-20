@@ -78,6 +78,7 @@ The head is not repeated in `lock.json`, on purpose: the lock sits in the same r
 copy of the head there is restored together with the file it anchors (`git checkout <old> -- <change>`), and writing it on
 every send back would change a locked file mid-build and void every pass gated before. The only anchors outside the repo are
 the owner's transcript and a signing key; the first answers a batch, not a head, and the second is an owner step 3.26.x does not add.
+Two more known limits of the board-image read: a folder of the change the user can search but not read (`--x`) cannot be opened folder by folder, so its image counts as missing and the gate fails closed; and the archive lookup of `adopt --migrate` asks for PRs from the repo's own branches only, so a PR from a fork is not found and its archive is kept.
 
 Retired for these changes: design-bundle pinning, `marks.py` rows against bundles and references, the
 six-layer geometry tolerances and the design-system audit tied to board counts (the design-system pin

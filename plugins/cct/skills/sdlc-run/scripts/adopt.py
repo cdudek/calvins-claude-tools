@@ -1251,7 +1251,7 @@ def gh_json(root: Path, *args: str) -> list | None:
     return items
 
 
-@functools.lru_cache(maxsize=None)
+@functools.cache
 def repo_owner(root: Path) -> str | None:
     """The owner of the repo's remote, asked of gh once per repo."""
     try:
