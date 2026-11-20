@@ -1221,16 +1221,37 @@ def finish_upgrade() -> str:
     return "\n".join(out)
 
 
-def merged_pr(root: Path, branch: str) -> bool | None:
-    """True when a merged PR came from exactly `branch` (gh is asked for that head), None when gh cannot say."""
+def gh_json(root: Path, endpoint: str) -> object | None:
+    """A GET over REST (`gh api`; gh fills `{owner}` and `{repo}` in from the repo's remote). None when gh cannot answer."""
     try:
-        out = subprocess.run(
-            ["gh", "pr", "list", "--head", branch, "--state", "merged", "--limit", "1", "--json", "headRefName"],
-            cwd=root, capture_output=True, text=True, timeout=60,
-        )  # fmt: skip
-        return bool(json.loads(out.stdout or "[]")) if out.returncode == 0 else None
+        out = subprocess.run(["gh", "api", endpoint], cwd=root, capture_output=True, text=True, timeout=60)
+        return json.loads(out.stdout or "null") if out.returncode == 0 else None
     except (OSError, ValueError, subprocess.TimeoutExpired):
         return None
+
+
+def merged_pr(root: Path, branch: str) -> bool | None:
+    """True when a merged PR came from exactly `branch` (asked over REST: GraphQL's rate limit does not touch it), None when gh cannot say."""
+    prs = gh_json(root, f"repos/{{owner}}/{{repo}}/pulls?head={{owner}}:{branch}&state=closed&per_page=100")
+    return any(isinstance(p, dict) and p.get("merged_at") for p in prs) if isinstance(prs, list) else None
+
+
+def archive_pr_merged(root: Path, default: str, *paths: Path) -> bool | None:
+    """True when the commit that added the archive folder to the default branch sits in a merged PR, whatever that
+    PR's branch was called. The first of `paths` that git has a commit for is asked. False when no merged PR holds
+    it (a direct push, or no commit found), None when gh cannot say."""
+    base = f"origin/{default}" if subprocess.run(
+        ["git", "rev-parse", "--verify", "-q", f"origin/{default}"], cwd=root, capture_output=True
+    ).returncode == 0 else default  # fmt: skip
+    for path in paths:
+        out = subprocess.run(
+            ["git", "log", base, "--no-renames", "--diff-filter=A", "--format=%H", "--reverse", "--", str(path)],
+            cwd=root, capture_output=True, text=True,
+        )  # fmt: skip
+        if sha := (out.stdout.split() or [""])[0]:
+            prs = gh_json(root, f"repos/{{owner}}/{{repo}}/commits/{sha}/pulls")
+            return any(isinstance(p, dict) and p.get("merged_at") for p in prs) if isinstance(prs, list) else None
+    return False
 
 
 def _slug(value: object, prefix: str) -> str | None:
@@ -1335,8 +1356,10 @@ def migrate_plan(cfg: dict) -> dict:
     folders = archived_changes(changes / "archive")
     remove_list, kept_lines = [], []
     for folder in folders:
-        branches, answers = own_branches(folder, cfg), []
-        for branch in branches:  # the change's own branches, one question each; the first merged PR settles it
+        branches = own_branches(folder, cfg)
+        # first, the PR that carried the archive commit onto the default branch (any branch name); then the guessed branches
+        answers = [archive_pr_merged(ROOT, cfg.get("defaultBranch") or "main", folder.relative_to(ROOT), changes.relative_to(ROOT) / folder.name)]
+        for branch in () if answers[0] else branches:  # one question each; the first merged PR settles it
             answers.append(merged_pr(ROOT, branch))
             if answers[-1]:
                 break
@@ -1344,7 +1367,7 @@ def migrate_plan(cfg: dict) -> dict:
         if any(answers):
             remove_list.append(folder)
         else:
-            looked = f" (looked for {', '.join(branches)}{'; gh could not answer' if None in answers else ''})" if branches else " (no branch name could be read from decisions.json)"
+            looked = f" (looked for the PR of the commit that added the archive{''.join(', ' + b for b in branches)}{'; gh could not answer' if None in answers else ''})"
             kept_lines.append(f"{rel}: kept, gh could not confirm a merged PR from {folder.name}'s own branch{looked}")
     moved = True
     while moved:  # a kept folder's own files count as referrers for the others, so repeat until nothing moves

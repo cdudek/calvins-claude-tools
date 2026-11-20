@@ -2058,19 +2058,23 @@ def test_a_plain_adopt_writes_a_new_kit_path_when_free_or_an_unedited_kit_copy_H
 
 
 # 3.21.0: `--migrate` is the one way across kit versions.
-def _fake_gh(tmp_path: Path, head: str, *more: str, open_heads: tuple[str, ...] = ()) -> dict[str, str]:
-    """A gh whose merged PRs are the ones from branches `head` and `more` (`gh pr list --head B --state merged`
-    answers for exactly the branch asked), and whose open PRs are `open_heads`."""
+def _fake_gh(tmp_path: Path, head: str, *more: str, open_heads: tuple[str, ...] = (), commit_prs: str = "[]") -> dict[str, str]:
+    """A gh whose merged PRs are the ones from branches `head` and `more` (REST `pulls?head=O:B&state=closed`
+    answers for exactly the branch asked), whose open PRs are `open_heads`, and whose
+    `commits/<sha>/pulls` answers `commit_prs` ("FAIL" makes gh exit 1). Every call is logged to `gh.log`."""
     bin_dir = tmp_path / "bin"
     bin_dir.mkdir()
     merged = " ".join((head, *more))
     opened = ",".join(f'{{"headRefName": "{h}"}}' for h in open_heads)
+    commit_answer = "exit 1" if commit_prs == "FAIL" else f"echo '{commit_prs}'"
     (bin_dir / "gh").write_text(
         "#!/bin/sh\n"
+        f'echo "$*" >> "{tmp_path}/gh.log"\n'
         'case "$*" in\n'
-        '  *"--state merged"*)\n'
-        '    while [ $# -gt 0 ]; do [ "$1" = --head ] && b="$2"; shift; done\n'
-        f'    for m in {merged}; do [ "$m" = "$b" ] && {{ echo "[{{\\"headRefName\\": \\"$b\\"}}]"; exit 0; }}; done\n'
+        f'  "api repos/{{owner}}/{{repo}}/commits/"*"/pulls") {commit_answer} ;;\n'
+        '  "api "*"/pulls?head="*)\n'
+        '    b=${2#*head=}; b=${b#*:}; b=${b%%&*}\n'
+        f'    for m in {merged}; do [ "$m" = "$b" ] && {{ echo "[{{\\"merged_at\\": \\"2026-10-05T00:00:00Z\\"}}]"; exit 0; }}; done\n'
         "    echo '[]' ;;\n"
         f"  *) echo '[{opened}]' ;;\n"
         "esac\n"
@@ -2420,19 +2424,42 @@ def test_migrate_takes_a_feature_branch_the_plan_declares(tmp_path: Path) -> Non
     assert (repo / "changes/archive/2026/2026-10/2026-10-02-unmerged-one").exists()  # a longer name is another branch
 
 
-def test_migrate_asks_gh_about_each_archives_own_branch_not_a_window_of_recent_prs(tmp_path: Path) -> None:
+def test_migrate_asks_gh_about_each_archives_own_branch_over_rest_not_a_window_of_recent_prs(tmp_path: Path) -> None:
     repo = _stamped_3_18(tmp_path)
     env = _fake_gh(tmp_path, "milestone/merged-one-1")
-    log = tmp_path / "gh.log"
-    gh = tmp_path / "bin" / "gh"
-    gh.write_text(f"#!/bin/sh\necho \"$@\" >> {log}\n" + gh.read_text().split("\n", 1)[1])
     res = _migrate(repo, env)
     assert res.returncode == 0, res.stderr
-    asked = [line for line in log.read_text().splitlines() if "--state merged" in line]
-    assert any("--head milestone/merged-one-1 " in line for line in asked) and any("--head milestone/unmerged-one " in line for line in asked)
-    assert all("--limit 1" in line for line in asked) and not any(line.startswith("api") for line in log.read_text().splitlines())
+    log = (tmp_path / "gh.log").read_text().splitlines()
+    asked = [line for line in log if "/pulls?head=" in line]
+    assert any("head={owner}:milestone/merged-one-1&state=closed" in line for line in asked)
+    assert any("head={owner}:milestone/unmerged-one&state=closed" in line for line in asked)
+    assert not any(line.startswith("pr list") and "--state merged" in line for line in log)  # GraphQL is never asked for a merged PR
     kept = "\n".join(_sections(res.stdout)["MANUAL"])
-    assert "2026-10-02-unmerged-one: kept, gh could not confirm a merged PR from 2026-10-02-unmerged-one's own branch (looked for milestone/unmerged-one" in kept
+    assert "2026-10-02-unmerged-one: kept, gh could not confirm a merged PR from 2026-10-02-unmerged-one's own branch (looked for the PR of the commit that added the archive, milestone/unmerged-one" in kept
+
+
+MERGED_PR = '[{"number": 184, "merged_at": "2026-10-05T10:00:00Z"}]'
+
+
+def test_migrate_removes_an_archive_whose_adding_commit_is_in_a_merged_pr_from_any_branch_name(tmp_path: Path) -> None:
+    repo = _stamped_3_18(tmp_path)  # decisions name no branch; the PR came from `fix/api-errors`, which adopt never guessed
+    res = _migrate(repo, _fake_gh(tmp_path, "nothing/matches", commit_prs=MERGED_PR))
+    assert res.returncode == 0, res.stderr
+    assert not (repo / "changes/archive/2026/2026-10/2026-10-01-merged-one").exists()
+    sha = subprocess.run(["git", "log", "--format=%H", "--diff-filter=A", "--", "changes/archive/2026/2026-10/2026-10-01-merged-one"], cwd=repo, capture_output=True, text=True).stdout.split()[-1]
+    assert f"api repos/{{owner}}/{{repo}}/commits/{sha}/pulls" in (tmp_path / "gh.log").read_text().splitlines()
+
+
+def test_migrate_keeps_an_archive_whose_adding_commit_has_no_merged_pr_and_names_what_it_looked_for(tmp_path: Path) -> None:
+    repo = _stamped_3_18(tmp_path)
+    for n, answer in enumerate(("[]", '[{"number": 9, "merged_at": null}]', "FAIL")):
+        (tmp_path / str(n)).mkdir()
+        res = _migrate(repo, _fake_gh(tmp_path / str(n), "nothing/matches", commit_prs=answer), "--dry-run")
+        assert res.returncode == 0, res.stderr
+        assert (repo / "changes/archive/2026/2026-10/2026-10-01-merged-one").exists()
+        kept = "\n".join(_sections(res.stdout)["MANUAL"])
+        assert "2026-10-01-merged-one: kept, gh could not confirm a merged PR" in kept and "looked for the PR of the commit that added the archive" in kept
+        assert ("gh could not answer" in kept) == (answer == "FAIL")
 
 
 def test_migrate_removes_a_flat_layout_archive_in_the_same_run(tmp_path: Path) -> None:
