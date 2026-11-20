@@ -14,12 +14,13 @@ trap 'rm -rf "$suite_log" "$logs"' EXIT
 run_one() { # <test file> <log folder>
   local f="$1" d b log rc start
   d="$(dirname "$f")"; b="$(basename "$f")"; log="$2/$(printf '%s' "$f" | tr '/' '_')"; start=$SECONDS
-  if [[ "$b" == *.py ]]; then (cd "$d" && perl -e 'alarm shift; exec @ARGV' "${TEST_FILE_TIMEOUT:-420}" python3 -m pytest -q -p no:cacheprovider "$b" >"$log.out" 2>&1)
+  if [[ "$b" == *.py ]]; then (cd "$d" && perl -e 'alarm shift; exec @ARGV' "${TEST_FILE_TIMEOUT:-420}" python3 -m pytest -q -p no:cacheprovider -o faulthandler_timeout=120 "$b" >"$log.out" 2>&1)
   else (cd "$d" && perl -e 'alarm shift; exec @ARGV' "${TEST_FILE_TIMEOUT:-420}" bash "$b" >"$log.out" 2>&1); fi
   rc=$?
   [ "$rc" = 142 ] && echo "timed out after ${TEST_FILE_TIMEOUT:-420}s" >>"$log.out"
   echo "$rc" >"$log.rc"
   echo "  done $((SECONDS - start))s rc=$rc ${b}"
+  [ "$rc" = 0 ] || { echo "---- ${b} (failed, last 60 lines)"; tail -60 "$log.out"; }  # now, in case the job is cut off later
 }
 export -f run_one
 files="$(find "$root/hooks" "$root/skills" -type f \( -name 'test_*.py' -o -name 'test_*.sh' \) -not -path '*/templates/*' | sort)"
