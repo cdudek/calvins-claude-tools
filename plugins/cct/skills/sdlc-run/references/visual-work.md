@@ -29,6 +29,10 @@ itself).
    `screens/approved.json` with the approver and the date; a send back removes the entry and prints
    `reopened: <entry>`. An answer for a shot that changed after the gallery was made is refused.
    Regenerating the gallery never touches an approval.
+   Each entry may carry `"milestone": N` (default 1): a milestone close captures the entries with
+   milestone <= N and the last milestone requires all of them, so an early close never needs a screen
+   a later milestone builds. Two entries never share a route and viewport (the fixture shows only
+   through the route), ids differ by more than case, and `visual.threshold` is a number from 0 to 1.
 5. **Exact tests.** From then on the gate compares each entry's capture with its approved sha256
    (zero tolerance; `visual.threshold` in `sdlc.json`, default 0). A difference fails with the entry
    name and a diff image path, and needs a new approval.

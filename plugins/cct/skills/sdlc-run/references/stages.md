@@ -568,11 +568,15 @@ imported with `gallery <change> --import`, and the approved shots become the exa
    The read-only review starts while the last feature builds.
    **Offline checks first, before any browser or suite starts:** `python3 scripts/preflight.py`
    (tools, sign-in, Docker), `python3 scripts/verify_gate.py lint <id>`,
-   `python3 scripts/marks.py check <id>` (shape: files and rows exist), the shape of `validation.md`
+   `python3 scripts/marks.py check <id>` (only for a lock without `"visual": "app"`; shape: files and rows exist), the shape of `validation.md`
    and `findings.md`, and `python3 scripts/evidence.py stale <dir> --catalog <file>` for screens whose
    text changed. A missing tool, input or evidence file fails in seconds here, not after a browser run.
    The shared visual pass of each UX run (every image opened, one convention verdict per issue) and
    the capture of every marked and referenced screen into `marks.json`: [visual work](visual-work.md).
+   **A lock with `"visual": "app"` (approved from 3.25.0) skips both:** no marks, no `--visual-run`.
+   The close job's gate runs one `app-screens` check (`capture.py run`: every `screens.json` entry due by
+   this milestone, twice, against the approved baselines). With no baseline yet it blocks
+   `needs-baseline`: build `evidence.py gallery <id>`, have the owner approve, import, run the gate again.
 2a. **Validation: does each feature do what the plan said?** Separate from the checks, which
    prove the code is sound. For every fact and every ask of this milestone, exercise the
       built app (E2E with the fact's tag, a headless capture of the named screen and state, or
@@ -594,7 +598,8 @@ imported with `gallery <change> --import`, and the approved shots become the exa
 3. One `changes/<id>/findings.md`: blocking items first (`- [ ]`, ticked when fixed), advisory
    after under `## Advisory`; the gate treats every other unchecked item as open. Link the visual
    ledgers and checks. A missing or failed visual check is BLOCKED: the review did not run.
-   Run `python3 scripts/marks.py check <id>`; open rows are blocking findings.
+   For a lock without `"visual": "app"`: run `python3 scripts/marks.py check <id>`; open rows are blocking findings.
+   An app-locked change has no marks ledger; its screens are the gallery and `approved.json`.
    A `fixed` row names the passing test tag that proves it in `test` (`@F<n>`); the tag must
    appear in a `testGlobs` file or the check fails.
    Only the engineer's words in `accepted` can accept a non-fixed row; never infer acceptance.
@@ -616,7 +621,7 @@ imported with `gallery <change> --import`, and the approved shots become the exa
    `findings.md` item ticked. **What the round leaves is settled by the owner's answer.** Per residual finding the supervisor asks one `AskUserQuestion` whose question text starts `Change <change id>, finding <finding id>: ` (for example `Change 2026-11-19-x, finding B2: the card overflows at 320. What now?`) and whose options are exactly `Fix it now`, `Accept as is`, `Defer to milestone <n>` and `Block the close`. The gate reads the structured tool result of that dialog from the session transcript (never typed text): `Accept as is` and `Defer to milestone <n>` settle the item, `Fix it now` keeps it open, `Block the close` is terminal (`findings-blocked`, also against a ticked box). The latest answer wins, an answer older than the finding is ignored, the item needs an explicit bold id (`**B2**`, `**C1**`) that no other open item shares, and the agent cannot answer for the owner. A fact that is `partly`
    or `not met` in `validation.md` is never cleared by an answer: change the scope with a new
    approval, or the milestone is held.
-6. Reopen recaptured images and rerun their visual checks. Then
+6. (Older locks) reopen recaptured images and rerun their visual checks; an app-locked change reviews the gallery instead. Then
    `python3 scripts/verify_gate.py milestone <id> --visual-check "<checker>" --visual-run "<run>"`
    once, after the fixes, never between them, run by the close builder (`Mode: close`) on a
    head nothing else touches. The gate runs the offline evidence checks first (`owner-marks`, the
@@ -640,7 +645,7 @@ imported with `gallery <change> --import`, and the approved shots become the exa
    `done.json` or `decisions.json`: a missing one is a blocker. The validation rows come from
    `done.json`; on a milestone branch the plan's `## Milestones` row must list the milestone's
    facts, and that section is part of the approval lock (an older lock reports an `upgrade gap`). An older gate without these flags needs `sdlc-run adopt`, not a bypass.
-   The milestone gate also runs `marks.py check` as `owner-marks` when sessions or `marks.json`
+   For a lock without `"visual": "app"` the milestone gate also runs `marks.py check` as `owner-marks` when sessions or `marks.json`
    exist, independently of `sdlc.json` checks or UX skips. Paste `python3 scripts/marks.py table <id>`
    into the milestone report, including accepted gaps. A file check proves coverage, not pixels.
 7. Compose the PR body from the repo's template, including its Decision4 section when it has
