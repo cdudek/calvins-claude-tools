@@ -5,6 +5,17 @@ version warning, the **Mechanical** lines are what `adopt` does for you (it adds
 with the stack's defaults and never overwrites a value), the **Manual** lines are printed for
 the engineer. A version with no migration lines needs nothing but a re-run of `adopt`.
 
+## 3.25.1 — the owner approves screens, never the agent; the helper guard fails closed; migrating a repo no longer breaks its lint
+
+- **An agent cannot approve a screen.** `evidence.py gallery <change> --import` writes nothing until the owner has answered `Approve screens` to a dialog naming exactly that batch (`Change <id>, finding screens-<id>: ...`, the same transcript-backed owner answer the findings use); the first run prints the question to ask. `approved.json` records the batch and each entry names it. The milestone capture fails with `CAPTURE FAIL approval` for an entry no owner answer covers, and the edit hook protects `screens/approved.json` and `screens/*.png` of an app-locked change like the other locked files.
+- **The helper guard fails closed.** A `cd` it cannot resolve (`$VAR`, a backtick, `-`) means what follows may be in the main folder, so a write there is refused; inline interpreter code (`python3 -c`, `node -e`) is unknown and counts as heavy until queued.
+- **Biome repos.** `adopt` formats what it wrote with the repo's own biome when biome is the repo's formatter (a biome config or `@biomejs/biome` in `package.json`), else with prettier; nothing installed, nothing to do.
+- **The TS guardrail test keeps the blank lines a padding-line lint rule asks for.** Blank lines only, no behaviour change.
+- **`design: none` and `design: spec`** count as "no separate design document", like `null`, in both guardrail tests.
+- **`adopt --migrate` no longer breaks the repo around it:** it adds the `IMPORTANT: <n>  NITS: <m>` tally line to a REVIEW.md that lacks it; it copies the line that lists one kit script in the repo's own lint lists (a pyproject `extend-exclude`, a Makefile list) for each script a release adds; and it keeps a merged archive that a tracked file outside it names, with the file reported.
+- Mechanical: re-running `adopt --migrate` replaces `heavy.py`, `evidence.py`, `capture.py`, `marks.py`, `verify_gate.py`, `pass_proof.py` and `chain-gate.sh`, regenerates the guardrail tests, and stamps `sdlcVersion` 3.25.1.
+- Manual: an `approved.json` written by 3.25.0 names no owner decision, so the milestone capture refuses it: run the gallery import again and let the owner answer its dialog. A list that holds several kit scripts on one line (an inline tuple) is reported, not edited: add the new script by hand.
+
 ## 3.25.0 — design in the real app: the owner approves screenshots of the app, and they become exact tests
 
 - **A design tool is direction only.** For a change approved from 3.25.0 (lock `"visual": "app"`) a canvas, Figma file, export bundle or image goes to `asks/` and is never a gate: no bundle pinning, no `marks.py` rows against designs, no six-layer geometry tolerances, no design-system audit tied to board counts (the design-system pin stays).
