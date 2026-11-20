@@ -707,7 +707,9 @@ def inline_code(prog: str, args: list[str]) -> bool:
     i = 0
     while i < len(args):
         a = args[i]
-        if a == "--" or not a.startswith("-") or a == "-":
+        if a == "-" and prog != "deno":
+            return True  # the program is read from stdin: whatever it is, it is not a script we can see
+        if a == "--" or not a.startswith("-"):
             return False  # the script (or module) starts here: what follows is its own
         if python and not a.startswith("--"):
             for k, ch in enumerate(a[1:], 1):
@@ -727,6 +729,26 @@ def inline_code(prog: str, args: list[str]) -> bool:
     return False
 
 
+RUNNERS = {"uv": {"run"}, "poetry": {"run"}, "hatch": {"run"}, "pnpm": {"exec", "dlx"}, "yarn": {"dlx", "exec"}, "npm": {"exec"}, "npx": set()}
+
+
+def runner_inline(prog: str, rest: list[str]) -> bool:
+    """`uv run python -c ...`, `npx tsx -e ...`, `pnpm exec node -`: inline code or a stdin program behind a runner
+    (the interpreter is the first word after the runner's own subcommand and options)."""
+    subs = RUNNERS.get(prog)
+    if subs is None:
+        return False
+    tail = rest
+    if subs:
+        at = next((i for i, a in enumerate(rest) if a in subs), None)
+        tail = [] if at is None else rest[at + 1 :]
+    for i, a in enumerate(tail):
+        name = os.path.basename(a)
+        if name.startswith("python") or name in ("node", "tsx", "ts-node", "deno"):
+            return inline_code(name, tail[i + 1 :])
+    return False
+
+
 def resolve_path(cwd: str | None, path: str) -> str | None:
     """The folder-independent meaning of `path`: absolute paths stand alone, relative ones need a known cwd."""
     path = os.path.expanduser(path)
@@ -740,7 +762,7 @@ def mutates(argv: list[str], cfg: dict) -> bool:
     if not argv:
         return False
     prog, rest = os.path.basename(argv[0]), argv[1:]
-    if inline_code(prog, rest):
+    if inline_code(prog, rest) or runner_inline(prog, rest):
         return True  # inline code may write anything: unknown, so a writer where the main folder is at stake
     if prog == "git":
         sub, args, _ = git_parts(rest)

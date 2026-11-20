@@ -590,6 +590,26 @@ def test_the_guard_reads_interpreter_flags_and_cd_options(tmp_path: Path) -> Non
     assert call(f"cd $X && git -C {main} commit -m x", wt) == 2
 
 
+def test_inline_code_behind_a_runner_and_a_program_from_stdin_are_possible_writers(tmp_path: Path) -> None:
+    main = tmp_path / "main"
+    main.mkdir()
+    _git(main, "init", "-q")
+    _git(main, "-c", "user.name=t", "-c", "user.email=t@t", "commit", "-q", "--allow-empty", "-m", "i")
+    wt = tmp_path / "wt"
+    _git(main, "worktree", "add", "-q", "-b", "feat", str(wt))
+
+    def call(cmd: str, cwd: Path) -> int:
+        return _guard(cwd, {"cwd": str(cwd), "agent_id": "a1", "tool_input": {"command": cmd}}).returncode
+
+    for writer in ("uv run python -c pass", "uv run --with x python3 -c pass", "poetry run python -c pass", "hatch run python -c pass",
+                   "npx tsx -e 1", "npx --yes node -e 1", "pnpm exec node -p 1", "yarn dlx node --eval 1",
+                   "python3 -", "node -", "python3 - arg", "uv run python -"):  # fmt: skip
+        assert call(writer, main) == 2, writer
+        assert call(writer, wt) == 0, writer
+    for reader in ("uv run python tool.py -c x", "npx prettier --check .", "pnpm exec node app.js -e 1", "yarn dlx cowsay hi"):
+        assert call(reader, main) == 0, reader
+
+
 @pytest.mark.parametrize("cmd", [
     "cargo build", "cargo +nightly test", "uv build", "yarn workspace app run build", "go build ./...", "go test ./...",
     "mvn package", "./mvnw verify", "gradle build", "./gradlew test",
