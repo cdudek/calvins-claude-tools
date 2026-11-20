@@ -117,7 +117,18 @@ def _seal(repo: Path, data: dict, owner: bool = True, change_id: str = ID) -> No
         owner_answers(repo, bid, change_id=change_id)
 
 
-def _approve_all(repo: Path, owner: bool = True) -> None:
+def _seal_3_25_1(repo: Path, data: dict) -> str:
+    """approved.json as 3.25.1 wrote it: the batch id is the sha256 of the newline-joined `<entry> <sha256>` lines, no log, no head."""
+    pairs = [[e, a["sha256"]] for e, a in data["entries"].items()]
+    bid = "screens-" + hashlib.sha256("\n".join(sorted(f"{e} {s}" for e, s in pairs)).encode()).hexdigest()[:16]
+    for a in data["entries"].values():
+        a["decision"] = bid
+    (repo / "changes" / ID / "screens" / "approved.json").write_text(json.dumps({**data, "batches": {bid: pairs}}))
+    owner_answers(repo, bid)
+    return bid
+
+
+def _approve_all(repo: Path, owner: bool = True, seal=None) -> None:
     """What `evidence.py gallery --import` leaves behind: the shots as baselines, their sha256 in approved.json,
     one batch the owner's dialog covered (`owner=False`: nobody answered it)."""
     change = repo / "changes" / ID
@@ -128,7 +139,11 @@ def _approve_all(repo: Path, owner: bool = True) -> None:
         (change / "screens" / f"{e['id']}.png").write_bytes(shot.read_bytes())
         entries[e["id"]] = {"sha256": hashlib.sha256(shot.read_bytes()).hexdigest(), "file": f"screens/{e['id']}.png",
                             "approvedBy": "owner", "date": "2026-11-20"}  # fmt: skip
-    _seal(repo, {"format": 1, "entries": entries}, owner)
+    data = {"format": 1, "entries": entries}
+    if seal:
+        seal(repo, data)
+    else:
+        _seal(repo, data, owner)
 
 
 # --- screens.json ---------------------------------------------------------------------------------
@@ -300,6 +315,34 @@ def test_an_approval_no_owner_decision_covers_fails_the_capture(tmp_path: Path) 
     _approve_all(repo, owner=False)  # an agent wrote approved.json itself
     r = _run(repo)
     assert _last(r) == "CAPTURE FAIL approval" and r.returncode == 1 and "leads.list.empty" in r.stdout
+
+
+def test_an_unchanged_3_25_1_baseline_with_its_owner_answer_still_passes(tmp_path: Path) -> None:
+    repo = _repo(tmp_path)
+    _run(repo)
+    _approve_all(repo, seal=_seal_3_25_1)
+    assert _last(_run(repo)) == "CAPTURE PASS 4"
+    change = repo / "changes" / ID
+    data = json.loads((change / "screens/approved.json").read_text())
+    bid = next(iter(data["batches"]))
+    data["batches"][bid][0][1] = "0" * 64  # an edited batch no longer matches the id the owner answered
+    (change / "screens/approved.json").write_text(json.dumps(data))
+    assert _last(_run(repo)) == "CAPTURE FAIL approval"
+
+
+def test_a_legacy_id_is_refused_once_the_decision_log_cites_it(tmp_path: Path) -> None:
+    repo = _repo(tmp_path)
+    _run(repo)
+    _approve_all(repo, seal=_seal_3_25_1)
+    change = repo / "changes" / ID
+    data = json.loads((change / "screens/approved.json").read_text())
+    bid = next(iter(data["batches"]))
+    log = []
+    for e in data["entries"]:
+        log.append(capture.link(log, {"entry": e, "answer": "accept", "batch": bid, "time": "t"}, ""))
+    (change / "screens/approved.json").write_text(json.dumps({**data, "log": log, "head": log[-1]["hash"]}))
+    r = _run(repo)
+    assert _last(r) == "CAPTURE FAIL approval" and "no recorded batch" in r.stdout
 
 
 def test_an_edited_batch_or_a_held_dialog_does_not_cover_an_approval(tmp_path: Path) -> None:

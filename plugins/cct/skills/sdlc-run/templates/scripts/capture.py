@@ -568,6 +568,13 @@ def approval_id(pairs: list) -> str:
     return "screens-" + hashlib.sha256(canon(sorted(pairs)).encode()).hexdigest()[:16]
 
 
+def legacy_approval_id(pairs: list) -> str:
+    """The id 3.25.1 to 3.25.2 made of a batch: the sorted `<entry> <sha256>` lines (a send back's third word included)
+    joined by newlines. A baseline written then keeps this id; a batch no decision-log entry cites is one of those
+    (3.26 writes a log entry for every batch it records)."""
+    return "screens-" + hashlib.sha256("\n".join(sorted(" ".join(p) for p in pairs)).encode()).hexdigest()[:16]
+
+
 def uncovered(change: Path, approved: dict) -> list[str]:
     """The approved entries no owner decision covers. approved.json is the owner's approval, so each entry
     names the batch (`decision`) its import was confirmed in: `batches[<id>]` lists that batch's
@@ -581,6 +588,7 @@ def uncovered(change: Path, approved: dict) -> list[str]:
     log = [r for r in data["log"] if isinstance(r, dict)] if isinstance(data.get("log"), list) else []
     lock = next((d for rel in ("state/lock.json", "lock.json") if isinstance(d := read_json(change / rel), dict)), {})
     out = [f"decision log: {p}" for p in chain_problems(log, data.get("head"), strict="design" in lock or "head" in data)]  # 3.26.1: a 3.26 lock, or the `head` 3.26.0 wrote into every approved.json
+    logged = {r.get("batch") for r in log}
     repo = Path(subprocess.run(["git", "-C", str(change), "rev-parse", "--show-toplevel"], capture_output=True, text=True).stdout.strip() or ".")
     sys.dont_write_bytecode = True  # the gate checks that the tree is clean afterwards: no __pycache__ from here
     try:
@@ -597,7 +605,7 @@ def uncovered(change: Path, approved: dict) -> list[str]:
         ok = isinstance(pairs, list) and all(isinstance(p, list) and len(p) in (2, 3) for p in pairs)
         # a deviation the owner did not see (added after the approval) is not covered: it needs the gallery again
         held = ok and any(p[:2] == [entry, a.get("sha256")] and p[2:] != ["send-back"] and p[2:] == ([tags[entry]] if tags.get(entry) else []) for p in pairs)
-        if not ok or approval_id(pairs) != bid or not held:
+        if not ok or bid not in (approval_id(pairs), *([] if bid in logged else [legacy_approval_id(pairs)])) or not held:
             out.append(f"{entry}: no recorded batch of an owner approval holds it" + (" with its current board mapping and deviation" if tags.get(entry) else ""))
         elif decided.get(bid, ("",))[0] != "screens":
             out.append(f"{entry}: the owner has not answered the dialog of {bid}")
