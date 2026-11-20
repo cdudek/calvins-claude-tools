@@ -249,3 +249,151 @@ def test_the_real_gallery_import_makes_the_baselines_capture_compares_against(tm
     assert r.returncode == 0, r.stderr
     r = _run(repo)
     assert _last(r) == "CAPTURE PASS 4" and r.returncode == 0, r.stdout
+
+
+# --- the 3.25.0 fix round ----------------------------------------------------------------------------
+
+
+def test_an_occupied_port_blocks_before_the_app_starts(tmp_path: Path) -> None:
+    import socket
+
+    repo = _repo(tmp_path)
+    with socket.socket() as s:
+        s.bind(("127.0.0.1", 0))
+        s.listen()
+        port = s.getsockname()[1]
+        r = _run(repo, SDLC_APP_PORT=str(port))
+    assert _last(r) == "VERIFY BLOCKED reason=env" and r.returncode == 3 and str(port) in r.stdout
+
+
+def test_a_replaced_baseline_file_fails_even_when_the_shots_match_it(tmp_path: Path) -> None:
+    repo = _repo(tmp_path, threshold=0.5)
+    _run(repo)
+    _approve_all(repo)
+    change = repo / "changes" / ID
+    now = change / "verify" / "shots" / "leads.list.empty.png"
+    w, h, _, _ = capture.pixels(now)
+    capture.write_png(change / "screens" / "leads.list.empty.png", w, h, bytes(w * h * 3))  # the digest stays as approved
+    r = _run(repo)
+    assert _last(r) == "CAPTURE FAIL baseline" and "leads.list.empty" in r.stdout
+
+
+def test_the_baseline_path_comes_from_the_id_not_the_file_field(tmp_path: Path) -> None:
+    repo = _repo(tmp_path)
+    _run(repo)
+    _approve_all(repo)
+    change = repo / "changes" / ID
+    approved = json.loads((change / "screens/approved.json").read_text())
+    approved["entries"]["leads.list.empty"]["file"] = "../../../etc/hosts"
+    (change / "screens/approved.json").write_text(json.dumps(approved))
+    assert _last(_run(repo)) == "CAPTURE PASS 4"  # the field is ignored; screens/<id>.png is what is verified
+
+
+@pytest.mark.parametrize(
+    ("second", "needle"),
+    [
+        ({"id": "LEADS.list.empty", "route": "/preview/x", "viewport": [1, 1], "fixture": "f"}, "same name"),
+        ({"id": "other", "route": ENTRIES[0]["route"], "viewport": [1440, 900], "fixture": "seed-2"}, "same route and viewport"),
+        ({"id": "ms", "route": "/x", "viewport": [1, 1], "fixture": "f", "milestone": 0}, "milestone"),
+        ({"id": "ms", "route": "/x", "viewport": [1, 1], "fixture": "f", "milestone": "2"}, "milestone"),
+    ],
+)
+def test_entries_that_would_collide_or_hide_a_state_are_refused(tmp_path: Path, second: dict, needle: str) -> None:
+    (tmp_path / "screens.json").write_text(json.dumps([ENTRIES[0], second]))
+    problems = capture.load_screens(tmp_path)[1]
+    assert any(needle in p for p in problems), problems
+
+
+def test_an_id_that_looks_like_a_second_pass_does_not_collide(tmp_path: Path) -> None:
+    ents = [
+        {"id": "home", "route": "/preview/leads?state=full", "viewport": [800, 600], "fixture": "a"},
+        {"id": "home.b", "route": "/preview/deals?state=full", "viewport": [800, 600], "fixture": "a"},
+        {"id": "home.diff", "route": "/preview/deals?state=empty", "viewport": [800, 600], "fixture": "a"},
+    ]
+    repo = _repo(tmp_path, ents)
+    r = _run(repo)
+    assert _last(r) == "VERIFY BLOCKED reason=needs-baseline" and "3 of 3 entries have no approved shot" in r.stdout
+    assert sorted(p.name for p in (repo / "changes" / ID / "verify/shots").glob("*.png")) == ["home.b.png", "home.diff.png", "home.png"]
+
+
+def test_a_retry_never_accepts_shots_left_by_an_earlier_batch(tmp_path: Path) -> None:
+    repo = _repo(tmp_path)
+    _run(repo)  # leaves every primary shot on disk
+    (repo / "noop.py").write_text("")
+    cfg = json.loads((repo / "sdlc.json").read_text())
+    cfg["visual"]["driver"] = f"{sys.executable} noop.py"  # a driver that skips the work and exits 0
+    (repo / "sdlc.json").write_text(json.dumps(cfg))
+    r = _run(repo)
+    assert _last(r) == "CAPTURE FAIL capture" and "wrote no shot" in r.stdout
+
+
+def test_a_preview_that_redirects_is_not_reachable(tmp_path: Path) -> None:
+    repo = _repo(tmp_path)
+    (repo / "app.py").write_text((repo / "app.py").read_text().replace(
+        'if u.path == "/" : body = b"ok"',
+        'if u.path == "/login-wall":\n            self.send_response(302); self.send_header("Location", "/"); self.end_headers(); return\n        if u.path == "/" : body = b"ok"'))
+    gone = {"id": "deals.list.wall", "route": "/login-wall", "viewport": [800, 600], "fixture": "seed-1"}
+    (repo / "changes" / ID / "screens.json").write_text(json.dumps([*ENTRIES, gone]))
+    r = _run(repo)
+    assert _last(r) == "CAPTURE FAIL preview-unreachable"
+    assert "deals.list.wall: /login-wall answers 302" in r.stdout
+
+
+def test_the_driver_contract_and_the_playwright_driver_check_the_origin_and_the_status() -> None:
+    assert "redirect" in capture.__doc__ and "2xx" in capture.__doc__
+    assert "new URL(page.url()).origin" in capture.PLAYWRIGHT_JS and "res.status()" in capture.PLAYWRIGHT_JS
+
+
+@pytest.mark.parametrize("bad", [5, -0.1, "NaN", "0.1", True, 1.5])
+def test_a_threshold_outside_zero_to_one_is_an_env_block_naming_it(tmp_path: Path, bad: object) -> None:
+    repo = _repo(tmp_path, threshold=bad)
+    r = _run(repo)
+    assert _last(r) == "VERIFY BLOCKED reason=env" and "visual.threshold" in r.stdout and repr(bad) in r.stdout
+    assert not list((repo / "changes" / ID / "verify").glob("shots/*.png"))  # refused before the app started
+
+
+def test_killing_the_capture_with_its_group_reaps_the_app(tmp_path: Path) -> None:
+    import signal
+    import time
+
+    repo = _repo(tmp_path)
+    (repo / "slow.py").write_text("import time; time.sleep(60)")
+    cfg = json.loads((repo / "sdlc.json").read_text())
+    cfg["visual"]["start"] = f"echo $$ > app.pid; exec {sys.executable} app.py"
+    cfg["visual"]["driver"] = f"{sys.executable} slow.py"
+    (repo / "sdlc.json").write_text(json.dumps(cfg))
+    env = {k: v for k, v in os.environ.items() if not k.startswith("GIT_")}
+    cap = subprocess.Popen([sys.executable, str(CAPTURE), "run", str(repo / "changes" / ID), "--group"], cwd=repo, env=env, start_new_session=True,
+                           stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)  # fmt: skip
+    pidfile = repo / "app.pid"
+    for _ in range(100):
+        if pidfile.is_file() and pidfile.read_text().strip():
+            break
+        time.sleep(0.1)
+    time.sleep(1.5)  # the app answers and the slow driver is running
+    pid = int(pidfile.read_text())
+    os.killpg(cap.pid, signal.SIGKILL)  # what the gate does on a timeout or a cancel
+    cap.wait()
+    for _ in range(50):
+        try:
+            os.kill(pid, 0)
+        except OSError:
+            return
+        time.sleep(0.1)
+    os.kill(pid, signal.SIGKILL)
+    raise AssertionError("the app outlived the killed capture")
+
+
+def test_the_milestone_bound_captures_only_the_entries_due(tmp_path: Path) -> None:
+    later = {"id": "deals.list.later", "route": "/preview/not-built-yet", "viewport": [800, 600], "fixture": "seed-1", "milestone": 2}
+    repo = _repo(tmp_path, [*ENTRIES, later])
+    change = repo / "changes" / ID
+    e = {k: v for k, v in os.environ.items() if not k.startswith("GIT_")}
+    r = subprocess.run([sys.executable, str(CAPTURE), "run", str(change), "--upto", "1"], cwd=repo, capture_output=True, text=True, env=e)
+    assert _last(r) == "VERIFY BLOCKED reason=needs-baseline" and "4 of 4 entries" in r.stdout
+    assert _last(_run(repo)) == "CAPTURE FAIL preview-unreachable"  # the last milestone needs all of them
+
+
+def test_the_handoff_names_the_real_change_path(tmp_path: Path) -> None:
+    r = _run(_repo(tmp_path))
+    assert f"python3 scripts/evidence.py gallery changes/{ID}" in r.stdout

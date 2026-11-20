@@ -2194,7 +2194,7 @@ def test_a_bad_screens_json_is_refused_at_approval(tmp_path: Path) -> None:
 
 def test_many_screens_need_no_design_system_audit_in_the_app_flow(tmp_path: Path) -> None:
     repo = _ds_repo(tmp_path, auditAbove=2)
-    _screens_json(repo, [{**SCREENS[0], "id": f"s{i}"} for i in range(30)])
+    _screens_json(repo, [{**SCREENS[0], "id": f"s{i}", "route": f"/preview/s{i}"} for i in range(30)])
     assert _gate(repo, "approve", ID).returncode == 0
 
 
@@ -2382,3 +2382,39 @@ def test_the_milestone_gate_captures_the_fixture_app_end_to_end(tmp_path: Path) 
     r = _gate(repo, "milestone", ID)
     assert _last(r) == f"VERIFY FAIL milestone {ID} check=app-screens"
     assert "leads.list.empty: differs from the approved shot" in r.stdout
+
+
+def test_a_visual_hotfix_runs_the_capture_in_its_feature_gate(tmp_path: Path) -> None:
+    repo = _repo(tmp_path, [])
+    (repo / "sdlc.json").write_text(json.dumps({"checks": {"feature": ["true"]}}))
+    (repo / "changes" / ID / "decisions.json").write_text(json.dumps({**VISUAL, "milestone": {"kind": "hotfix"}}))
+    _screens_json(repo)
+    _approve(repo)
+    _git(repo, "checkout", "-qb", "hotfix/trial")
+    r = _gate(repo, "feature", ID)
+    names = [c["name"] for c in json.loads((repo / "changes" / ID / "verify/report.json").read_text())["checks"]]
+    assert names[:1] == ["app-screens"], r.stdout
+    assert _last(r) == "VERIFY BLOCKED reason=env" and "visual.start" in r.stdout  # no app configured here
+
+
+def test_a_plain_feature_gate_of_an_app_change_does_not_capture(tmp_path: Path) -> None:
+    repo = _repo(tmp_path, [])
+    (repo / "sdlc.json").write_text(json.dumps({"checks": {"feature": ["true"]}}))
+    _screens_json(repo)
+    _approve(repo)
+    r = _gate(repo, "feature", ID)
+    names = [c["name"] for c in json.loads((repo / "changes" / ID / "verify/report.json").read_text())["checks"]]
+    assert "app-screens" not in names, r.stdout
+
+
+def test_an_early_milestone_asks_the_capture_only_for_the_entries_due(tmp_path: Path) -> None:
+    sys.path.insert(0, str(GATE.parent))
+    import verify_gate
+
+    repo = _repo(tmp_path, [])  # the plan's milestones are M1 and M2
+    change = repo / "changes" / ID
+    assert verify_gate.capture_upto(change, 1) == 1  # M1 closes with the entries up to milestone 1
+    assert verify_gate.capture_upto(change, 2) is None  # the last milestone requires every entry
+    assert verify_gate.capture_upto(change, None) is None  # no number: everything
+    (change / "plan.md").write_text("# no milestone table\n")
+    assert verify_gate.capture_upto(change, 1) is None  # cannot tell which is last: require all

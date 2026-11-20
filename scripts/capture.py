@@ -2,26 +2,34 @@
 `screens.json` entry at its viewport, twice, compared with the approved baseline.
 
     python3 scripts/capture.py check <change-dir>     # validate screens.json only (what `approve` runs)
-    python3 scripts/capture.py run <change-dir>       # reachability, capture x2, stability, baseline compare
+    python3 scripts/capture.py run <change-dir> [--upto N] [--group]
+        # reachability, capture x2, stability, baseline compare. --upto N: only entries due by milestone N.
+        # --group: the caller (the gate) leads this process group, so the app starts inside it and dies with it.
 
 `screens.json` (in the change folder): a list, or {"entries": [...]}, of
     {"id": "leads.list.empty", "route": "/preview/leads?state=empty", "viewport": [1440, 900], "fixture": "empty-leads"}
-Ids are plain names (letters, digits, `.` `_` `-`) and unique; a route starts with `/`; a viewport is two positive ints.
+Ids are plain names (letters, digits, `.` `_` `-`), unique even when case is ignored; a route starts with `/`; a viewport
+is two positive ints; no two entries share a route and viewport (the fixture shows only through the route). An entry may
+carry "milestone": N (default 1): a milestone close captures the entries with milestone <= N, the last one requires all.
 
 sdlc.json `visual` (all optional except `start` for `run`):
     start         shell command that starts the app on $PORT (a build step may precede it: `npm run build && npm start`)
     ready         path polled until the app answers (default "/")
     startTimeout  seconds to wait for it (default 120)
-    threshold     fraction of differing pixels still accepted (default 0: bytes must be equal)
+    threshold     fraction of differing pixels still accepted, a number from 0 to 1 (default 0: bytes must be equal)
     driver        a capture command of your own: `<driver> <jobs.json>` writes the png of every job (see below);
                   default is the repo's Playwright (`@playwright/test` or `playwright` in package.json)
 
 Driver contract: jobs.json is {"base": "http://127.0.0.1:PORT", "jobs": [{"id", "route", "viewport", "out"}]};
-the driver writes a png to every `out` and exits 0.
+the driver writes a png to every `out` and exits 0. It must not follow a redirect off the app: before each shot it
+checks that the response is 2xx and that the final URL is on the origin of `base`, and fails (non-zero) otherwise.
+(The reachability probe does not follow redirects either: a 3xx is "not reachable".) The shot folders are emptied
+before the driver runs, and every expected file must be newer than the start of the batch.
 
-Shots go to <change>/verify/shots/<id>.png (and <id>.b.png for the second pass; a differing pair is
-unstable). The baseline is <change>/screens/approved.json: {"format": 1, "entries": {"<id>": {"sha256", "file", ...}}}
-with the png at <change>/<file>. A difference writes verify/shots/<id>.diff.png and needs a new approval.
+Shots go to <change>/verify/shots/<id>.png (the second pass to verify/shots/second/<id>.png; a differing pair is
+unstable). The baseline is <change>/screens/approved.json: {"format": 1, "entries": {"<id>": {"sha256", ...}}}
+with the png at <change>/screens/<id>.png, which must hash to that sha256 before any pixel is compared. A difference
+writes verify/shots/diff/<id>.png and needs a new approval.
 
 Last line: `CAPTURE PASS <n>` (exit 0), `CAPTURE FAIL ...` (exit 1) or `VERIFY BLOCKED reason=<code>` (exit 3:
 needs-baseline when an entry has no approved shot, env when the app or Playwright is missing).
@@ -32,9 +40,11 @@ from __future__ import annotations
 
 import hashlib
 import json
+import math
 import os
 import re
 import shlex
+import shutil
 import signal
 import socket
 import struct
@@ -57,7 +67,10 @@ if (!pw) { console.error('playwright is not installed'); process.exit(2); }
   const browser = await pw.chromium.launch();
   for (const j of job.jobs) {
     const page = await browser.newPage({ viewport: { width: j.viewport[0], height: j.viewport[1] } });
-    await page.goto(job.base + j.route, { waitUntil: 'networkidle' });
+    const res = await page.goto(job.base + j.route, { waitUntil: 'networkidle' });
+    if (!res || res.status() < 200 || res.status() >= 300 || new URL(page.url()).origin !== new URL(job.base).origin) {
+      throw new Error(j.id + ': ' + page.url() + ' answered ' + (res ? res.status() : 'nothing') + ', not a 2xx page of the launched app');
+    }
     await page.screenshot({ path: j.out, animations: 'disabled', caret: 'hide' });
     await page.close();
   }
@@ -78,7 +91,7 @@ def load_screens(change: Path) -> tuple[list[dict], list[str]]:
     entries = data.get("entries") if isinstance(data, dict) else data
     if not isinstance(entries, list) or not entries:
         return [], [f"{path.name} must be a non-empty list of entries (or {{\"entries\": [...]}})"]
-    problems, seen = [], set()
+    problems, seen, spots = [], set(), {}
     for i, e in enumerate(entries, 1):
         name = e.get("id") if isinstance(e, dict) else None
         tag = f"{path.name} entry {i}" + (f" ({name})" if isinstance(name, str) else "")
@@ -89,7 +102,10 @@ def load_screens(change: Path) -> tuple[list[dict], list[str]]:
             problems.append(f"{tag}: id must be a plain name (letters, digits, . _ -)")
         elif name in seen:
             problems.append(f"{tag}: id is used twice")
-        seen.add(name)
+        elif name.lower() in {s.lower() for s in seen}:
+            problems.append(f"{tag}: id has the same name as another entry once case is ignored (they would share one file)")
+        if isinstance(name, str):
+            seen.add(name)
         route = e.get("route")
         if not isinstance(route, str) or not route.startswith("/") or "//" in route[:2] or re.search(r"\s", route):
             problems.append(f"{tag}: route must start with a single / and hold no space")
@@ -98,6 +114,13 @@ def load_screens(change: Path) -> tuple[list[dict], list[str]]:
             problems.append(f"{tag}: viewport must be [width, height], two positive integers")
         if not isinstance(e.get("fixture"), str) or not e["fixture"].strip():
             problems.append(f"{tag}: fixture must name the sample data the app seeds")
+        ms = e.get("milestone", 1)
+        if not isinstance(ms, int) or isinstance(ms, bool) or ms < 1:
+            problems.append(f"{tag}: milestone must be a positive integer")
+        if isinstance(route, str) and isinstance(vp, list):
+            first = spots.setdefault((route, tuple(map(str, vp))), name)
+            if first != name:
+                problems.append(f"{tag}: same route and viewport as {first}: the fixture shows only through the route, so give each state its own")
     return [e for e in entries if isinstance(e, dict)], problems
 
 
@@ -124,9 +147,17 @@ def free_port() -> int:
         return s.getsockname()[1]
 
 
+class NoRedirect(urllib.request.HTTPRedirectHandler):
+    def redirect_request(self, *args, **kwargs):  # a 3xx stays a 3xx: it is never "reachable"
+        return None
+
+
+OPENER = urllib.request.build_opener(NoRedirect)
+
+
 def fetch(url: str) -> int:
     try:
-        with urllib.request.urlopen(url, timeout=10) as r:  # noqa: S310 -- our own local app
+        with OPENER.open(url, timeout=10) as r:  # our own local app
             return r.status
     except urllib.error.HTTPError as err:
         return err.code
@@ -135,7 +166,7 @@ def fetch(url: str) -> int:
 
 
 def sha(path: Path) -> str:
-    return hashlib.sha256(path.read_bytes()).hexdigest()
+    return hashlib.sha256(path.read_bytes()).hexdigest() if path.is_file() else ""
 
 
 def pixels(path: Path) -> tuple[int, int, int, bytes]:
@@ -202,15 +233,31 @@ def compare(a: Path, b: Path, diff: Path) -> float:
     return bad / (wa * ha)
 
 
-def stop(proc: subprocess.Popen) -> None:
+def stop(proc: subprocess.Popen, group: bool = False) -> None:
+    """Stop the app. With `group` it shares this process's group (so the gate's group kill reaps it): signal the
+    whole group while ignoring our own SIGTERM; otherwise it has a group of its own."""
+    old = signal.signal(signal.SIGTERM, signal.SIG_IGN) if group else None
     try:
-        os.killpg(proc.pid, signal.SIGTERM)
+        os.killpg(os.getpgrp() if group else proc.pid, signal.SIGTERM)
         proc.wait(timeout=10)
     except (OSError, subprocess.TimeoutExpired):
         try:
-            os.killpg(proc.pid, signal.SIGKILL)
+            proc.kill() if group else os.killpg(proc.pid, signal.SIGKILL)
         except OSError:
             pass
+    finally:
+        if old is not None:
+            signal.signal(signal.SIGTERM, old)
+
+
+def valid_threshold(value: object) -> bool:
+    return isinstance(value, (int, float)) and not isinstance(value, bool) and math.isfinite(value) and 0 <= value <= 1
+
+
+def port_in_use(port: int) -> bool:
+    with socket.socket() as s:
+        s.settimeout(2)
+        return s.connect_ex(("127.0.0.1", port)) == 0
 
 
 def drive(repo: Path, cfg: dict, jobs_file: Path) -> tuple[int, str]:
@@ -229,24 +276,45 @@ def drive(repo: Path, cfg: dict, jobs_file: Path) -> tuple[int, str]:
     return res.returncode, (res.stdout + res.stderr)[-2000:]
 
 
-def run(change: Path, repo: Path) -> int:
+def run(change: Path, repo: Path, upto: int | None = None, group: bool = False) -> int:
     entries, problems = load_screens(change)
     if problems:
         print("\n".join(problems))
         return end("CAPTURE FAIL screens.json", 1)
+    entries = [e for e in entries if upto is None or e.get("milestone", 1) <= upto]  # a milestone close: the entries due so far
     cfg = read_config(repo)
     if not cfg.get("start"):
         print('sdlc.json has no visual.start: the command that starts the app on $PORT (for example "npm run build && npm start").')
         return end("VERIFY BLOCKED reason=env", 3)
+    threshold = cfg.get("threshold", 0)
+    if not valid_threshold(threshold):
+        print(f"sdlc.json visual.threshold must be a number from 0 to 1 (the share of pixels that may differ), not {threshold!r}.")
+        return end("VERIFY BLOCKED reason=env", 3)
     port = int(os.environ.get("SDLC_APP_PORT") or free_port())
+    if port_in_use(port):
+        print(f"port {port} already answers: an old server could pass for this build. Stop it or set another SDLC_APP_PORT.")
+        return end("VERIFY BLOCKED reason=env", 3)
     base = f"http://127.0.0.1:{port}"
     shots = change / "verify" / "shots"
+    for folder in (shots / "second", shots / "diff"):
+        shutil.rmtree(folder, ignore_errors=True)
+    for old in shots.glob("*.png"):  # nothing left from an earlier batch can pass for this one
+        old.unlink()
     shots.mkdir(parents=True, exist_ok=True)
+    (shots / "second").mkdir(exist_ok=True)
+    started = time.time()
     log = tempfile.NamedTemporaryFile("w+", prefix="capture-app-", suffix=".log", delete=False)
     app = subprocess.Popen(
         str(cfg["start"]), shell=True, cwd=repo, env={**os.environ, "PORT": str(port)},
-        stdout=log, stderr=subprocess.STDOUT, start_new_session=True,
+        stdout=log, stderr=subprocess.STDOUT, start_new_session=not group,
     )  # fmt: skip
+
+    def cancelled(signum, _frame) -> None:  # a caught signal also stops the app; SIGKILL is covered by the shared group
+        stop(app, group)
+        sys.exit(128 + signum)
+
+    for sig in (signal.SIGTERM, signal.SIGINT, signal.SIGHUP):
+        signal.signal(sig, cancelled)
     try:
         deadline = time.monotonic() + float(cfg.get("startTimeout", 120))
         ready = base + str(cfg.get("ready", "/"))
@@ -256,13 +324,18 @@ def run(change: Path, repo: Path) -> int:
                 print(f"the app did not answer at {ready}:\n" + "\n".join(log.read().splitlines()[-30:]))
                 return end("VERIFY BLOCKED reason=env", 3)
             time.sleep(0.5)
-        missing = [f"{e['id']}: {e['route']} answers {code or 'nothing'}" for e in entries if not 200 <= (code := fetch(base + e["route"])) < 300]
+        missing = []
+        for e in entries:
+            code = fetch(base + e["route"])
+            if not 200 <= code < 300:
+                why = f"answers {code or 'nothing'}" + (" (a redirect: a preview page answers 200 itself)" if 300 <= code < 400 else "")
+                missing.append(f"{e['id']}: {e['route']} {why}")
         if missing:
             print("no reachable preview page for these entries (the build gives every one a route):\n" + "\n".join(missing))
             return end("CAPTURE FAIL preview-unreachable", 1)
         jobs = [
-            {"id": e["id"], "route": e["route"], "viewport": e["viewport"], "out": str(shots / f"{e['id']}{suffix}.png")}
-            for suffix in ("", ".b")
+            {"id": e["id"], "route": e["route"], "viewport": e["viewport"], "out": str(shots / sub / f"{e['id']}.png")}
+            for sub in ("", "second")
             for e in entries
         ]
         jobs_file = shots / "jobs.json"
@@ -272,21 +345,25 @@ def run(change: Path, repo: Path) -> int:
             print(out)
             return end("VERIFY BLOCKED reason=env" if code == 3 else "CAPTURE FAIL capture", 3 if code == 3 else 1)
     finally:
-        stop(app)
+        stop(app, group)
         log.close()
         Path(log.name).unlink(missing_ok=True)
-    return judge(change, entries, shots, float(cfg.get("threshold", 0)))
+    return judge(change, entries, shots, float(threshold), started, repo)
 
 
-def judge(change: Path, entries: list[dict], shots: Path, threshold: float) -> int:
+def judge(change: Path, entries: list[dict], shots: Path, threshold: float, started: float = 0.0, repo: Path | None = None) -> int:
     ids = [e["id"] for e in entries]
-    absent = [i for i in ids if not (shots / f"{i}.png").is_file() or not (shots / f"{i}.b.png").is_file()]
+    second = shots / "second"
+
+    def fresh(path: Path) -> bool:  # written by this batch (a little slack for coarse file times)
+        return path.is_file() and path.stat().st_mtime >= started - 2
+
+    absent = [i for i in ids if not fresh(shots / f"{i}.png") or not fresh(second / f"{i}.png")]
     if absent:
         print("the capture wrote no shot for: " + ", ".join(absent))
         return end("CAPTURE FAIL capture", 1)
-    unstable = [i for i in ids if sha(shots / f"{i}.png") != sha(shots / f"{i}.b.png")]
-    for i in ids:
-        (shots / f"{i}.b.png").unlink(missing_ok=True) if i not in unstable else None
+    unstable = [i for i in ids if sha(shots / f"{i}.png") != sha(second / f"{i}.png")]
+    shutil.rmtree(second, ignore_errors=True)
     if unstable:
         print("unstable: two shots of one entry differ (animation, a clock, random data: fix the preview page):\n  " + "\n  ".join(unstable))
         return end("CAPTURE FAIL unstable", 1)
@@ -294,25 +371,34 @@ def judge(change: Path, entries: list[dict], shots: Path, threshold: float) -> i
         approved = json.loads((change / "screens" / "approved.json").read_text(encoding="utf-8")).get("entries", {})
     except (OSError, ValueError, AttributeError):
         approved = {}
-    fresh = [i for i in ids if i not in approved]
-    if fresh:
+    approved = {i: a for i, a in approved.items() if isinstance(a, dict)} if isinstance(approved, dict) else {}
+    fresh_ids = [i for i in ids if i not in approved]
+    if fresh_ids:
+        where = os.path.relpath(change, repo) if repo else str(change)
         print(
-            f"{len(fresh)} of {len(ids)} entries have no approved shot: " + ", ".join(fresh)
-            + f"\nThe shots are in {shots}. Build the gallery (`python3 scripts/evidence.py gallery {change.name}`) and have the owner approve them."
+            f"{len(fresh_ids)} of {len(ids)} entries have no approved shot: " + ", ".join(fresh_ids)
+            + f"\nThe shots are in {shots}. Build the gallery (`python3 scripts/evidence.py gallery {where}`) and have the owner approve them."
         )
         return end("VERIFY BLOCKED reason=needs-baseline", 3)
+    # the baseline is screens/<id>.png (the id is validated: no path comes from the file field) and must be the approved bytes
+    torn = [i for i in ids if sha(change / "screens" / f"{i}.png") != approved[i].get("sha256")]
+    if torn:
+        print("the approved baseline does not match its recorded sha256 (edited or missing): " + ", ".join(torn)
+              + "\nRestore screens/<id>.png from git, or approve the shots again.")
+        return end("CAPTURE FAIL baseline", 1)
     changed = []
+    (shots / "diff").mkdir(exist_ok=True)
     for i in ids:
-        now, base = shots / f"{i}.png", change / str(approved[i].get("file", f"screens/{i}.png"))
+        now, base, diff = shots / f"{i}.png", change / "screens" / f"{i}.png", shots / "diff" / f"{i}.png"
         if sha(now) == approved[i].get("sha256"):
             continue
         try:
-            share = compare(now, base, shots / f"{i}.diff.png") if base.is_file() and threshold else 1.0
+            share = compare(now, base, diff) if threshold else 1.0
         except (ValueError, zlib.error, struct.error) as err:
             print(f"{i}: cannot compare by pixels: {err}")
             share = 1.0
         if share > threshold:
-            note = f" ({share:.4%} of pixels, diff {shots / f'{i}.diff.png'})" if (shots / f"{i}.diff.png").is_file() else ""
+            note = f" ({share:.4%} of pixels, diff {diff})" if diff.is_file() else ""
             changed.append(f"{i}: differs from the approved shot{note}")
     if changed:
         print("\n".join(changed) + "\nA changed screen needs a new approval: rebuild the gallery, or fix the page.")
@@ -326,16 +412,28 @@ def end(line: str, code: int) -> int:
 
 
 def main(argv: list[str]) -> int:
-    if len(argv) != 3 or argv[1] not in ("check", "run"):
+    args, upto, group = argv[1:], None, False
+    if "--group" in args:
+        group = True
+        args.remove("--group")
+    if "--upto" in args:
+        k = args.index("--upto")
+        try:
+            upto = int(args[k + 1])
+        except (IndexError, ValueError):
+            print(__doc__)
+            return 2
+        del args[k : k + 2]
+    if len(args) != 2 or args[0] not in ("check", "run"):
         print(__doc__)
         return 2
-    change = Path(argv[2]).resolve()
-    if argv[1] == "check":
+    change = Path(args[1]).resolve()
+    if args[0] == "check":
         problems = load_screens(change)[1]
         print("\n".join(problems))
         return 1 if problems else 0
     repo = Path(subprocess.run(["git", "-C", str(change), "rev-parse", "--show-toplevel"], capture_output=True, text=True).stdout.strip() or ".")
-    return run(change, repo)
+    return run(change, repo, upto, group)
 
 
 if __name__ == "__main__":

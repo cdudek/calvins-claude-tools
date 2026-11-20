@@ -259,6 +259,19 @@ def milestone_number(change: Path, cfg: dict, branch: str) -> int | None:
     return int(found[1]) if found else None
 
 
+def last_milestone(change: Path) -> int | None:
+    """The highest M<n> of the plan's `## Milestones` table, None when the plan names none."""
+    ids = [int(m[1]) for r in table_rows(section(read(change / "plan.md"), "Milestones"))[1:] if r and (m := re.match(r"M(\d+)\b", r[0]))]
+    return max(ids) if ids else None
+
+
+def capture_upto(change: Path, number: int | None) -> int | None:
+    """What a milestone close asks capture.py for: the entries due by `number`, or None (all of them) for the
+    last milestone, an unnumbered branch, or a plan that does not say which one is last."""
+    last = last_milestone(change)
+    return number if number and last and number < last else None
+
+
 def project_branch(change: Path, cfg: dict) -> str:
     """project/<slug> of the change's project when it has a branch, else "". A project without
     `branch: true` is planning only (3.7.0), but one written before 3.7.0 has no `branch` key
@@ -1526,7 +1539,9 @@ def run_close(
     if scope == "milestone" and (blocker := milestone_blockers(change, number)):
         print("\n".join(blocker[1][:TAIL]))
         return finish(f"VERIFY BLOCKED reason={blocker[0]}", 3)
-    app = scope == "milestone" and lock.get("visual") == "app"  # approved from 3.25.0: no bundles, marks or tolerances
+    # approved from 3.25.0: no bundles, marks or tolerances. A hotfix has no milestone close: its feature gate is the final one.
+    hotfix = scope == "feature" and branch_now.startswith("hotfix/") and cfg.get("hotfix", True) and hotfix_change(change)
+    app = (scope == "milestone" or bool(hotfix)) and lock.get("visual") == "app"
     if scope == "milestone" and not app and legacy_marks() and has_bundle_inputs(change):
         print("scripts/marks.py is older than this gate (it has no `bundles`): it cannot inventory")
         print("this milestone's design bundles, and an empty inventory would pass an unrendered one.")
@@ -1617,7 +1632,7 @@ def run_close(
     if app:  # one capture batch inside this close: preview reachability, two passes, the approved baselines
         script = Path(__file__).with_name("capture.py")
         evidence.append(
-            {"name": "app-screens", "cache": False, "run": shlex.join([sys.executable, str(script), "run", str(change)])}
+            {"name": "app-screens", "cache": False, "run": shlex.join([sys.executable, str(script), "run", str(change), "--group", *(["--upto", str(upto)] if (upto := capture_upto(change, number)) else [])])}
             if script.is_file()
             else refusal("app-screens", "scripts/capture.py is missing: run `adopt --upgrade` to install it")
         )
