@@ -1041,6 +1041,7 @@ KIT_PREFLIGHT = {
 KIT_CAPTURE = {
     "55464dcaa9fb571a",
     "b83541819543ec15",
+    "df45ac2d5c99d0bb",
 }
 KIT_HELPER_GUARD = {
     "ca26ffb8ad16e8b3",

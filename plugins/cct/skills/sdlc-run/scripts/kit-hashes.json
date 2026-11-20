@@ -193,7 +193,8 @@
   "f72c02e5f30938e4"
  ],
  "scripts/capture.py": [
-  "b83541819543ec15"
+  "b83541819543ec15",
+  "df45ac2d5c99d0bb"
  ],
  "scripts/db.py": [
   "132fb5df36b3a3ca",

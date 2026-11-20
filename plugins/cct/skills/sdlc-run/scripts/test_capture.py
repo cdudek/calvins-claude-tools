@@ -121,9 +121,9 @@ def test_missing_empty_and_duplicate_screens_json(tmp_path: Path) -> None:
     (tmp_path / "screens.json").write_text("[]")
     assert capture.load_screens(tmp_path)[1]
     good = ENTRIES[0]
-    (tmp_path / "screens.json").write_text(json.dumps({"screens": [good, good]}))
+    (tmp_path / "screens.json").write_text(json.dumps({"entries": [good, good]}))
     assert "used twice" in capture.load_screens(tmp_path)[1][0]
-    (tmp_path / "screens.json").write_text(json.dumps({"screens": ENTRIES}))
+    (tmp_path / "screens.json").write_text(json.dumps({"entries": ENTRIES}))
     assert capture.load_screens(tmp_path)[1] == []
 
 
@@ -232,3 +232,20 @@ def test_live_playwright_captures_the_fixture_app_twice_identically(tmp_path: Pa
     (repo / "sdlc.json").write_text(json.dumps(cfg))
     (repo / "package.json").write_text(json.dumps({"devDependencies": {"@playwright/test": "*"}}))
     assert _last(_run(repo)) == "VERIFY BLOCKED reason=needs-baseline"
+
+
+def test_the_real_gallery_import_makes_the_baselines_capture_compares_against(tmp_path: Path) -> None:
+    """The seam: evidence.py gallery --import writes what capture.py reads, from one {"entries": [...]} file."""
+    repo = _repo(tmp_path)
+    change = repo / "changes" / ID
+    (change / "screens.json").write_text(json.dumps({"entries": ENTRIES}))
+    _run(repo)
+    answers = {e["id"]: {"answer": "accept", "sha256": hashlib.sha256((change / "verify/shots" / f"{e['id']}.png").read_bytes()).hexdigest()}
+               for e in ENTRIES}  # fmt: skip
+    (tmp_path / "answers.json").write_text(json.dumps({"format": 1, "approvedBy": "owner", "answers": answers}))
+    evidence = [sys.executable, str(SCRIPTS / "evidence.py"), "gallery", str(change)]
+    assert subprocess.run(evidence, capture_output=True, text=True).returncode == 0
+    r = subprocess.run([*evidence, "--import", str(tmp_path / "answers.json")], capture_output=True, text=True)
+    assert r.returncode == 0, r.stderr
+    r = _run(repo)
+    assert _last(r) == "CAPTURE PASS 4" and r.returncode == 0, r.stdout

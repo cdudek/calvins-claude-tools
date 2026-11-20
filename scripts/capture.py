@@ -4,7 +4,7 @@
     python3 scripts/capture.py check <change-dir>     # validate screens.json only (what `approve` runs)
     python3 scripts/capture.py run <change-dir>       # reachability, capture x2, stability, baseline compare
 
-`screens.json` (in the change folder): a list, or {"screens": [...]}, of
+`screens.json` (in the change folder): a list, or {"entries": [...]}, of
     {"id": "leads.list.empty", "route": "/preview/leads?state=empty", "viewport": [1440, 900], "fixture": "empty-leads"}
 Ids are plain names (letters, digits, `.` `_` `-`) and unique; a route starts with `/`; a viewport is two positive ints.
 
@@ -75,9 +75,9 @@ def load_screens(change: Path) -> tuple[list[dict], list[str]]:
         return [], [f"{path.name} is missing: the UX plan writes one entry per screen and state"]
     except ValueError as err:
         return [], [f"{path.name} is not JSON: {err}"]
-    entries = data.get("screens") if isinstance(data, dict) else data
+    entries = data.get("entries") if isinstance(data, dict) else data
     if not isinstance(entries, list) or not entries:
-        return [], [f"{path.name} must be a non-empty list of entries (or {{\"screens\": [...]}})"]
+        return [], [f"{path.name} must be a non-empty list of entries (or {{\"entries\": [...]}})"]
     problems, seen = [], set()
     for i, e in enumerate(entries, 1):
         name = e.get("id") if isinstance(e, dict) else None
