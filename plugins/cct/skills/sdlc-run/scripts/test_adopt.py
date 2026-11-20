@@ -2271,6 +2271,7 @@ def test_migrate_adds_a_new_kit_script_before_the_last_element_of_a_list(tmp_pat
 
 def test_a_comment_above_the_last_element_keeps_the_list_valid(tmp_path: Path) -> None:
     import ast
+
     import tomllib
 
     repo = _stamped_3_18(tmp_path)
