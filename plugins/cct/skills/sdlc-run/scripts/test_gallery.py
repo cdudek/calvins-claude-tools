@@ -32,6 +32,7 @@ def repo(tmp_path: Path) -> Path:
     (ch / "verify" / "shots").mkdir(parents=True)
     rows = [{"id": e, "route": f"/preview/{e}", "viewport": [1440, 900], "fixture": "leads-basic"} for e in ENTRIES]
     (ch / "screens.json").write_text(json.dumps(rows))
+    (ch / "lock.json").write_text(json.dumps({"visual": "app", "criteria": {}}))
     for i, e in enumerate(ENTRIES):
         (ch / "verify" / "shots" / f"{e}.png").write_bytes(PNG + bytes([i]))
     return tmp_path
@@ -143,3 +144,78 @@ def test_sdlc_status_prints_the_line(repo: Path) -> None:
     import sdlc_status
 
     assert sdlc_status.screens_line(ch(repo)).startswith("screens: 0 of 4 approved")
+
+
+def test_status_uses_the_app_flow_only_when_the_lock_says_visual_app(repo: Path) -> None:
+    (ch(repo) / "lock.json").write_text(json.dumps({"screens": "required", "criteria": {}}))  # a 3.24 lock
+    assert "approved" not in status(repo)
+    (ch(repo) / "lock.json").write_text(json.dumps({"visual": "app", "criteria": {}}))
+    assert status(repo).startswith("screens: 0 of 4 approved")
+
+
+def test_a_bare_change_id_resolves_through_changes_dir(repo: Path) -> None:
+    out = ev(repo, "gallery", ID)
+    assert out.returncode == 0, out.stderr
+    assert (ch(repo) / "verify" / "gallery.html").is_file()
+
+
+@pytest.mark.parametrize("bad", ["../evil", "a/b", "/etc/passwd"])
+def test_gallery_and_import_refuse_an_id_capture_would_reject_before_touching_a_file(repo: Path, bad: str) -> None:
+    rows = json.loads((ch(repo) / "screens.json").read_text())
+    rows.append({"id": bad, "route": "/preview/x", "viewport": [800, 600], "fixture": "f"})
+    (ch(repo) / "screens.json").write_text(json.dumps(rows))
+    (ch(repo) / "verify" / "evil.png").write_bytes(PNG + b"outside")
+    out = ev(repo, "gallery", str(ch(repo)))
+    assert out.returncode == 1 and bad.split("/")[0] in (out.stdout + out.stderr)
+    assert not (ch(repo) / "verify" / "gallery.html").exists()
+    path = answers(repo, **{"leads.list.empty": "accept"})
+    body = json.loads(path.read_text())
+    body["answers"][bad] = {"answer": "accept", "sha256": sha(PNG + b"outside")}
+    path.write_text(json.dumps(body))
+    out = ev(repo, "gallery", str(ch(repo)), "--import", str(path))
+    assert out.returncode == 1
+    assert not (ch(repo) / "screens" / "approved.json").exists() and not (ch(repo) / "evil.png").exists()
+
+
+def test_each_shot_is_read_once_so_the_page_shows_the_bytes_that_are_approved(repo: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    sys.path.insert(0, str(EVIDENCE.parent))
+    import evidence
+
+    reads: list[str] = []
+    real = Path.read_bytes
+    file = str(answers(repo, **{"leads.list.empty": "accept"}))  # the helper reads the shot too: before counting
+
+    def counting(self: Path) -> bytes:
+        if self.suffix == ".png":
+            reads.append(self.name)
+        return real(self)
+
+    monkeypatch.setattr(Path, "read_bytes", counting)
+    shot = ch(repo) / "verify" / "shots" / "leads.list.empty.png"
+    evidence.gallery_write(ch(repo), evidence.app_entries(ch(repo)))
+    assert reads.count("leads.list.empty.png") == 1
+    reads.clear()
+    args = type("A", (), {"do_import": file, "by": ""})()
+    evidence.gallery_import(args, ch(repo), evidence.app_entries(ch(repo)))
+    assert reads.count("leads.list.empty.png") == 1 and shot.is_file()
+
+
+def test_a_send_back_for_an_old_shot_does_not_revoke_a_newer_approval(repo: Path) -> None:
+    old = repo / "old.json"
+    old.write_text(answers(repo, **{"leads.list.empty": "send back"}).read_text())  # made from the shot as it was
+    shot = ch(repo) / "verify" / "shots" / "leads.list.empty.png"
+    shot.write_bytes(PNG + b"newer")
+    ev(repo, "gallery", str(ch(repo)), "--import", str(answers(repo, **{"leads.list.empty": "accept"})))
+    out = ev(repo, "gallery", str(ch(repo)), "--import", str(old))
+    assert out.returncode == 1 and "leads.list.empty" in out.stderr
+    assert "leads.list.empty" in approved(repo)
+
+
+def test_two_imports_at_once_both_land(repo: Path) -> None:
+    a = answers(repo, **{"leads.list.empty": "accept"})
+    b = repo / "b.json"
+    b.write_text(json.dumps({"format": 1, "approvedBy": "Bo", "answers": {
+        "leads.list.full": {"answer": "accept", "sha256": sha((ch(repo) / "verify/shots/leads.list.full.png").read_bytes())}}}))  # fmt: skip
+    procs = [subprocess.Popen([sys.executable, str(EVIDENCE), "gallery", str(ch(repo)), "--import", str(f)], cwd=repo) for f in (a, b)]
+    assert [p.wait() for p in procs] == [0, 0]
+    assert set(approved(repo)) == {"leads.list.empty", "leads.list.full"}
