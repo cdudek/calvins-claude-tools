@@ -707,8 +707,8 @@ def inline_code(prog: str, args: list[str]) -> bool:
     i = 0
     while i < len(args):
         a = args[i]
-        if a == "-" and prog != "deno":
-            return True  # the program is read from stdin: whatever it is, it is not a script we can see
+        if (a == "-" and prog != "deno") or a.startswith("<"):
+            return True  # the program is read from stdin (`-`, a heredoc, a redirect): not a script we can see
         if a == "--" or not a.startswith("-"):
             return False  # the script (or module) starts here: what follows is its own
         if python and not a.startswith("--"):
@@ -726,26 +726,38 @@ def inline_code(prog: str, args: list[str]) -> bool:
             if a in NODE_VALUE_OPTIONS:
                 i += 1
         i += 1
-    return False
+    # no script, module or code on the line: the interpreter reads its program from stdin (a heredoc, a pipe, a file)
+    return not {"--version", "-V", "--help", "-h", "-VV"} & set(args)
 
 
 RUNNERS = {"uv": {"run"}, "poetry": {"run"}, "hatch": {"run"}, "pnpm": {"exec", "dlx"}, "yarn": {"dlx", "exec"}, "npm": {"exec"}, "npx": set()}
+RUNNER_VALUE_OPTIONS = {
+    "--with", "--with-requirements", "--with-editable", "--python", "-p", "--project", "--directory", "--env-file", "--extra", "--group",
+    "--package", "--filter", "-F", "-C", "--prefix", "--cwd", "-e", "--env", "--index", "--index-url", "--from", "--only-group", "--no-group",
+}  # fmt: skip
 
 
 def runner_inline(prog: str, rest: list[str]) -> bool:
-    """`uv run python -c ...`, `npx tsx -e ...`, `pnpm exec node -`: inline code or a stdin program behind a runner
-    (the interpreter is the first word after the runner's own subcommand and options)."""
+    """`uv run python -c ...`, `npx tsx -e ...`, `pnpm exec node -`: inline code or a stdin program behind a runner. The
+    runner's own options are read through (those that take a value skip it) to the executable; its operands are
+    never read as commands (`uv run rg python -c` searches, it does not run python)."""
     subs = RUNNERS.get(prog)
     if subs is None:
         return False
     tail = rest
     if subs:
         at = next((i for i, a in enumerate(rest) if a in subs), None)
-        tail = [] if at is None else rest[at + 1 :]
-    for i, a in enumerate(tail):
-        name = os.path.basename(a)
-        if name.startswith("python") or name in ("node", "tsx", "ts-node", "deno"):
-            return inline_code(name, tail[i + 1 :])
+        if at is None:
+            return False
+        tail = rest[at + 1 :]
+    i = 0
+    while i < len(tail) and tail[i].startswith("-") and tail[i] != "-":
+        i += 2 if tail[i] in RUNNER_VALUE_OPTIONS else 1
+    if i >= len(tail):
+        return False
+    name = os.path.basename(tail[i])
+    if name.startswith("python") or name in ("node", "tsx", "ts-node", "deno"):
+        return inline_code(name, tail[i + 1 :])
     return False
 
 

@@ -417,16 +417,12 @@ def test_the_build_may_record_a_deviation_and_nothing_else_in_a_locked_screens_j
     assert edit(repo, f"changes/{ID}/design.json", old_string="B", new_string="C").returncode == 2  # design.json is locked too
 
 
-def test_a_deviation_keeps_the_pass_and_a_changed_route_does_not(tmp_path: Path) -> None:
+def test_a_deviation_edit_is_allowed_by_the_plan_lock_but_voids_the_pass(tmp_path: Path) -> None:
     lock = json.dumps({"criteria": {}, "visual": "app"})
     files = {"facts.md": "# f\n", "lock.json": lock, "screens.json": ROWS, "design.json": "{}"}
     gated = _gated_files(tmp_path, files)
     (tmp_path / "changes" / ID / "screens.json").write_text(ROWS.replace('"design"', '"deviates": "x", "design"'))
-    head = _commit_all(tmp_path)
-    assert pass_proof.proves(tmp_path, "changes", gated, head)
-    gated = head
-    (tmp_path / "changes" / ID / "screens.json").write_text(ROWS.replace("/a", "/b"))
-    assert not pass_proof.proves(tmp_path, "changes", gated, _commit_all(tmp_path))
+    assert not pass_proof.proves(tmp_path, "changes", gated, _commit_all(tmp_path))  # the owner has not accepted that text
 
 
 def test_the_hook_and_the_gate_read_screens_json_without_its_deviations_the_same_way() -> None:

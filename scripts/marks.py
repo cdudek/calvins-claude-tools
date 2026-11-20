@@ -96,7 +96,7 @@ OWNER_LABELS = {
     "skip visual evidence": "skip",
     "run visual evidence": "run",
     "approve screens": "screens",
-    "drop these boards": "design-drop",
+    "confirm inventory": "design-inventory",
 }
 DEFER = re.compile(r"defer to milestone (\d+)", re.I)
 
@@ -125,7 +125,9 @@ def worktree_paths(repo: Path) -> set[Path]:
     if not found <= known:
         try:
             ledger.parent.mkdir(parents=True, exist_ok=True)
-            ledger.write_text(json.dumps(sorted(str(p) for p in known | found)), encoding="utf-8")
+            tmp = ledger.with_name(f".{ledger.name}.{os.getpid()}.tmp")
+            tmp.write_text(json.dumps(sorted(str(p) for p in known | found)), encoding="utf-8")
+            os.replace(tmp, ledger)  # atomic: a concurrent reader sees the old list or the new one, never half
         except OSError:
             pass  # a read-only git dir: the listed worktrees still count
     return known | found
@@ -136,13 +138,40 @@ def transcript_dirs(repo: Path) -> list[Path]:
     path (the owner may have spoken in any of them, a removed one included). A folder is read only if neither it
     nor a parent is a link (a link could point at a folder the agent wrote) and it is ours."""
     projects = Path.home() / ".claude/projects"
-    names = {re.sub(r"[^A-Za-z0-9]", "-", str(root)) for root in {repo.resolve(), *worktree_paths(repo)}}
+    slug = lambda path: re.sub(r"[^A-Za-z0-9]", "-", str(path))  # noqa: E731
+    paths = {repo.resolve(), *worktree_paths(repo)}
     found = []
-    for name in sorted(names):
+    for name in sorted({slug(root) for root in paths}):
         base = projects / name
         if base.is_dir() and not any(p.is_symlink() for p in (base, base.parent, base.parent.parent)):
             found.append(base)
+    # a worktree removed before the ledger existed: its folder begins like `<main>/.worktrees/` and is read only if the
+    # sessions in it record a working directory under that folder (the folder name alone proves nothing)
+    common = subprocess.run(["git", "-C", str(repo), "rev-parse", "--path-format=absolute", "--git-common-dir"], capture_output=True, text=True).stdout.strip()
+    main = Path(common).parent.resolve() if common.endswith("/.git") else repo.resolve()
+    prefix = slug(main / ".worktrees") + "-"
+    if projects.is_dir():
+        for base in sorted(projects.iterdir()):
+            if base.name.startswith(prefix) and base not in found and base.is_dir() and not any(p.is_symlink() for p in (base, base.parent, base.parent.parent)) and sessions_under(base, main / ".worktrees"):
+                found.append(base)
     return found
+
+
+def sessions_under(base: Path, folder: Path) -> bool:
+    """Every session file of `base` that records a `cwd` records one inside `folder`, and at least one does."""
+    seen = False
+    for path in base.glob("*.jsonl"):
+        try:
+            with path.open(encoding="utf-8") as fh:
+                cwd = next((c for c in (json.loads(line).get("cwd") for line in fh if line.strip()) if isinstance(c, str)), None)
+        except (OSError, ValueError, AttributeError):
+            return False
+        if cwd is None:
+            continue
+        if not Path(os.path.realpath(cwd)).is_relative_to(folder.resolve()):
+            return False
+        seen = True
+    return seen
 
 
 def first_seen(repo: Path, record: Path, needle: str) -> dt.datetime | None:

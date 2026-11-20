@@ -159,9 +159,11 @@ decision.
   (`python3 -c`, `node -e`) is quick, not heavy, but it may write anything, so it is refused like other
   writers when its folder may be the main one; elsewhere it runs normally. The flags are read per
   interpreter (python `-c` after `-X x` / `-W x`, attached `-cCODE`; node `-e`, `-p`, `--eval[=]`,
-  `--print[=]`; node `-c` only checks syntax). A program read from stdin (`python3 -`, `node -`) counts the same,
-  and so does inline code behind a runner (`uv run`, `poetry run`, `hatch run`, `npx`, `pnpm exec`,
-  `yarn dlx`: the interpreter is the first word after the runner's own options). `cd` options (`--`, `-P`, `-L`) are read before the operand,
+  `--print[=]`; node `-c` only checks syntax). A program read from stdin counts the same (`python3 -`, a heredoc,
+  a pipe or redirect, any interpreter with no script operand), and so does inline code behind a
+  runner (`uv run`, `poetry run`, `hatch run`, `npx`, `pnpm exec`, `yarn dlx`): the runner's options
+  are read through (those with a value skip it) to the executable, and the executable's operands are
+  never read as commands (`uv run rg python -c` is a search). `cd` options (`--`, `-P`, `-L`) are read before the operand,
   and an absolute redirect target or `git -C` path names its own folder even after an unresolved `cd`. The payload carries
   `agent_id` for a subagent, and an absent, empty or unreadable field is the owner's own session,
   which is never refused. The command is split into real segments and wrappers (`env`, `timeout`,

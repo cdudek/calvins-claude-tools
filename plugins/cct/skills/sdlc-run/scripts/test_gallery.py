@@ -369,7 +369,7 @@ def test_a_deviation_added_after_the_approval_needs_the_owner_again(repo: Path, 
     rows[0]["deviates"] = "added by the build"
     (ch(repo) / "screens.json").write_text(json.dumps(rows))
     left = capture.uncovered(ch(repo), approved(repo))
-    assert any("leads.list.empty: no recorded batch of an owner approval holds it with its current deviation" in p for p in left)
+    assert any("leads.list.empty: no recorded batch of an owner approval holds it with its current board mapping and deviation" in p for p in left)
 
 
 def test_the_status_line_counts_the_design(repo: Path) -> None:
@@ -396,3 +396,54 @@ def test_the_decision_log_is_a_chain_and_a_spent_or_trimmed_log_is_refused(repo:
     rewritten = [{**log[0], "answer": "send-back"}, log[1]]
     assert any("was changed" in p for p in capture.chain_problems(rewritten, log[-1]["hash"]))
     assert capture.chain_problems([{"entry": "x", "answer": "accept", "batch": "b"}], None) == []  # a 3.25 log has no hashes: read as it is
+
+
+def test_a_remapped_screen_needs_a_new_owner_answer_and_shows_needs_review(repo: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    import marks
+
+    monkeypatch.setenv("HOME", str(repo.parent / "home"))
+    with_design(repo)
+    assert imp(repo, str(answers(repo, **{"leads.list.empty": "accept"}))).returncode == 0
+    marks._ANSWERS.clear()
+    assert capture.uncovered(ch(repo), approved(repo)) == []
+    rows = json.loads((ch(repo) / "screens.json").read_text())
+    rows[0]["design"] = ["b2"]  # the same screen and pixels, another board
+    (ch(repo) / "screens.json").write_text(json.dumps(rows))
+    assert any("current board mapping" in p for p in capture.uncovered(ch(repo), approved(repo)))
+    state = ev(repo, "status", str(ch(repo))).stdout
+    assert "screens: 0 of 4 approved · 1 changed since approval" in state  # the status counts it as not approved
+    assert "needs review" in gallery(repo).read_text()
+    # a board image that changed after the owner saw it changes the binding too
+    rows[0]["design"] = ["b1"]
+    (ch(repo) / "screens.json").write_text(json.dumps(rows))
+    assert capture.uncovered(ch(repo), approved(repo)) == []
+    (ch(repo) / "asks" / "design" / "b1.png").write_bytes(BOARD + b"2")
+    assert any("current board mapping" in p for p in capture.uncovered(ch(repo), approved(repo)))
+
+
+def test_a_board_named_without_a_design_json_is_a_problem_and_hashes_bind_record_boundaries(repo: Path) -> None:
+    rows = [{"id": "a", "route": "/a", "viewport": [1, 1], "fixture": "f", "design": ["b9"]}]
+    assert capture.design_problems(ch(repo), rows) == ["screens.json entry a names board b9, but the change has no design.json"]
+    one = {"boards": [{"id": "b1", "name": "x"}], "dropped": [{"board": "b1", "reason": "a\nb2 c"}]}
+    two = {"boards": [{"id": "b1", "name": "x"}], "dropped": [{"board": "b1", "reason": "a"}, {"board": "b2", "reason": "c"}]}
+    assert capture.inventory_id(one) != capture.inventory_id(two)
+    assert capture.approval_id([["a", "b c"]]) != capture.approval_id([["a b", "c"]])
+
+
+def test_a_kept_older_capture_py_takes_the_old_path_without_a_design_and_stops_with_one(repo: Path, tmp_path: Path) -> None:
+    old = tmp_path / "old"
+    old.mkdir()
+    keep = {"load_design", "boards_of", "dropped_of", "mapped", "design_counts", "binding_tag", "deviation_tag", "lock_sha",
+            "image_problems", "link", "replayed", "design_problems"}  # fmt: skip
+    src = (EVIDENCE.parent / "capture.py").read_text()
+    for name in keep:  # a 3.25 capture.py has none of the design helpers
+        src = src.replace(f"def {name}(", f"def _gone_{name}(")
+    (old / "capture.py").write_text(src)
+    for name in ("evidence.py", "marks.py"):
+        (old / name).write_bytes((EVIDENCE.parent / name).read_bytes())
+    env = {**os.environ, "HOME": str(repo.parent / "home")}
+    run = lambda *a: subprocess.run([sys.executable, str(old / "evidence.py"), *a], cwd=repo, capture_output=True, text=True, env=env)  # noqa: E731
+    assert run("gallery", str(ch(repo))).returncode == 0  # no design: the older path
+    with_design(repo)
+    out = run("gallery", str(ch(repo)))
+    assert out.returncode == 1 and "adopt --upgrade --replace scripts/capture.py --apply" in out.stderr

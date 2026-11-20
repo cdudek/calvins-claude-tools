@@ -52,7 +52,7 @@ become exact visual tests (the same renderer against itself). A change with no d
    the common git dir): a folder whose name merely begins like a worktree's is never read.
    **Known limit.** Owner decisions everywhere in sdlc-run trust the local session transcripts. An agent
    with filesystem access could write a fake transcript; the check stops a careless agent, not a hostile
-   one. A real fix needs a signing key the agent cannot read.
+   one. A real fix needs a signing key the agent cannot read. An empty or restored decision log cannot be detected without an anchor outside the files an agent can write.
    Each entry may carry `"milestone": N` (default 1): a milestone close captures the entries with
    milestone <= N and the last milestone requires all of them, so an early close never needs a screen
    a later milestone builds. Two entries never share a route and viewport (the fixture shows only

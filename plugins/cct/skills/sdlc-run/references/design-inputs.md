@@ -30,13 +30,23 @@ name that stays the same when the board is renamed in the tool.
 
 **The mapping.** A `screens.json` entry may carry `"design": ["<board id>", ...]`. Every board is
 either named by at least one entry or listed in `dropped` with a reason; `verify_gate.py approve`
-fails naming each unmapped board and each entry that names a board `design.json` does not list.
-**A dropped board is the owner's decision**, never the agent's: approve prints the question to ask
-(`Change <id>, finding design-<hash of the list>: Drop these N design boards? ...`, options `Drop
-these boards` | `Hold`), the same transcript-backed owner answer the screen approval uses, one dialog
-for the whole list. The lock records the inventory (`"design": "inventory"`) and the id of the
-dropped list; `design.json` is locked like `screens.json`, so editing it after approval voids the
-approval.
+fails naming each unmapped board, each entry that names a board `design.json` does not list, and an
+entry that names a board when there is no `design.json`.
+
+**The owner confirms the inventory.** An agent could list only some of the boards, so at approval the
+owner answers one dialog bound to a hash of the whole list (board ids, names, count, and the dropped
+list with its reasons): `Change <id>, finding inventory-<hash>: these N boards are the whole design:
+...` (options `Confirm inventory` | `Hold`), the same transcript-backed owner answer the screen
+approval uses. One dialog covers both the board list and the dropped boards, so a dropped board is
+the owner's decision, never the agent's. The lock records the inventory (`"design": "inventory"`,
+`"inventory": <id>`) and the sha256 of every board image (`"designImages"`); `design.json` is locked
+like `screens.json`, so editing it after approval voids the approval, and the gallery and the close
+refuse an image that changed or went missing, naming the board. Every hash behind these ids is made of
+canonical JSON, so record boundaries bind.
+
+**A design input makes it an app change.** The change has a design input when `visualSource` is set
+or `asks/design/` holds at least one file (an empty folder counts for nothing; `ux: off` waives it).
+Such a change needs `screens.json` and `design.json` whatever its size.
 
 **Deviations are explicit.** A built screen that differs from its board (a section left out, another
 layout, different content structure) says so in the entry's `"deviates": "<what differs and why>"`.
@@ -45,8 +55,10 @@ void the approval (the lock hashes `screens.json` without it, and the edit hook 
 that changes nothing else). It is not free, though: the gallery shows the text above the board and
 the screenshot, an entry with a deviation is never approved in bulk (the owner ticks it by name, and
 the approval dialog states how many deviations it covers), and a deviation added or changed after the
-owner approved the screen fails the capture (`CAPTURE FAIL approval`) until the owner approves it in
-the gallery again.
+owner approved the screen voids a milestone pass already given and fails the capture (`CAPTURE FAIL
+approval`) until the owner approves it in the gallery again. The owner's answer for a screen is also
+bound to the boards the entry maps and their image digests: moving a screen to another board needs a
+new answer, and the gallery shows such a screen as `needs review`, not `approved`.
 
 Changes approved before 3.26.0 keep their path: the lock says whether it holds an inventory
 (`"design": "inventory"`). An in-flight 3.25 change gets its `design.json` at its next approval;

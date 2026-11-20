@@ -606,7 +606,10 @@ def test_inline_code_behind_a_runner_and_a_program_from_stdin_are_possible_write
                    "python3 -", "node -", "python3 - arg", "uv run python -"):  # fmt: skip
         assert call(writer, main) == 2, writer
         assert call(writer, wt) == 0, writer
-    for reader in ("uv run python tool.py -c x", "npx prettier --check .", "pnpm exec node app.js -e 1", "yarn dlx cowsay hi"):
+    for writer in ("uv run --python 3.12 python -c pass", "uv run --with rich python3 -c pass", "python3 <<EOF\nprint(1)\nEOF", "cat x.py | python3", "python3 < x.py"):
+        assert call(writer, main) == 2, writer
+    for reader in ("uv run python tool.py -c x", "npx prettier --check .", "pnpm exec node app.js -e 1", "yarn dlx cowsay hi",
+                   "uv run rg python -c", "uv run --with rich rg node -e x", "python3 --version", "uv run python --version"):  # fmt: skip
         assert call(reader, main) == 0, reader
 
 

@@ -118,6 +118,7 @@
   "dfd42c691cbeaf20",
   "e65e84d20f614067",
   "e6c16749fb56dd96",
+  "f0113702caceea7e",
   "faa52678825431ca"
  ],
  ".claude/hooks/plan-gate.sh": [
@@ -201,6 +202,7 @@
   "f72c02e5f30938e4"
  ],
  "scripts/capture.py": [
+  "2b0aa4a315b83122",
   "55464dcaa9fb571a",
   "76f341df1ef81a00",
   "9cd5bdc59852d1a6",
@@ -228,6 +230,7 @@
   "6a317db378861d28",
   "6c666865c4228267",
   "74b85435656e6566",
+  "9cb41cc57637e80a",
   "a2ad7046f8557477",
   "ac196d166bdc401d",
   "c90008dbca3b8a29",
@@ -235,6 +238,7 @@
  ],
  "scripts/heavy.py": [
   "050107783daa70ff",
+  "133511d3c4625790",
   "1bb86e7356aa80e0",
   "40e40233bf70ec93",
   "5deaa2eb45d65844",
@@ -285,6 +289,7 @@
   "da489951ced4b597",
   "e210db4d72bf4d37",
   "e9511caf3de9934b",
+  "f45da7efa824ab0a",
   "fd8848049fa7ca68"
  ],
  "scripts/preflight.py": [
@@ -340,6 +345,7 @@
   "22d6de1fd42fa247",
   "25ea5841fdd27c8c",
   "2681ebc8e3caefb2",
+  "27b31df57ec5f2fd",
   "3144bebd00196d11",
   "3606423109411bd8",
   "368a5c17464a5307",
@@ -410,6 +416,7 @@
   "dbe9a6d4a1e59972",
   "dc74f0d3516b6100",
   "dfbfa38f6cd4fec6",
+  "e2b0b3375e049cf6",
   "e4d8badd50ba224c",
   "e687aa980130321e",
   "e70857e375a254ff",

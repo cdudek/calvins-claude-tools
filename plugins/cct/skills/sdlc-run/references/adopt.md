@@ -14,9 +14,10 @@ Chain step 0 reads that line, so a stale repo is refreshed before any change sta
 it just wrote. The templates cannot match every repo's printWidth and quote style, and a repo
 with a `prettier --check` gate rejects an unformatted file the moment you commit it. No
 prettier installed, nothing happens.
-In a linked worktree with no `node_modules` of its own, `adopt` uses the main checkout's formatter
-(the first entry of `git worktree list`) when its lockfile is identical to the worktree's; when the
-lockfile differs it prints a MANUAL line with the exact format command instead.
+In a linked worktree with no `node_modules` directory at all, `adopt` uses the main checkout's
+formatter (the first entry of `git worktree list`) when the active package manager's lockfile
+(`packageManager` in `package.json`, else every lockfile present) is identical in both; when it
+differs it prints a MANUAL line with the exact format command instead.
 
     python3 ${CLAUDE_SKILL_DIR}/scripts/adopt.py [--dry-run] [--preset node|python] [--ticket KEY-123] --tiers yes|no
 

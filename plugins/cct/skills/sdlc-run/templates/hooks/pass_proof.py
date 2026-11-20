@@ -281,7 +281,8 @@ def _lock_keys(repo: Path, tree: dict[str, tuple[str, str]]) -> set[str]:
 
 def screens_core(text: str) -> str:
     """screens.json without the entries' `deviates` text: the one field of an entry the build may change after
-    approval (verify_gate.py hashes the same form into lock.json; test_passes keeps the two equal)."""
+    approval (verify_gate.py hashes the same form into lock.json; test_sdd_hooks keeps the two equal). Only the plan
+    lock ignores it: a pass does not survive a changed deviation, because the owner has to accept the new text."""
     try:
         data = json.loads(text)
     except ValueError:
@@ -305,16 +306,6 @@ def _app_locked(repo: Path, tree: dict[str, tuple[str, str]]) -> bool:
         return app_locked(json.loads(_text(repo, tree.get("state/lock.json") or tree.get("lock.json"))))
     except (ValueError, TypeError):
         return False
-
-
-def _app_file_moved(repo: Path, mine: list[dict[str, tuple[str, str]]], name: str) -> bool:
-    """`name` differs between the two trees. With a design.json the entries' `deviates` text is not a difference (3.26.0)."""
-    a, b = mine[0].get(name) or ("",), mine[1].get(name) or ("",)
-    if a[0] == b[0]:
-        return False
-    if name == "screens.json" and "design.json" in mine[0] and "design.json" in mine[1] and "" not in (a[0], b[0]):
-        return screens_core(_text(repo, mine[0][name])) != screens_core(_text(repo, mine[1][name]))
-    return True
 
 
 def proves(repo: Path, changes_dir: str, gated: str, head: str) -> bool:
@@ -348,7 +339,7 @@ def proves(repo: Path, changes_dir: str, gated: str, head: str) -> bool:
         keys = _lock_keys(repo, mine[0])
         if "decisions.routing" in keys and _routing(repo, mine[0]) != _routing(repo, mine[1]):
             return False
-        if _app_locked(repo, mine[0]) and any(_app_file_moved(repo, mine, f) for f in APP_LOCKED_FILES):
+        if _app_locked(repo, mine[0]) and any((mine[0].get(f) or ("",))[0] != (mine[1].get(f) or ("",))[0] for f in APP_LOCKED_FILES):
             return False
         if "plan.milestones" in keys and _plan_milestones(repo, mine[0]) != _plan_milestones(repo, mine[1]):
             return False

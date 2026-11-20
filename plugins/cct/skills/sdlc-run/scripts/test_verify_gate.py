@@ -71,14 +71,26 @@ def _with_design(repo: Path) -> None:
     entries[0].setdefault("design", ["b1"])
     (change / "screens.json").write_text(json.dumps(rows))
     (change / "design.json").write_text(json.dumps({"source": "asks", "boards": [{"id": "b1", "name": "Board one"}]}))
+    _confirm_inventory(repo)
+
+
+def _confirm_inventory(repo: Path) -> None:
+    """The owner's answer to the inventory dialog of the design.json as it stands."""
+    from capture import inventory_id
+
+    import test_capture as tc
+
+    design = json.loads((repo / "changes" / ID / "design.json").read_text())
+    tc.owner_answers(repo, inventory_id(design), label="Confirm inventory", change_id=ID, options=("Confirm inventory", "Hold"))
 
 
 def _gate(repo: Path, *args: str) -> subprocess.CompletedProcess[str]:
     if args[:1] == ("approve",):
         _with_design(repo)
     return subprocess.run(
-        [sys.executable, str(GATE), *args], cwd=repo, capture_output=True, text=True, env=_env()
-    )
+        [sys.executable, str(GATE), *args], cwd=repo, capture_output=True, text=True,
+        env={**_env(), "HOME": str(repo.parent / "home")},  # where the owner's answers are read
+    )  # fmt: skip
 
 
 def _approve(repo: Path) -> None:
@@ -2219,9 +2231,7 @@ def _design(repo: Path, **fields: object) -> None:
 
 
 def test_the_design_is_binding_for_which_screens_exist(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
-    from capture import dropped_id
-
-    import test_capture as tc
+    from capture import inventory_id
 
     repo = _design_repo(tmp_path, monkeypatch)
     r = _gate(repo, "approve", ID)  # three boards, two mapped, one not
@@ -2233,16 +2243,19 @@ def test_the_design_is_binding_for_which_screens_exist(tmp_path: Path, monkeypat
     assert "entry deals.list.empty maps board b9, which design.json does not list" in _gate(repo, "approve", ID).stdout
     rows[2].pop("design")
     _screens_json(repo, rows)
-    assert _gate(repo, "approve", ID).returncode == 0  # two boards, both mapped
+    refused = _gate(repo, "approve", ID)  # two boards, both mapped, but nobody confirmed the inventory
+    iid = inventory_id(json.loads((repo / "changes" / ID / "design.json").read_text()))
+    assert refused.returncode == 1 and "an agent cannot confirm" in refused.stdout and f"finding {iid}: these 2 boards are the whole design" in refused.stdout
+    _confirm_inventory(repo)
+    assert _gate(repo, "approve", ID).returncode == 0
     (repo / "changes" / ID / "lock.json").unlink()
     _design(repo, boards=[{"id": b, "name": b} for b in ("b1", "b2", "b3")], dropped=[{"board": "b3", "reason": "the detail panel replaces it"}])
-    refused = _gate(repo, "approve", ID)  # dropped, and nobody asked the owner
-    did = dropped_id([{"board": "b3", "reason": "the detail panel replaces it"}])
-    assert refused.returncode == 1 and "an agent cannot drop a board" in refused.stdout and f"finding {did}:" in refused.stdout
-    tc.owner_answers(repo, did, label="Drop these boards", change_id=ID, options=("Drop these boards", "Hold"))
+    refused = _gate(repo, "approve", ID)  # the answer for the old list covers nothing here: one dialog for boards and dropped list
+    assert refused.returncode == 1 and "or drop 1 of them" in refused.stdout and "dropped: b3 (the detail panel replaces it)" in refused.stdout
+    _confirm_inventory(repo)
     assert _gate(repo, "approve", ID).returncode == 0
     lock = _lock(repo)
-    assert lock["design"] == "inventory" and lock["dropped"] == did and "design.json" in lock["criteria"]
+    assert lock["design"] == "inventory" and lock["inventory"].startswith("inventory-") and "design.json" in lock["criteria"]
     _git(repo, "add", ".")
     _git(repo, "commit", "-qm", "approved")
     _design(repo, dropped=[{"board": "b3", "reason": "changed after the owner said yes"}])  # the list the owner saw is locked
@@ -2250,8 +2263,51 @@ def test_the_design_is_binding_for_which_screens_exist(tmp_path: Path, monkeypat
     assert _last(r) == "VERIFY BLOCKED reason=protected-path" and "design.json" in r.stdout
 
 
+def test_a_design_input_makes_it_an_app_change_whatever_the_size_and_an_empty_folder_is_none(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setenv("HOME", str(tmp_path / "home"))
+    repo = _repo(tmp_path, [])
+    (repo / "sdlc.json").write_text(json.dumps({"checks": {"milestone": ["true"]}, "ux": "on"}))
+    change = repo / "changes" / ID
+    (change / "decisions.json").write_text(json.dumps({"size": "M"}))
+    (change / "asks" / "design").mkdir(parents=True)
+    assert _gate(repo, "approve", ID).returncode == 0  # an empty asks/design/ is no design input
+    (change / "asks" / "design" / "checkout.fig").write_bytes(b"x")
+    r = _gate(repo, "approve", ID)  # a design file, no visualSource, no screens.json
+    assert r.returncode == 1 and "screens.json is missing" in r.stdout
+
+
+def test_a_board_image_is_locked_and_a_changed_one_stops_the_gallery_and_the_close(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    repo = _design_repo(tmp_path, monkeypatch, boards=("b1", "b2"))
+    change = repo / "changes" / ID
+    (change / "asks" / "design").mkdir(parents=True)
+    (change / "asks" / "design" / "b1.png").write_bytes(b"one")
+    _design(repo, boards=[{"id": "b1", "name": "b1", "image": "asks/design/b1.png"}, {"id": "b2", "name": "b2"}])
+    _confirm_inventory(repo)
+    assert _gate(repo, "approve", ID).returncode == 0
+    assert _lock(repo)["designImages"] == {"b1": hashlib.sha256(b"one").hexdigest()}
+    (change / "asks" / "design" / "b1.png").write_bytes(b"two")
+    import capture
+
+    assert capture.image_problems(change) == ["board b1: its image changed or is missing since approval (approval locked it)"]
+    sys.path.insert(0, str(GATE.parent))
+    r = subprocess.run([sys.executable, str(GATE.parent / "evidence.py"), "gallery", str(change)], cwd=repo, capture_output=True, text=True)
+    assert r.returncode == 1 and "board b1: its image changed" in r.stderr
+
+
+def test_an_older_lock_keeps_its_hash_algorithm_even_when_design_json_exists(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    sys.path.insert(0, str(GATE.parent))
+    import verify_gate
+
+    repo = _design_repo(tmp_path, monkeypatch, boards=("b1", "b2"))
+    change = repo / "changes" / ID
+    old = verify_gate.criteria_hash(change, {}, design=False)
+    assert "design.json" not in old and old["screens.json"] == hashlib.sha256((change / "screens.json").read_bytes()).hexdigest()
+    assert "design.json" in verify_gate.criteria_hash(change, {}, design=True)
+
+
 def test_a_deviation_is_the_one_field_the_build_may_add_after_approval(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
     repo = _design_repo(tmp_path, monkeypatch, boards=("b1", "b2"))
+    _confirm_inventory(repo)
     _approve(repo)
     rows = json.loads((repo / "changes" / ID / "screens.json").read_text())
     rows[0]["deviates"] = "the list has one column less: the owner's screenshot shows it"

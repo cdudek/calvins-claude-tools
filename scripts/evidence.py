@@ -544,23 +544,28 @@ def sha_of(path: Path) -> str:
     return hashlib.sha256(path.read_bytes()).hexdigest() if path.is_file() else ""
 
 
-def app_state(change: str | Path, entry: str, approved: dict, digest: str | None = None) -> str:
-    """approved | changed | new | not captured, for one entry (`digest`: the shot's, when the caller already read it)."""
+def app_state(change: str | Path, entry: str, approved: dict, digest: str | None = None, tag: str = "") -> str:
+    """approved | changed | needs review | new | not captured, for one entry (`digest`: the shot's, when the caller already
+    read it; `tag`: the entry's current board mapping and deviation, which the owner's answer was bound to)."""
     shot, ok = sha_of(shot_of(change, entry)) if digest is None else digest, approved.get(entry)
     if ok:
-        return "changed" if shot and shot != ok.get("sha256") else "approved"
+        if shot and shot != ok.get("sha256"):
+            return "changed"
+        return "needs review" if ok.get("binding", "") != tag else "approved"
     return "new" if shot else "not captured"
 
 
 def app_status_line(change: str | Path) -> str:
     approved = read_approved(change)
-    states = [app_state(change, e["id"], approved) for e in app_entries(change)]
+    import capture
+
+    shim_old_capture(capture)
+    design = capture.load_design(Path(change))
+    states = [app_state(change, e["id"], approved, tag=capture.binding_tag(Path(change), design, e)) for e in app_entries(change)]
     if not states:
         return ""
-    line = (f"screens: {states.count('approved')} of {len(states)} approved · {states.count('changed')} changed since approval"
+    line = (f"screens: {states.count('approved')} of {len(states)} approved · {states.count('changed') + states.count('needs review')} changed since approval"
             f" · {states.count('not captured')} not captured")
-    import capture  # the one design rule
-
     counts = capture.design_counts(Path(change), app_entries(change))
     return line + (f"\ndesign: {counts[0]} boards · {counts[1]} mapped · {counts[2]} dropped · {counts[3]} deviations" if counts else "")
 
@@ -596,11 +601,32 @@ def inside(change: Path, path: Path) -> bool:
     return path.resolve().is_relative_to(change.resolve())
 
 
+def shim_old_capture(capture) -> None:
+    """A kept older scripts/capture.py (3.25) lacks the design helpers: for a change with no design input they have
+    one honest meaning, so the older path runs. design.json with such a capture.py is refused by gallery_cmd."""
+    none = {
+        "load_design": lambda change: {}, "boards_of": lambda design: [], "dropped_of": lambda design: [], "mapped": lambda entry: [],
+        "design_counts": lambda change, entries: None, "binding_tag": lambda change, design, entry: "",
+        "deviation_tag": lambda text: "", "lock_sha": lambda change: "", "image_problems": lambda change: [],
+        "link": lambda log, record, lock: record, "replayed": lambda log, entry, bid: False,
+    }  # fmt: skip
+    for name, fn in none.items():
+        if not hasattr(capture, name):
+            setattr(capture, name, fn)
+
+
 def gallery_cmd(args) -> int:
     sys.dont_write_bytecode = True  # a checkout stays clean: no __pycache__ from importing the kit's scripts
     import capture  # the one id rule; both scripts sit in the same folder
 
+    shim_old_capture(capture)
     change = resolve_change(args.change)
+    if (change / "design.json").is_file() and not hasattr(capture, "design_problems"):
+        print("evidence: scripts/capture.py is older than this script and cannot read design.json: run `adopt --upgrade --replace scripts/capture.py --apply`", file=sys.stderr)
+        return 1
+    if bad := capture.image_problems(change):
+        print("\n".join(f"evidence: {p}" for p in bad), file=sys.stderr)
+        return 1
     entries, problems = capture.load_screens(change)
     if problems:
         print("\n".join(f"evidence: {p}" for p in problems), file=sys.stderr)
@@ -639,14 +665,14 @@ def gallery_write(change: Path, entries: list[dict]) -> int:
         shot = shot_of(change, e["id"])
         raw = shot.read_bytes() if shot.is_file() and inside(change, shot) else None  # read once: shown, hashed and approved alike
         digest = hashlib.sha256(raw).hexdigest() if raw is not None else ""
-        state = app_state(change, e["id"], approved, digest)
+        state = app_state(change, e["id"], approved, digest, capture.binding_tag(change, design, e))
         head = f"<b>{html.escape(e['id'])}</b> <code>{html.escape(str(e.get('route', '')))}</code> "
         deviates = str(e.get("deviates") or "").strip()
         note = (f'<p class="dev"><b>Deviates from the design:</b> {html.escape(deviates)}<br><label><input type="checkbox" '
                 f'value="{capture.deviation_tag(deviates)}"> I accept this deviation</label></p>') if deviates else ""
         if raw is not None:
             data = base64.b64encode(raw).decode()
-            cls = ' class="changed"' if state == "changed" else ""
+            cls = ' class="changed"' if state in ("changed", "needs review") else ""
             name = html.escape(e["id"], quote=True)
             body.append(
                 f'<figure data-id="{name}" data-sha="{digest}">{head}<span{cls}>'
@@ -700,7 +726,9 @@ def gallery_import(args, change: Path, entries: list[dict]) -> int:
         print("evidence: the answers name nobody; fill in the name on the page or pass --by", file=sys.stderr)
         return 1
     known, bad, reopened, accepted, sent_back = {e["id"] for e in entries}, [], [], {}, []
-    tags = {e["id"]: capture.deviation_tag(e["deviates"]) for e in entries if isinstance(e.get("deviates"), str) and e["deviates"].strip()}
+    design = capture.load_design(change)
+    devs = {e["id"]: capture.deviation_tag(e["deviates"]) for e in entries if isinstance(e.get("deviates"), str) and e["deviates"].strip()}
+    tags = {e["id"]: capture.binding_tag(change, design, e) for e in entries}  # the boards and the deviation the answer is bound to
     lock = capture.lock_sha(change)
     with writing(change, approved_path(change)):  # two imports never overwrite each other's decisions
         approved, batches, log = read_approved(change), read_batches(change), read_log(change)
@@ -717,20 +745,20 @@ def gallery_import(args, change: Path, entries: list[dict]) -> int:
                 bad.append(f"{entry}: the shot changed since the gallery was made; regenerate it")
             elif answer == "send-back":
                 sent_back.append((entry, digest))
-            elif entry in tags and a.get("deviation") != tags[entry]:  # a deviation is accepted by name, never in bulk
+            elif entry in devs and a.get("deviation") != devs[entry]:  # a deviation is accepted by name, never in bulk
                 bad.append(f"{entry}: it deviates from the design ({entry} in screens.json says how); accept the deviation explicitly in the gallery")
             else:
                 accepted[entry] = (digest, raw)
         # only the owner decides a screen: their answer to the dialog of exactly this batch, accepts and the
         # send backs that remove an approval alike (a send back of a screen nobody approved changes nothing)
-        pairs = sorted([[e, d, *([tags[e]] if e in tags else [])] for e, (d, _) in accepted.items()] + [[e, d, "send-back"] for e, d in sent_back if e in approved])
+        pairs = sorted([[e, d, *([tags[e]] if tags[e] else [])] for e, (d, _) in accepted.items()] + [[e, d, "send-back"] for e, d in sent_back if e in approved])
         bid = capture.approval_id(pairs) if pairs else ""
         if pairs:
             if spent := [e for e in accepted if capture.replayed(log, e, bid)]:
                 print(f"evidence: the owner's answer for {', '.join(spent)} was given before a later send back: a new batch is needed (capture the screen again and regenerate the gallery). Nothing was written.", file=sys.stderr)
                 return 1
             if not owner_approved(change, bid):
-                print(owner_dialog(change.name, bid, [p[0] + (" (send back)" if p[2:] == ["send-back"] else "") for p in pairs], sum(p[0] in tags and p[2:] != ["send-back"] for p in pairs)), file=sys.stderr)
+                print(owner_dialog(change.name, bid, [p[0] + (" (send back)" if p[2:] == ["send-back"] else "") for p in pairs], sum(p[0] in devs and p[2:] != ["send-back"] for p in pairs)), file=sys.stderr)
                 return 1
             batches[bid] = pairs
         stamp = time.strftime("%Y-%m-%dT%H:%M:%S%z")
@@ -744,7 +772,7 @@ def gallery_import(args, change: Path, entries: list[dict]) -> int:
             screens_dir(change).mkdir(parents=True, exist_ok=True)
             (screens_dir(change) / f"{entry}.png").write_bytes(raw)
             approved[entry] = {"sha256": digest, "file": f"screens/{entry}.png", "approvedBy": by,
-                               "date": time.strftime("%Y-%m-%d"), "decision": bid}  # fmt: skip
+                               "date": time.strftime("%Y-%m-%d"), "decision": bid, **({"binding": tags[entry]} if tags[entry] else {})}  # fmt: skip
         if approved != before or batches != batches_before or len(log) != log_before:
             write_approved(change, approved, batches, log)
     for r in reopened:

@@ -633,7 +633,8 @@ def uses_biome() -> bool:
     return isinstance(pkg, dict) and any("@biomejs/biome" in (pkg.get(k) or {}) for k in ("dependencies", "devDependencies"))
 
 
-LOCKFILES = ("package-lock.json", "pnpm-lock.yaml", "yarn.lock", "bun.lockb", "bun.lock")
+LOCKFILES = ("pnpm-lock.yaml", "package-lock.json", "yarn.lock")  # the order that wins when none is named
+MANAGER_LOCKS = {"pnpm": ("pnpm-lock.yaml",), "npm": ("package-lock.json",), "yarn": ("yarn.lock",), "bun": ("bun.lock", "bun.lockb")}
 
 
 def main_checkout() -> Path | None:
@@ -643,18 +644,27 @@ def main_checkout() -> Path | None:
     return first if first is not None and first.resolve() != ROOT.resolve() else None
 
 
+def active_lockfiles(main: Path) -> list[str]:
+    """The lockfiles of the package manager in use: the `packageManager` field of package.json, else every lockfile present."""
+    try:
+        manager = str(json.loads((ROOT / "package.json").read_text(encoding="utf-8")).get("packageManager", "")).split("@")[0]
+    except (OSError, ValueError, AttributeError):
+        manager = ""
+    if manager in MANAGER_LOCKS:
+        return list(MANAGER_LOCKS[manager])
+    return [lock for lock in LOCKFILES if (ROOT / lock).exists() or (main / lock).exists()]
+
+
 def main_checkout_formatter(name: str) -> tuple[Path | None, bool]:
-    """(the main checkout's `node_modules/.bin/<name>` when its lockfile is byte for byte this worktree's, whether the
-    main checkout has the formatter at all). A worktree has no node_modules of its own."""
+    """(the main checkout's `node_modules/.bin/<name>` when this worktree has no node_modules at all and the active package
+    manager's lockfile is byte for byte the same in both, whether the main checkout has the formatter at all)."""
     main = main_checkout()
     binary = main / "node_modules" / ".bin" / name if main else None
     if binary is None or not binary.exists():
         return None, False
-    for lock in LOCKFILES:
-        mine, theirs = ROOT / lock, main / lock
-        if mine.exists() or theirs.exists():
-            return (binary if mine.exists() and theirs.exists() and mine.read_bytes() == theirs.read_bytes() else None), True
-    return None, True
+    locks = active_lockfiles(main)
+    same = bool(locks) and all((ROOT / lock).is_file() and (main / lock).is_file() and (ROOT / lock).read_bytes() == (main / lock).read_bytes() for lock in locks)
+    return (binary if same and not (ROOT / "node_modules").exists() else None), True
 
 
 def format_written() -> None:
@@ -1069,6 +1079,7 @@ KIT_HEAVY = {
     "aa80c7f1cdab2e74",
     "a09c60909df8931b",
     "a13b3e0ac5548a40",
+    "133511d3c4625790",
     "d5f94641e353c11a",
 }
 KIT_DB = {
@@ -1086,6 +1097,7 @@ KIT_EVIDENCE = {
     "74b85435656e6566",
     "6c666865c4228267",
     "ac196d166bdc401d",
+    "9cb41cc57637e80a",
     "06688e12102ccf68",
 }
 KIT_PREFLIGHT = {
@@ -1103,6 +1115,7 @@ KIT_CAPTURE = {
     "b66771e69e06e46f",
     "e43a7d24e86cfe1f",
     "9cd5bdc59852d1a6",
+    "2b0aa4a315b83122",
     "ebdfb586c6d92fc8",
 }
 KIT_HELPER_GUARD = {
@@ -1230,13 +1243,7 @@ def own_branch(folder: Path, cfg: dict, head: str) -> bool:
     """`head` is a branch of this change: milestone/<slug>[-n], project/<slug>, or a branch the
     change's own plan.md names (the folder name gives the slug when decisions.json names none).
     Nothing a PR body says counts, and a decisions.json adopt cannot read means the branch is unknown."""
-    decisions: object = {}
-    for path in (folder / "state" / "decisions.json", folder / "decisions.json"):
-        try:
-            decisions = json.loads(path.read_text(encoding="utf-8"))
-            break
-        except (OSError, ValueError):
-            continue
+    decisions = read_decisions_of(folder)
     if not isinstance(decisions, dict):
         return False
     prefix = (cfg.get("milestones") or {}).get("branchPrefix", "milestone/")
@@ -1255,16 +1262,21 @@ def own_branch(folder: Path, cfg: dict, head: str) -> bool:
     return "/" in head and re.search(rf"(?<![\w/.-]){re.escape(head)}(?![\w/-])", plan) is not None
 
 
-def own_branches(folder: Path, cfg: dict) -> list[str]:
-    """The branches `own_branch` accepts, as names to ask gh about: milestone/<slug>, milestone/<slug>-1 to -<last M of
-    plan.md>, project/<slug>, and each branch-shaped name the plan.md gives. [] when decisions.json cannot be read."""
-    decisions: object = {}
-    for path in (folder / "state" / "decisions.json", folder / "decisions.json"):
+def read_decisions_of(folder: Path) -> object:
+    """The change's decisions: `state/intake.json` (layout 4's name for it), `state/decisions.json`, else `decisions.json`."""
+    for path in (folder / "state" / "intake.json", folder / "state" / "decisions.json", folder / "decisions.json"):
         try:
-            decisions = json.loads(path.read_text(encoding="utf-8"))
-            break
+            return json.loads(path.read_text(encoding="utf-8"))
         except (OSError, ValueError):
             continue
+    return {}
+
+
+def own_branches(folder: Path, cfg: dict) -> list[str]:
+    """The branches the change declares, as names to ask gh about: milestone/<slug>, milestone/<slug>-1 to -<last M of
+    plan.md>, project/<slug>, and a `branch:` field (decisions or a line of plan.md). Nothing is guessed from paths in the
+    plan. [] when the decisions cannot be read."""
+    decisions = read_decisions_of(folder)
     prefix = (cfg.get("milestones") or {}).get("branchPrefix", "milestone/")
     pprefix = (cfg.get("projects") or {}).get("branchPrefix", "project/")
     slug = _slug(decisions.get("milestone"), prefix) if isinstance(decisions, dict) else None
@@ -1277,9 +1289,9 @@ def own_branches(folder: Path, cfg: dict) -> list[str]:
     except OSError:
         plan = ""
     last = max([1, *(int(n) for n in re.findall(r"\bM(\d+)\b", plan))])
-    named = [t.rstrip(".") for t in re.findall(r"(?<![\w/.-])([\w.-]+/[\w./-]+)(?![\w/-])", plan)]
-    named = [t for t in named if "." not in t.rsplit("/", 1)[-1]][:5]  # a path with an extension is a file, not a branch
-    found = [f"{prefix}{slug}", *(f"{prefix}{slug}-{n}" for n in range(1, last + 1)), *([f"{pprefix}{project}"] if project else []), *named]
+    declared = [str(decisions.get("branch", ""))] if isinstance(decisions, dict) else []
+    declared += re.findall(r"^\s*branch:\s*([\w.-]+/[\w./-]+?)\s*$", plan, re.M)
+    found = [f"{prefix}{slug}", *(f"{prefix}{slug}-{n}" for n in range(1, last + 1)), *([f"{pprefix}{project}"] if project else []), *(b for b in declared if b)]
     return list(dict.fromkeys(found))
 
 
@@ -1332,7 +1344,7 @@ def migrate_plan(cfg: dict) -> dict:
     while moved:  # a kept folder's own files count as referrers for the others, so repeat until nothing moves
         moved = False
         for folder in list(remove_list):
-            if ref := referrer(folder.name, remove_list, set(cfg.get("keep", []))):
+            if ref := referrer(folder.name, remove_list):
                 remove_list.remove(folder)
                 PINNED_ARCHIVES.add(folder.name)
                 kept_lines.append(f"{folder.relative_to(ROOT)}: kept, referenced by {ref} (a link would break)")

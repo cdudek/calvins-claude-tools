@@ -157,11 +157,54 @@ def dropped_of(design: dict) -> list[dict]:
     return [d for d in design.get("dropped") or [] if isinstance(d, dict)]
 
 
-def dropped_id(dropped: list) -> str:
-    """The id of the owner's answer to the dropped list: `design-` and 16 hex of the sorted `<board> <reason>` lines.
-    The dialog is `Change <id>, finding <this id>: ...`, so the answer covers exactly this list and no other."""
-    lines = sorted(f"{d.get('board')} {d.get('reason')}" for d in dropped)
-    return "design-" + hashlib.sha256("\n".join(lines).encode()).hexdigest()[:16]
+def canon(value: object) -> str:
+    """The one text every approval hash is made of: sorted canonical JSON, so record boundaries bind."""
+    return json.dumps(value, sort_keys=True, separators=(",", ":"), ensure_ascii=True)
+
+
+def inventory_id(design: dict) -> str:
+    """The id of the owner's confirmation of the inventory: `inventory-` and 16 hex of the canonical board list (ids,
+    names, count) and dropped list. The dialog is `Change <id>, finding <this id>: these N boards are the whole design`,
+    so the answer covers exactly this list and no other."""
+    boards = sorted([b["id"], str(b.get("name", ""))] for b in boards_of(design))
+    dropped = sorted([str(d.get("board")), str(d.get("reason"))] for d in dropped_of(design))
+    return "inventory-" + hashlib.sha256(canon({"boards": boards, "count": len(boards), "dropped": dropped}).encode()).hexdigest()[:16]
+
+
+def board_digest(change: Path, design: dict, board_id: str) -> str:
+    """sha256 of a board's image file, "" when it has none (or the file is missing)."""
+    board = next((b for b in boards_of(design) if b["id"] == board_id), {})
+    image = board.get("image")
+    path = Path(change) / image if isinstance(image, str) else None
+    return hashlib.sha256(path.read_bytes()).hexdigest() if path and path.is_file() else ""
+
+
+def image_digests(change: Path) -> dict[str, str]:
+    """{board id: sha256} of every board image: what approval records in the lock."""
+    design = load_design(change)
+    return {b["id"]: board_digest(change, design, b["id"]) for b in boards_of(design) if isinstance(b.get("image"), str)}
+
+
+def image_problems(change: Path) -> list[str]:
+    """A board image that changed (or went missing) since approval, by board. Nothing when the lock recorded none."""
+    locked = {}
+    for rel in ("state/lock.json", "lock.json"):
+        data = read_json(Path(change) / rel)
+        if isinstance(data, dict):
+            locked = data.get("designImages") if isinstance(data.get("designImages"), dict) else {}
+            break
+    now = image_digests(change)
+    return [f"board {b}: its image changed or is missing since approval (approval locked it)" for b, d in locked.items() if now.get(b) != d]
+
+
+def binding_tag(change: Path, design: dict, entry: dict) -> str:
+    """What the owner's answer for a screen is bound to beyond its pixels: the boards it maps (with their image digests)
+    and its deviation text. "" for a screen with neither, so a change with no design input hashes as before."""
+    boards = mapped(entry)
+    text = str(entry.get("deviates") or "").strip()
+    if not boards and not text:
+        return ""
+    return "bind-" + hashlib.sha256(canon({"boards": [[b, board_digest(change, design, b)] for b in boards], "deviates": text}).encode()).hexdigest()[:8]
 
 
 def deviation_tag(text: str) -> str:
@@ -174,7 +217,9 @@ def design_problems(change: Path, entries: list[dict], required: bool = False) -
     names only boards design.json lists. `required`: the change has a design input, so design.json must exist."""
     change = Path(change)
     if not (change / "design.json").is_file():
-        return ["design.json is missing: the change has a design input, so the UX plan lists every board of it"] if required else []
+        if required:
+            return ["design.json is missing: the change has a design input, so the UX plan lists every board of it"]
+        return [f"screens.json entry {e.get('id')} names board {b}, but the change has no design.json" for e in entries for b in mapped(e)]
     design = load_design(change)
     boards = design.get("boards")
     if not (isinstance(design.get("source"), str) and design["source"].strip() and isinstance(boards, list) and boards):
@@ -504,16 +549,16 @@ def run(change: Path, repo: Path, upto: int | None = None, group: bool = False) 
 
 
 def approval_id(pairs: list) -> str:
-    """The id of one owner approval: `screens-` and 16 hex of the sorted `<entry> <sha256>` lines. The owner's
-    dialog is `Change <id>, finding <this id>: ...`, so the answer covers exactly these shots and no others."""
-    lines = sorted(" ".join(p) for p in pairs)  # [entry, sha256] or [entry, sha256, "send-back"]
-    return "screens-" + hashlib.sha256("\n".join(lines).encode()).hexdigest()[:16]
+    """The id of one owner approval: `screens-` and 16 hex of the sorted canonical pairs `[entry, sha256]` (a send back or a
+    screen's board and deviation binding adds a third word). The owner's dialog is `Change <id>, finding <this id>: ...`,
+    so the answer covers exactly these shots and no others."""
+    return "screens-" + hashlib.sha256(canon(sorted(pairs)).encode()).hexdigest()[:16]
 
 
 def uncovered(change: Path, approved: dict) -> list[str]:
     """The approved entries no owner decision covers. approved.json is the owner's approval, so each entry
     names the batch (`decision`) its import was confirmed in: `batches[<id>]` lists that batch's
-    `[entry, sha256]` pairs (a send back adds `"send-back"`, an entry with a `deviates` text its `dev-` tag), the id is their
+    `[entry, sha256]` pairs (a send back adds `"send-back"`, an entry with boards or a `deviates` text its `bind-` tag), the id is their
     `approval_id`, and the owner answered `Approve screens` to the dialog of that id (`marks.owner_decisions`, the
     transcript). A file an agent wrote covers nothing, a batch a later send back spent covers nothing (the decision
     log says so), and a log that was trimmed or rewritten fails the check."""
@@ -530,15 +575,16 @@ def uncovered(change: Path, approved: dict) -> list[str]:
         decided = owner_decisions(repo, change.name)
     except ImportError:  # no reader of owner answers: nothing is covered
         decided = {}
-    tags = {e["id"]: deviation_tag(e["deviates"]) for e in load_screens(change)[0] if isinstance(e.get("deviates"), str) and e["deviates"].strip()}
+    design = load_design(change)
+    tags = {e["id"]: binding_tag(change, design, e) for e in load_screens(change)[0]}
     for entry, a in approved.items():
         bid = a.get("decision")
         pairs = batches.get(bid) if isinstance(bid, str) else None
         ok = isinstance(pairs, list) and all(isinstance(p, list) and len(p) in (2, 3) for p in pairs)
         # a deviation the owner did not see (added after the approval) is not covered: it needs the gallery again
-        held = ok and any(p[:2] == [entry, a.get("sha256")] and p[2:] != ["send-back"] and (entry not in tags or p[2:] == [tags[entry]]) for p in pairs)
+        held = ok and any(p[:2] == [entry, a.get("sha256")] and p[2:] != ["send-back"] and p[2:] == ([tags[entry]] if tags.get(entry) else []) for p in pairs)
         if not ok or approval_id(pairs) != bid or not held:
-            out.append(f"{entry}: no recorded batch of an owner approval holds it" + (" with its current deviation" if entry in tags else ""))
+            out.append(f"{entry}: no recorded batch of an owner approval holds it" + (" with its current board mapping and deviation" if tags.get(entry) else ""))
         elif decided.get(bid, ("",))[0] != "screens":
             out.append(f"{entry}: the owner has not answered the dialog of {bid}")
         elif replayed(log, entry, bid):
@@ -562,6 +608,9 @@ def judge(change: Path, entries: list[dict], shots: Path, threshold: float, star
     if unstable:
         print("unstable: two shots of one entry differ (animation, a clock, random data: fix the preview page):\n  " + "\n  ".join(unstable))
         return end("CAPTURE FAIL unstable", 1)
+    if bad := image_problems(change):
+        print("\n".join(bad) + "\nRestore the image from git, or have the plan approved again with the new one.")
+        return end("CAPTURE FAIL design", 1)
     try:
         approved = json.loads((change / "screens" / "approved.json").read_text(encoding="utf-8")).get("entries", {})
     except (OSError, ValueError, AttributeError):

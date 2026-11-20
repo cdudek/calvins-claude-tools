@@ -156,10 +156,12 @@ def root() -> Path:
     return Path(sh("git", "rev-parse", "--show-toplevel") or ".").resolve()
 
 
-def criteria_hash(change: Path, checks: object, plan: bool = True) -> dict[str, str]:
+def criteria_hash(change: Path, checks: object, plan: bool = True, design: bool | None = None) -> dict[str, str]:
     """Hashes of what approval locks: facts.md, done.json, the checks and (from 3.21.0) the plan's
     `## Milestones` section, which decides which facts each milestone must prove. `plan=False`
-    reads an older lock, which lacks that key."""
+    reads an older lock, which lacks that key. `design`: the lock holds a design inventory (3.26.0), which hashes
+    screens.json without `deviates` and adds design.json; None (a new approval) means design.json exists. An older
+    lock keeps the raw-byte hash and gains no criterion."""
     v4 = spec.applies(change)
     hashes = {
         name: hashlib.sha256(spec.state_path(change, name).read_bytes()).hexdigest()
@@ -179,10 +181,12 @@ def criteria_hash(change: Path, checks: object, plan: bool = True) -> dict[str, 
         ).hexdigest()
     if plan and (change / "screens.json").is_file():  # from 3.25.0 the screens to prove are approved too
         raw = (change / "screens.json").read_bytes()
-        design = (change / "design.json").is_file()  # from 3.26.0 the design inventory is locked, and `deviates` alone may change
+        if design is None:
+            design = (change / "design.json").is_file()  # from 3.26.0 the design inventory is locked, and `deviates` alone may change
         hashes["screens.json"] = hashlib.sha256(screens_core(raw.decode("utf-8", "replace")).encode() if design else raw).hexdigest()
         if design:
-            hashes["design.json"] = hashlib.sha256((change / "design.json").read_bytes()).hexdigest()
+            path = change / "design.json"
+            hashes["design.json"] = hashlib.sha256(path.read_bytes()).hexdigest() if path.is_file() else "missing"
     if plan:  # every layout locks the routing fields
         hashes["decisions.routing"] = hashlib.sha256(
             json.dumps(routing(change), sort_keys=True).encode("utf-8")
@@ -919,19 +923,36 @@ def design_system_moves(lock: dict, cfg: dict, repo: Path) -> list[str]:
     return out
 
 
-def dropped_problems(change: Path) -> list[str]:
-    """A dropped board is the owner's decision: they answered `Drop these boards` to the dialog of exactly this list."""
+def design_files(change: Path) -> bool:
+    """`asks/design/` holds at least one file (an empty folder is no design input)."""
+    return any(p.is_file() and p.name != ".DS_Store" for p in (change / "asks" / "design").rglob("*"))
+
+
+def design_input(change: Path, cfg: dict) -> bool:
+    """The change has a design input: `visualSource` is declared or `asks/design/` holds a file (`ux: off` waives it).
+    Computed once: it decides both whether the change is an app change and whether design.json is required."""
+    decisions = read_decisions(change) or {}
+    return cfg.get("ux") != "off" and (has_visual_source(decisions.get("visualSource")) or design_files(change))
+
+
+def inventory_problems(change: Path) -> list[str]:
+    """The owner confirms the inventory: they answered `Confirm inventory` to the dialog of exactly this board list and
+    dropped list (a dropped board is part of it, so one dialog covers both)."""
     import capture
     from marks import owner_decisions
 
-    dropped = capture.dropped_of(capture.load_design(change))
-    did = capture.dropped_id(dropped) if dropped else ""
-    if not dropped or owner_decisions(root(), change.name).get(did, ("",))[0] == "design-drop":
+    design = capture.load_design(change)
+    iid = capture.inventory_id(design)
+    if owner_decisions(root(), change.name).get(iid, ("",))[0] == "design-inventory":
         return []
+    boards, dropped = capture.boards_of(design), capture.dropped_of(design)
+    gone = "; ".join(f"{d.get('board')} ({d.get('reason')})" for d in dropped)
     return [
-        f"design.json drops {len(dropped)} board(s) ({', '.join(str(d.get('board')) for d in dropped)}) and an agent cannot drop a board. Ask the owner "
-        f"(AskUserQuestion, options Drop these boards | Hold), the question starting exactly:\n  Change {change.name}, finding {did}: "
-        f"Drop these {len(dropped)} design boards? " + "; ".join(f"{d.get('board')} ({d.get('reason')})" for d in dropped) + "\nthen run approve again."
+        f"design.json lists {len(boards)} boards and an agent cannot confirm that they are the whole design"
+        + (f" or drop {len(dropped)} of them" if dropped else "")
+        + f". Ask the owner (AskUserQuestion, options Confirm inventory | Hold), the question starting exactly:\n  Change {change.name}, finding {iid}: "
+        f"these {len(boards)} boards are the whole design: " + ", ".join(f"{b['id']} ({b.get('name')})" for b in boards)
+        + (f"; dropped: {gone}" if dropped else "") + "\nthen run approve again."
     ]
 
 
@@ -949,16 +970,22 @@ def approve(change: Path, cfg: dict) -> int:
         problems += graph_problems(read(change / "plan.md"))
     # from 3.25.0 visual work is proved in the real app: screens.json lists every screen and state, the
     # lock says `"visual": "app"` and the gate captures them. No design bundle, marks rows or audit table.
-    app = visual_run_required(change, cfg, root()) or (change / "screens.json").is_file()
+    wanted = design_input(change, cfg)  # a design input makes it an app change, whatever the size
+    app = wanted or visual_run_required(change, cfg, root()) or (change / "screens.json").is_file()
     if app:
         import capture  # 3.25.0: scripts/capture.py, imported only here so a kept older install still runs the other scopes
 
         entries, found = capture.load_screens(change)
         problems += found
-        if not found:  # 3.26.0: the design is binding for which screens exist
-            decisions = read_decisions(change) or {}
-            problems += capture.design_problems(change, entries, has_visual_source(decisions.get("visualSource")) or (change / "asks" / "design").is_dir())
-            problems += dropped_problems(change)
+        if not hasattr(capture, "design_problems"):  # a kept older scripts/capture.py
+            if wanted:
+                print("scripts/capture.py is older than this gate and cannot check the design inventory: run `adopt --upgrade --replace scripts/capture.py --apply`")
+                return end("APPROVE BLOCKED reason=env", 3)
+        elif not found:  # 3.26.0: the design is binding for which screens exist
+            design_found = capture.design_problems(change, entries, wanted)
+            problems += design_found
+            if not design_found and (change / "design.json").is_file():
+                problems += inventory_problems(change)
     if gap := full_e2e_gap((cfg.get("checks") or {}).get("milestone") or [], root()):
         problems.append(gap)
     if not v4 and not spec.state_path(change, "done.json").exists():  # approval requires its artifacts
@@ -981,10 +1008,11 @@ def approve(change: Path, cfg: dict) -> int:
     }
     if app:
         lock["visual"] = "app"
-        if (change / "design.json").is_file():  # 3.26.0: the board inventory is part of what was approved
+        if (change / "design.json").is_file() and hasattr(capture, "inventory_id"):  # 3.26.0: the board inventory is part of what was approved
             lock["design"] = "inventory"
-            if dropped := capture.dropped_of(capture.load_design(change)):
-                lock["dropped"] = capture.dropped_id(dropped)  # the owner's answer covers exactly this list
+            lock["inventory"] = capture.inventory_id(capture.load_design(change))  # the owner's answer covers exactly this list
+            if images := capture.image_digests(change):
+                lock["designImages"] = images  # the gallery and the close refuse an image that changed since
         # the folders the plan says new files go in: the chain-gate scope guard reads this snapshot, not the plan
         found = re.findall(r"`([^`]+/)`", section(read(change / "plan.md"), "Where things go") + section(read(change / "design.md"), "Where things go"))
         lock["scopeFolders"] = sorted({f.strip("/") for f in found if f.strip("/") and ".." not in f.split("/")})
@@ -1279,6 +1307,7 @@ KIT_HEAVY = {
     "aa80c7f1cdab2e74",
     "a09c60909df8931b",
     "a13b3e0ac5548a40",
+    "133511d3c4625790",
     "d5f94641e353c11a",
 }
 
@@ -1523,7 +1552,7 @@ def run_close(
         locked = lock["criteria"]
         declared = lock.get("order") != "cost"
         old_plan = lock.get("format", 0) < LOCK_FORMAT or ("plan.milestones" not in locked and not spec.applies(change))
-        now = criteria_hash(change, cfg.get("checks", {}))
+        now = criteria_hash(change, cfg.get("checks", {}), design=lock.get("design") == "inventory")
         for key in ("plan.milestones", "decisions.routing", "screens.json"):
             if key not in locked:
                 now.pop(key, None)  # an older lock never hashed it: reported below, not a move

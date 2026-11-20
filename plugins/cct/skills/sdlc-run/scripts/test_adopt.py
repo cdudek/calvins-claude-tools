@@ -2408,11 +2408,11 @@ def test_migrate_reads_every_shape_decisions_json_has_had_and_never_crashes(tmp_
         assert "2026-10-02-unmerged-one: kept, gh could not confirm" in "\n".join(_sections(res.stdout)["MANUAL"])
 
 
-def test_migrate_takes_a_feature_branch_the_plan_names(tmp_path: Path) -> None:
+def test_migrate_takes_a_feature_branch_the_plan_declares(tmp_path: Path) -> None:
     repo = _stamped_3_18(tmp_path)
     for name, branch in (("2026-10-01-merged-one", "feature/rev-9-merged-one"), ("2026-10-02-unmerged-one", "feature/rev-9-unmerged")):
         plan = repo / "changes/archive/2026/2026-10" / name / "plan.md"
-        plan.write_text(plan.read_text() + f"\nWork on branch\n{branch}. Host files come from gh.\n")
+        plan.write_text(plan.read_text() + f"\nbranch: {branch}\n\nHost files come from gh. The dependabot/npm/x branch is not ours.\n")
     _commit_all(repo)
     res = _migrate(repo, _fake_gh(tmp_path, "feature/rev-9-merged-one", "feature/rev-9-unmerged-extra"))
     assert res.returncode == 0, res.stderr
@@ -2679,3 +2679,49 @@ def test_a_toml_edit_is_refused_when_it_cannot_be_checked(monkeypatch) -> None:
     before = 'x = [\n  "scripts/db.py",\n]\n'
     after = 'x = [\n  "scripts/capture.py",\n  "scripts/db.py",\n]\n'
     assert mod.list_still_valid("pyproject.toml", before, after, "scripts/capture.py", "scripts/db.py") is False
+
+
+def test_migrate_does_not_guess_a_branch_from_paths_in_the_plan_and_reads_the_intake_file(tmp_path: Path) -> None:
+    repo = _stamped_3_18(tmp_path)
+    folder = repo / "changes/archive/2026/2026-10/2026-10-01-merged-one"
+    (folder / "plan.md").write_text((folder / "plan.md").read_text() + "\nWe depend on feature/rev-9-merged-one and src/app/x.\n")
+    _commit_all(repo)
+    res = _migrate(repo, _fake_gh(tmp_path, "feature/rev-9-merged-one"))
+    assert res.returncode == 0, res.stderr
+    assert folder.exists()  # a branch the plan merely mentions confirms nothing
+    (folder / "state").mkdir()
+    (folder / "state" / "intake.json").write_text(json.dumps({"milestone": {"slug": "custom-name"}}))
+    (folder / "decisions.json").unlink(missing_ok=True)
+    _commit_all(repo)
+    res = _migrate(repo, _fake_gh(_again(tmp_path), "milestone/custom-name-1"))
+    assert res.returncode == 0, res.stderr
+    assert not folder.exists()  # layout 4 keeps its decisions in state/intake.json
+
+
+def test_migrate_keeps_an_archive_a_keep_file_links_to(tmp_path: Path) -> None:
+    repo = _stamped_3_18(tmp_path)
+    (repo / "NOTES.md").write_text("see changes/archive/2026/2026-10/2026-10-01-merged-one for why\n")
+    cfg = json.loads((repo / "sdlc.json").read_text())
+    (repo / "sdlc.json").write_text(json.dumps({**cfg, "keep": ["NOTES.md"]}))
+    _commit_all(repo)
+    res = _migrate(repo, _fake_gh(tmp_path, "milestone/merged-one-1"))
+    assert res.returncode == 0, res.stderr
+    assert (repo / "changes/archive/2026/2026-10/2026-10-01-merged-one").exists()
+    assert "referenced by NOTES.md" in "\n".join(_sections(res.stdout)["MANUAL"])
+
+
+def test_the_formatter_fallback_needs_no_node_modules_and_the_active_managers_lockfile(tmp_path: Path) -> None:
+    repo, wt = _worktree_with_main_prettier(tmp_path, '{"lock": 1}\n')
+    (wt / "node_modules").mkdir()  # the worktree has dependencies of its own: no borrowing
+    out = _adopt(wt)
+    assert out.returncode == 0 and not (repo / "prettier-argv.txt").exists()
+
+
+def test_a_leftover_lockfile_cannot_mask_the_active_one(tmp_path: Path) -> None:
+    repo, wt = _worktree_with_main_prettier(tmp_path, '{"lock": 1}\n')  # package-lock.json identical
+    (repo / "pnpm-lock.yaml").write_text("a: 1\n")
+    (wt / "pnpm-lock.yaml").write_text("a: 2\n")  # the manager in use differs
+    (wt / "package.json").write_text('{"packageManager": "pnpm@9.0.0"}\n')
+    out = _adopt(wt)
+    assert out.returncode == 0 and not (repo / "prettier-argv.txt").exists()
+    assert any("prettier is not installed in this worktree" in m for m in _sections(out.stdout)["MANUAL"])
