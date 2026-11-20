@@ -9,12 +9,17 @@ suite_log="$(mktemp)" || exit 1
 logs="$(mktemp -d)" || exit 1
 trap 'rm -rf "$suite_log" "$logs"' EXIT
 # Test files run side by side (TEST_JOBS, default 4); each writes its own log, results print in file order.
+# A file that runs past TEST_FILE_TIMEOUT seconds (default 420) is stopped and fails under its own name, so a hang
+# never ends as a cancelled job with no output. Each file prints one progress line as it finishes.
 run_one() { # <test file> <log folder>
-  local f="$1" d b log
-  d="$(dirname "$f")"; b="$(basename "$f")"; log="$2/$(printf '%s' "$f" | tr '/' '_')"
-  if [[ "$b" == *.py ]]; then (cd "$d" && python3 -m pytest -q -p no:cacheprovider "$b" >"$log.out" 2>&1)
-  else (cd "$d" && bash "$b" >"$log.out" 2>&1); fi
-  echo $? >"$log.rc"
+  local f="$1" d b log rc start
+  d="$(dirname "$f")"; b="$(basename "$f")"; log="$2/$(printf '%s' "$f" | tr '/' '_')"; start=$SECONDS
+  if [[ "$b" == *.py ]]; then (cd "$d" && perl -e 'alarm shift; exec @ARGV' "${TEST_FILE_TIMEOUT:-420}" python3 -m pytest -q -p no:cacheprovider "$b" >"$log.out" 2>&1)
+  else (cd "$d" && perl -e 'alarm shift; exec @ARGV' "${TEST_FILE_TIMEOUT:-420}" bash "$b" >"$log.out" 2>&1); fi
+  rc=$?
+  [ "$rc" = 142 ] && echo "timed out after ${TEST_FILE_TIMEOUT:-420}s" >>"$log.out"
+  echo "$rc" >"$log.rc"
+  echo "  done $((SECONDS - start))s rc=$rc ${b}"
 }
 export -f run_one
 files="$(find "$root/hooks" "$root/skills" -type f \( -name 'test_*.py' -o -name 'test_*.sh' \) -not -path '*/templates/*' | sort)"
