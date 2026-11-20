@@ -10,9 +10,9 @@ import subprocess
 import sys
 from pathlib import Path
 
+import capture
 import pytest
 
-import capture
 from test_capture import owner_answers
 
 EVIDENCE = Path(__file__).resolve().parents[1] / "templates/scripts/evidence.py"
