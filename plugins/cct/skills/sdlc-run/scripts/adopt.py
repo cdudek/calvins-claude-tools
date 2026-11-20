@@ -1415,6 +1415,11 @@ def list_still_valid(rel: str, before: str, after: str, script: str, old: str) -
         walk(data, False)
         return found
 
+    if suffix == ".toml":
+        try:
+            import tomllib  # noqa: F401 -- Python 3.11+; without it a TOML edit cannot be checked, so none is made
+        except ImportError:
+            return False
     if suffix not in (".py", ".toml", ".json") or strings(before) is None:
         return True  # nothing to check with (or the file did not parse before the edit)
     got = strings(after)

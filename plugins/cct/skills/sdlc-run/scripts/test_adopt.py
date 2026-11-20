@@ -2613,3 +2613,24 @@ def test_upgrade_offers_the_layout_switch_once_and_only_without_a_layout(tmp_pat
     cfg["layout"] = 3
     (repo / "sdlc.json").write_text(json.dumps(cfg))
     assert _layout_manual(_adopt(repo, "--upgrade").stdout) == []
+
+
+def test_a_toml_edit_is_refused_when_it_cannot_be_checked(monkeypatch) -> None:
+    """Without tomllib (Python < 3.11) a TOML list edit cannot be validated, so it is not made."""
+    import builtins
+    import importlib.util
+
+    spec = importlib.util.spec_from_file_location("adopt_mod", Path(__file__).with_name("adopt.py"))
+    mod = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(mod)
+    real = builtins.__import__
+
+    def no_tomllib(name, *a, **k):
+        if name == "tomllib":
+            raise ImportError(name)
+        return real(name, *a, **k)
+
+    monkeypatch.setattr(builtins, "__import__", no_tomllib)
+    before = 'x = [\n  "scripts/db.py",\n]\n'
+    after = 'x = [\n  "scripts/capture.py",\n  "scripts/db.py",\n]\n'
+    assert mod.list_still_valid("pyproject.toml", before, after, "scripts/capture.py", "scripts/db.py") is False
