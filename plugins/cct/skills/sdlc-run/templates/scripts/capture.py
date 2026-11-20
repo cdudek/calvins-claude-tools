@@ -34,7 +34,7 @@ import hashlib
 import json
 import os
 import re
-import shutil
+import shlex
 import signal
 import socket
 import struct
@@ -215,7 +215,7 @@ def stop(proc: subprocess.Popen) -> None:
 
 def drive(repo: Path, cfg: dict, jobs_file: Path) -> tuple[int, str]:
     if cfg.get("driver"):
-        cmd = [*(__import__("shlex").split(str(cfg["driver"]))), str(jobs_file)]
+        cmd = [*shlex.split(str(cfg["driver"])), str(jobs_file)]
     elif has_playwright(repo):
         js = jobs_file.with_suffix(".mjs.cjs")
         js.write_text(PLAYWRIGHT_JS, encoding="utf-8")
