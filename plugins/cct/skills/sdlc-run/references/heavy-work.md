@@ -154,7 +154,9 @@ decision.
   (`commit`, `add`, `merge`, `checkout`, `switch`, `reset`, `stash`, `push`, `rebase`, `worktree add`,
   `branch -D`), package installs, builds and tests. Reading, including read-only git, is fine. A `cd`
   moves the check to its resolved destination; only a command that ends up in the main folder is
-  refused. The payload carries
+  refused. A `cd` it cannot resolve (`$VAR`, a backtick, `-`) fails closed: what follows may be in the
+  main folder, so a write there is refused until a literal `cd` follows. Inline interpreter code
+  (`python3 -c`, `node -e`) is unknown, so it counts as heavy and goes through the queue. The payload carries
   `agent_id` for a subagent, and an absent, empty or unreadable field is the owner's own session,
   which is never refused. The command is split into real segments and wrappers (`env`, `timeout`,
   `nice`, `xargs`, `sh -c`, `find -exec`) are read by their inner command. It stops a careless
