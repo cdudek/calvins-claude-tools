@@ -692,6 +692,40 @@ def test_a_biome_repo_without_biome_installed_is_left_alone(tmp_path: Path) -> N
     assert not any("biome" in w or "prettier" in w for w in _sections(out.stdout)["WROTE"])
 
 
+def _worktree_with_main_prettier(tmp_path: Path, lock_in_worktree: str) -> tuple[Path, Path]:
+    """A node repo whose main checkout has prettier installed (and a lockfile), and a linked worktree without node_modules."""
+    repo = _repo(tmp_path, "node")
+    (repo / "package-lock.json").write_text('{"lock": 1}\n')
+    subprocess.run(["git", "add", "."], cwd=repo, check=True, env=_env())
+    subprocess.run(["git", "-c", "user.name=t", "-c", "user.email=t@t", "commit", "-qm", "lock"], cwd=repo, check=True, env=_env())
+    bin_dir = repo / "node_modules" / ".bin"
+    bin_dir.mkdir(parents=True)
+    stub = bin_dir / "prettier"
+    stub.write_text('#!/bin/sh\nprintf "%s\\n" "$@" >> "$(dirname "$0")/../../prettier-argv.txt"\n')
+    stub.chmod(0o755)
+    wt = tmp_path / "wt"
+    subprocess.run(["git", "worktree", "add", "-q", "-b", "feat", str(wt)], cwd=repo, check=True, env=_env())
+    (wt / "package-lock.json").write_text(lock_in_worktree)
+    return repo, wt
+
+
+def test_a_worktree_without_node_modules_uses_the_main_checkouts_formatter_when_the_lockfile_is_the_same(tmp_path: Path) -> None:
+    repo, wt = _worktree_with_main_prettier(tmp_path, '{"lock": 1}\n')
+    out = _adopt(wt)
+    assert out.returncode == 0, out.stderr
+    argv = (repo / "prettier-argv.txt").read_text().splitlines()
+    assert any(a.endswith("tests/sdlc.test.ts") for a in argv) and any(w.startswith("prettier --write on") for w in _sections(out.stdout)["WROTE"])
+
+
+def test_a_worktree_with_another_lockfile_prints_the_format_command_instead(tmp_path: Path) -> None:
+    repo, wt = _worktree_with_main_prettier(tmp_path, '{"lock": 2}\n')
+    out = _adopt(wt)
+    assert out.returncode == 0, out.stderr
+    assert not (repo / "prettier-argv.txt").exists()
+    line = next(m for m in _sections(out.stdout)["MANUAL"] if "prettier is not installed in this worktree" in m)
+    assert "run `prettier --write " in line and "tests/sdlc.test.ts" in line
+
+
 def test_without_prettier_installed_adopt_still_succeeds(tmp_path: Path) -> None:
     repo = _repo(tmp_path, "node")
     out = _adopt(repo)
@@ -2025,14 +2059,21 @@ def test_a_plain_adopt_writes_a_new_kit_path_when_free_or_an_unedited_kit_copy_H
 
 # 3.21.0: `--migrate` is the one way across kit versions.
 def _fake_gh(tmp_path: Path, head: str, *more: str, open_heads: tuple[str, ...] = ()) -> dict[str, str]:
-    """A gh whose merged PRs (gh api pulls) are the ones from branches `head` and `more`, and whose
-    open PRs are `open_heads`."""
+    """A gh whose merged PRs are the ones from branches `head` and `more` (`gh pr list --head B --state merged`
+    answers for exactly the branch asked), and whose open PRs are `open_heads`."""
     bin_dir = tmp_path / "bin"
     bin_dir.mkdir()
-    merged = "\\n".join((head, *more))
+    merged = " ".join((head, *more))
     opened = ",".join(f'{{"headRefName": "{h}"}}' for h in open_heads)
     (bin_dir / "gh").write_text(
-        f"#!/bin/sh\nif [ \"$1\" = api ]; then printf '{merged}\\n'; else echo '[{opened}]'; fi\n"
+        "#!/bin/sh\n"
+        'case "$*" in\n'
+        '  *"--state merged"*)\n'
+        '    while [ $# -gt 0 ]; do [ "$1" = --head ] && b="$2"; shift; done\n'
+        f'    for m in {merged}; do [ "$m" = "$b" ] && {{ echo "[{{\\"headRefName\\": \\"$b\\"}}]"; exit 0; }}; done\n'
+        "    echo '[]' ;;\n"
+        f"  *) echo '[{opened}]' ;;\n"
+        "esac\n"
     )
     (bin_dir / "gh").chmod(0o755)
     return {**_env(), "PATH": f"{bin_dir}{os.pathsep}{os.environ['PATH']}"}
@@ -2379,15 +2420,19 @@ def test_migrate_takes_a_feature_branch_the_plan_names(tmp_path: Path) -> None:
     assert (repo / "changes/archive/2026/2026-10/2026-10-02-unmerged-one").exists()  # a longer name is another branch
 
 
-def test_migrate_reads_all_merged_prs_not_the_latest_page(tmp_path: Path) -> None:
+def test_migrate_asks_gh_about_each_archives_own_branch_not_a_window_of_recent_prs(tmp_path: Path) -> None:
     repo = _stamped_3_18(tmp_path)
     env = _fake_gh(tmp_path, "milestone/merged-one-1")
     log = tmp_path / "gh.log"
     gh = tmp_path / "bin" / "gh"
     gh.write_text(f"#!/bin/sh\necho \"$@\" >> {log}\n" + gh.read_text().split("\n", 1)[1])
-    assert _migrate(repo, env).returncode == 0
-    api = [line for line in log.read_text().splitlines() if line.startswith("api")]
-    assert api and "--paginate" in api[0] and "state=closed" in api[0] and "limit" not in api[0]
+    res = _migrate(repo, env)
+    assert res.returncode == 0, res.stderr
+    asked = [line for line in log.read_text().splitlines() if "--state merged" in line]
+    assert any("--head milestone/merged-one-1 " in line for line in asked) and any("--head milestone/unmerged-one " in line for line in asked)
+    assert all("--limit 1" in line for line in asked) and not any(line.startswith("api") for line in log.read_text().splitlines())
+    kept = "\n".join(_sections(res.stdout)["MANUAL"])
+    assert "2026-10-02-unmerged-one: kept, gh could not confirm a merged PR from 2026-10-02-unmerged-one's own branch (looked for milestone/unmerged-one" in kept
 
 
 def test_migrate_removes_a_flat_layout_archive_in_the_same_run(tmp_path: Path) -> None:
