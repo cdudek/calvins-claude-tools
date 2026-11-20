@@ -57,7 +57,25 @@ def _repo(tmp_path: Path, feature: list) -> Path:
     return repo
 
 
+def _with_design(repo: Path) -> None:
+    """From 3.26.0 a change with a visual source lists the boards of it: one board, mapped by the first screen."""
+    change = repo / "changes" / ID
+    try:
+        decisions = json.loads((change / "decisions.json").read_text())
+        rows = json.loads((change / "screens.json").read_text())
+    except (OSError, ValueError):
+        return
+    entries = rows.get("entries") if isinstance(rows, dict) else rows
+    if not decisions.get("visualSource") or (change / "design.json").exists() or not isinstance(entries, list) or not entries:
+        return
+    entries[0].setdefault("design", ["b1"])
+    (change / "screens.json").write_text(json.dumps(rows))
+    (change / "design.json").write_text(json.dumps({"source": "asks", "boards": [{"id": "b1", "name": "Board one"}]}))
+
+
 def _gate(repo: Path, *args: str) -> subprocess.CompletedProcess[str]:
+    if args[:1] == ("approve",):
+        _with_design(repo)
     return subprocess.run(
         [sys.executable, str(GATE), *args], cwd=repo, capture_output=True, text=True, env=_env()
     )
@@ -76,8 +94,9 @@ def _approve_legacy(repo: Path) -> None:
     (change / "screens.json").write_text('[{"id": "x", "route": "/x", "viewport": [1, 1], "fixture": "f"}]')
     assert _gate(repo, "approve", ID).returncode == 0
     (change / "screens.json").unlink()
+    (change / "design.json").unlink(missing_ok=True)
     lock = json.loads((change / "lock.json").read_text())
-    lock.pop("visual"), lock["criteria"].pop("screens.json")
+    lock.pop("visual"), lock.pop("design", None), lock["criteria"].pop("screens.json"), lock["criteria"].pop("design.json", None)
     lock["screens"] = "required"
     (change / "lock.json").write_text(json.dumps(lock, indent=2) + "\n")
     _git(repo, "add", ".")
@@ -2177,6 +2196,70 @@ def test_approval_locks_the_app_flow_the_screens_and_the_design_system_pin(tmp_p
     assert lock["criteria"]["screens.json"] == hashlib.sha256((repo / "changes" / ID / "screens.json").read_bytes()).hexdigest()
     assert lock["scopeFolders"] == ["src/screens"]
     assert lock["designSystem"]["version"] == "1.2.0"
+
+
+def _design_repo(tmp_path: Path, monkeypatch: pytest.MonkeyPatch, boards: tuple[str, ...] = ("b1", "b2", "b3")) -> Path:
+    """The change has a design source with three boards; the first two screens map b1 and b2, b3 is unmapped."""
+    monkeypatch.setenv("HOME", str(tmp_path / "home"))  # where the owner's answers are read
+    repo = _repo(tmp_path, [])
+    (repo / "sdlc.json").write_text(json.dumps({"checks": {"milestone": ["true"]}, "ux": "on"}))
+    change = repo / "changes" / ID
+    (change / "decisions.json").write_text(json.dumps(VISUAL))
+    rows = [{**r, "design": [b]} if b else r for r, b in zip(SCREENS, ("b1", "b2", "", ""))]
+    (change / "design.json").write_text(json.dumps({"source": "https://design.example/f/1", "boards": [{"id": b, "name": f"Board {b}"} for b in boards]}))
+    _screens_json(repo, rows)
+    return repo
+
+
+def _design(repo: Path, **fields: object) -> None:
+    path = repo / "changes" / ID / "design.json"
+    path.write_text(json.dumps({**json.loads(path.read_text()), **fields}))
+    _git(repo, "add", ".")
+    _git(repo, "commit", "-qm", "design.json")
+
+
+def test_the_design_is_binding_for_which_screens_exist(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    from capture import dropped_id
+
+    import test_capture as tc
+
+    repo = _design_repo(tmp_path, monkeypatch)
+    r = _gate(repo, "approve", ID)  # three boards, two mapped, one not
+    assert r.returncode == 1 and "board b3 is mapped by no screens.json entry and is not dropped" in r.stdout
+    _design(repo, boards=[{"id": b, "name": b} for b in ("b1", "b2")])
+    rows = json.loads((repo / "changes" / ID / "screens.json").read_text())
+    rows[2]["design"] = ["b9"]
+    _screens_json(repo, rows)
+    assert "entry deals.list.empty maps board b9, which design.json does not list" in _gate(repo, "approve", ID).stdout
+    rows[2].pop("design")
+    _screens_json(repo, rows)
+    assert _gate(repo, "approve", ID).returncode == 0  # two boards, both mapped
+    (repo / "changes" / ID / "lock.json").unlink()
+    _design(repo, boards=[{"id": b, "name": b} for b in ("b1", "b2", "b3")], dropped=[{"board": "b3", "reason": "the detail panel replaces it"}])
+    refused = _gate(repo, "approve", ID)  # dropped, and nobody asked the owner
+    did = dropped_id([{"board": "b3", "reason": "the detail panel replaces it"}])
+    assert refused.returncode == 1 and "an agent cannot drop a board" in refused.stdout and f"finding {did}:" in refused.stdout
+    tc.owner_answers(repo, did, label="Drop these boards", change_id=ID, options=("Drop these boards", "Hold"))
+    assert _gate(repo, "approve", ID).returncode == 0
+    lock = _lock(repo)
+    assert lock["design"] == "inventory" and lock["dropped"] == did and "design.json" in lock["criteria"]
+    _git(repo, "add", ".")
+    _git(repo, "commit", "-qm", "approved")
+    _design(repo, dropped=[{"board": "b3", "reason": "changed after the owner said yes"}])  # the list the owner saw is locked
+    r = _gate(repo, "milestone", ID)
+    assert _last(r) == "VERIFY BLOCKED reason=protected-path" and "design.json" in r.stdout
+
+
+def test_a_deviation_is_the_one_field_the_build_may_add_after_approval(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    repo = _design_repo(tmp_path, monkeypatch, boards=("b1", "b2"))
+    _approve(repo)
+    rows = json.loads((repo / "changes" / ID / "screens.json").read_text())
+    rows[0]["deviates"] = "the list has one column less: the owner's screenshot shows it"
+    _screens_json(repo, rows)
+    assert _last(_gate(repo, "milestone", ID)) == "VERIFY BLOCKED reason=env"  # not protected-path: the approval holds
+    rows[0]["route"] = "/preview/elsewhere"
+    _screens_json(repo, rows)
+    assert _last(_gate(repo, "milestone", ID)) == "VERIFY BLOCKED reason=protected-path"
 
 
 def test_a_visual_change_without_screens_json_is_refused_at_approval(tmp_path: Path) -> None:

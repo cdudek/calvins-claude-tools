@@ -354,6 +354,19 @@ def authorized(target: str, change_id: str, change_dir: Path, decisions: dict) -
     return False
 
 
+def deviates_only(path: Path, tool: dict) -> bool:
+    """The edit changes no more of screens.json than the entries' `deviates` text (the one field the lock leaves open)."""
+    try:
+        now = path.read_text(encoding="utf-8")
+        new = tool["content"] if "content" in tool else now.replace(
+            str(tool.get("old_string", "")), str(tool.get("new_string", "")), -1 if tool.get("replace_all") else 1 if tool.get("old_string") else 0
+        )
+        core = helper("pass_proof").screens_core
+        return core(now) == core(new)
+    except Exception:  # unreadable, or no pass_proof: the edit stays locked
+        return False
+
+
 def branch_change() -> tuple[str, Path, dict] | None:
     """The change of the checked-out branch; the dispatch pointer only fills in when the branch names
     none. When both name a change and they differ, the edit is refused: a pointer never overrides."""
@@ -442,6 +455,8 @@ if len(parts) >= 3 and parts[0] == changes:
         if any(fnmatch.fnmatchcase(inside, n) for n in protected_files(change_dir, decisions)) and (state_file(change_dir, "lock.json")).exists():
             if authorized(rel, change_id, change_dir, decisions):
                 sys.exit(0)
+            if inside == "screens.json" and (change_dir / "design.json").is_file() and deviates_only(change_dir / "screens.json", payload.get("tool_input") or {}):
+                sys.exit(0)  # 3.26.0: the build records where it departs from a board; nothing else in the entries moves
             deny(
                 f"{changes}/{change_id}/{inside} is locked since the engineer approved the plan. "
                 "Stop and ask; record their words as `protectedEdit` in decisions.json first.",

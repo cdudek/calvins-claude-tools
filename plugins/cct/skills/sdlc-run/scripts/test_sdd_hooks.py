@@ -398,5 +398,42 @@ def test_chain_gate_protects_the_approved_screens_of_an_app_change(tmp_path: Pat
     assert edit(repo, f"changes/{ID}/screens/some-record.json").returncode == 0  # the per-screen records stay open
 
 
+ROWS = '[{"id": "a", "route": "/a", "design": ["b1"]}]'
+
+
+def test_the_build_may_record_a_deviation_and_nothing_else_in_a_locked_screens_json(tmp_path: Path) -> None:
+    repo = make(tmp_path)
+    change = repo / "changes" / ID
+    (change / "lock.json").write_text(json.dumps({"layout": 4, "visual": "app", "design": "inventory", "criteria": {}}))
+    (change / "screens.json").write_text(ROWS)
+    file = f"changes/{ID}/screens.json"
+    note = '{"id": "a", "route": "/a", "design": ["b1"], "deviates": "no filter bar"}'
+    assert edit(repo, file, old_string='{"id": "a", "route": "/a", "design": ["b1"]}', new_string=note).returncode == 2  # no design.json: locked
+    (change / "design.json").write_text('{"source": "x", "boards": [{"id": "b1", "name": "B"}]}')
+    assert edit(repo, file, old_string='{"id": "a", "route": "/a", "design": ["b1"]}', new_string=note).returncode == 0
+    assert edit(repo, file, content=f"[{note}]").returncode == 0
+    assert edit(repo, file, old_string='"/a"', new_string='"/b"').returncode == 2  # any other field stays locked
+    assert edit(repo, file, old_string='["b1"]', new_string='[]').returncode == 2
+    assert edit(repo, f"changes/{ID}/design.json", old_string="B", new_string="C").returncode == 2  # design.json is locked too
+
+
+def test_a_deviation_keeps_the_pass_and_a_changed_route_does_not(tmp_path: Path) -> None:
+    lock = json.dumps({"criteria": {}, "visual": "app"})
+    files = {"facts.md": "# f\n", "lock.json": lock, "screens.json": ROWS, "design.json": "{}"}
+    gated = _gated_files(tmp_path, files)
+    (tmp_path / "changes" / ID / "screens.json").write_text(ROWS.replace('"design"', '"deviates": "x", "design"'))
+    head = _commit_all(tmp_path)
+    assert pass_proof.proves(tmp_path, "changes", gated, head)
+    gated = head
+    (tmp_path / "changes" / ID / "screens.json").write_text(ROWS.replace("/a", "/b"))
+    assert not pass_proof.proves(tmp_path, "changes", gated, _commit_all(tmp_path))
+
+
+def test_the_hook_and_the_gate_read_screens_json_without_its_deviations_the_same_way() -> None:
+    for text in (ROWS, '{"entries": [{"id": "a", "deviates": "x", "route": "/a"}]}', "{not json", "[1]"):
+        assert pass_proof.screens_core(text) == verify_gate.screens_core(text)
+    assert pass_proof.screens_core('[{"id": "a", "deviates": "x"}]') == pass_proof.screens_core('[{"deviates": "y", "id": "a"}]')
+
+
 def test_the_routing_fields_are_the_gates(tmp_path: Path) -> None:
     assert pass_proof.ROUTING == verify_gate.ROUTING

@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import base64
 import hashlib
 import json
 import os
@@ -306,3 +307,92 @@ def test_every_decision_is_logged_in_order_with_its_batch(repo: Path) -> None:
     log = json.loads((ch(repo) / "screens/approved.json").read_text())["log"]
     assert [(r["entry"], r["answer"]) for r in log] == [("leads.list.empty", "accept"), ("leads.list.empty", "send-back")]
     assert all(r["batch"].startswith("screens-") and r["time"] for r in log) and log[0]["batch"] != log[1]["batch"]
+
+
+# --- 3.26.0: the design is binding for what exists ---------------------------------------------------
+
+BOARD = PNG + b"board"
+
+
+def with_design(repo: Path, deviates: str = "") -> None:
+    """3 boards: b1 (image) maps leads.list.empty, b2 (no image) maps leads.list.full, b3 is dropped; an optional deviation."""
+    change = ch(repo)
+    (change / "asks" / "design").mkdir(parents=True)
+    (change / "asks" / "design" / "b1.png").write_bytes(BOARD)
+    (change / "design.json").write_text(json.dumps({
+        "source": "https://design.example/file/1",
+        "boards": [{"id": "b1", "name": "Leads empty", "image": "asks/design/b1.png"}, {"id": "b2", "name": "Leads full"}, {"id": "b3", "name": "Old"}],
+        "dropped": [{"board": "b3", "reason": "replaced by the detail panel"}]}))  # fmt: skip
+    rows = json.loads((change / "screens.json").read_text())
+    rows[0]["design"], rows[1]["design"] = ["b1"], ["b2"]
+    if deviates:
+        rows[0]["deviates"] = deviates
+    (change / "screens.json").write_text(json.dumps(rows))
+
+
+def test_the_gallery_shows_the_board_next_to_the_app_the_deviation_and_the_counts(repo: Path) -> None:
+    with_design(repo, "no filter bar: the list has one column less")
+    page = gallery(repo).read_text()
+    assert "3 boards · 2 mapped · 1 dropped · 1 deviations" in page
+    assert "Deviates from the design:</b> no filter bar: the list has one column less" in page
+    assert base64.b64encode(BOARD).decode() in page  # the board image is embedded, the file stays single and offline
+    assert 'Leads full</b> (b2), no image: <a href="https://design.example/file/1">source</a>' in page
+
+
+def test_a_deviation_cannot_be_approved_in_bulk(repo: Path) -> None:
+    with_design(repo, "no filter bar")
+    plain = answers(repo, **{"leads.list.empty": "accept"})
+    res = ev(repo, "gallery", str(ch(repo)), "--import", str(plain))
+    assert res.returncode == 1 and "leads.list.empty: it deviates from the design" in res.stderr
+    assert not (ch(repo) / "screens" / "approved.json").exists() or "leads.list.empty" not in approved(repo)
+    tag = capture.deviation_tag("no filter bar")
+    body = json.loads(plain.read_text())
+    body["answers"]["leads.list.empty"]["deviation"] = capture.deviation_tag("another text")
+    plain.write_text(json.dumps(body))
+    assert "it deviates from the design" in ev(repo, "gallery", str(ch(repo)), "--import", str(plain)).stderr  # the text it names must be this one
+    body["answers"]["leads.list.empty"]["deviation"] = tag
+    plain.write_text(json.dumps(body))
+    first = ev(repo, "gallery", str(ch(repo)), "--import", str(plain))
+    assert first.returncode == 1 and "(1 with a deviation from the design, each accepted by name)" in first.stderr  # the dialog says how many
+    assert imp(repo, str(plain)).returncode == 0 and set(approved(repo)) == {"leads.list.empty"}
+
+
+def test_a_deviation_added_after_the_approval_needs_the_owner_again(repo: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setenv("HOME", str(repo.parent / "home"))
+    with_design(repo)
+    assert imp(repo, str(answers(repo, **{"leads.list.empty": "accept"}))).returncode == 0
+    import marks
+
+    marks._ANSWERS.clear()
+    assert capture.uncovered(ch(repo), approved(repo)) == []
+    rows = json.loads((ch(repo) / "screens.json").read_text())
+    rows[0]["deviates"] = "added by the build"
+    (ch(repo) / "screens.json").write_text(json.dumps(rows))
+    left = capture.uncovered(ch(repo), approved(repo))
+    assert any("leads.list.empty: no recorded batch of an owner approval holds it with its current deviation" in p for p in left)
+
+
+def test_the_status_line_counts_the_design(repo: Path) -> None:
+    with_design(repo, "x")
+    out = ev(repo, "status", str(ch(repo)))
+    assert out.stdout.splitlines()[-1] == "design: 3 boards · 2 mapped · 1 dropped · 1 deviations", out.stdout
+
+
+def test_the_decision_log_is_a_chain_and_a_spent_or_trimmed_log_is_refused(repo: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setenv("HOME", str(repo.parent / "home"))
+    imp(repo, str(answers(repo, **{"leads.list.empty": "accept"})))
+    old = json.loads((ch(repo) / "screens/approved.json").read_text())
+    imp(repo, str(answers(repo, **{"leads.list.empty": "send back"})))
+    log = json.loads((ch(repo) / "screens/approved.json").read_text())["log"]
+    assert all(r["hash"] and "prev" in r and "lock" in r for r in log) and capture.chain_problems(log, log[-1]["hash"]) == []
+    import marks
+
+    marks._ANSWERS.clear()
+    # the send back is removed and the old entry put back: a later send back spent that batch
+    (ch(repo) / "screens/approved.json").write_text(json.dumps({**old, "log": log, "head": log[-1]["hash"]}))
+    assert any("spent by a later send back" in p for p in capture.uncovered(ch(repo), approved(repo)))
+    # a log trimmed to the accept: the file's head no longer matches, and a rewritten entry breaks the chain
+    assert any("entries were removed" in p for p in capture.chain_problems(log[:1], log[-1]["hash"]))
+    rewritten = [{**log[0], "answer": "send-back"}, log[1]]
+    assert any("was changed" in p for p in capture.chain_problems(rewritten, log[-1]["hash"]))
+    assert capture.chain_problems([{"entry": "x", "answer": "accept", "batch": "b"}], None) == []  # a 3.25 log has no hashes: read as it is

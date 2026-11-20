@@ -117,11 +117,144 @@ def load_screens(change: Path) -> tuple[list[dict], list[str]]:
         ms = e.get("milestone", 1)
         if not isinstance(ms, int) or isinstance(ms, bool) or ms < 1:
             problems.append(f"{tag}: milestone must be a positive integer")
+        boards = e.get("design", [])
+        if not isinstance(boards, list) or not all(isinstance(b, str) and ID.match(b) for b in boards):
+            problems.append(f"{tag}: design must be a list of board ids from design.json")
+        if "deviates" in e and not (isinstance(e["deviates"], str) and e["deviates"].strip()):
+            problems.append(f"{tag}: deviates must say what differs from the board and why")
         if isinstance(route, str) and isinstance(vp, list):
             first = spots.setdefault((route, tuple(map(str, vp))), name)
             if first != name:
                 problems.append(f"{tag}: same route and viewport as {first}: the fixture shows only through the route, so give each state its own")
     return [e for e in entries if isinstance(e, dict)], problems
+
+
+# --- 3.26.0: the design is binding for what exists (design.json maps the boards of the design source to screens.json) ---
+
+def read_json(path: Path) -> object:
+    try:
+        return json.loads(path.read_text(encoding="utf-8"))
+    except (OSError, ValueError):
+        return None
+
+
+def load_design(change: Path) -> dict:
+    """design.json: {"source", "boards": [{"id", "name", "image"?}], "dropped": [{"board", "reason"}]}; {} when absent or unreadable."""
+    data = read_json(Path(change) / "design.json")
+    return data if isinstance(data, dict) else {}
+
+
+def boards_of(design: dict) -> list[dict]:
+    return [b for b in design.get("boards") or [] if isinstance(b, dict) and isinstance(b.get("id"), str)]
+
+
+def mapped(entry: dict) -> list[str]:
+    """The board ids an entry's `design` list names."""
+    return [b for b in entry.get("design") or [] if isinstance(b, str)] if isinstance(entry.get("design"), list) else []
+
+
+def dropped_of(design: dict) -> list[dict]:
+    return [d for d in design.get("dropped") or [] if isinstance(d, dict)]
+
+
+def dropped_id(dropped: list) -> str:
+    """The id of the owner's answer to the dropped list: `design-` and 16 hex of the sorted `<board> <reason>` lines.
+    The dialog is `Change <id>, finding <this id>: ...`, so the answer covers exactly this list and no other."""
+    lines = sorted(f"{d.get('board')} {d.get('reason')}" for d in dropped)
+    return "design-" + hashlib.sha256("\n".join(lines).encode()).hexdigest()[:16]
+
+
+def deviation_tag(text: str) -> str:
+    """What an approval pair carries for an entry with a `deviates` text: the owner accepted exactly this text."""
+    return "dev-" + hashlib.sha256(text.strip().encode()).hexdigest()[:8]
+
+
+def design_problems(change: Path, entries: list[dict], required: bool = False) -> list[str]:
+    """Every board of design.json is mapped by an entry's `design` list or dropped with a reason, and every entry
+    names only boards design.json lists. `required`: the change has a design input, so design.json must exist."""
+    change = Path(change)
+    if not (change / "design.json").is_file():
+        return ["design.json is missing: the change has a design input, so the UX plan lists every board of it"] if required else []
+    design = load_design(change)
+    boards = design.get("boards")
+    if not (isinstance(design.get("source"), str) and design["source"].strip() and isinstance(boards, list) and boards):
+        return ['design.json must be {"source": "<link or path>", "boards": [{"id", "name", "image"?}, ...]} with at least one board']
+    problems, ids = [], []
+    for b in boards:
+        name = b.get("id") if isinstance(b, dict) else None
+        if not (isinstance(name, str) and ID.match(name)) or not isinstance(b.get("name"), str) or not b["name"].strip():
+            problems.append(f"design.json board {name or b!r}: needs a plain id and a name")
+        elif name in ids:
+            problems.append(f"design.json board {name}: id is used twice")
+        else:
+            ids.append(name)
+        image = b.get("image") if isinstance(b, dict) else None
+        if image is not None and not (isinstance(image, str) and (change / image).is_file() and (change / image).resolve().is_relative_to(change.resolve())):
+            problems.append(f"design.json board {name}: image {image!r} is not a file of the change")
+    dropped = design.get("dropped", [])
+    ok = isinstance(dropped, list) and all(isinstance(d, dict) and d.get("board") in ids and isinstance(d.get("reason"), str) and d["reason"].strip() for d in dropped)
+    if not ok:
+        problems.append('design.json dropped must be [{"board": <a board id>, "reason": "..."}, ...]')
+        dropped = []
+    used = {b for e in entries for b in mapped(e)}
+    for e in entries:
+        problems += [f"screens.json entry {e.get('id')} maps board {b}, which design.json does not list" for b in mapped(e) if b not in ids]
+    gone = {d["board"] for d in dropped}
+    problems += [f"board {b} is mapped by no screens.json entry and is not dropped: map it (\"design\": [\"{b}\"]) or drop it with a reason" for b in ids if b not in used and b not in gone]
+    problems += [f"board {b} is both mapped and dropped: choose one" for b in ids if b in used and b in gone]
+    return problems
+
+
+def design_counts(change: Path, entries: list[dict]) -> tuple[int, int, int, int] | None:
+    """(boards, mapped, dropped, deviations) of a change that has design.json, else None."""
+    design = load_design(change)
+    boards = [b["id"] for b in boards_of(design)]
+    if not boards:
+        return None
+    used = {b for e in entries for b in mapped(e)}
+    return len(boards), len([b for b in boards if b in used]), len(dropped_of(design)), len([e for e in entries if str(e.get("deviates", "")).strip()])
+
+
+def lock_sha(change: Path) -> str:
+    for rel in ("state/lock.json", "lock.json"):
+        data = read_json(Path(change) / rel)
+        if isinstance(data, dict):
+            return str(data.get("sha", ""))
+    return ""
+
+
+def link(log: list, record: dict, lock: str) -> dict:
+    """`record` chained to the log: the hash of the entry before it and the lock it was decided under go into its own hash."""
+    prev = log[-1].get("hash", "") if log else ""
+    body = {k: v for k, v in record.items() if k not in ("hash", "prev", "lock")}
+    body.update({"prev": prev, "lock": lock})
+    body["hash"] = hashlib.sha256(json.dumps(body, sort_keys=True).encode()).hexdigest()
+    return body
+
+
+def chain_problems(log: list, head: object = None) -> list[str]:
+    """A log written before 3.26.0 has no hashes and is read as it is; once an entry is hashed, every later one is,
+    each names the hash of the one before it, and the file's `head` is the last. A trimmed or rewritten log fails."""
+    out, prev, hashed = [], "", False
+    for i, rec in enumerate(log):
+        if "hash" not in rec:
+            if hashed:
+                out.append(f"log entry {i + 1} has no hash after a hashed one")
+            continue
+        body = {k: v for k, v in rec.items() if k != "hash"}
+        want = hashlib.sha256(json.dumps(body, sort_keys=True).encode()).hexdigest()
+        if rec.get("prev") != prev or rec["hash"] != want:
+            out.append(f"log entry {i + 1} ({rec.get('entry')}) does not follow the one before it: the log was changed")
+        prev, hashed = rec["hash"], True
+    if hashed and head != prev:
+        out.append("the log does not end where approved.json says it does: entries were removed")
+    return out
+
+
+def replayed(log: list, entry: str, bid: str) -> bool:
+    """`bid` already approved `entry`, and a send back of the entry came after it: that batch is spent."""
+    at = [i for i, r in enumerate(log) if r.get("entry") == entry and r.get("answer") == "accept" and r.get("batch") == bid]
+    return bool(at) and any(r.get("entry") == entry and r.get("answer") == "send-back" for r in log[at[0] + 1 :])
 
 
 def read_config(repo: Path) -> dict:
@@ -380,13 +513,15 @@ def approval_id(pairs: list) -> str:
 def uncovered(change: Path, approved: dict) -> list[str]:
     """The approved entries no owner decision covers. approved.json is the owner's approval, so each entry
     names the batch (`decision`) its import was confirmed in: `batches[<id>]` lists that batch's
-    `[entry, sha256]` pairs (a send back adds `"send-back"`), the id is their `approval_id`, and the owner answered `Approve screens` to the
-    dialog of that id (`marks.owner_decisions`, the transcript). A file an agent wrote covers nothing."""
-    try:
-        data = json.loads((change / "screens" / "approved.json").read_text(encoding="utf-8"))
-        batches = data["batches"] if isinstance(data["batches"], dict) else {}
-    except (OSError, ValueError, KeyError, TypeError):
-        batches = {}
+    `[entry, sha256]` pairs (a send back adds `"send-back"`, an entry with a `deviates` text its `dev-` tag), the id is their
+    `approval_id`, and the owner answered `Approve screens` to the dialog of that id (`marks.owner_decisions`, the
+    transcript). A file an agent wrote covers nothing, a batch a later send back spent covers nothing (the decision
+    log says so), and a log that was trimmed or rewritten fails the check."""
+    data = read_json(change / "screens" / "approved.json")
+    data = data if isinstance(data, dict) else {}
+    batches = data["batches"] if isinstance(data.get("batches"), dict) else {}
+    log = [r for r in data["log"] if isinstance(r, dict)] if isinstance(data.get("log"), list) else []
+    out = [f"decision log: {p}" for p in chain_problems(log, data.get("head"))]
     repo = Path(subprocess.run(["git", "-C", str(change), "rev-parse", "--show-toplevel"], capture_output=True, text=True).stdout.strip() or ".")
     sys.dont_write_bytecode = True  # the gate checks that the tree is clean afterwards: no __pycache__ from here
     try:
@@ -395,15 +530,19 @@ def uncovered(change: Path, approved: dict) -> list[str]:
         decided = owner_decisions(repo, change.name)
     except ImportError:  # no reader of owner answers: nothing is covered
         decided = {}
-    out = []
+    tags = {e["id"]: deviation_tag(e["deviates"]) for e in load_screens(change)[0] if isinstance(e.get("deviates"), str) and e["deviates"].strip()}
     for entry, a in approved.items():
         bid = a.get("decision")
         pairs = batches.get(bid) if isinstance(bid, str) else None
         ok = isinstance(pairs, list) and all(isinstance(p, list) and len(p) in (2, 3) for p in pairs)
-        if not ok or approval_id(pairs) != bid or [entry, a.get("sha256")] not in pairs:
-            out.append(f"{entry}: no recorded batch of an owner approval holds it")
+        # a deviation the owner did not see (added after the approval) is not covered: it needs the gallery again
+        held = ok and any(p[:2] == [entry, a.get("sha256")] and p[2:] != ["send-back"] and (entry not in tags or p[2:] == [tags[entry]]) for p in pairs)
+        if not ok or approval_id(pairs) != bid or not held:
+            out.append(f"{entry}: no recorded batch of an owner approval holds it" + (" with its current deviation" if entry in tags else ""))
         elif decided.get(bid, ("",))[0] != "screens":
             out.append(f"{entry}: the owner has not answered the dialog of {bid}")
+        elif replayed(log, entry, bid):
+            out.append(f"{entry}: the owner's answer of {bid} was spent by a later send back: approve the screen again")
     return out
 
 
@@ -490,7 +629,8 @@ def main(argv: list[str]) -> int:
         return 2
     change = Path(args[1]).resolve()
     if args[0] == "check":
-        problems = load_screens(change)[1]
+        entries, problems = load_screens(change)
+        problems += design_problems(change, entries) if not problems else []
         print("\n".join(problems))
         return 1 if problems else 0
     repo = Path(subprocess.run(["git", "-C", str(change), "rev-parse", "--show-toplevel"], capture_output=True, text=True).stdout.strip() or ".")

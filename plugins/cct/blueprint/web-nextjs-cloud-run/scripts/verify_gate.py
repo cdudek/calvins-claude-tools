@@ -178,12 +178,29 @@ def criteria_hash(change: Path, checks: object, plan: bool = True) -> dict[str, 
             section(read(change / "plan.md"), "Milestones").encode("utf-8")
         ).hexdigest()
     if plan and (change / "screens.json").is_file():  # from 3.25.0 the screens to prove are approved too
-        hashes["screens.json"] = hashlib.sha256((change / "screens.json").read_bytes()).hexdigest()
+        raw = (change / "screens.json").read_bytes()
+        design = (change / "design.json").is_file()  # from 3.26.0 the design inventory is locked, and `deviates` alone may change
+        hashes["screens.json"] = hashlib.sha256(screens_core(raw.decode("utf-8", "replace")).encode() if design else raw).hexdigest()
+        if design:
+            hashes["design.json"] = hashlib.sha256((change / "design.json").read_bytes()).hexdigest()
     if plan:  # every layout locks the routing fields
         hashes["decisions.routing"] = hashlib.sha256(
             json.dumps(routing(change), sort_keys=True).encode("utf-8")
         ).hexdigest()
     return hashes
+
+
+def screens_core(text: str) -> str:
+    """screens.json without the entries' `deviates` text: the one field of an entry the build may change after approval.
+    hooks/pass_proof.py holds the same rule; test_passes keeps them equal."""
+    try:
+        data = json.loads(text)
+    except ValueError:
+        return text
+    for row in (data.get("entries") if isinstance(data, dict) else data) or []:
+        if isinstance(row, dict):
+            row.pop("deviates", None)
+    return json.dumps(data, sort_keys=True)
 
 
 def routing(change: Path) -> dict:
@@ -902,6 +919,22 @@ def design_system_moves(lock: dict, cfg: dict, repo: Path) -> list[str]:
     return out
 
 
+def dropped_problems(change: Path) -> list[str]:
+    """A dropped board is the owner's decision: they answered `Drop these boards` to the dialog of exactly this list."""
+    import capture
+    from marks import owner_decisions
+
+    dropped = capture.dropped_of(capture.load_design(change))
+    did = capture.dropped_id(dropped) if dropped else ""
+    if not dropped or owner_decisions(root(), change.name).get(did, ("",))[0] == "design-drop":
+        return []
+    return [
+        f"design.json drops {len(dropped)} board(s) ({', '.join(str(d.get('board')) for d in dropped)}) and an agent cannot drop a board. Ask the owner "
+        f"(AskUserQuestion, options Drop these boards | Hold), the question starting exactly:\n  Change {change.name}, finding {did}: "
+        f"Drop these {len(dropped)} design boards? " + "; ".join(f"{d.get('board')} ({d.get('reason')})" for d in dropped) + "\nthen run approve again."
+    ]
+
+
 def approve(change: Path, cfg: dict) -> int:
     v4 = spec.applies(change)
     problems = lint_problems(change) + approval_blockers(change)  # the cheap pure check first
@@ -920,7 +953,12 @@ def approve(change: Path, cfg: dict) -> int:
     if app:
         import capture  # 3.25.0: scripts/capture.py, imported only here so a kept older install still runs the other scopes
 
-        problems += capture.load_screens(change)[1]
+        entries, found = capture.load_screens(change)
+        problems += found
+        if not found:  # 3.26.0: the design is binding for which screens exist
+            decisions = read_decisions(change) or {}
+            problems += capture.design_problems(change, entries, has_visual_source(decisions.get("visualSource")) or (change / "asks" / "design").is_dir())
+            problems += dropped_problems(change)
     if gap := full_e2e_gap((cfg.get("checks") or {}).get("milestone") or [], root()):
         problems.append(gap)
     if not v4 and not spec.state_path(change, "done.json").exists():  # approval requires its artifacts
@@ -943,6 +981,10 @@ def approve(change: Path, cfg: dict) -> int:
     }
     if app:
         lock["visual"] = "app"
+        if (change / "design.json").is_file():  # 3.26.0: the board inventory is part of what was approved
+            lock["design"] = "inventory"
+            if dropped := capture.dropped_of(capture.load_design(change)):
+                lock["dropped"] = capture.dropped_id(dropped)  # the owner's answer covers exactly this list
         # the folders the plan says new files go in: the chain-gate scope guard reads this snapshot, not the plan
         found = re.findall(r"`([^`]+/)`", section(read(change / "plan.md"), "Where things go") + section(read(change / "design.md"), "Where things go"))
         lock["scopeFolders"] = sorted({f.strip("/") for f in found if f.strip("/") and ".." not in f.split("/")})
@@ -1237,6 +1279,7 @@ KIT_HEAVY = {
     "aa80c7f1cdab2e74",
     "a09c60909df8931b",
     "a13b3e0ac5548a40",
+    "d5f94641e353c11a",
 }
 
 
