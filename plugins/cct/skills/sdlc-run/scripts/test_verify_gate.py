@@ -2208,6 +2208,7 @@ def test_approval_locks_the_app_flow_the_screens_and_the_design_system_pin(tmp_p
     assert lock["criteria"]["screens.json"] == hashlib.sha256((repo / "changes" / ID / "screens.json").read_bytes()).hexdigest()
     assert lock["scopeFolders"] == ["src/screens"]
     assert lock["designSystem"]["version"] == "1.2.0"
+    assert lock["design"] == "none"  # 3.26.1: the lock says it is 3.26 or later, so the decision log must be a full chain
 
 
 def _design_repo(tmp_path: Path, monkeypatch: pytest.MonkeyPatch, boards: tuple[str, ...] = ("b1", "b2", "b3")) -> Path:

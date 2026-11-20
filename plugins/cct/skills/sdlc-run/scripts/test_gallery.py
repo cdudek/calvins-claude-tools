@@ -447,3 +447,34 @@ def test_a_kept_older_capture_py_takes_the_old_path_without_a_design_and_stops_w
     with_design(repo)
     out = run("gallery", str(ch(repo)))
     assert out.returncode == 1 and "adopt --upgrade --replace scripts/capture.py --apply" in out.stderr
+
+
+def _chained(n: int) -> list[dict]:
+    log: list[dict] = []
+    for i in range(n):
+        log.append(capture.link(log, {"entry": f"e{i}", "answer": "accept", "batch": "b"}, "sha"))
+    return log
+
+
+def test_a_3_26_log_refuses_unhashed_entries_a_mixed_log_and_a_head_that_is_not_the_last_entry() -> None:
+    plain = [{"entry": "x", "answer": "accept", "batch": "b"}]
+    assert capture.chain_problems(plain, None, strict=True)  # nothing is hashed: the whole log is an agent's text
+    assert capture.chain_problems(plain, None) == []  # a log before 3.26 keeps its path
+    log = _chained(2)
+    assert capture.chain_problems(log, log[-1]["hash"], strict=True) == []
+    assert capture.chain_problems([], None, strict=True) == [] and capture.chain_problems([], "", strict=True) == []
+    assert capture.chain_problems(log + plain, log[-1]["hash"], strict=True)  # hashed then unhashed
+    assert capture.chain_problems(plain + log, log[-1]["hash"], strict=True)  # unhashed then hashed
+    assert capture.chain_problems([], "forged", strict=True)  # a head with no entries
+    assert any("removed" in p for p in capture.chain_problems(plain, "forged", strict=True))  # head vs last, nothing hashed
+
+
+def test_the_gate_reads_the_log_strictly_when_the_lock_is_3_26_and_loosely_before(repo: Path) -> None:
+    approved_json = ch(repo) / "screens" / "approved.json"
+    approved_json.parent.mkdir(exist_ok=True)
+    entry = {"sha256": "x", "decision": "b"}
+    approved_json.write_text(json.dumps({"format": 1, "entries": {"leads.list.empty": entry}, "batches": {}, "log": [{"entry": "leads.list.empty", "answer": "accept", "batch": "b"}]}))
+    old = capture.uncovered(ch(repo), {"leads.list.empty": entry})
+    assert not any(p.startswith("decision log") for p in old)  # locked before 3.26: read as it is
+    (ch(repo) / "lock.json").write_text(json.dumps({"visual": "app", "criteria": {}, "design": "none"}))
+    assert any(p.startswith("decision log") for p in capture.uncovered(ch(repo), {"leads.list.empty": entry}))

@@ -1013,6 +1013,8 @@ def approve(change: Path, cfg: dict) -> int:
             lock["inventory"] = capture.inventory_id(capture.load_design(change))  # the owner's answer covers exactly this list
             if images := capture.image_digests(change):
                 lock["designImages"] = images  # the gallery and the close refuse an image that changed since
+        else:
+            lock["design"] = "none"  # no inventory, but a 3.26+ lock: the decision log must be a full hash chain (capture.uncovered)
         # the folders the plan says new files go in: the chain-gate scope guard reads this snapshot, not the plan
         found = re.findall(r"`([^`]+/)`", section(read(change / "plan.md"), "Where things go") + section(read(change / "design.md"), "Where things go"))
         lock["scopeFolders"] = sorted({f.strip("/") for f in found if f.strip("/") and ".." not in f.split("/")})

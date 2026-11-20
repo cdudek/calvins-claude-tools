@@ -277,21 +277,24 @@ def link(log: list, record: dict, lock: str) -> dict:
     return body
 
 
-def chain_problems(log: list, head: object = None) -> list[str]:
+def chain_problems(log: list, head: object = None, strict: bool = False) -> list[str]:
     """A log written before 3.26.0 has no hashes and is read as it is; once an entry is hashed, every later one is,
-    each names the hash of the one before it, and the file's `head` is the last. A trimmed or rewritten log fails."""
+    each names the hash of the one before it, and the file's `head` is the last. A trimmed or rewritten log fails.
+    `strict` (a 3.26+ lock): every entry is hashed, none is missing from the chain, and `head` is the last entry's
+    hash even when no entry is hashed."""
     out, prev, hashed = [], "", False
     for i, rec in enumerate(log):
         if "hash" not in rec:
-            if hashed:
-                out.append(f"log entry {i + 1} has no hash after a hashed one")
+            if hashed or strict:
+                out.append(f"log entry {i + 1} has no hash" + (" after a hashed one" if hashed else ""))
             continue
         body = {k: v for k, v in rec.items() if k != "hash"}
         want = hashlib.sha256(json.dumps(body, sort_keys=True).encode()).hexdigest()
         if rec.get("prev") != prev or rec["hash"] != want:
             out.append(f"log entry {i + 1} ({rec.get('entry')}) does not follow the one before it: the log was changed")
         prev, hashed = rec["hash"], True
-    if hashed and head != prev:
+    last = log[-1].get("hash", "") if log else ""
+    if (hashed or strict) and (head or "") != (prev if hashed else last):
         out.append("the log does not end where approved.json says it does: entries were removed")
     return out
 
@@ -566,7 +569,8 @@ def uncovered(change: Path, approved: dict) -> list[str]:
     data = data if isinstance(data, dict) else {}
     batches = data["batches"] if isinstance(data.get("batches"), dict) else {}
     log = [r for r in data["log"] if isinstance(r, dict)] if isinstance(data.get("log"), list) else []
-    out = [f"decision log: {p}" for p in chain_problems(log, data.get("head"))]
+    lock = next((d for rel in ("state/lock.json", "lock.json") if isinstance(d := read_json(change / rel), dict)), {})
+    out = [f"decision log: {p}" for p in chain_problems(log, data.get("head"), strict="design" in lock)]  # 3.26.1: the lock says how strict
     repo = Path(subprocess.run(["git", "-C", str(change), "rev-parse", "--show-toplevel"], capture_output=True, text=True).stdout.strip() or ".")
     sys.dont_write_bytecode = True  # the gate checks that the tree is clean afterwards: no __pycache__ from here
     try:
