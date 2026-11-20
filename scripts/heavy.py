@@ -127,7 +127,7 @@ def program_heavy(argv: list[str]) -> bool:
             if a == "-m":
                 return heavy_name(next(it, "").split(".")[0])
             if a in ("-c", "-e", "--eval", "-p"):
-                return False
+                return False  # inline code is quick; `mutates` treats it as a possible writer
             if not a.startswith("-"):
                 name = os.path.splitext(os.path.basename(a))[0]
                 if name == "verify_gate":
@@ -693,6 +693,46 @@ def git_parts(args: list[str]) -> tuple[str, list[str], str]:
     return (args[i], args[i + 1 :], where) if i < len(args) else ("", [], where)
 
 
+NODE_VALUE_OPTIONS = {"-r", "--require", "--import", "--loader", "--experimental-loader", "--input-type", "-C", "--conditions", "--env-file"}
+
+
+def inline_code(prog: str, args: list[str]) -> bool:
+    """The interpreter runs code given on its command line: python `-c` (also in a cluster, `-Ic`, or attached,
+    `-cCODE`, after `-X x` / `-W x`), node `-e` / `-p` / `--eval[=]` / `--print[=]`. node `-c` only checks syntax."""
+    if prog == "deno":
+        return args[:1] == ["eval"]
+    python = prog.startswith("python")
+    if not python and prog not in ("node", "tsx", "ts-node"):
+        return False
+    i = 0
+    while i < len(args):
+        a = args[i]
+        if a == "--" or not a.startswith("-") or a == "-":
+            return False  # the script (or module) starts here: what follows is its own
+        if python and not a.startswith("--"):
+            for k, ch in enumerate(a[1:], 1):
+                if ch == "c":
+                    return True
+                if ch == "m":
+                    return False
+                if ch in "WX":
+                    i += 0 if a[k + 1 :] else 1  # the value is attached, or the next argument
+                    break
+        elif not python:
+            if a in ("-e", "--eval", "-p", "--print") or a.startswith(("--eval=", "--print=")) or re.fullmatch(r"-[ep]+", a):
+                return True
+            if a in NODE_VALUE_OPTIONS:
+                i += 1
+        i += 1
+    return False
+
+
+def resolve_path(cwd: str | None, path: str) -> str | None:
+    """The folder-independent meaning of `path`: absolute paths stand alone, relative ones need a known cwd."""
+    path = os.path.expanduser(path)
+    return os.path.realpath(path) if os.path.isabs(path) else (os.path.realpath(os.path.join(cwd, path)) if cwd else None)
+
+
 def mutates(argv: list[str], cfg: dict) -> bool:
     """A command that changes files, history, installed packages or build output. Reading is never one."""
     while argv and ENV_ASSIGN.fullmatch(argv[0]):
@@ -700,6 +740,8 @@ def mutates(argv: list[str], cfg: dict) -> bool:
     if not argv:
         return False
     prog, rest = os.path.basename(argv[0]), argv[1:]
+    if inline_code(prog, rest):
+        return True  # inline code may write anything: unknown, so a writer where the main folder is at stake
     if prog == "git":
         sub, args, _ = git_parts(rest)
         if sub == "worktree":
@@ -734,25 +776,30 @@ def writes_in_main(command: str, payload_cwd: str, cfg: dict | None = None) -> b
     """A helper's command that changes the main working folder: file writes, redirects, mutating git,
     package installs, builds and tests that run there. Reading is fine. The shell starts in the main
     folder on every call, so a `cd` moves the check with it: only a command whose folder (after the
-    `cd`, resolved) is the main folder counts. A destination the line computes (`$VAR`) is not followed."""
+    `cd`, resolved) is the main folder counts. A destination the line computes (`$VAR`, a backtick, `-`)
+    cannot be resolved, so what follows may be in the main folder: it fails closed."""
     cfg, cwd = cfg or {}, payload_cwd
     cache: dict[str, bool] = {}
 
     def in_main(path: str | None) -> bool:
-        return bool(path) and cache.setdefault(path, in_main_folder(path))
+        return path is None or (bool(path) and cache.setdefault(path, in_main_folder(path)))  # None: unknown
 
     for seg in shell_segments(command):
         for argv in inner_argv(seg):
             prog = os.path.basename(argv[0])
             if prog in ("cd", "pushd"):
-                target = argv[1] if len(argv) > 1 else "~"
+                operands = argv[1:]
+                while operands and operands[0].startswith("-") and operands[0] != "-":  # cd -P, cd -L, cd --
+                    if operands.pop(0) == "--":
+                        break
+                target = operands[0] if operands else "~"
                 unknown = any(c in target for c in "$`") or target == "-"
-                cwd = None if unknown or cwd is None else os.path.realpath(os.path.join(cwd, os.path.expanduser(target)))
+                cwd = None if unknown else resolve_path(cwd, target)
                 continue
             where = cwd
             if prog == "git":
                 dash_c = git_parts(argv[1:])[2]
-                where = os.path.realpath(os.path.join(cwd, os.path.expanduser(dash_c))) if dash_c and cwd else cwd
+                where = resolve_path(cwd, dash_c) if dash_c else cwd
             if not in_main(where):
                 continue
             if mutates(argv, cfg):
@@ -760,8 +807,9 @@ def writes_in_main(command: str, payload_cwd: str, cfg: dict | None = None) -> b
         # a redirect writes even from a read-only tool; its folder is the target's, not the line's
         for argv in inner_argv(seg):
             target = redirect_target(argv)
-            if target and cwd:
-                if in_main(os.path.dirname(os.path.realpath(os.path.join(cwd, os.path.expanduser(target))))):
+            if target:
+                folder = resolve_path(cwd, target)
+                if in_main(os.path.dirname(folder) if folder else None):
                     return True
     return False
 

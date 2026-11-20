@@ -2349,13 +2349,14 @@ def test_lockfile_readers_for_pnpm_and_yarn(tmp_path: Path) -> None:
 
 
 
-def test_the_milestone_gate_captures_the_fixture_app_end_to_end(tmp_path: Path) -> None:
+def test_the_milestone_gate_captures_the_fixture_app_end_to_end(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
     """Close job: one app start, every entry twice; no baseline blocks, an approved baseline passes,
     a changed page fails with the entry name. The browser is the fake driver of test_capture.py."""
     import hashlib
 
     import test_capture as tc
 
+    monkeypatch.setenv("HOME", str(tmp_path / "home"))  # where the owner's answers are read
     repo = _repo(tmp_path, [])
     (repo / "app.py").write_text(tc.APP)
     (repo / "driver.py").write_text(tc.DRIVER)
@@ -2372,9 +2373,12 @@ def test_the_milestone_gate_captures_the_fixture_app_end_to_end(tmp_path: Path) 
         shot = change / "verify/shots" / f"{e['id']}.png"
         (change / "screens" / f"{e['id']}.png").write_bytes(shot.read_bytes())
         entries[e["id"]] = {"sha256": hashlib.sha256(shot.read_bytes()).hexdigest(), "file": f"screens/{e['id']}.png"}
-    (change / "screens/approved.json").write_text(json.dumps({"format": 1, "entries": entries}))
+    tc._seal(repo, {"format": 1, "entries": entries}, owner=False, change_id=ID)  # approved.json as an agent could write it
     _git(repo, "add", ".")
-    _git(repo, "commit", "-qm", "owner approved the screens")
+    _git(repo, "commit", "-qm", "approved.json without the owner")
+    r = _gate(repo, "milestone", ID)
+    assert _last(r) == f"VERIFY FAIL milestone {ID} check=app-screens" and "no owner decision covers" in r.stdout
+    tc.owner_answers(repo, next(iter(json.loads((change / "screens/approved.json").read_text())["batches"])), change_id=ID)
     r = _gate(repo, "milestone", ID)
     assert _last(r).startswith(f"VERIFY PASS milestone {ID}"), r.stdout
     (repo / "app.py").write_text(tc.APP.replace("'MARK', ''", "'MARK', 'x'"))

@@ -95,6 +95,7 @@ OWNER_LABELS = {
     "hold": "hold",
     "skip visual evidence": "skip",
     "run visual evidence": "run",
+    "approve screens": "screens",
 }
 DEFER = re.compile(r"defer to milestone (\d+)", re.I)
 
@@ -120,9 +121,16 @@ def transcript_dirs(repo: Path) -> list[Path]:
     ).stdout.strip()
     if common.endswith("/.git"):
         roots.add(Path(common).parent.resolve())
+    projects = Path.home() / ".claude/projects"
+    slug = lambda path: re.sub(r"[^A-Za-z0-9]", "-", str(path))  # noqa: E731
+    names = {slug(root) for root in roots}
+    for root in list(roots):  # the owner may have answered in a sibling worktree, a removed one included
+        prefix = slug(root / ".worktrees") + "-"
+        if projects.is_dir():
+            names |= {d.name for d in projects.iterdir() if d.name.startswith(prefix)}
     found = []
-    for root in sorted(roots):
-        base = Path.home() / ".claude/projects" / re.sub(r"[^A-Za-z0-9]", "-", str(root))
+    for name in sorted(names):
+        base = projects / name
         if base.is_dir() and not any(p.is_symlink() for p in (base, base.parent, base.parent.parent)):
             found.append(base)
     return found

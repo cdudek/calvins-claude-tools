@@ -223,7 +223,7 @@ def protected_files(change_dir: Path, decisions: dict) -> tuple[str, ...]:
                 action="restore lock.json from git or run `verify_gate.py approve` again",
             )
     if proof.app_locked(lock):  # 3.25.0: the screens to prove are approved with the plan
-        names = [*names, *proof.APP_LOCKED_FILES]
+        names = [*names, *proof.APP_LOCKED_FILES, *proof.APP_LOCKED_GLOBS]
     return tuple(dict.fromkeys(n for n in names if n not in ticked))
 
 
@@ -439,7 +439,7 @@ if len(parts) >= 3 and parts[0] == changes:
     v4 = is_v4(change_dir, decisions)
 
     if is_milestone(decisions) or v4:
-        if inside in protected_files(change_dir, decisions) and (state_file(change_dir, "lock.json")).exists():
+        if any(fnmatch.fnmatchcase(inside, n) for n in protected_files(change_dir, decisions)) and (state_file(change_dir, "lock.json")).exists():
             if authorized(rel, change_id, change_dir, decisions):
                 sys.exit(0)
             deny(

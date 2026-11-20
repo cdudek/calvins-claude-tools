@@ -522,6 +522,74 @@ def test_the_hook_refuses_a_helpers_write_in_the_main_folder(tmp_path: Path) -> 
     assert call("python3 scripts/verify_gate.py approve m-1", wt) == 0
 
 
+def test_the_hook_fails_closed_on_a_cd_it_cannot_resolve(tmp_path: Path) -> None:
+    main = tmp_path / "main"
+    main.mkdir()
+    _git(main, "init", "-q")
+    _git(main, "-c", "user.name=t", "-c", "user.email=t@t", "commit", "-q", "--allow-empty", "-m", "i")
+    wt = tmp_path / "wt"
+    _git(main, "worktree", "add", "-q", "-b", "feat", str(wt))
+
+    def call(cmd: str, cwd: Path) -> int:
+        return _guard(cwd, {"cwd": str(cwd), "agent_id": "a1", "tool_input": {"command": cmd}}).returncode
+
+    for unknown in ("cd $X && touch x", "cd `pwd` && touch x", "cd - && touch x", "cd \"$(dirname $F)\" && echo hi > x"):
+        assert call(unknown, wt) == 2, unknown
+        assert call(unknown, main) == 2, unknown
+    assert call("cd $X && ls", wt) == 0, "reading is fine wherever it runs"
+    assert call(f"cd $X && cd {wt} && touch x", main) == 0, "a later literal cd resolves it again"
+
+
+@pytest.mark.parametrize("cmd", ["python3 -c print(1)", "node -e 1", "node --eval 1", "node -p 1", "python3 -c pass"])
+def test_inline_interpreter_code_is_light_for_the_queue(cmd: str) -> None:
+    assert _heavy_classify(cmd) == "light"
+
+
+def test_inline_interpreter_code_counts_as_a_writer_only_in_the_main_folder(tmp_path: Path) -> None:
+    main = tmp_path / "main"
+    main.mkdir()
+    _git(main, "init", "-q")
+    _git(main, "-c", "user.name=t", "-c", "user.email=t@t", "commit", "-q", "--allow-empty", "-m", "i")
+    wt = tmp_path / "wt"
+    _git(main, "worktree", "add", "-q", "-b", "feat", str(wt))
+
+    def call(cmd: str, cwd: Path) -> int:
+        return _guard(cwd, {"cwd": str(cwd), "agent_id": "a1", "tool_input": {"command": cmd}}).returncode
+
+    for inline in ("python3 -c 'open(\"x\", \"w\")'", "node -e 1", "node --eval 1", "node -p 1"):
+        assert call(inline, main) == 2, inline
+        assert call(inline, wt) == 0, inline
+    assert call("cd $X && python3 -c pass", wt) == 2
+    assert call(f"cd {wt} && python3 -c pass", main) == 0
+
+
+def test_the_guard_reads_interpreter_flags_and_cd_options(tmp_path: Path) -> None:
+    main = tmp_path / "main"
+    main.mkdir()
+    _git(main, "init", "-q")
+    _git(main, "-c", "user.name=t", "-c", "user.email=t@t", "commit", "-q", "--allow-empty", "-m", "i")
+    wt = tmp_path / "wt"
+    _git(main, "worktree", "add", "-q", "-b", "feat", str(wt))
+
+    def call(cmd: str, cwd: Path) -> int:
+        return _guard(cwd, {"cwd": str(cwd), "agent_id": "a1", "tool_input": {"command": cmd}}).returncode
+
+    for writer in ("python3 -X utf8 -c pass", "python3 -W ignore -c pass", "python3 -cprint(1)", "python3 -Ic pass",
+                   "node --eval=1", "node --print 1", "node -r x -e 1", "node -pe 1"):  # fmt: skip
+        assert call(writer, main) == 2, writer
+        assert call(writer, wt) == 0, writer
+    for reader in ("node -c app.js", "node --check app.js", "python3 -m pytest -p x", "python3 tool.py -c x", "node app.js -e 1"):
+        assert call(reader, main) == 0, reader
+    for unknown in ('cd -- "$X" && touch x', 'cd -P "$X" && touch x', "cd -L `pwd` && touch x"):
+        assert call(unknown, wt) == 2, unknown
+    assert call(f"cd -- {wt} && touch x", main) == 0 and call(f"cd -P {main} && touch x", wt) == 2
+    # a computed cd leaves the folder unknown, but an absolute destination still names its own folder
+    assert call("cd $X && echo hi > /tmp/sdlc-log.txt", wt) == 0
+    assert call(f"cd $X && echo hi > {main}/x", wt) == 2
+    assert call(f"cd $X && git -C {wt} commit -m x", main) == 0
+    assert call(f"cd $X && git -C {main} commit -m x", wt) == 2
+
+
 @pytest.mark.parametrize("cmd", [
     "cargo build", "cargo +nightly test", "uv build", "yarn workspace app run build", "go build ./...", "go test ./...",
     "mvn package", "./mvnw verify", "gradle build", "./gradlew test",

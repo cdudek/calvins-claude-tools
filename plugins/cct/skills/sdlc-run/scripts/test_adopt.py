@@ -642,6 +642,56 @@ def test_runs_the_repos_own_prettier_over_what_it_wrote(tmp_path: Path) -> None:
     assert not any(a.endswith(".sh") for a in formatted), formatted
 
 
+@pytest.mark.parametrize("marker", ["biome.json", "biome.jsonc", "package.json"])
+def test_a_biome_repo_gets_its_own_biome_not_prettier(tmp_path: Path, marker: str) -> None:
+    """A repo whose formatter is biome (a biome config, or @biomejs/biome in package.json) rejects
+    unformatted kit files in its first CI run: adopt runs that biome, and no prettier."""
+    repo = _repo(tmp_path, "node")
+    if marker == "package.json":
+        (repo / marker).write_text('{"devDependencies": {"@biomejs/biome": "2.0.0"}}\n')
+    else:
+        (repo / marker).write_text("{}\n")
+    bin_dir = repo / "node_modules" / ".bin"
+    bin_dir.mkdir(parents=True)
+    for name in ("biome", "prettier"):
+        stub = bin_dir / name
+        stub.write_text(f'#!/bin/sh\nprintf "%s\\n" "$@" >> "$(dirname "$0")/../../{name}-argv.txt"\n')
+        stub.chmod(0o755)
+
+    out = _adopt(repo)
+
+    argv = (repo / "biome-argv.txt").read_text().splitlines()
+    assert argv[:2] == ["format", "--write"], argv[:3]
+    formatted = [a for a in argv if not a.startswith("--") and a != "format"]
+    assert any(a.endswith("tests/sdlc.test.ts") for a in formatted) and any(a.endswith("sdlc.json") for a in formatted), formatted
+    assert not any(a.endswith((".yml", ".md", ".sh")) for a in formatted), formatted  # biome does not format these
+    pretty = [a for a in (repo / "prettier-argv.txt").read_text().splitlines() if not a.startswith("--") and a != "warn"]
+    assert pretty and all(a.endswith((".yml", ".yaml", ".md")) for a in pretty), pretty  # prettier keeps the types biome never gets
+    assert any(w.startswith("biome format --write on") for w in _sections(out.stdout)["WROTE"])
+
+
+def test_biome_with_its_formatter_disabled_leaves_everything_to_prettier(tmp_path: Path) -> None:
+    repo = _repo(tmp_path, "node")
+    (repo / "biome.json").write_text('{"formatter": {"enabled": false}, "linter": {"enabled": true}}\n')
+    bin_dir = repo / "node_modules" / ".bin"
+    bin_dir.mkdir(parents=True)
+    for name in ("biome", "prettier"):
+        stub = bin_dir / name
+        stub.write_text(f'#!/bin/sh\nprintf "%s\\n" "$@" >> "$(dirname "$0")/../../{name}-argv.txt"\n')
+        stub.chmod(0o755)
+    _adopt(repo)
+    assert not (repo / "biome-argv.txt").exists()
+    assert any(a.endswith("tests/sdlc.test.ts") for a in (repo / "prettier-argv.txt").read_text().splitlines())
+
+
+def test_a_biome_repo_without_biome_installed_is_left_alone(tmp_path: Path) -> None:
+    repo = _repo(tmp_path, "node")
+    (repo / "biome.json").write_text("{}\n")
+    out = _adopt(repo)
+    assert out.returncode == 0, out.stderr
+    assert not any("biome" in w or "prettier" in w for w in _sections(out.stdout)["WROTE"])
+
+
 def test_without_prettier_installed_adopt_still_succeeds(tmp_path: Path) -> None:
     repo = _repo(tmp_path, "node")
     out = _adopt(repo)
@@ -2116,6 +2166,182 @@ def test_migrate_takes_the_branch_from_the_changes_own_decisions(tmp_path: Path)
     assert not folder.exists()
 
 
+def _commit_everything(repo: Path, message: str = "x") -> None:
+    subprocess.run(["git", "add", "-A"], cwd=repo, check=True, env=_env())
+    subprocess.run(["git", "-c", "user.name=t", "-c", "user.email=t@t", "commit", "-qm", message], cwd=repo, check=True, env=_env())
+
+
+def test_migrate_keeps_an_archive_a_tracked_file_outside_it_names(tmp_path: Path) -> None:
+    repo = _stamped_3_18(tmp_path)
+    (repo / "PRODUCT.md").write_text("See changes/archive/2026/2026-10/2026-10-01-merged-one/plan.md for the history.\n")
+    _commit_everything(repo)
+    res = _migrate(repo, _fake_gh(tmp_path, "milestone/merged-one-1", "milestone/unmerged-one-1"))
+    assert res.returncode == 0, res.stderr
+    assert (repo / "changes/archive/2026/2026-10/2026-10-01-merged-one/plan.md").exists()
+    assert "2026-10-01-merged-one: kept, referenced by PRODUCT.md" in "\n".join(_sections(res.stdout)["MANUAL"])
+    assert not (repo / "changes/archive/2026/2026-10/2026-10-02-unmerged-one").exists()  # nothing names this one
+
+
+def test_a_reference_from_another_removed_archive_does_not_keep_it(tmp_path: Path) -> None:
+    repo = _stamped_3_18(tmp_path)
+    other = repo / "changes/archive/2026/2026-10/2026-10-02-unmerged-one/plan.md"
+    other.write_text(other.read_text() + "\nBuilds on 2026-10-01-merged-one.\n")
+    _commit_everything(repo)
+    res = _migrate(repo, _fake_gh(tmp_path, "milestone/merged-one-1", "milestone/unmerged-one-1"))
+    assert res.returncode == 0, res.stderr
+    assert not (repo / "changes/archive/2026/2026-10/2026-10-01-merged-one").exists()
+    assert not other.exists()
+
+
+def _again(tmp_path: Path) -> Path:
+    (tmp_path / "again").mkdir()
+    return tmp_path / "again"
+
+
+def test_migrate_adds_the_review_tally_line_when_review_md_lacks_it(tmp_path: Path) -> None:
+    repo = _stamped_3_18(tmp_path)
+    (repo / "REVIEW.md").write_text("# Review\n\n## Cap the nits\n\nFive at most.\n\n## Do not report\n\n- lockfiles\n")
+    _commit_everything(repo)
+    res = _migrate(repo, _fake_gh(tmp_path, "milestone/merged-one-1"))
+    assert res.returncode == 0, res.stderr
+    text = (repo / "REVIEW.md").read_text()
+    assert "IMPORTANT: <n>  NITS: <m>" in text
+    assert text.index("Five at most.") < text.index("IMPORTANT: <n>") < text.index("## Do not report")
+    assert any("REVIEW.md" in w and "tally" in w for w in _sections(res.stdout)["WROTE"])
+    again = _migrate(repo, _fake_gh(_again(tmp_path), "milestone/merged-one-1"))
+    assert (repo / "REVIEW.md").read_text() == text and again.returncode == 0  # once
+
+
+def test_migrate_says_so_when_review_md_has_no_place_for_the_tally(tmp_path: Path) -> None:
+    repo = _stamped_3_18(tmp_path)
+    (repo / "REVIEW.md").write_text("# Review\n\nBe kind.\n")
+    _commit_everything(repo)
+    res = _migrate(repo, _fake_gh(tmp_path, "milestone/merged-one-1"))
+    assert (repo / "REVIEW.md").read_text() == "# Review\n\nBe kind.\n"
+    assert any("REVIEW.md" in m and "IMPORTANT: <n>  NITS: <m>" in m for m in _sections(res.stdout)["MANUAL"])
+
+
+def _lists_kit_scripts(repo: Path) -> None:
+    """Three files that list kit scripts for the repo's own tooling, and the new kit script (capture.py) is absent."""
+    subprocess.run(["git", "rm", "-q", "scripts/capture.py"], cwd=repo, check=True, env=_env())
+    (repo / "pyproject.toml").write_text('[tool.ruff]\nextend-exclude = [\n    "scripts/db.py",\n    "scripts/heavy.py",\n]\n')
+    (repo / "Makefile").write_text("GENERATED = \\\n\tscripts/db.py \\\n\tscripts/heavy.py\n")
+    (repo / "tests").mkdir(exist_ok=True)
+    (repo / "tests/test_kit.py").write_text('KIT_OWNED = ("scripts/db.py", "scripts/heavy.py")\n')
+    (repo / "changes/notes.md").write_text('    "scripts/db.py",\n')  # inside changes/: never touched
+    _commit_everything(repo)
+
+
+def test_migrate_adds_a_new_kit_script_to_the_repos_own_lists(tmp_path: Path) -> None:
+    repo = _stamped_3_18(tmp_path)
+    _lists_kit_scripts(repo)
+    res = _migrate(repo, _fake_gh(tmp_path, "milestone/merged-one-1"))
+    assert res.returncode == 0, res.stderr
+    assert (repo / "pyproject.toml").read_text() == (
+        '[tool.ruff]\nextend-exclude = [\n    "scripts/db.py",\n    "scripts/capture.py",\n    "scripts/heavy.py",\n]\n'
+    )
+    assert (repo / "Makefile").read_text() == "GENERATED = \\\n\tscripts/db.py \\\n\tscripts/capture.py \\\n\tscripts/heavy.py\n"
+    assert (repo / "changes/notes.md").read_text() == '    "scripts/db.py",\n'
+    assert "scripts/capture.py" not in (repo / "sdlc.json").read_text()
+    out = _sections(res.stdout)
+    assert any("pyproject.toml" in w and "scripts/capture.py" in w and "scripts/db.py" in w for w in out["WROTE"])
+    assert any("tests/test_kit.py" in m and "scripts/capture.py" in m for m in out["MANUAL"])  # an inline tuple it cannot copy
+    assert (repo / "tests/test_kit.py").read_text() == 'KIT_OWNED = ("scripts/db.py", "scripts/heavy.py")\n'
+    before = (repo / "pyproject.toml").read_text()
+    _commit_everything(repo, "migrated")
+    assert _migrate(repo, _fake_gh(_again(tmp_path), "milestone/merged-one-1")).returncode == 0
+    assert (repo / "pyproject.toml").read_text() == before  # the script is installed now: nothing to add twice
+
+
+def test_migrate_adds_a_new_kit_script_before_the_last_element_of_a_list(tmp_path: Path) -> None:
+    repo = _stamped_3_18(tmp_path)
+    subprocess.run(["git", "rm", "-q", "scripts/capture.py"], cwd=repo, check=True, env=_env())
+    (repo / "pyproject.toml").write_text('[tool.ruff]\nextend-exclude = [\n    "src/x.py",\n    "scripts/db.py"\n]\n')
+    (repo / "tests").mkdir(exist_ok=True)
+    (repo / "tests/test_kit.py").write_text('KIT_OWNED = (\n    "tests/a.py",\n    "scripts/db.py"\n)\nONLY = [\n    "scripts/db.py"\n]\nPLAIN = [\n    a\n    scripts/db.py\n]\n')
+    _commit_everything(repo)
+    res = _migrate(repo, _fake_gh(tmp_path, "milestone/merged-one-1"))
+    assert res.returncode == 0, res.stderr
+    assert (repo / "pyproject.toml").read_text() == '[tool.ruff]\nextend-exclude = [\n    "src/x.py",\n    "scripts/capture.py",\n    "scripts/db.py"\n]\n'
+    assert (repo / "tests/test_kit.py").read_text() == (
+        'KIT_OWNED = (\n    "tests/a.py",\n    "scripts/capture.py",\n    "scripts/db.py"\n)\n'
+        'ONLY = [\n    "scripts/db.py"\n]\nPLAIN = [\n    a\n    scripts/db.py\n]\n'
+    )  # one file takes one insertion: the first list
+
+
+def test_a_comment_above_the_last_element_keeps_the_list_valid(tmp_path: Path) -> None:
+    import ast
+
+    import tomllib
+
+    repo = _stamped_3_18(tmp_path)
+    subprocess.run(["git", "rm", "-q", "scripts/capture.py"], cwd=repo, check=True, env=_env())
+    (repo / "pyproject.toml").write_text('[tool.ruff]\nextend-exclude = [\n    "src/x.py",\n    # the repo\'s own helper\n    "scripts/db.py"\n]\n')
+    (repo / "tests").mkdir(exist_ok=True)
+    (repo / "tests/test_kit.py").write_text('KIT = (\n    "tests/a.py",\n    # the repo\'s own helper\n    "scripts/db.py"\n)\n')
+    (repo / "trap.toml").write_text('note = """\n"scripts/db.py"\n"""\n')  # a line that looks like an element but is prose
+    _commit_everything(repo)
+    res = _migrate(repo, _fake_gh(tmp_path, "milestone/merged-one-1"))
+    assert res.returncode == 0, res.stderr
+    assert tomllib.loads((repo / "pyproject.toml").read_text())["tool"]["ruff"]["extend-exclude"] == ["src/x.py", "scripts/capture.py", "scripts/db.py"]
+    assert [n.value for n in ast.walk(ast.parse((repo / "tests/test_kit.py").read_text())) if isinstance(n, ast.Constant)] == ["tests/a.py", "scripts/capture.py", "scripts/db.py"]
+    assert "# the repo's own helper\n    \"scripts/db.py\"" in (repo / "pyproject.toml").read_text()  # the comment stays with its element
+    assert (repo / "trap.toml").read_text() == 'note = """\n"scripts/db.py"\n"""\n'  # an edit that does not leave a list is not written
+    assert any("trap.toml" in m for m in _sections(res.stdout)["MANUAL"])
+
+
+def test_the_list_editor_skips_make_recipes_symlinks_and_kept_files(tmp_path: Path) -> None:
+    repo = _stamped_3_18(tmp_path)
+    subprocess.run(["git", "rm", "-q", "scripts/capture.py"], cwd=repo, check=True, env=_env())
+    (repo / "Makefile").write_text("build:\n\tscripts/db.py\n")
+    outside = tmp_path / "shared-lint.toml"
+    outside.write_text('x = [\n    "scripts/db.py",\n]\n')
+    (repo / "lint.toml").symlink_to(outside)
+    (repo / "kept.toml").write_text('x = [\n    "scripts/db.py",\n]\n')
+    cfg = json.loads((repo / "sdlc.json").read_text())
+    cfg["keep"] = [*cfg.get("keep", []), "kept.toml"]
+    (repo / "sdlc.json").write_text(json.dumps(cfg, indent=2) + "\n")
+    _commit_everything(repo)
+    res = _migrate(repo, _fake_gh(tmp_path, "milestone/merged-one-1"))
+    assert res.returncode == 0, res.stderr
+    assert (repo / "Makefile").read_text() == "build:\n\tscripts/db.py\n"
+    assert outside.read_text() == 'x = [\n    "scripts/db.py",\n]\n' and (repo / "lint.toml").is_symlink()
+    assert (repo / "kept.toml").read_text() == 'x = [\n    "scripts/db.py",\n]\n'
+
+
+def test_a_symlink_into_an_archive_keeps_it_and_a_retained_flat_archive_stays_put(tmp_path: Path) -> None:
+    repo = _stamped_3_18(tmp_path)
+    (repo / "latest.md").symlink_to("changes/archive/2026/2026-10/2026-10-01-merged-one/plan.md")
+    flat = repo / "changes/archive/2026-10-03-flat-one"
+    flat.mkdir()
+    (flat / "plan.md").write_text("---\ncreated: 2026-10-03\n---\n# Plan\n")
+    (repo / "PRODUCT.md").write_text("History: changes/archive/2026-10-03-flat-one/plan.md\n")
+    _commit_everything(repo)
+    res = _migrate(repo, _fake_gh(tmp_path, "milestone/merged-one-1", "milestone/flat-one-1"))
+    assert res.returncode == 0, res.stderr
+    manual = "\n".join(_sections(res.stdout)["MANUAL"])
+    assert (repo / "changes/archive/2026/2026-10/2026-10-01-merged-one/plan.md").exists() and "referenced by latest.md" in manual
+    assert (flat / "plan.md").exists() and "2026-10-03-flat-one: not moved" in manual
+
+
+def test_migrate_upgrades_a_short_tally_line_in_place(tmp_path: Path) -> None:
+    repo = _stamped_3_18(tmp_path)
+    (repo / "REVIEW.md").write_text("# Review\n\n## Cap the nits\n\nFive.\n\n## Output\n\nTally: `IMPORTANT: <n>  NITS: <m>` please.\n")
+    _commit_everything(repo)
+    res = _migrate(repo, _fake_gh(tmp_path, "milestone/merged-one-1"))
+    assert res.returncode == 0, res.stderr
+    assert (repo / "REVIEW.md").read_text() == "# Review\n\n## Cap the nits\n\nFive.\n\n## Output\n\nTally: `IMPORTANT: <n>  NITS: <m>  SHA: <head sha>` please.\n"
+
+
+def test_migrate_dry_run_reports_the_list_edit_without_making_it(tmp_path: Path) -> None:
+    repo = _stamped_3_18(tmp_path)
+    _lists_kit_scripts(repo)
+    before = (repo / "pyproject.toml").read_text()
+    res = _migrate(repo, _fake_gh(tmp_path, "milestone/merged-one-1"), "--dry-run")
+    assert (repo / "pyproject.toml").read_text() == before
+    assert any("pyproject.toml" in w and "scripts/capture.py" in w for w in _sections(res.stdout)["WROTE"])
+
+
 @pytest.mark.parametrize(
     ("decisions", "removed"),
     [
@@ -2387,3 +2613,24 @@ def test_upgrade_offers_the_layout_switch_once_and_only_without_a_layout(tmp_pat
     cfg["layout"] = 3
     (repo / "sdlc.json").write_text(json.dumps(cfg))
     assert _layout_manual(_adopt(repo, "--upgrade").stdout) == []
+
+
+def test_a_toml_edit_is_refused_when_it_cannot_be_checked(monkeypatch) -> None:
+    """Without tomllib (Python < 3.11) a TOML list edit cannot be validated, so it is not made."""
+    import builtins
+    import importlib.util
+
+    spec = importlib.util.spec_from_file_location("adopt_mod", Path(__file__).with_name("adopt.py"))
+    mod = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(mod)
+    real = builtins.__import__
+
+    def no_tomllib(name, *a, **k):
+        if name == "tomllib":
+            raise ImportError(name)
+        return real(name, *a, **k)
+
+    monkeypatch.setattr(builtins, "__import__", no_tomllib)
+    before = 'x = [\n  "scripts/db.py",\n]\n'
+    after = 'x = [\n  "scripts/capture.py",\n  "scripts/db.py",\n]\n'
+    assert mod.list_still_valid("pyproject.toml", before, after, "scripts/capture.py", "scripts/db.py") is False

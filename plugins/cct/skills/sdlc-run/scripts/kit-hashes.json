@@ -5,6 +5,7 @@
   "a698592ee00f3758"
  ],
  ".claude/hooks/chain-gate.sh": [
+  "07812784033643a4",
   "0ef9c20efaa7d183",
   "1730f591bdb031fc",
   "1c598367b43d3c13",
@@ -93,6 +94,7 @@
   "0c4b932f35536c54",
   "10693101ca4bc51c",
   "3d0c007f1c19738a",
+  "4012f53e437dd572",
   "41036633b2de566c",
   "4d6ad3677e893998",
   "4f2b8fc7ae53f777",
@@ -199,9 +201,11 @@
  "scripts/capture.py": [
   "55464dcaa9fb571a",
   "76f341df1ef81a00",
+  "9cd5bdc59852d1a6",
   "b66771e69e06e46f",
   "b83541819543ec15",
-  "df45ac2d5c99d0bb"
+  "df45ac2d5c99d0bb",
+  "e43a7d24e86cfe1f"
  ],
  "scripts/db.py": [
   "132fb5df36b3a3ca",
@@ -218,8 +222,10 @@
  "scripts/evidence.py": [
   "1ee414d2b612b638",
   "6a317db378861d28",
+  "6c666865c4228267",
   "74b85435656e6566",
   "a2ad7046f8557477",
+  "ac196d166bdc401d",
   "c90008dbca3b8a29",
   "d1ca5373b45d3068"
  ],
@@ -230,6 +236,9 @@
   "5deaa2eb45d65844",
   "7dfd1429b4f9cd2d",
   "8b4f8c3dfa44073f",
+  "a09c60909df8931b",
+  "a13b3e0ac5548a40",
+  "aa80c7f1cdab2e74",
   "af2eb2673c676348",
   "cc25027d60793b2b",
   "f411b8feb66c33ed"
@@ -237,6 +246,7 @@
  "scripts/marks.py": [
   "07ad5aac6e4147ef",
   "0b01636d6dc4e428",
+  "107b3beb6a056294",
   "141766b67443e974",
   "15006becaf7ecc61",
   "1c753d2e8d90e632",
@@ -256,6 +266,7 @@
   "9c32038d4e406af7",
   "9e291aa9a4ca7939",
   "a5be99c8d2b1e911",
+  "a6bf33c857a75d8e",
   "ae62245347abc052",
   "b35426f37e60f79f",
   "b4861d544b8dcf5b",
@@ -355,10 +366,12 @@
   "7a3711e62bce27bb",
   "7a82772a419c1ca3",
   "7b3a48a65c51f60f",
+  "80f657b0150d1ba3",
   "8fbd251005bff8ad",
   "90f3c45de74a3056",
   "96ef7a0baac1edad",
   "986c2c8211feda19",
+  "9f41fd1172c25737",
   "a0ae1a0d71d1589a",
   "a0b381c0b945ecdb",
   "a16cf77a6ddfdc38",
@@ -399,6 +412,7 @@
   "f74bcd2c928e6244",
   "f7c7ad9006898a5b",
   "fb733e7ae3cac69d",
-  "fc6a42c9183280fb"
+  "fc6a42c9183280fb",
+  "ffdd93d363182ad0"
  ]
 }

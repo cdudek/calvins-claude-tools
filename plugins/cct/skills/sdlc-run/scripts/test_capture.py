@@ -4,9 +4,11 @@ boundary (sdlc.json visual.driver); one live Playwright test runs only with SDLC
 
 from __future__ import annotations
 
+import datetime as dt
 import hashlib
 import json
 import os
+import re
 import subprocess
 import sys
 from pathlib import Path
@@ -74,7 +76,7 @@ def _repo(tmp_path: Path, entries=ENTRIES, **visual) -> Path:
 
 def _run(repo: Path, **env: str) -> subprocess.CompletedProcess[str]:
     e = {k: v for k, v in os.environ.items() if not k.startswith("GIT_")}
-    e.update(env)
+    e.update(HOME=str(repo.parent / "home"), **env)  # the owner's transcripts are read from the home folder
     return subprocess.run([sys.executable, str(CAPTURE), "run", str(repo / "changes" / ID)], cwd=repo, capture_output=True, text=True, env=e)
 
 
@@ -82,8 +84,40 @@ def _last(r: subprocess.CompletedProcess[str]) -> str:
     return r.stdout.strip().splitlines()[-1]
 
 
-def _approve_all(repo: Path) -> None:
-    """What `evidence.py gallery --import` leaves behind: the shots as baselines, their sha256 in approved.json."""
+def owner_answers(repo: Path, bid: str, label: str = "Approve screens", n: int = 1, change_id: str = ID, home: Path | None = None) -> None:
+    """The owner's structured answer to the dialog that names approval `bid`, in the session transcript
+    Claude Code keeps for this repo (the one place the gate believes an owner decision)."""
+    folder = (home or repo.parent / "home") / ".claude/projects" / re.sub(r"[^A-Za-z0-9]", "-", str(repo.resolve()))
+    folder.mkdir(parents=True, exist_ok=True)
+    question = f"Change {change_id}, finding {bid}: Approve these screens?"
+    stamp = (dt.datetime.now(dt.timezone.utc) + dt.timedelta(seconds=60 + n)).isoformat()
+    entries = [
+        {"type": "assistant", "timestamp": stamp, "message": {"content": [{
+            "type": "tool_use", "id": f"s{n}", "name": "AskUserQuestion",
+            "input": {"questions": [{"question": question, "options": [{"label": "Approve screens"}, {"label": "Hold"}]}]},
+        }]}},
+        {"type": "user", "timestamp": stamp, "toolUseResult": {"answers": {question: label}},
+         "message": {"content": [{"type": "tool_result", "tool_use_id": f"s{n}", "content": "ok"}]}},
+    ]  # fmt: skip
+    with (folder / "session.jsonl").open("a") as out:
+        out.write("".join(json.dumps(e) + "\n" for e in entries))
+
+
+def _seal(repo: Path, data: dict, owner: bool = True, change_id: str = ID) -> None:
+    """Write approved.json as one batch the owner's dialog covered (`owner=False`: nobody answered it)."""
+    pairs = [[e, a["sha256"]] for e, a in data["entries"].items()]
+    bid = capture.approval_id(pairs)
+    for a in data["entries"].values():
+        a["decision"] = bid
+    data["batches"] = {bid: pairs}
+    (repo / "changes" / change_id / "screens" / "approved.json").write_text(json.dumps(data))
+    if owner:
+        owner_answers(repo, bid, change_id=change_id)
+
+
+def _approve_all(repo: Path, owner: bool = True) -> None:
+    """What `evidence.py gallery --import` leaves behind: the shots as baselines, their sha256 in approved.json,
+    one batch the owner's dialog covered (`owner=False`: nobody answered it)."""
     change = repo / "changes" / ID
     (change / "screens").mkdir(exist_ok=True)
     entries = {}
@@ -92,7 +126,7 @@ def _approve_all(repo: Path) -> None:
         (change / "screens" / f"{e['id']}.png").write_bytes(shot.read_bytes())
         entries[e["id"]] = {"sha256": hashlib.sha256(shot.read_bytes()).hexdigest(), "file": f"screens/{e['id']}.png",
                             "approvedBy": "owner", "date": "2026-11-20"}  # fmt: skip
-    (change / "screens" / "approved.json").write_text(json.dumps({"format": 1, "entries": entries}))
+    _seal(repo, {"format": 1, "entries": entries}, owner)
 
 
 # --- screens.json ---------------------------------------------------------------------------------
@@ -163,7 +197,7 @@ def test_the_threshold_accepts_a_small_share_of_pixels_and_refuses_a_large_one(t
     capture.write_png(base, w, h, bytes(tweaked))
     approved = json.loads((change / "screens/approved.json").read_text())
     approved["entries"]["leads.list.empty"]["sha256"] = hashlib.sha256(base.read_bytes()).hexdigest()
-    (change / "screens/approved.json").write_text(json.dumps(approved))
+    _seal(repo, approved)  # the owner approved this baseline
     assert _last(_run(repo)) == "CAPTURE PASS 4"
     (repo / "sdlc.json").write_text(json.dumps({"visual": {**json.loads((repo / "sdlc.json").read_text())["visual"], "threshold": 0}}))
     r = _run(repo)
@@ -235,20 +269,63 @@ def test_live_playwright_captures_the_fixture_app_twice_identically(tmp_path: Pa
 
 
 def test_the_real_gallery_import_makes_the_baselines_capture_compares_against(tmp_path: Path) -> None:
-    """The seam: evidence.py gallery --import writes what capture.py reads, from one {"entries": [...]} file."""
+    """The seam: evidence.py gallery --import writes what capture.py reads, from one {"entries": [...]} file,
+    once the owner has answered the dialog the import asks for."""
     repo = _repo(tmp_path)
     change = repo / "changes" / ID
     (change / "screens.json").write_text(json.dumps({"entries": ENTRIES}))
     _run(repo)
+    subprocess.run(["git", "add", "."], cwd=repo, check=True)  # the change has a first commit: an answer after it counts
+    subprocess.run(["git", "-c", "user.name=t", "-c", "user.email=t@t", "commit", "-qm", "change"], cwd=repo, check=True)
     answers = {e["id"]: {"answer": "accept", "sha256": hashlib.sha256((change / "verify/shots" / f"{e['id']}.png").read_bytes()).hexdigest()}
                for e in ENTRIES}  # fmt: skip
     (tmp_path / "answers.json").write_text(json.dumps({"format": 1, "approvedBy": "owner", "answers": answers}))
+    env = {**os.environ, "HOME": str(tmp_path / "home")}
     evidence = [sys.executable, str(SCRIPTS / "evidence.py"), "gallery", str(change)]
-    assert subprocess.run(evidence, capture_output=True, text=True).returncode == 0
-    r = subprocess.run([*evidence, "--import", str(tmp_path / "answers.json")], capture_output=True, text=True)
+    assert subprocess.run(evidence, capture_output=True, text=True, env=env).returncode == 0
+    ask = subprocess.run([*evidence, "--import", str(tmp_path / "answers.json")], capture_output=True, text=True, env=env)
+    assert ask.returncode == 1 and "AskUserQuestion" in ask.stderr, ask.stderr  # nobody has answered yet
+    owner_answers(repo, re.search(r"finding (screens-\w+):", ask.stderr)[1])
+    r = subprocess.run([*evidence, "--import", str(tmp_path / "answers.json")], capture_output=True, text=True, env=env)
     assert r.returncode == 0, r.stderr
     r = _run(repo)
     assert _last(r) == "CAPTURE PASS 4" and r.returncode == 0, r.stdout
+
+
+def test_an_approval_no_owner_decision_covers_fails_the_capture(tmp_path: Path) -> None:
+    repo = _repo(tmp_path)
+    _run(repo)
+    _approve_all(repo, owner=False)  # an agent wrote approved.json itself
+    r = _run(repo)
+    assert _last(r) == "CAPTURE FAIL approval" and r.returncode == 1 and "leads.list.empty" in r.stdout
+
+
+def test_an_edited_batch_or_a_held_dialog_does_not_cover_an_approval(tmp_path: Path) -> None:
+    repo = _repo(tmp_path)
+    _run(repo)
+    _approve_all(repo, owner=False)
+    change = repo / "changes" / ID
+    data = json.loads((change / "screens/approved.json").read_text())
+    bid = next(iter(data["batches"]))
+    owner_answers(repo, bid, label="Hold")
+    assert _last(_run(repo)) == "CAPTURE FAIL approval"  # the owner said hold
+    owner_answers(repo, bid, n=2)
+    assert _last(_run(repo)) == "CAPTURE PASS 4"  # a later yes covers the same batch
+    data["batches"][bid] = data["batches"][bid][:-1] + [["leads.list.empty", "0" * 64]]  # the batch no longer matches its id
+    (change / "screens/approved.json").write_text(json.dumps(data))
+    assert _last(_run(repo)) == "CAPTURE FAIL approval"
+
+
+def test_an_entry_added_after_the_owner_answered_is_not_covered(tmp_path: Path) -> None:
+    repo = _repo(tmp_path)
+    _run(repo)
+    _approve_all(repo)
+    change = repo / "changes" / ID
+    data = json.loads((change / "screens/approved.json").read_text())
+    data["entries"]["extra.entry"] = {**data["entries"]["leads.list.empty"]}  # copies another entry's decision id
+    (change / "screens/approved.json").write_text(json.dumps(data))
+    r = _run(repo)
+    assert _last(r) == "CAPTURE FAIL approval" and "extra.entry" in r.stdout
 
 
 # --- the 3.25.0 fix round ----------------------------------------------------------------------------
@@ -405,7 +482,62 @@ def test_group_cleanup_spares_the_shell_that_leads_the_group(tmp_path: Path) -> 
     repo = _repo(tmp_path)
     _run(repo)
     _approve_all(repo)
-    e = {k: v for k, v in os.environ.items() if not k.startswith("GIT_")}
+    e = {k: v for k, v in os.environ.items() if not k.startswith("GIT_")} | {"HOME": str(tmp_path / "home")}
     cmd = f"{sys.executable} {CAPTURE} run {repo / 'changes' / ID} --group; echo rc=$?"  # `; echo` keeps sh alive
     r = subprocess.run(["sh", "-c", cmd], cwd=repo, capture_output=True, text=True, env=e, start_new_session=True)
     assert r.returncode == 0 and "CAPTURE PASS 4" in r.stdout and "rc=0" in r.stdout, (r.returncode, r.stdout)
+
+
+def test_an_owner_answer_recorded_in_a_sibling_worktree_counts(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    """The owner answers in one worktree and the next milestone closes in another: every transcript folder of
+    the repo's main checkout and its `.worktrees/*` is read, removed worktrees included."""
+    import marks
+
+    main = tmp_path / "main"
+    (main / "changes" / ID).mkdir(parents=True)
+    (main / "changes" / ID / "screens.json").write_text("[]")
+    git = ["git", "-c", "user.name=t", "-c", "user.email=t@t"]
+    for cmd in (["git", "init", "-q"], ["git", "add", "."], [*git, "commit", "-qm", "i"],
+                [*git, "worktree", "add", "-q", "-b", "a", str(main / ".worktrees" / "a")],
+                [*git, "worktree", "add", "-q", "-b", "b", str(main / ".worktrees" / "b")]):  # fmt: skip
+        subprocess.run(cmd, cwd=main, check=True, capture_output=True)
+    home = tmp_path / "home"
+    monkeypatch.setenv("HOME", str(home))
+    (tmp_path / "other-repo").mkdir()
+    owner_answers(main / ".worktrees" / "a", "screens-abc", home=home)
+    owner_answers(tmp_path / "other-repo", "screens-other", home=home)  # another repo's answer is never read
+    marks._ANSWERS.clear()
+    decided = marks.owner_decisions(main / ".worktrees" / "b", ID)
+    assert decided.get("screens-abc", ("",))[0] == "screens" and "screens-other" not in decided
+    subprocess.run([*git, "worktree", "remove", "--force", str(main / ".worktrees" / "a")], cwd=main, check=True, capture_output=True)
+    marks._ANSWERS.clear()
+    assert marks.owner_decisions(main, ID).get("screens-abc", ("",))[0] == "screens"  # a removed worktree's answer stays
+
+
+def test_an_early_close_checks_coverage_only_for_the_entries_due(tmp_path: Path) -> None:
+    ents = [{**e, "milestone": 2 if e["id"].startswith("deals") else 1} for e in ENTRIES]
+    repo = _repo(tmp_path, ents)
+    _run(repo)
+    _approve_all(repo)
+    change = repo / "changes" / ID
+    data = json.loads((change / "screens/approved.json").read_text())
+    for e in ("deals.list.empty", "deals.list.full"):  # approved by 3.25.0: no owner decision on record
+        del data["entries"][e]["decision"]
+    (change / "screens/approved.json").write_text(json.dumps(data))
+    env = {**os.environ, "HOME": str(tmp_path / "home")}
+    run = lambda *extra: subprocess.run([sys.executable, str(CAPTURE), "run", str(change), *extra], cwd=repo, capture_output=True, text=True, env=env)  # noqa: E731
+    early = run("--upto", "1")
+    assert _last(early) == "CAPTURE PASS 2", early.stdout
+    final = run()
+    assert _last(final) == "CAPTURE FAIL approval" and "deals.list.empty" in final.stdout
+
+
+def test_the_capture_leaves_no_bytecode_in_the_checkout(tmp_path: Path) -> None:
+    repo = _repo(tmp_path)
+    _run(repo)
+    _approve_all(repo)
+    cache = SCRIPTS / "__pycache__"
+    for pyc in cache.glob("marks*.pyc"):
+        pyc.unlink()
+    assert _last(_run(repo)) == "CAPTURE PASS 4"
+    assert not list(cache.glob("marks*.pyc"))

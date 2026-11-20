@@ -29,6 +29,25 @@ itself).
    `screens/approved.json` with the approver and the date; a send back removes the entry and prints
    `reopened: <entry>`. An answer for a shot that changed after the gallery was made is refused.
    Regenerating the gallery never touches an approval.
+   **The owner approves, never the agent.** The answers file is only a list: an agent could write one
+   that accepts everything. So the import writes nothing until the owner has answered `Approve screens`
+   to a dialog of exactly that batch (the same transcript-backed owner answer the findings use). The
+   first import run prints the question to ask with `AskUserQuestion` (`Change <id>, finding
+   screens-<id of the batch>: Approve these N screens? ...`, options `Approve screens` | `Hold`); the
+   owner opens `verify/gallery.html`, picks per screen, downloads `answers.json`, and confirms the
+   import in that one dialog; the agent runs the import again. `approved.json` records the batch
+   (`batches`) and every entry names it (`decision`); the milestone gate (`capture.py`) fails with
+   `CAPTURE FAIL approval` for an entry no owner answer covers, and the edit hook protects
+   `screens/approved.json` and `screens/*.png` of an app-locked change like the other locked files.
+   A send back that removes an approval needs the owner's answer the same way, and every decision is
+   logged in order (`log`: entry, answer, batch, time); an owner answer that was given before a later
+   send back of the same screen is spent, so a screen sent back needs a new capture and a new batch.
+   An early close (`--upto N`) checks coverage only for the entries due; the last close checks every
+   approval. The owner's answers are read from the Claude Code transcripts of the repo's main checkout and
+   all its `.worktrees/*`, removed ones included.
+   **Known limit.** Owner decisions everywhere in sdlc-run trust the local session transcripts. An agent
+   with filesystem access could write a fake transcript; the check stops a careless agent, not a hostile
+   one. A real fix needs a signing key the agent cannot read.
    Each entry may carry `"milestone": N` (default 1): a milestone close captures the entries with
    milestone <= N and the last milestone requires all of them, so an early close never needs a screen
    a later milestone builds. Two entries never share a route and viewport (the fixture shows only
