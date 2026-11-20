@@ -522,6 +522,29 @@ def test_the_hook_refuses_a_helpers_write_in_the_main_folder(tmp_path: Path) -> 
     assert call("python3 scripts/verify_gate.py approve m-1", wt) == 0
 
 
+def test_the_hook_fails_closed_on_a_cd_it_cannot_resolve(tmp_path: Path) -> None:
+    main = tmp_path / "main"
+    main.mkdir()
+    _git(main, "init", "-q")
+    _git(main, "-c", "user.name=t", "-c", "user.email=t@t", "commit", "-q", "--allow-empty", "-m", "i")
+    wt = tmp_path / "wt"
+    _git(main, "worktree", "add", "-q", "-b", "feat", str(wt))
+
+    def call(cmd: str, cwd: Path) -> int:
+        return _guard(cwd, {"cwd": str(cwd), "agent_id": "a1", "tool_input": {"command": cmd}}).returncode
+
+    for unknown in ("cd $X && touch x", "cd `pwd` && touch x", "cd - && touch x", "cd \"$(dirname $F)\" && echo hi > x"):
+        assert call(unknown, wt) == 2, unknown
+        assert call(unknown, main) == 2, unknown
+    assert call("cd $X && ls", wt) == 0, "reading is fine wherever it runs"
+    assert call(f"cd $X && cd {wt} && touch x", main) == 0, "a later literal cd resolves it again"
+
+
+@pytest.mark.parametrize("cmd", ["python3 -c print(1)", "node -e 1", "node --eval 1", "node -p 1", "python3 -c pass"])
+def test_inline_interpreter_code_is_unknown_so_heavy(cmd: str) -> None:
+    assert _heavy_classify(cmd) == "heavy"
+
+
 @pytest.mark.parametrize("cmd", [
     "cargo build", "cargo +nightly test", "uv build", "yarn workspace app run build", "go build ./...", "go test ./...",
     "mvn package", "./mvnw verify", "gradle build", "./gradlew test",

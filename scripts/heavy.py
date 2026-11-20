@@ -127,7 +127,7 @@ def program_heavy(argv: list[str]) -> bool:
             if a == "-m":
                 return heavy_name(next(it, "").split(".")[0])
             if a in ("-c", "-e", "--eval", "-p"):
-                return False
+                return True  # inline code is unknown: it may run anything, so it is heavy until queued
             if not a.startswith("-"):
                 name = os.path.splitext(os.path.basename(a))[0]
                 if name == "verify_gate":
@@ -734,12 +734,13 @@ def writes_in_main(command: str, payload_cwd: str, cfg: dict | None = None) -> b
     """A helper's command that changes the main working folder: file writes, redirects, mutating git,
     package installs, builds and tests that run there. Reading is fine. The shell starts in the main
     folder on every call, so a `cd` moves the check with it: only a command whose folder (after the
-    `cd`, resolved) is the main folder counts. A destination the line computes (`$VAR`) is not followed."""
+    `cd`, resolved) is the main folder counts. A destination the line computes (`$VAR`, a backtick, `-`)
+    cannot be resolved, so what follows may be in the main folder: it fails closed."""
     cfg, cwd = cfg or {}, payload_cwd
     cache: dict[str, bool] = {}
 
     def in_main(path: str | None) -> bool:
-        return bool(path) and cache.setdefault(path, in_main_folder(path))
+        return path is None or (bool(path) and cache.setdefault(path, in_main_folder(path)))  # None: unknown
 
     for seg in shell_segments(command):
         for argv in inner_argv(seg):
@@ -747,7 +748,8 @@ def writes_in_main(command: str, payload_cwd: str, cfg: dict | None = None) -> b
             if prog in ("cd", "pushd"):
                 target = argv[1] if len(argv) > 1 else "~"
                 unknown = any(c in target for c in "$`") or target == "-"
-                cwd = None if unknown or cwd is None else os.path.realpath(os.path.join(cwd, os.path.expanduser(target)))
+                target = os.path.expanduser(target)
+                cwd = None if unknown or (cwd is None and not os.path.isabs(target)) else os.path.realpath(os.path.join(cwd or "/", target))
                 continue
             where = cwd
             if prog == "git":
@@ -760,8 +762,9 @@ def writes_in_main(command: str, payload_cwd: str, cfg: dict | None = None) -> b
         # a redirect writes even from a read-only tool; its folder is the target's, not the line's
         for argv in inner_argv(seg):
             target = redirect_target(argv)
-            if target and cwd:
-                if in_main(os.path.dirname(os.path.realpath(os.path.join(cwd, os.path.expanduser(target))))):
+            if target:
+                folder = cwd and os.path.dirname(os.path.realpath(os.path.join(cwd, os.path.expanduser(target))))
+                if in_main(folder or None):
                     return True
     return False
 
