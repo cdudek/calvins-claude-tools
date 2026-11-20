@@ -74,6 +74,10 @@ holds the hash of the one before it and the lock sha; `approved.json` holds the 
 gate refuses a trimmed or rewritten log and a batch a later send back spent.
 Known limit: the chain lives in the repo, so an older, whole `approved.json` put back (or a deleted one) is a
 rollback it cannot see without an anchor outside the repo; the owner's answers in their own transcript still bind each batch.
+The head is not repeated in `lock.json`, on purpose: the lock sits in the same repo and is written by the same scripts, so a
+copy of the head there is restored together with the file it anchors (`git checkout <old> -- <change>`), and writing it on
+every send back would change a locked file mid-build and void every pass gated before. The only anchors outside the repo are
+the owner's transcript and a signing key; the first answers a batch, not a head, and the second is an owner step 3.26.x does not add.
 
 Retired for these changes: design-bundle pinning, `marks.py` rows against bundles and references, the
 six-layer geometry tolerances and the design-system audit tied to board counts (the design-system pin
