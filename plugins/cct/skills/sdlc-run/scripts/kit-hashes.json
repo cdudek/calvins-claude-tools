@@ -37,6 +37,7 @@
   "82ca237d1a81e03c",
   "88e6a2fb88d002e2",
   "9566ec4dcf5ce2d9",
+  "95bfbae2d6023882",
   "95bfe366dd90a2ed",
   "a086d0c186045c11",
   "c27e840026401823",
@@ -93,6 +94,7 @@
   "08655b8b92ba1cf3",
   "0c4b932f35536c54",
   "10693101ca4bc51c",
+  "1671209c5c7e19b4",
   "3d0c007f1c19738a",
   "4012f53e437dd572",
   "41036633b2de566c",
@@ -116,6 +118,7 @@
   "dfd42c691cbeaf20",
   "e65e84d20f614067",
   "e6c16749fb56dd96",
+  "f0113702caceea7e",
   "faa52678825431ca"
  ],
  ".claude/hooks/plan-gate.sh": [
@@ -199,13 +202,15 @@
   "f72c02e5f30938e4"
  ],
  "scripts/capture.py": [
+  "2b0aa4a315b83122",
   "55464dcaa9fb571a",
   "76f341df1ef81a00",
   "9cd5bdc59852d1a6",
   "b66771e69e06e46f",
   "b83541819543ec15",
   "df45ac2d5c99d0bb",
-  "e43a7d24e86cfe1f"
+  "e43a7d24e86cfe1f",
+  "ebdfb586c6d92fc8"
  ],
  "scripts/db.py": [
   "132fb5df36b3a3ca",
@@ -220,10 +225,12 @@
   "fe5497fceab1c8e9"
  ],
  "scripts/evidence.py": [
+  "06688e12102ccf68",
   "1ee414d2b612b638",
   "6a317db378861d28",
   "6c666865c4228267",
   "74b85435656e6566",
+  "9cb41cc57637e80a",
   "a2ad7046f8557477",
   "ac196d166bdc401d",
   "c90008dbca3b8a29",
@@ -231,6 +238,7 @@
  ],
  "scripts/heavy.py": [
   "050107783daa70ff",
+  "133511d3c4625790",
   "1bb86e7356aa80e0",
   "40e40233bf70ec93",
   "5deaa2eb45d65844",
@@ -241,6 +249,7 @@
   "aa80c7f1cdab2e74",
   "af2eb2673c676348",
   "cc25027d60793b2b",
+  "d5f94641e353c11a",
   "f411b8feb66c33ed"
  ],
  "scripts/marks.py": [
@@ -252,6 +261,7 @@
   "1c753d2e8d90e632",
   "1d7b567db399b3f8",
   "2643204887c6e1be",
+  "319562d2b66830cb",
   "38a78e806a7d33d2",
   "4dc39753a72de141",
   "54684d37d2b5435c",
@@ -279,6 +289,7 @@
   "da489951ced4b597",
   "e210db4d72bf4d37",
   "e9511caf3de9934b",
+  "f45da7efa824ab0a",
   "fd8848049fa7ca68"
  ],
  "scripts/preflight.py": [
@@ -334,6 +345,7 @@
   "22d6de1fd42fa247",
   "25ea5841fdd27c8c",
   "2681ebc8e3caefb2",
+  "27b31df57ec5f2fd",
   "3144bebd00196d11",
   "3606423109411bd8",
   "368a5c17464a5307",
@@ -345,6 +357,7 @@
   "457ba1316969ac55",
   "486c9c790d888caf",
   "49c96180a9059469",
+  "4c0e8dcf9dc28974",
   "4cd72bc3903a46ca",
   "4cf1a016840c1594",
   "5152ca52e4e6ae8b",
@@ -403,6 +416,7 @@
   "dbe9a6d4a1e59972",
   "dc74f0d3516b6100",
   "dfbfa38f6cd4fec6",
+  "e2b0b3375e049cf6",
   "e4d8badd50ba224c",
   "e687aa980130321e",
   "e70857e375a254ff",

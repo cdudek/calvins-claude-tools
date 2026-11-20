@@ -8,13 +8,17 @@ live in `../../ux-build-validate/references/build.md` (Measurements) and the sha
 
 ## Changes approved from 3.25.0: the app's own screenshots (lock `"visual": "app"`)
 
-A design tool is direction, never a gate. The screens are built in the real app and the owner approves
-screenshots of the real app; the approved shots become exact visual tests (the same renderer against
-itself).
+The design is binding for which screens and states exist and how each is structured
+([design inputs](design-inputs.md): `design.json`, the `design` mapping, `deviates`); pixel detail is
+decided by the owner on the real app's screenshots, and nothing measures pixels against the design. The
+screens are built in the real app and the owner approves screenshots of the real app; the approved shots
+become exact visual tests (the same renderer against itself). A change with no design input has no
+`design.json` and works as before.
 
 1. **Plan (Stage 2).** The UX plan writes `screens.json` in the change folder: one entry per screen and
    state, `{"id": "leads.list.empty", "route": "/preview/leads?state=empty", "viewport": [1440, 900],
-   "fixture": "<scenario name>"}`, and names the one sample-data fixture the app seeds.
+   "fixture": "<scenario name>", "design": ["<board id>"]}`, and names the one sample-data fixture the
+   app seeds. With a design input it also writes `design.json`, every board mapped or dropped.
 2. **Build (Stage 5).** Every entry gets a preview page in the app that renders that screen and state
    with the fixture (dev and test builds only; the repo decides how, for example a `/preview` route
    behind an environment flag). A milestone whose `screens.json` has an entry with no reachable
@@ -43,11 +47,12 @@ itself).
    logged in order (`log`: entry, answer, batch, time); an owner answer that was given before a later
    send back of the same screen is spent, so a screen sent back needs a new capture and a new batch.
    An early close (`--upto N`) checks coverage only for the entries due; the last close checks every
-   approval. The owner's answers are read from the Claude Code transcripts of the repo's main checkout and
-   all its `.worktrees/*`, removed ones included.
+   approval. The owner's answers are read from the Claude Code transcripts of every worktree of the repo,
+   matched by exact path (`git worktree list`, plus the paths listed before and since removed, kept in
+   the common git dir): a folder whose name merely begins like a worktree's is never read.
    **Known limit.** Owner decisions everywhere in sdlc-run trust the local session transcripts. An agent
    with filesystem access could write a fake transcript; the check stops a careless agent, not a hostile
-   one. A real fix needs a signing key the agent cannot read.
+   one. A real fix needs a signing key the agent cannot read. An empty or restored decision log cannot be detected without an anchor outside the files an agent can write.
    Each entry may carry `"milestone": N` (default 1): a milestone close captures the entries with
    milestone <= N and the last milestone requires all of them, so an early close never needs a screen
    a later milestone builds. Two entries never share a route and viewport (the fixture shows only
@@ -55,7 +60,18 @@ itself).
 5. **Exact tests.** From then on the gate compares each entry's capture with its approved sha256
    (zero tolerance; `visual.threshold` in `sdlc.json`, default 0). A difference fails with the entry
    name and a diff image path, and needs a new approval.
-6. **Status.** `screens: N of M approved · K changed since approval · L not captured`.
+6. **Status.** `screens: N of M approved · K changed since approval · L not captured`, and for a change
+   with `design.json` a second line `design: N boards · M mapped · K dropped · D deviations`.
+
+**The gallery shows the design next to the app (from 3.26.0).** For an entry with `design` boards the
+page shows each board's image beside the app shot (a board without an image shows its name and the
+source link), the entry's `deviates` text highlighted above both, and a header
+`N boards · M mapped · K dropped · D deviations`. An entry with a `deviates` text cannot be accepted in
+bulk: the answers file must name the deviation (`"deviation": "<tag>"`, which the page's checkbox writes),
+it is part of the batch the owner dialog names, and the question says how many deviations it covers.
+Board images are embedded: the page stays one offline file. The decision log is a hash chain (each entry
+holds the hash of the one before it and the lock sha; `approved.json` holds the last as `head`), and the
+gate refuses a trimmed or rewritten log and a batch a later send back spent.
 
 Retired for these changes: design-bundle pinning, `marks.py` rows against bundles and references, the
 six-layer geometry tolerances and the design-system audit tied to board counts (the design-system pin

@@ -633,6 +633,40 @@ def uses_biome() -> bool:
     return isinstance(pkg, dict) and any("@biomejs/biome" in (pkg.get(k) or {}) for k in ("dependencies", "devDependencies"))
 
 
+LOCKFILES = ("pnpm-lock.yaml", "package-lock.json", "yarn.lock")  # the order that wins when none is named
+MANAGER_LOCKS = {"pnpm": ("pnpm-lock.yaml",), "npm": ("package-lock.json",), "yarn": ("yarn.lock",), "bun": ("bun.lock", "bun.lockb")}
+
+
+def main_checkout() -> Path | None:
+    """The main checkout when ROOT is another worktree of the repo (`git worktree list`: its first entry), else None."""
+    out = subprocess.run(["git", "worktree", "list", "--porcelain"], cwd=ROOT, capture_output=True, text=True).stdout.splitlines()
+    first = next((Path(line[9:]) for line in out if line.startswith("worktree ")), None)
+    return first if first is not None and first.resolve() != ROOT.resolve() else None
+
+
+def active_lockfiles(main: Path) -> list[str]:
+    """The lockfiles of the package manager in use: the `packageManager` field of package.json, else every lockfile present."""
+    try:
+        manager = str(json.loads((ROOT / "package.json").read_text(encoding="utf-8")).get("packageManager", "")).split("@")[0]
+    except (OSError, ValueError, AttributeError):
+        manager = ""
+    if manager in MANAGER_LOCKS:
+        return list(MANAGER_LOCKS[manager])
+    return [lock for lock in LOCKFILES if (ROOT / lock).exists() or (main / lock).exists()]
+
+
+def main_checkout_formatter(name: str) -> tuple[Path | None, bool]:
+    """(the main checkout's `node_modules/.bin/<name>` when this worktree has no node_modules at all and the active package
+    manager's lockfile is byte for byte the same in both, whether the main checkout has the formatter at all)."""
+    main = main_checkout()
+    binary = main / "node_modules" / ".bin" / name if main else None
+    if binary is None or not binary.exists():
+        return None, False
+    locks = active_lockfiles(main)
+    same = bool(locks) and all((ROOT / lock).is_file() and (main / lock).is_file() and (ROOT / lock).read_bytes() == (main / lock).read_bytes() for lock in locks)
+    return (binary if same and not (ROOT / "node_modules").exists() else None), True
+
+
 def format_written() -> None:
     """Run the repo's own formatter over what we just wrote, per file type: biome for the types it handles
     when it is the repo's formatter, prettier for everything else.
@@ -650,7 +684,12 @@ def format_written() -> None:
     ]
     for name, label, flags, targets in groups:
         binary = ROOT / "node_modules" / ".bin" / name
-        if not targets or not binary.exists():
+        if targets and not binary.exists():
+            binary, installed = main_checkout_formatter(name)
+            if binary is None and installed:
+                files = " ".join(str(p.relative_to(ROOT)) for p in targets)
+                manual.append(f"{name} is not installed in this worktree and the main checkout's lockfile differs, so adopt did not format what it wrote -- run `{label} {files}` before committing")
+        if not targets or binary is None or not binary.exists():
             continue
         out = subprocess.run([str(binary), *flags, *(str(p) for p in targets)], cwd=ROOT, capture_output=True, text=True)
         if out.returncode == 0:
@@ -1040,6 +1079,8 @@ KIT_HEAVY = {
     "aa80c7f1cdab2e74",
     "a09c60909df8931b",
     "a13b3e0ac5548a40",
+    "133511d3c4625790",
+    "d5f94641e353c11a",
 }
 KIT_DB = {
     "b34ea79ae0841fc5",
@@ -1056,6 +1097,8 @@ KIT_EVIDENCE = {
     "74b85435656e6566",
     "6c666865c4228267",
     "ac196d166bdc401d",
+    "9cb41cc57637e80a",
+    "06688e12102ccf68",
 }
 KIT_PREFLIGHT = {
     "848114ac6dd4a375",
@@ -1072,6 +1115,8 @@ KIT_CAPTURE = {
     "b66771e69e06e46f",
     "e43a7d24e86cfe1f",
     "9cd5bdc59852d1a6",
+    "2b0aa4a315b83122",
+    "ebdfb586c6d92fc8",
 }
 KIT_HELPER_GUARD = {
     "ca26ffb8ad16e8b3",
@@ -1170,16 +1215,15 @@ def finish_upgrade() -> str:
     return "\n".join(out)
 
 
-def merged_heads(root: Path) -> list[str] | None:
-    """Head branch of every merged PR (all pages); None when gh cannot say."""
+def merged_pr(root: Path, branch: str) -> bool | None:
+    """True when a merged PR came from exactly `branch` (gh is asked for that head), None when gh cannot say."""
     try:
         out = subprocess.run(
-            ["gh", "api", "--paginate", "repos/{owner}/{repo}/pulls?state=closed&per_page=100",
-             "--jq", ".[] | select(.merged_at) | .head.ref"],
-            cwd=root, capture_output=True, text=True, timeout=600,
+            ["gh", "pr", "list", "--head", branch, "--state", "merged", "--limit", "1", "--json", "headRefName"],
+            cwd=root, capture_output=True, text=True, timeout=60,
         )  # fmt: skip
-        return out.stdout.split() if out.returncode == 0 else None
-    except (OSError, subprocess.TimeoutExpired):
+        return bool(json.loads(out.stdout or "[]")) if out.returncode == 0 else None
+    except (OSError, ValueError, subprocess.TimeoutExpired):
         return None
 
 
@@ -1199,13 +1243,7 @@ def own_branch(folder: Path, cfg: dict, head: str) -> bool:
     """`head` is a branch of this change: milestone/<slug>[-n], project/<slug>, or a branch the
     change's own plan.md names (the folder name gives the slug when decisions.json names none).
     Nothing a PR body says counts, and a decisions.json adopt cannot read means the branch is unknown."""
-    decisions: object = {}
-    for path in (folder / "state" / "decisions.json", folder / "decisions.json"):
-        try:
-            decisions = json.loads(path.read_text(encoding="utf-8"))
-            break
-        except (OSError, ValueError):
-            continue
+    decisions = read_decisions_of(folder)
     if not isinstance(decisions, dict):
         return False
     prefix = (cfg.get("milestones") or {}).get("branchPrefix", "milestone/")
@@ -1222,6 +1260,39 @@ def own_branch(folder: Path, cfg: dict, head: str) -> bool:
     except OSError:
         return False
     return "/" in head and re.search(rf"(?<![\w/.-]){re.escape(head)}(?![\w/-])", plan) is not None
+
+
+def read_decisions_of(folder: Path) -> object:
+    """The change's decisions: `state/intake.json` (layout 4's name for it), `state/decisions.json`, else `decisions.json`."""
+    for path in (folder / "state" / "intake.json", folder / "state" / "decisions.json", folder / "decisions.json"):
+        try:
+            return json.loads(path.read_text(encoding="utf-8"))
+        except (OSError, ValueError):
+            continue
+    return {}
+
+
+def own_branches(folder: Path, cfg: dict) -> list[str]:
+    """The branches the change declares, as names to ask gh about: milestone/<slug>, milestone/<slug>-1 to -<last M of
+    plan.md>, project/<slug>, and a `branch:` field (decisions or a line of plan.md). Nothing is guessed from paths in the
+    plan. [] when the decisions cannot be read."""
+    decisions = read_decisions_of(folder)
+    prefix = (cfg.get("milestones") or {}).get("branchPrefix", "milestone/")
+    pprefix = (cfg.get("projects") or {}).get("branchPrefix", "project/")
+    slug = _slug(decisions.get("milestone"), prefix) if isinstance(decisions, dict) else None
+    project = _slug(decisions.get("project"), pprefix) if isinstance(decisions, dict) else None
+    if slug is None or project is None:
+        return []
+    slug = slug or re.sub(r"^([A-Z][A-Z0-9]+-\d+-)?", "", re.sub(r"^\d{4}-\d{2}-\d{2}-", "", folder.name))
+    try:
+        plan = (folder / "plan.md").read_text(encoding="utf-8")
+    except OSError:
+        plan = ""
+    last = max([1, *(int(n) for n in re.findall(r"\bM(\d+)\b", plan))])
+    declared = [str(decisions.get("branch", ""))] if isinstance(decisions, dict) else []
+    declared += re.findall(r"^\s*branch:\s*([\w.-]+/[\w./-]+?)\s*$", plan, re.M)
+    found = [f"{prefix}{slug}", *(f"{prefix}{slug}-{n}" for n in range(1, last + 1)), *([f"{pprefix}{project}"] if project else []), *(b for b in declared if b)]
+    return list(dict.fromkeys(found))
 
 
 TALLY = "IMPORTANT: <n>  NITS: <m>  SHA: <head sha>"
@@ -1256,20 +1327,24 @@ def migrate_plan(cfg: dict) -> dict:
     if not changes.is_dir():
         changes = ROOT / ".changes"
     folders = archived_changes(changes / "archive")
-    heads = merged_heads(ROOT)
     remove_list, kept_lines = [], []
     for folder in folders:
-        if heads is not None and any(own_branch(folder, cfg, h) for h in heads):
+        branches, answers = own_branches(folder, cfg), []
+        for branch in branches:  # the change's own branches, one question each; the first merged PR settles it
+            answers.append(merged_pr(ROOT, branch))
+            if answers[-1]:
+                break
+        rel = folder.relative_to(ROOT)
+        if any(answers):
             remove_list.append(folder)
         else:
-            kept_lines.append(
-                f"{folder.relative_to(ROOT)}: kept, gh could not confirm a merged PR from {folder.name}'s own branch"
-            )
+            looked = f" (looked for {', '.join(branches)}{'; gh could not answer' if None in answers else ''})" if branches else " (no branch name could be read from decisions.json)"
+            kept_lines.append(f"{rel}: kept, gh could not confirm a merged PR from {folder.name}'s own branch{looked}")
     moved = True
     while moved:  # a kept folder's own files count as referrers for the others, so repeat until nothing moves
         moved = False
         for folder in list(remove_list):
-            if ref := referrer(folder.name, remove_list, set(cfg.get("keep", []))):
+            if ref := referrer(folder.name, remove_list):
                 remove_list.remove(folder)
                 PINNED_ARCHIVES.add(folder.name)
                 kept_lines.append(f"{folder.relative_to(ROOT)}: kept, referenced by {ref} (a link would break)")
@@ -1277,7 +1352,7 @@ def migrate_plan(cfg: dict) -> dict:
     return {
         "remove": remove_list,
         "kept": kept_lines,
-        "open": unmerged_branches(ROOT, cfg.get("defaultBranch") or "main", heads),
+        "open": unmerged_branches(ROOT, cfg.get("defaultBranch") or "main"),
         "had": {rel for rel in kit_script_paths() if (ROOT / rel).exists()},  # before this run writes any
     }
 
@@ -1461,7 +1536,7 @@ def migrate_report(cfg: dict, plan: dict) -> None:
             )
 
 
-def unmerged_branches(root: Path, default: str, merged: list[str] | None = None) -> list[str]:
+def unmerged_branches(root: Path, default: str) -> list[str]:
     """Branches not merged into the default branch (local and origin) and without a merged PR
     (a squash merge leaves the branch looking unmerged), plus the heads of open PRs."""
     base = f"origin/{default}" if subprocess.run(
@@ -1472,7 +1547,7 @@ def unmerged_branches(root: Path, default: str, merged: list[str] | None = None)
         cwd=root, capture_output=True, text=True,
     )  # fmt: skip
     names = [n.removeprefix("origin/") for n in out.stdout.split()] if out.returncode == 0 else []
-    names = [n for n in names if n not in set(merged or ())]
+    names = [n for n in names if not merged_pr(root, n)]  # a squash merge leaves the branch looking unmerged
     try:
         pr = subprocess.run(
             ["gh", "pr", "list", "--state", "open", "--json", "headRefName"],

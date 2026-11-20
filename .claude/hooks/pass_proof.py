@@ -30,7 +30,7 @@ LOCKED_FILES = {
 }
 TICKED_FILES = ("tasks.md",)  # a tick or a handover edit is not an edit: only its task rows are locked
 LOCKED = {name for names in LOCKED_FILES.values() for name in names}
-APP_LOCKED_FILES = ("screens.json", "screens/approved.json")  # locked too once the lock says `"visual": "app"` or hashed it (3.25.0)
+APP_LOCKED_FILES = ("screens.json", "screens/approved.json", "design.json")  # locked too once the lock says `"visual": "app"` or hashed it (3.25.0; design.json 3.26.0)
 APP_LOCKED_GLOBS = ("screens/*.png",)  # the approved baselines: the owner approves them, an edit needs the owner too
 EVIDENCE_FILES = {"marks.json"}
 EVIDENCE_DIRS = {"asks", "evidence", "shots", "screens"}  # screens/: the per-screen records (3.23.0)
@@ -277,6 +277,20 @@ def _lock_keys(repo: Path, tree: dict[str, tuple[str, str]]) -> set[str]:
         return set()
     criteria = data.get("criteria") if isinstance(data, dict) else None
     return set(criteria) if isinstance(criteria, dict) else set()
+
+
+def screens_core(text: str) -> str:
+    """screens.json without the entries' `deviates` text: the one field of an entry the build may change after
+    approval (verify_gate.py hashes the same form into lock.json; test_sdd_hooks keeps the two equal). Only the plan
+    lock ignores it: a pass does not survive a changed deviation, because the owner has to accept the new text."""
+    try:
+        data = json.loads(text)
+    except ValueError:
+        return text
+    for row in (data.get("entries") if isinstance(data, dict) else data) or []:
+        if isinstance(row, dict):
+            row.pop("deviates", None)
+    return json.dumps(data, sort_keys=True)
 
 
 def app_locked(lock: object) -> bool:

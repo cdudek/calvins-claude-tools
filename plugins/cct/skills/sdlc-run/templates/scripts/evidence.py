@@ -45,6 +45,7 @@ import fcntl
 import hashlib
 import html
 import json
+import mimetypes
 import os
 import re
 import subprocess
@@ -530,18 +531,12 @@ def read_log(change: str | Path) -> list:
     return [r for r in data.get("log", []) if isinstance(r, dict)] if isinstance(data, dict) and isinstance(data.get("log"), list) else []
 
 
-def replayed(log: list, entry: str, bid: str) -> bool:
-    """`bid` already approved `entry`, and a send back of the entry came after it: that batch is spent."""
-    at = [i for i, r in enumerate(log) if r.get("entry") == entry and r.get("answer") == "accept" and r.get("batch") == bid]
-    return bool(at) and any(r.get("entry") == entry and r.get("answer") == "send-back" for r in log[at[0] + 1 :])
-
-
 def write_approved(change: str | Path, entries: dict, batches: dict, log: list) -> None:
     path = approved_path(change)
     path.parent.mkdir(parents=True, exist_ok=True)
     tmp = path.with_name(f".{path.name}.{os.getpid()}.tmp")
     kept = {b: p for b, p in batches.items() if any(a.get("decision") == b for a in entries.values())}  # drop a batch nothing cites
-    tmp.write_text(json.dumps({"format": 1, "entries": entries, "batches": kept, "log": log}, indent=2, sort_keys=True) + "\n", encoding="utf-8")
+    tmp.write_text(json.dumps({"format": 1, "entries": entries, "batches": kept, "log": log, "head": log[-1].get("hash", "") if log else ""}, indent=2, sort_keys=True) + "\n", encoding="utf-8")
     os.replace(tmp, path)
 
 
@@ -549,32 +544,44 @@ def sha_of(path: Path) -> str:
     return hashlib.sha256(path.read_bytes()).hexdigest() if path.is_file() else ""
 
 
-def app_state(change: str | Path, entry: str, approved: dict, digest: str | None = None) -> str:
-    """approved | changed | new | not captured, for one entry (`digest`: the shot's, when the caller already read it)."""
+def app_state(change: str | Path, entry: str, approved: dict, digest: str | None = None, tag: str = "") -> str:
+    """approved | changed | needs review | new | not captured, for one entry (`digest`: the shot's, when the caller already
+    read it; `tag`: the entry's current board mapping and deviation, which the owner's answer was bound to)."""
     shot, ok = sha_of(shot_of(change, entry)) if digest is None else digest, approved.get(entry)
     if ok:
-        return "changed" if shot and shot != ok.get("sha256") else "approved"
+        if shot and shot != ok.get("sha256"):
+            return "changed"
+        return "needs review" if ok.get("binding", "") != tag else "approved"
     return "new" if shot else "not captured"
 
 
 def app_status_line(change: str | Path) -> str:
     approved = read_approved(change)
-    states = [app_state(change, e["id"], approved) for e in app_entries(change)]
+    import capture
+
+    shim_old_capture(capture)
+    design = capture.load_design(Path(change))
+    states = [app_state(change, e["id"], approved, tag=capture.binding_tag(Path(change), design, e)) for e in app_entries(change)]
     if not states:
         return ""
-    return (f"screens: {states.count('approved')} of {len(states)} approved · {states.count('changed')} changed since approval"
+    line = (f"screens: {states.count('approved')} of {len(states)} approved · {states.count('changed') + states.count('needs review')} changed since approval"
             f" · {states.count('not captured')} not captured")
+    counts = capture.design_counts(Path(change), app_entries(change))
+    return line + (f"\ndesign: {counts[0]} boards · {counts[1]} mapped · {counts[2]} dropped · {counts[3]} deviations" if counts else "")
 
 
 PAGE = """<!doctype html><meta charset="utf-8"><title>Screens to approve</title>
 <style>body{font:15px system-ui;margin:2rem auto;max-width:1100px;padding:0 1rem}h2{margin-top:2.5rem}
 figure{border:1px solid #ccc;border-radius:8px;padding:1rem;margin:1rem 0}img{max-width:100%;border:1px solid #ddd}
-code{background:#eee;padding:0 .3rem}.changed{color:#b00}label{margin-right:1rem}</style>
+code{background:#eee;padding:0 .3rem}.changed{color:#b00}label{margin-right:1rem}
+.pair{display:flex;gap:1rem;align-items:flex-start}.pair>div{flex:1;min-width:0}.dev{background:#fff3cd;border:1px solid #d6a300;padding:.5rem;margin:.5rem 0}
+.board{border:1px dashed #999;padding:.5rem}</style>
 <h1>Screens to approve</h1><p>Change <code>__CHANGE__</code>. Pick accept or send back per screen, then download your answers.</p>
+<p>__COUNTS__</p>
 <p><label>Your name <input id="by"></label> <button onclick="dl()">Download answers</button></p>
 __BODY__
 <script>function dl(){var a={};document.querySelectorAll('figure[data-id]').forEach(function(f){var c=f.querySelector('input[type=radio]:checked');
-if(c)a[f.dataset.id]={answer:c.value,sha256:f.dataset.sha}});var b=new Blob([JSON.stringify({format:1,approvedBy:document.getElementById('by').value,answers:a},null,2)],{type:'application/json'});
+if(c){a[f.dataset.id]={answer:c.value,sha256:f.dataset.sha};var d=f.querySelector('input[type=checkbox]:checked');if(d)a[f.dataset.id].deviation=d.value}});var b=new Blob([JSON.stringify({format:1,approvedBy:document.getElementById('by').value,answers:a},null,2)],{type:'application/json'});
 var l=document.createElement('a');l.href=URL.createObjectURL(b);l.download='answers.json';l.click()}</script>
 """
 
@@ -594,11 +601,32 @@ def inside(change: Path, path: Path) -> bool:
     return path.resolve().is_relative_to(change.resolve())
 
 
+def shim_old_capture(capture) -> None:
+    """A kept older scripts/capture.py (3.25) lacks the design helpers: for a change with no design input they have
+    one honest meaning, so the older path runs. design.json with such a capture.py is refused by gallery_cmd."""
+    none = {
+        "load_design": lambda change: {}, "boards_of": lambda design: [], "dropped_of": lambda design: [], "mapped": lambda entry: [],
+        "design_counts": lambda change, entries: None, "binding_tag": lambda change, design, entry: "",
+        "deviation_tag": lambda text: "", "lock_sha": lambda change: "", "image_problems": lambda change: [],
+        "link": lambda log, record, lock: record, "replayed": lambda log, entry, bid: False,
+    }  # fmt: skip
+    for name, fn in none.items():
+        if not hasattr(capture, name):
+            setattr(capture, name, fn)
+
+
 def gallery_cmd(args) -> int:
     sys.dont_write_bytecode = True  # a checkout stays clean: no __pycache__ from importing the kit's scripts
     import capture  # the one id rule; both scripts sit in the same folder
 
+    shim_old_capture(capture)
     change = resolve_change(args.change)
+    if (change / "design.json").is_file() and not hasattr(capture, "design_problems"):
+        print("evidence: scripts/capture.py is older than this script and cannot read design.json: run `adopt --upgrade --replace scripts/capture.py --apply`", file=sys.stderr)
+        return 1
+    if bad := capture.image_problems(change):
+        print("\n".join(f"evidence: {p}" for p in bad), file=sys.stderr)
+        return 1
     entries, problems = capture.load_screens(change)
     if problems:
         print("\n".join(f"evidence: {p}" for p in problems), file=sys.stderr)
@@ -606,8 +634,29 @@ def gallery_cmd(args) -> int:
     return gallery_import(args, change, entries) if args.do_import else gallery_write(change, entries)
 
 
+def boards_html(change: Path, design: dict, entry: dict) -> str:
+    """The design boards an entry maps, as one column: the board image embedded, else its name and the source link."""
+    import capture
+
+    known, out = {b["id"]: b for b in capture.boards_of(design)}, []
+    for bid in capture.mapped(entry):
+        board = known.get(bid, {"id": bid, "name": bid})
+        image = change / board["image"] if isinstance(board.get("image"), str) else None
+        mime = mimetypes.guess_type(str(image))[0] if image else None
+        if image and mime and image.is_file() and inside(change, image):
+            data = base64.b64encode(image.read_bytes()).decode()
+            out.append(f'<img alt="design {html.escape(bid, quote=True)}" src="data:{mime};base64,{data}">')
+        else:
+            src = str(design.get("source", ""))
+            link = f'<a href="{html.escape(src, quote=True)}">source</a>' if src.startswith(("http://", "https://")) else html.escape(src)
+            out.append(f'<div class="board"><b>{html.escape(str(board.get("name", bid)))}</b> ({html.escape(bid)}), no image: {link}</div>')
+    return f"<div><small>design</small><br>{''.join(out)}</div>" if out else ""
+
+
 def gallery_write(change: Path, entries: list[dict]) -> int:
-    approved, body, seen = read_approved(change), [], []
+    import capture
+
+    approved, body, seen, design = read_approved(change), [], [], capture.load_design(change)
     for e in entries:
         group = e["id"].rpartition(".")[0] or e["id"]
         if group not in seen:
@@ -616,22 +665,29 @@ def gallery_write(change: Path, entries: list[dict]) -> int:
         shot = shot_of(change, e["id"])
         raw = shot.read_bytes() if shot.is_file() and inside(change, shot) else None  # read once: shown, hashed and approved alike
         digest = hashlib.sha256(raw).hexdigest() if raw is not None else ""
-        state = app_state(change, e["id"], approved, digest)
+        state = app_state(change, e["id"], approved, digest, capture.binding_tag(change, design, e))
         head = f"<b>{html.escape(e['id'])}</b> <code>{html.escape(str(e.get('route', '')))}</code> "
+        deviates = str(e.get("deviates") or "").strip()
+        note = (f'<p class="dev"><b>Deviates from the design:</b> {html.escape(deviates)}<br><label><input type="checkbox" '
+                f'value="{capture.deviation_tag(deviates)}"> I accept this deviation</label></p>') if deviates else ""
         if raw is not None:
             data = base64.b64encode(raw).decode()
-            cls = ' class="changed"' if state == "changed" else ""
+            cls = ' class="changed"' if state in ("changed", "needs review") else ""
+            name = html.escape(e["id"], quote=True)
             body.append(
-                f'<figure data-id="{html.escape(e["id"], quote=True)}" data-sha="{digest}">{head}<span{cls}>'
-                f'{"changed since approval" if state == "changed" else state}</span><br>'
-                f'<img alt="{html.escape(e["id"], quote=True)}" src="data:image/png;base64,{data}"><br>'
-                f'<label><input type="radio" name="{html.escape(e["id"], quote=True)}" value="accept"> accept</label>'
-                f'<label><input type="radio" name="{html.escape(e["id"], quote=True)}" value="send back"> send back</label></figure>')
+                f'<figure data-id="{name}" data-sha="{digest}">{head}<span{cls}>'
+                f'{"changed since approval" if state == "changed" else state}</span><br>{note}'
+                f'<div class="pair">{boards_html(change, design, e)}<div><small>app</small><br>'
+                f'<img alt="{name}" src="data:image/png;base64,{data}"></div></div><br>'
+                f'<label><input type="radio" name="{name}" value="accept"> accept</label>'
+                f'<label><input type="radio" name="{name}" value="send back"> send back</label></figure>')
         else:
-            body.append(f"<figure>{head}<span>not captured</span></figure>")
+            body.append(f"<figure>{head}<span>not captured</span>{note}</figure>")
+    counts = capture.design_counts(change, entries)
+    summary = "<b>design:</b> {} boards · {} mapped · {} dropped · {} deviations".format(*counts) if counts else ""
     out = change / "verify" / "gallery.html"
     out.parent.mkdir(parents=True, exist_ok=True)
-    out.write_text(PAGE.replace("__CHANGE__", html.escape(change.name)).replace("__BODY__", "\n".join(body)), encoding="utf-8")
+    out.write_text(PAGE.replace("__CHANGE__", html.escape(change.name)).replace("__COUNTS__", summary).replace("__BODY__", "\n".join(body)), encoding="utf-8")
     print(f"wrote {out}")
     return 0
 
@@ -644,11 +700,12 @@ def owner_approved(change: Path, bid: str) -> bool:
     return marks.owner_decisions(repo, change.name).get(bid, ("",))[0] == "screens"
 
 
-def owner_dialog(change_id: str, bid: str, ids: list[str]) -> str:
+def owner_dialog(change_id: str, bid: str, ids: list[str], deviations: int = 0) -> str:
+    extra = f" ({deviations} with a deviation from the design, each accepted by name)" if deviations else ""
     return (
         f"evidence: no owner decision covers these {len(ids)} screens, and an agent cannot approve a screen. Ask the owner "
         "(AskUserQuestion, options Approve screens | Hold), the question starting exactly:\n"
-        f"  Change {change_id}, finding {bid}: Approve these {len(ids)} screens? {', '.join(ids)}\n"
+        f"  Change {change_id}, finding {bid}: Approve these {len(ids)} screens{extra}? {', '.join(ids)}\n"
         "then run the import again. Nothing was written."
     )
 
@@ -669,6 +726,10 @@ def gallery_import(args, change: Path, entries: list[dict]) -> int:
         print("evidence: the answers name nobody; fill in the name on the page or pass --by", file=sys.stderr)
         return 1
     known, bad, reopened, accepted, sent_back = {e["id"] for e in entries}, [], [], {}, []
+    design = capture.load_design(change)
+    devs = {e["id"]: capture.deviation_tag(e["deviates"]) for e in entries if isinstance(e.get("deviates"), str) and e["deviates"].strip()}
+    tags = {e["id"]: capture.binding_tag(change, design, e) for e in entries}  # the boards and the deviation the answer is bound to
+    lock = capture.lock_sha(change)
     with writing(change, approved_path(change)):  # two imports never overwrite each other's decisions
         approved, batches, log = read_approved(change), read_batches(change), read_log(change)
         before, batches_before, log_before = dict(approved), dict(batches), len(log)
@@ -684,32 +745,34 @@ def gallery_import(args, change: Path, entries: list[dict]) -> int:
                 bad.append(f"{entry}: the shot changed since the gallery was made; regenerate it")
             elif answer == "send-back":
                 sent_back.append((entry, digest))
+            elif entry in devs and a.get("deviation") != devs[entry]:  # a deviation is accepted by name, never in bulk
+                bad.append(f"{entry}: it deviates from the design ({entry} in screens.json says how); accept the deviation explicitly in the gallery")
             else:
                 accepted[entry] = (digest, raw)
         # only the owner decides a screen: their answer to the dialog of exactly this batch, accepts and the
         # send backs that remove an approval alike (a send back of a screen nobody approved changes nothing)
-        pairs = sorted([[e, d] for e, (d, _) in accepted.items()] + [[e, d, "send-back"] for e, d in sent_back if e in approved])
+        pairs = sorted([[e, d, *([tags[e]] if tags[e] else [])] for e, (d, _) in accepted.items()] + [[e, d, "send-back"] for e, d in sent_back if e in approved])
         bid = capture.approval_id(pairs) if pairs else ""
         if pairs:
-            if spent := [e for e in accepted if replayed(log, e, bid)]:
+            if spent := [e for e in accepted if capture.replayed(log, e, bid)]:
                 print(f"evidence: the owner's answer for {', '.join(spent)} was given before a later send back: a new batch is needed (capture the screen again and regenerate the gallery). Nothing was written.", file=sys.stderr)
                 return 1
             if not owner_approved(change, bid):
-                print(owner_dialog(change.name, bid, [p[0] + (" (send back)" if len(p) == 3 else "") for p in pairs]), file=sys.stderr)
+                print(owner_dialog(change.name, bid, [p[0] + (" (send back)" if p[2:] == ["send-back"] else "") for p in pairs], sum(p[0] in devs and p[2:] != ["send-back"] for p in pairs)), file=sys.stderr)
                 return 1
             batches[bid] = pairs
         stamp = time.strftime("%Y-%m-%dT%H:%M:%S%z")
-        for entry, digest in sent_back:
+        for entry, _ in sent_back:
             if approved.pop(entry, None):
                 (screens_dir(change) / f"{entry}.png").unlink(missing_ok=True)
-                log.append({"entry": entry, "answer": "send-back", "batch": bid, "time": stamp})
+                log.append(capture.link(log, {"entry": entry, "answer": "send-back", "batch": bid, "time": stamp}, lock))
             reopened.append(entry)
         for entry, (digest, raw) in accepted.items():
-            log.append({"entry": entry, "answer": "accept", "batch": bid, "time": stamp})
+            log.append(capture.link(log, {"entry": entry, "answer": "accept", "batch": bid, "time": stamp}, lock))
             screens_dir(change).mkdir(parents=True, exist_ok=True)
             (screens_dir(change) / f"{entry}.png").write_bytes(raw)
             approved[entry] = {"sha256": digest, "file": f"screens/{entry}.png", "approvedBy": by,
-                               "date": time.strftime("%Y-%m-%d"), "decision": bid}  # fmt: skip
+                               "date": time.strftime("%Y-%m-%d"), "decision": bid, **({"binding": tags[entry]} if tags[entry] else {})}  # fmt: skip
         if approved != before or batches != batches_before or len(log) != log_before:
             write_approved(change, approved, batches, log)
     for r in reopened:

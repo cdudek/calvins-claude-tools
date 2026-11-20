@@ -6,14 +6,65 @@ Stage 1 asks which design the change follows and records the answer once, in
 key out or writes `"none"`. This is the change's one **visual source of truth**. Every other
 input (more images, annotated screenshots, generated mockups, today's app) is a reference.
 
-## A design tool is direction only (changes approved from 3.25.0)
+## The design is binding for what exists (changes approved from 3.26.0)
 
-For a change locked with `"visual": "app"` no design input is a gate. A canvas link, a Figma file,
-an export bundle, images or annotated screenshots go to `asks/` as direction the UX plan reads; they
-are not pinned, not compared with the app and not a `marks.py` row. What the owner approves is
-screenshots of the real app, one per entry of `screens.json`
-([visual work](visual-work.md)). The rest of this file, including the six layers, describes changes
-approved before 3.25.0.
+For a change locked with `"visual": "app"` the design binds **which screens and states exist and how
+each is structured**. Nothing measures pixels against it: pixel detail is decided by the owner on the
+real app's screenshots ([visual work](visual-work.md)), and a pinned design export, a `marks.py` row
+and the six layers below stay retired. A canvas link, a Figma file, an export bundle, images or
+annotated screenshots go to `asks/` for the UX plan to read. A change with no design input is
+unchanged.
+
+**The inventory.** When the change has a design input (`decisions.json` `visualSource`, or files in
+`asks/design/`), the UX plan writes `changes/<id>/design.json` and lists **every** board or frame of
+the source: it reads the canvas, the Figma file or the export it was given, never a sample.
+
+```json
+{"source": "<link or path>",
+ "boards": [{"id": "<stable board id>", "name": "Leads, empty", "image": "asks/design/<id>.png"}],
+ "dropped": [{"board": "<board id>", "reason": "replaced by the detail panel"}]}
+```
+
+`image` is optional (an exported picture of the board, stored in the change). A board id is a plain
+name that stays the same when the board is renamed in the tool.
+
+**The mapping.** A `screens.json` entry may carry `"design": ["<board id>", ...]`. Every board is
+either named by at least one entry or listed in `dropped` with a reason; `verify_gate.py approve`
+fails naming each unmapped board, each entry that names a board `design.json` does not list, and an
+entry that names a board when there is no `design.json`.
+
+**The owner confirms the inventory.** An agent could list only some of the boards, so at approval the
+owner answers one dialog bound to a hash of the whole list (board ids, names, count, and the dropped
+list with its reasons): `Change <id>, finding inventory-<hash>: these N boards are the whole design:
+...` (options `Confirm inventory` | `Hold`), the same transcript-backed owner answer the screen
+approval uses. One dialog covers both the board list and the dropped boards, so a dropped board is
+the owner's decision, never the agent's. The lock records the inventory (`"design": "inventory"`,
+`"inventory": <id>`) and the sha256 of every board image (`"designImages"`); `design.json` is locked
+like `screens.json`, so editing it after approval voids the approval, and the gallery and the close
+refuse an image that changed or went missing, naming the board. Every hash behind these ids is made of
+canonical JSON, so record boundaries bind.
+
+**A design input makes it an app change.** The change has a design input when `visualSource` is set
+or `asks/design/` holds at least one file (an empty folder counts for nothing; `ux: off` waives it).
+Such a change needs `screens.json` and `design.json` whatever its size.
+
+**Deviations are explicit.** A built screen that differs from its board (a section left out, another
+layout, different content structure) says so in the entry's `"deviates": "<what differs and why>"`.
+The build may add or change `deviates` after approval: it is the one field of an entry that does not
+void the approval (the lock hashes `screens.json` without it, and the edit hook lets an edit through
+that changes nothing else). It is not free, though: the gallery shows the text above the board and
+the screenshot, an entry with a deviation is never approved in bulk (the owner ticks it by name, and
+the approval dialog states how many deviations it covers), and a deviation added or changed after the
+owner approved the screen voids a milestone pass already given and fails the capture (`CAPTURE FAIL
+approval`) until the owner approves it in the gallery again. The owner's answer for a screen is also
+bound to the boards the entry maps and their image digests: moving a screen to another board needs a
+new answer, and the gallery shows such a screen as `needs review`, not `approved`.
+
+Changes approved before 3.26.0 keep their path: the lock says whether it holds an inventory
+(`"design": "inventory"`). An in-flight 3.25 change gets its `design.json` at its next approval;
+nothing forces it earlier.
+
+The rest of this file, including the six layers, describes changes approved before 3.25.0.
 
 ## The six layers
 

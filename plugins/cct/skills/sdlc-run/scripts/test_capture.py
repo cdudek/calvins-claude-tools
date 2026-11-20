@@ -84,17 +84,19 @@ def _last(r: subprocess.CompletedProcess[str]) -> str:
     return r.stdout.strip().splitlines()[-1]
 
 
-def owner_answers(repo: Path, bid: str, label: str = "Approve screens", n: int = 1, change_id: str = ID, home: Path | None = None) -> None:
+def owner_answers(repo: Path, bid: str, label: str = "Approve screens", n: int = 1, change_id: str = ID, home: Path | None = None,
+                  options: tuple[str, ...] = ("Approve screens", "Hold"), cwd: Path | None = None) -> None:
     """The owner's structured answer to the dialog that names approval `bid`, in the session transcript
     Claude Code keeps for this repo (the one place the gate believes an owner decision)."""
     folder = (home or repo.parent / "home") / ".claude/projects" / re.sub(r"[^A-Za-z0-9]", "-", str(repo.resolve()))
     folder.mkdir(parents=True, exist_ok=True)
     question = f"Change {change_id}, finding {bid}: Approve these screens?"
     stamp = (dt.datetime.now(dt.timezone.utc) + dt.timedelta(seconds=60 + n)).isoformat()
+    where = {"cwd": str(cwd)} if cwd else {}
     entries = [
-        {"type": "assistant", "timestamp": stamp, "message": {"content": [{
+        {"type": "assistant", "timestamp": stamp, **where, "message": {"content": [{
             "type": "tool_use", "id": f"s{n}", "name": "AskUserQuestion",
-            "input": {"questions": [{"question": question, "options": [{"label": "Approve screens"}, {"label": "Hold"}]}]},
+            "input": {"questions": [{"question": question, "options": [{"label": o} for o in options]}]},
         }]}},
         {"type": "user", "timestamp": stamp, "toolUseResult": {"answers": {question: label}},
          "message": {"content": [{"type": "tool_result", "tool_use_id": f"s{n}", "content": "ok"}]}},
@@ -512,6 +514,33 @@ def test_an_owner_answer_recorded_in_a_sibling_worktree_counts(tmp_path: Path, m
     subprocess.run([*git, "worktree", "remove", "--force", str(main / ".worktrees" / "a")], cwd=main, check=True, capture_output=True)
     marks._ANSWERS.clear()
     assert marks.owner_decisions(main, ID).get("screens-abc", ("",))[0] == "screens"  # a removed worktree's answer stays
+    # a folder whose name only begins like a worktree's is another path: its answer is never read (exact names, no prefix)
+    lookalike = main / ".worktrees" / "a-extra"
+    lookalike.mkdir()
+    owner_answers(lookalike, "screens-lookalike", home=home)
+    marks._ANSWERS.clear()
+    assert "screens-lookalike" not in marks.owner_decisions(main, ID)
+
+
+def test_a_worktree_removed_before_the_ledger_counts_only_if_its_sessions_ran_under_the_worktrees_folder(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    import marks
+
+    main = tmp_path / "main"
+    (main / "changes" / ID).mkdir(parents=True)
+    (main / "changes" / ID / "screens.json").write_text("[]")
+    git = ["git", "-c", "user.name=t", "-c", "user.email=t@t"]
+    for cmd in (["git", "init", "-q"], ["git", "add", "."], [*git, "commit", "-qm", "i"]):
+        subprocess.run(cmd, cwd=main, check=True, capture_output=True)
+    home = tmp_path / "home"
+    monkeypatch.setenv("HOME", str(home))
+    gone, fake = main / ".worktrees" / "gone", main / ".worktrees" / "fake-copy"  # neither exists, nor is in the ledger
+    owner_answers(gone, "screens-real", home=home, cwd=gone)
+    owner_answers(fake, "screens-fake", home=home, cwd=tmp_path / "elsewhere")  # a folder named like one, run somewhere else
+    marks._ANSWERS.clear()
+    decided = marks.owner_decisions(main, ID)
+    assert decided.get("screens-real", ("",))[0] == "screens" and "screens-fake" not in decided
+    ledger = main / ".git" / "sdlc" / "worktrees.json"
+    assert not list(ledger.parent.glob(".*.tmp")) if ledger.parent.exists() else True  # the ledger is replaced atomically
 
 
 def test_an_early_close_checks_coverage_only_for_the_entries_due(tmp_path: Path) -> None:
