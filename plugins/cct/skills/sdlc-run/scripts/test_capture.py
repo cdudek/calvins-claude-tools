@@ -358,6 +358,16 @@ def test_a_legacy_id_is_refused_once_any_decision_was_logged_after_it(tmp_path: 
     assert _last(r) == "CAPTURE FAIL approval" and "no recorded batch" in r.stdout
 
 
+@pytest.mark.parametrize("image", ["asks/../x.png", "./a.png", "a/./b.png", "../x.png", "a//b.png"])
+def test_a_board_path_with_dot_parts_is_no_board_image(tmp_path: Path, image: str) -> None:
+    for rel in ("x.png", "a.png", "a/b.png", "asks/keep"):
+        (tmp_path / rel).parent.mkdir(parents=True, exist_ok=True)
+        (tmp_path / rel).write_bytes(b"png")
+    assert capture.board_file(tmp_path, image) is None
+    assert capture.read_board(tmp_path, image) is None
+    assert capture.read_board(tmp_path, "a/b.png") == b"png"
+
+
 def test_an_edited_batch_or_a_held_dialog_does_not_cover_an_approval(tmp_path: Path) -> None:
     repo = _repo(tmp_path)
     _run(repo)

@@ -177,6 +177,8 @@ def board_file(change: Path, image: object) -> Path | None:
     symlink and is a file. An absolute path, a `..` that leaves, a symlink or a symlinked folder is no board image."""
     if not isinstance(image, str) or not image or Path(image).is_absolute():
         return None
+    if os.path.normpath(image) != image or {".", ".."} & set(image.split("/")):  # 3.26.4: no `.`/`..` part, so the folder walk never follows one
+        return None
     base = Path(change).resolve()
     path = base / image
     real = path.resolve()
@@ -190,6 +192,8 @@ def read_board(change: Path, image: object) -> bytes | None:
     if board_file(change, image) is None:
         return None
     *folders, leaf = Path(str(image)).parts
+    if {".", ".."} & {*folders, leaf}:
+        return None
     fd = -1
     try:
         fd = os.open(Path(change).resolve(), os.O_RDONLY | os.O_DIRECTORY)
