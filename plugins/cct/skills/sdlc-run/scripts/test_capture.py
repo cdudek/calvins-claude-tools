@@ -358,6 +358,50 @@ def test_a_legacy_id_is_refused_once_any_decision_was_logged_after_it(tmp_path: 
     assert _last(r) == "CAPTURE FAIL approval" and "no recorded batch" in r.stdout
 
 
+def test_a_legacy_id_is_refused_under_a_strict_lock_with_the_log_emptied(tmp_path: Path) -> None:
+    """3.26.4: the legacy id is read for a pre-3.26 lock only, never because the (writable) log is empty."""
+    repo = _repo(tmp_path)
+    _run(repo)
+    _approve_all(repo, seal=_seal_3_25_1)
+    change = repo / "changes" / ID
+    (change / "state").mkdir(exist_ok=True)
+    (change / "state" / "lock.json").write_text(json.dumps({"sha": "x", "design": {}}))  # a 3.26 lock
+    r = _run(repo)
+    assert _last(r) == "CAPTURE FAIL approval" and "entries were removed" in r.stdout
+
+
+def test_the_legacy_id_needs_the_old_hash_shape() -> None:
+    h = "a" * 64
+    assert capture.legacy_approval_id([["e", h], ["f", h, "send-back"]]) is not None
+    for bad in ([["e f", h]], [["e\nf", h]], [["e", h.upper()]], [["e", "a" * 63]], [["e", h, "x y"]], [["e"]], [["e", h, "a", "b"]]):
+        assert capture.legacy_approval_id(bad) is None, bad
+
+
+@pytest.mark.parametrize("image", ["asks/../x.png", "./a.png", "a/./b.png", "../x.png", "a//b.png"])
+def test_a_board_path_with_dot_parts_is_no_board_image(tmp_path: Path, image: str) -> None:
+    for rel in ("x.png", "a.png", "a/b.png", "asks/keep"):
+        (tmp_path / rel).parent.mkdir(parents=True, exist_ok=True)
+        (tmp_path / rel).write_bytes(b"png")
+    assert capture.board_file(tmp_path, image) is None
+    assert capture.read_board(tmp_path, image) is None
+    assert capture.read_board(tmp_path, "a/b.png") == b"png"
+
+
+def test_a_legacy_id_is_refused_on_a_pre_3_26_lock_once_any_decision_was_logged(tmp_path: Path) -> None:
+    """An unlogged 3.25.1 acceptance, then a logged send back of that screen, then the old baseline restored: refused.
+    No `head` and no 3.26 lock, so the lock is not strict; the legacy id is read only while the log is empty."""
+    repo = _repo(tmp_path)
+    _run(repo)
+    _approve_all(repo, seal=_seal_3_25_1)
+    change = repo / "changes" / ID
+    data = json.loads((change / "screens/approved.json").read_text())
+    bid = next(iter(data["batches"]))
+    log = [{"entry": "leads.list.empty", "answer": "send-back", "batch": bid, "time": "t"}]  # unhashed, no head
+    (change / "screens/approved.json").write_text(json.dumps({**data, "log": log}))
+    r = _run(repo)
+    assert _last(r) == "CAPTURE FAIL approval" and "no recorded batch" in r.stdout
+
+
 def test_an_edited_batch_or_a_held_dialog_does_not_cover_an_approval(tmp_path: Path) -> None:
     repo = _repo(tmp_path)
     _run(repo)

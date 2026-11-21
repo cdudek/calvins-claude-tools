@@ -2533,6 +2533,12 @@ def test_the_milestone_gate_captures_the_fixture_app_end_to_end(tmp_path: Path, 
         (change / "screens" / f"{e['id']}.png").write_bytes(shot.read_bytes())
         entries[e["id"]] = {"sha256": hashlib.sha256(shot.read_bytes()).hexdigest(), "file": f"screens/{e['id']}.png"}
     tc._seal(repo, {"format": 1, "entries": entries}, owner=False, change_id=ID)  # approved.json as an agent could write it
+    path = change / "screens/approved.json"  # this lock is 3.26: every approval has its logged decision, or the log was removed
+    data = json.loads(path.read_text())
+    log: list = []
+    for e in entries:
+        log.append(tc.capture.link(log, {"entry": e, "answer": "accept", "batch": entries[e]["decision"], "time": "t"}, ""))
+    path.write_text(json.dumps({**data, "log": log, "head": log[-1]["hash"]}))
     _git(repo, "add", ".")
     _git(repo, "commit", "-qm", "approved.json without the owner")
     r = _gate(repo, "milestone", ID)
