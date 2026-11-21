@@ -2059,7 +2059,7 @@ def test_a_plain_adopt_writes_a_new_kit_path_when_free_or_an_unedited_kit_copy_H
 
 # 3.21.0: `--migrate` is the one way across kit versions.
 def _fake_gh(tmp_path: Path, head: str, *more: str, open_heads: tuple[str, ...] = (), commit_prs: str = "[]",
-             pr_files: dict[int, str] | None = None, paged: bool = False) -> dict[str, str]:
+             pr_files: dict[int, str] | None = None, paged: bool = False, remaining: int = 5000) -> dict[str, str]:
     """A gh that answers like GitHub's REST API for what adopt asks. Merged PRs are the ones from branches `head` and
     `more`, matched on the exact head (`-f head=<owner>:<branch>`; a head put into the URL is cut at its first `&`, as
     the server would). `paged`: the merged PR sits on page two (gh prints page one alone; --paginate prints one array per page). Open PRs are
@@ -2067,7 +2067,7 @@ def _fake_gh(tmp_path: Path, head: str, *more: str, open_heads: tuple[str, ...] 
     newline-separated names in `pr_files[n]` (default: a file outside changes/). Every call is logged to `gh.log`."""
     bin_dir = tmp_path / "bin"
     bin_dir.mkdir()
-    config = {"merged": [head, *more], "open": list(open_heads), "commit_prs": commit_prs, "files": pr_files or {}, "paged": paged}
+    config = {"merged": [head, *more], "open": list(open_heads), "commit_prs": commit_prs, "files": pr_files or {}, "paged": paged, "remaining": remaining}
     (tmp_path / "gh.json").write_text(json.dumps(config))
     (bin_dir / "gh").write_text(
         f"#!{sys.executable}\n"
@@ -2078,6 +2078,8 @@ def _fake_gh(tmp_path: Path, head: str, *more: str, open_heads: tuple[str, ...] 
         f"open({str(tmp_path / 'gh.log')!r}, 'a').write(' '.join(args) + '\\n')\n"
         "if args[:2] == ['repo', 'view']:\n"
         "    print('acme/app')\n"
+        "elif args[:2] == ['api', 'rate_limit']:\n"
+        "    print(cfg['remaining'], 1790000000)\n"
         "elif args[:1] == ['api']:\n"
         "    endpoint = next(a for a in args[1:] if a.startswith('repos/'))\n"
         "    fields = {a.split('=', 1)[0]: a.split('=', 1)[1] for prev, a in zip(args, args[1:]) if prev == '-f'}\n"
@@ -2477,6 +2479,27 @@ def test_migrate_keeps_an_archive_whose_adding_commit_has_no_merged_pr_and_names
         kept = "\n".join(_sections(res.stdout)["MANUAL"])
         assert "2026-10-01-merged-one: kept, gh could not confirm a merged PR" in kept and "looked for the PR of the commit that added the archive" in kept
         assert ("gh could not answer" in kept) == (answer == "FAIL")
+
+
+def test_archives_sharing_one_pr_cost_one_files_call_and_one_commit_lookup(tmp_path: Path) -> None:
+    repo = _stamped_3_18(tmp_path)  # both archives came in one commit, so in one PR
+    res = _migrate(repo, _fake_gh(tmp_path, "nothing/matches", commit_prs=MERGED_PR))
+    assert res.returncode == 0, res.stderr
+    calls = (tmp_path / "gh.log").read_text().splitlines()
+    assert len([c for c in calls if "/pulls/184/files" in c]) == 1, calls
+    assert len([c for c in calls if "/commits/" in c]) == 1, calls
+
+
+def test_a_low_api_quota_stops_confirming_with_one_line_and_keeps_the_archives(tmp_path: Path) -> None:
+    repo = _stamped_3_18(tmp_path)
+    res = _migrate(repo, _fake_gh(tmp_path, "milestone/merged-one-1", commit_prs=MERGED_PR, remaining=150))
+    assert res.returncode == 0, res.stderr
+    assert (repo / "changes/archive/2026/2026-10/2026-10-01-merged-one").exists()
+    assert (repo / "changes/archive/2026/2026-10/2026-10-02-unmerged-one").exists()
+    manual = "\n".join(_sections(res.stdout)["MANUAL"])
+    assert manual.count("archive check stopped: GitHub API quota low, 2 archives kept unconfirmed, re-run adopt --migrate after ") == 1, manual
+    assert "gh could not" not in manual
+    assert not [c for c in (tmp_path / "gh.log").read_text().splitlines() if "/commits/" in c or "/pulls" in c]
 
 
 def test_a_records_only_pr_does_not_confirm_the_change_merged(tmp_path: Path) -> None:

@@ -1226,8 +1226,30 @@ def finish_upgrade() -> str:
     return "\n".join(out)
 
 
+QUOTA_FLOOR, QUOTA_EVERY = 200, 50  # stop confirming archives under this many REST calls left; the quota is read before the first call and every 50th
+API = {"calls": 0, "stopped": False, "remaining": 0, "reset": ""}
+SHA_PRS: dict[str, list | None] = {}  # commit sha -> the PRs of that commit: many archives come in one commit
+PR_HOLDS: dict[int, bool | None] = {}  # PR number -> whether it changed a file outside the records folder (None: gh could not say)
+
+
+def quota_low(root: Path) -> bool:
+    """True once the REST quota is under `QUOTA_FLOOR`; the answer sticks for the run. An unreadable quota is not low."""
+    try:
+        out = subprocess.run(["gh", "api", "rate_limit", "--jq", '.resources.core | "\\(.remaining) \\(.reset)"'], cwd=root, capture_output=True, text=True, timeout=60).stdout.split()
+        remaining, reset = int(out[0]), int(out[1])
+    except (OSError, subprocess.TimeoutExpired, ValueError, IndexError):
+        return False
+    if remaining < QUOTA_FLOOR:
+        API.update(stopped=True, remaining=remaining, reset=dt.datetime.fromtimestamp(reset, dt.timezone.utc).strftime("%Y-%m-%d %H:%M UTC"))
+    return API["stopped"]
+
+
 def gh_api(root: Path, *args: str) -> str | None:
-    """`gh api <args>` over REST (gh fills `{owner}` and `{repo}` in an endpoint from the repo's remote). None when gh cannot answer."""
+    """`gh api <args>` over REST (gh fills `{owner}` and `{repo}` in an endpoint from the repo's remote). None when gh cannot answer
+    or the quota ran low (`quota_low`: read before the first call and every 50th)."""
+    if API["stopped"] or (API["calls"] % QUOTA_EVERY == 0 and quota_low(root)):
+        return None
+    API["calls"] += 1
     try:
         out = subprocess.run(["gh", "api", *args], cwd=root, capture_output=True, text=True, timeout=120)
         return out.stdout if out.returncode == 0 else None
@@ -1293,15 +1315,19 @@ def archive_pr_merged(root: Path, default: str, records: str, *paths: Path) -> b
         )  # fmt: skip
         if not (sha := (out.stdout.split() or [""])[0]):
             continue
-        prs = gh_json(root, f"repos/{{owner}}/{{repo}}/commits/{sha}/pulls")
+        if sha not in SHA_PRS:
+            SHA_PRS[sha] = gh_json(root, f"repos/{{owner}}/{{repo}}/commits/{sha}/pulls")
+        prs = SHA_PRS[sha]
         if prs is None:
             return None
         unsure = False
         for pr in (p for p in prs if isinstance(p, dict) and p.get("merged_at") and isinstance(p.get("number"), int)):
-            names = gh_api(root, "--paginate", f"repos/{{owner}}/{{repo}}/pulls/{pr['number']}/files", "--jq", ".[].filename")
-            if names is None:
+            if pr["number"] not in PR_HOLDS:
+                names = gh_api(root, "--paginate", f"repos/{{owner}}/{{repo}}/pulls/{pr['number']}/files", "--jq", ".[].filename")
+                PR_HOLDS[pr["number"]] = None if names is None else any(n and not n.startswith(records.rstrip("/") + "/") for n in names.splitlines())
+            if PR_HOLDS[pr["number"]] is None:
                 unsure = True
-            elif any(n and not n.startswith(records.rstrip("/") + "/") for n in names.splitlines()):
+            elif PR_HOLDS[pr["number"]]:
                 return True
         return None if unsure else False
     return False
@@ -1407,7 +1433,10 @@ def migrate_plan(cfg: dict) -> dict:
     if not changes.is_dir():
         changes = ROOT / ".changes"
     folders = archived_changes(changes / "archive")
-    remove_list, kept_lines = [], []
+    remove_list, kept_lines, unconfirmed = [], [], []
+    API.update(calls=0, stopped=False)
+    SHA_PRS.clear()
+    PR_HOLDS.clear()
     for folder in folders:
         branches = own_branches(folder, cfg)
         # first, the PR that carried the archive commit onto the default branch (any branch name); then the guessed branches
@@ -1417,11 +1446,15 @@ def migrate_plan(cfg: dict) -> dict:
             if answers[-1]:
                 break
         rel = folder.relative_to(ROOT)
-        if any(answers):
+        if API["stopped"] and not any(answers):  # the quota ran out: this archive and every later one stay, under one line
+            unconfirmed.append(folder)
+        elif any(answers):
             remove_list.append(folder)
         else:
             looked = f" (looked for the PR of the commit that added the archive{''.join(', ' + b for b in branches)}{'; gh could not answer' if None in answers else ''})"
             kept_lines.append(f"{rel}: kept, gh could not confirm a merged PR from {folder.name}'s own branch{looked}")
+    if unconfirmed:
+        kept_lines.append(f"archive check stopped: GitHub API quota low, {len(unconfirmed)} archives kept unconfirmed, re-run adopt --migrate after {API['reset']}")
     moved = True
     while moved:  # a kept folder's own files count as referrers for the others, so repeat until nothing moves
         moved = False
