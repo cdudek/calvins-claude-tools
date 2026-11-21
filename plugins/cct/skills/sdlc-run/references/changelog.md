@@ -5,6 +5,15 @@ version warning, the **Mechanical** lines are what `adopt` does for you (it adds
 with the stack's defaults and never overwrites a value), the **Manual** lines are printed for
 the engineer. A version with no migration lines needs nothing but a re-run of `adopt`.
 
+## 3.26.4 — a strict lock never reads the legacy batch id; board paths without dots; adopt spends fewer API calls
+
+- **The 3.25.1 batch id is read only for a pre-3.26 lock.** The decision log sits in the writable `approved.json`, so an empty log proves nothing. Under a 3.26 lock, approvals beside an empty or absent log are refused ("entries were removed").
+- **The legacy id is made only of the old shape.** Every pair has 2 or 3 fields without whitespace and a 64-digit lowercase hex digest; any other batch is not a legacy batch, so a re-partitioned batch cannot collide.
+- **A board image path has no `.` or `..` part.** `board_file` refuses an absolute path, a `.` or `..` part and a path that differs from its normalized form; `read_board` checks its component list again before the folder-by-folder walk.
+- **`adopt --migrate` asks GitHub less.** One commit lookup per commit and one files call per PR, however many archives share them. The REST quota is read before the first call and every 50th; under 200 left, confirming stops with one line and the remaining archives are kept.
+- Mechanical: re-running `adopt --migrate` replaces `capture.py` and stamps `sdlcVersion` 3.26.4.
+- Manual: none. After a stop on the quota line, re-run `adopt --migrate` once the quota resets.
+
 ## 3.26.3 — three regressions of 3.26.2
 
 - **A records-only PR confirms nothing.** The PR found through an archive's commit counts only when it also changed a file outside the changes folder; a housekeeping PR that only archives folders falls through to the branch lookup.
