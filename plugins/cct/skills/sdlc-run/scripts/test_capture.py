@@ -387,6 +387,21 @@ def test_a_board_path_with_dot_parts_is_no_board_image(tmp_path: Path, image: st
     assert capture.read_board(tmp_path, "a/b.png") == b"png"
 
 
+def test_a_legacy_id_is_refused_on_a_pre_3_26_lock_once_any_decision_was_logged(tmp_path: Path) -> None:
+    """An unlogged 3.25.1 acceptance, then a logged send back of that screen, then the old baseline restored: refused.
+    No `head` and no 3.26 lock, so the lock is not strict; the legacy id is read only while the log is empty."""
+    repo = _repo(tmp_path)
+    _run(repo)
+    _approve_all(repo, seal=_seal_3_25_1)
+    change = repo / "changes" / ID
+    data = json.loads((change / "screens/approved.json").read_text())
+    bid = next(iter(data["batches"]))
+    log = [{"entry": "leads.list.empty", "answer": "send-back", "batch": bid, "time": "t"}]  # unhashed, no head
+    (change / "screens/approved.json").write_text(json.dumps({**data, "log": log}))
+    r = _run(repo)
+    assert _last(r) == "CAPTURE FAIL approval" and "no recorded batch" in r.stdout
+
+
 def test_an_edited_batch_or_a_held_dialog_does_not_cover_an_approval(tmp_path: Path) -> None:
     repo = _repo(tmp_path)
     _run(repo)

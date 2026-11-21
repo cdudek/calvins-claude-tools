@@ -7,12 +7,12 @@ the engineer. A version with no migration lines needs nothing but a re-run of `a
 
 ## 3.26.4 — a strict lock never reads the legacy batch id; board paths without dots; adopt spends fewer API calls
 
-- **The 3.25.1 batch id is read only for a pre-3.26 lock.** The decision log sits in the writable `approved.json`, so an empty log proves nothing. Under a 3.26 lock, approvals beside an empty or absent log are refused ("entries were removed").
+- **The 3.25.1 batch id is read only for a pre-3.26 lock with an empty decision log.** Under a 3.26 lock it is never read, and approvals beside an empty or absent log are refused ("entries were removed"). On a pre-3.26 lock any logged decision, a send back included, ends it.
 - **The legacy id is made only of the old shape.** Every pair has 2 or 3 fields without whitespace and a 64-digit lowercase hex digest; any other batch is not a legacy batch, so a re-partitioned batch cannot collide.
 - **A board image path has no `.` or `..` part.** `board_file` refuses an absolute path, a `.` or `..` part and a path that differs from its normalized form; `read_board` checks its component list again before the folder-by-folder walk.
 - **`adopt --migrate` asks GitHub less.** One commit lookup per commit and one files call per PR, however many archives share them. The REST quota is read before the first call and every 50th; under 200 left, confirming stops with one line and the remaining archives are kept.
 - Mechanical: re-running `adopt --migrate` replaces `capture.py` and stamps `sdlcVersion` 3.26.4.
-- Manual: none. After a stop on the quota line, re-run `adopt --migrate` once the quota resets.
+- Manual: a repo that kept a pre-log 3.25.1 `evidence.py` must run `adopt --migrate` before approving under a 3.26 lock; an in-flight `design.json` with `./`-prefixed image paths must be normalised and re-locked once. After a stop on the quota line, re-run `adopt --migrate` once the quota resets.
 
 ## 3.26.3 — three regressions of 3.26.2
 

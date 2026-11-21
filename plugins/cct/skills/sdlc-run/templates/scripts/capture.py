@@ -605,7 +605,7 @@ def approval_id(pairs: list) -> str:
 def legacy_approval_id(pairs: list) -> str | None:
     """The id 3.25.1 to 3.25.2 made of a batch: the sorted `<entry> <sha256>` lines (a send back's third word included)
     joined by newlines. A baseline written then keeps this id, and `uncovered` reads it only for a lock that is not
-    strict (pre-3.26). The join is ambiguous, so it is made only of pairs of the old shape: 2 or 3 fields without
+    strict (pre-3.26) while the decision log is empty (3.26 logs every decision). The join is ambiguous, so it is made only of pairs of the old shape: 2 or 3 fields without
     whitespace, the digest 64 lowercase hex. None for any other batch."""
     if not all(isinstance(p, list) and len(p) in (2, 3) and all(isinstance(w, str) and w and not re.search(r"\s", w) for w in p)
                and re.fullmatch(r"[0-9a-f]{64}", p[1]) for p in pairs):
@@ -645,7 +645,7 @@ def uncovered(change: Path, approved: dict) -> list[str]:
         ok = isinstance(pairs, list) and all(isinstance(p, list) and len(p) in (2, 3) for p in pairs)
         # a deviation the owner did not see (added after the approval) is not covered: it needs the gallery again
         held = ok and any(p[:2] == [entry, a.get("sha256")] and p[2:] != ["send-back"] and p[2:] == ([tags[entry]] if tags.get(entry) else []) for p in pairs)
-        if not ok or bid not in (approval_id(pairs), *([] if strict else [legacy_approval_id(pairs)])) or not held:
+        if not ok or bid not in (approval_id(pairs), *([] if strict or log else [legacy_approval_id(pairs)])) or not held:
             out.append(f"{entry}: no recorded batch of an owner approval holds it" + (" with its current board mapping and deviation" if tags.get(entry) else ""))
         elif decided.get(bid, ("",))[0] != "screens":
             out.append(f"{entry}: the owner has not answered the dialog of {bid}")
