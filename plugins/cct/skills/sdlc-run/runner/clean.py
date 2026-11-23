@@ -675,6 +675,7 @@ def main(argv: list[str] | None = None) -> int:
         ap.error(f"{repo} is not a git repository")
     inv = inventory(repo)
     plan = plan_removals(inv)
+    report = None if args.json else _render(inv)  # before --apply: the report reads the files that apply is about to delete
     result: dict = {}
     if args.apply:
         try:
@@ -684,7 +685,7 @@ def main(argv: list[str] | None = None) -> int:
     if args.json:
         print(json.dumps({"inventory": inv, "plan": plan, "result": result}, indent=2))
         return 0
-    print(_render(inv))
+    print(report)
     if not args.apply:
         print("\nDRY RUN: nothing changed (use --apply)")
     elif "refused" in result:
