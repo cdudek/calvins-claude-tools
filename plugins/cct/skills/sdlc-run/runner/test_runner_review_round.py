@@ -366,17 +366,24 @@ def test_candidate_commands_get_no_tokens_unless_the_contract_names_them(tmp_pat
     assert os.environ["GITHUB_TOKEN"] == "secret-token" and "GITHUB_TOKEN" not in verify.clean_env()
 
 
-def test_the_gate_command_is_fixed_and_needs_an_explicit_approval(tmp_path, monkeypatch):
+# Output recorded from real `plannotator annotate <doc> --gate --json` runs (the log of each run begins with a Resolved: line).
+REAL_APPROVED = 'Resolved: /x/plan.md\n{"decision":"approved"}\n'
+REAL_DISMISSED = 'Folder: /x/changes\n{"decision":"dismissed"}\n'
+REAL_ANNOTATED = 'Resolved: /x/plan.md\n{"decision":"annotated","feedback":"# File Feedback\\n\\nWhy S3?"}\n'
+
+
+def test_the_gate_command_is_fixed_and_needs_an_explicit_approval_field(tmp_path, monkeypatch):
     _, rid = _run(tmp_path, [tk.chk("x", "app", ["true"], count=False)], {"milestones": []})
     monkeypatch.setenv("SDLC_GATE_CMD", "true")  # the old override: it must change nothing
     seen = []
     monkeypatch.setattr(discover, "GATE_RUN", lambda cmd: (seen.append(cmd), (0, "ok"))[1])
-    assert discover.gate(rid) is False  # exit 0 without a positive approval is not an approval
-    assert seen[0][:2] == ["plannotator", "annotate"] and seen[0][-1] == "--gate" and "true" not in seen[0]
+    assert discover.gate(rid) is False  # exit 0 without a decision is not an approval
+    assert seen[0][:2] == ["plannotator", "annotate"] and seen[0][-2:] == ["--gate", "--json"] and "true" not in seen[0]
     assert not store.gate_marker(rid, "approve").exists()
-    for said in ("Decision: rejected", "changes requested", "not approved"):
+    for said in (REAL_DISMISSED, REAL_ANNOTATED, 'The user approved. {"note": "approved"}', '{"decision": "not approved"}', "approved"):
         monkeypatch.setattr(discover, "GATE_RUN", lambda cmd, s=said: (0, s))
-        assert discover.gate(rid) is False
-    monkeypatch.setattr(discover, "GATE_RUN", lambda cmd: (0, "Decision: approved"))
+        assert discover.gate(rid) is False, said
+    monkeypatch.setattr(discover, "GATE_RUN", lambda cmd: (1, REAL_APPROVED))
+    assert discover.gate(rid) is False  # a failing exit never approves
+    monkeypatch.setattr(discover, "GATE_RUN", lambda cmd: (0, REAL_APPROVED))
     assert discover.gate(rid) is True and store.gate_marker(rid, "approve").exists()
-

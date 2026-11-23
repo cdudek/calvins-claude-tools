@@ -6,6 +6,7 @@ import sys
 from pathlib import Path
 
 import board
+import pytest
 import verify
 
 HERE = Path(__file__).parent
@@ -43,6 +44,10 @@ def run_check(tmp_path, f, rows, executable=None):
     return p.returncode, p.stdout
 
 
+needs_browser = pytest.mark.skipif(not board.browser_available()[0], reason="no Chromium installed here (playwright install chromium)")
+
+
+@needs_browser
 def test_spacing_failure_names_expected_and_got(tmp_path):
     rows = board.extract(structured(), TOKENS)["rows"]
     code, out = run_check(tmp_path, page(tmp_path, "12px"), rows)
@@ -52,6 +57,7 @@ def test_spacing_failure_names_expected_and_got(tmp_path):
     assert "Ran 2 checks" in out and "1 failed" in out
 
 
+@needs_browser
 def test_spacing_pass(tmp_path):
     rows = board.extract(structured(), TOKENS)["rows"]
     code, out = run_check(tmp_path, page(tmp_path, "16px"), rows)
@@ -81,6 +87,7 @@ def test_unresolved_token_is_unsupported():
     assert out["unsupported"][0]["id"].endswith("padding-left") and "space-9" in out["unsupported"][0]["reason"]
 
 
+@needs_browser
 def test_html_board_measured_then_app_compared(tmp_path):
     ref = tmp_path / "ref.html"
     ref.write_text(PAGE % "16px")
@@ -106,6 +113,7 @@ def test_browser_unavailable(tmp_path):
     assert code == 127 and out.startswith("env: browser unavailable")
 
 
+@needs_browser
 def test_locator_must_match_exactly_one(tmp_path):
     f = page(tmp_path)
     many = {"id": "m", "locator": {"css": "div.a"}, "prop": "width", "expected": "10px", "tolerance_px": 0.5}
@@ -115,6 +123,7 @@ def test_locator_must_match_exactly_one(tmp_path):
     assert "FAIL m: locator matched 2 elements" in out and "FAIL n: locator matched 0 elements" in out
 
 
+@needs_browser
 def test_gap_between_two_locators(tmp_path):
     f = tmp_path / "g.html"
     f.write_text('<body style="margin:0"><button style="display:block;height:20px;margin:0">A</button>'
@@ -130,6 +139,7 @@ def test_compare():
     assert board.compare("center", "center", 0.5) and not board.compare("left", "center", 0.5)
 
 
+@needs_browser
 def test_verify_classifies_cli_output(tmp_path):
     chk = {"count_regex": r"Ran (\d+) checks"}
     rows = board.extract(structured(), TOKENS)["rows"]

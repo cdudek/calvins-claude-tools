@@ -15,7 +15,7 @@ def sdlc(home, *args, cwd=None, gate="approved"):
     import sdlc as cli
 
     out, err = io.StringIO(), io.StringIO()
-    old, discover.GATE_RUN = os.environ.get("SDLC_HOME"), (lambda cmd: (0 if gate != "false" else 1, f"decision: {gate}"))
+    old, discover.GATE_RUN = os.environ.get("SDLC_HOME"), (lambda cmd: (0, json.dumps({"decision": "approved" if gate == "approved" else "dismissed"})))
     os.environ["SDLC_HOME"] = str(home)
     old_cwd = os.getcwd()
     try:

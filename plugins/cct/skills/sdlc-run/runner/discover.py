@@ -290,6 +290,19 @@ def screen(rid: str) -> Path:
     return p
 
 
+def gate_decision(out: str) -> str | None:
+    """The `decision` of the JSON object `plannotator annotate --gate --json` prints (recorded values: approved, annotated,
+    dismissed). Only an explicit "approved" counts; a missing or unparsable result is no approval."""
+    for line in reversed(out.strip().splitlines()):
+        try:
+            obj = json.loads(line)
+        except ValueError:
+            continue
+        if isinstance(obj, dict) and isinstance(obj.get("decision"), str):
+            return obj["decision"]
+    return None
+
+
 def _plannotator(cmd: list[str]) -> tuple[int, str]:
     r = subprocess.run(cmd, capture_output=True, text=True)
     return r.returncode, r.stdout + r.stderr
@@ -307,9 +320,8 @@ def gate(rid: str, purpose: str = "approve") -> bool:
     else:
         doc = d / f"gate-{purpose}.md"
         store.atomic_write(doc, f"# Restart run {rid}\n\nThe run was stopped or blocked. Approve to continue within the original caps and deadline.\n")
-    rc, said = GATE_RUN(["plannotator", "annotate", str(doc), "--gate"])  # a fixed command: no environment variable swaps it
-    said = said.lower()
-    ok = rc == 0 and bool(re.search(r"\bapproved?\b", said)) and not re.search(r"reject|denied|changes requested|request.?changes|not approved", said)
+    rc, said = GATE_RUN(["plannotator", "annotate", str(doc), "--gate", "--json"])  # a fixed command: no environment variable swaps it
+    ok = rc == 0 and gate_decision(said) == "approved"
     if ok:
         store.write_json(store.gate_marker(rid, purpose), {"digest": contract.bundle_digest(rid), "at": store.iso()})
     store.log(rid, f"gate {purpose}: {'approved' if ok else 'not approved'}")
