@@ -151,7 +151,7 @@ def test_pass_needs_the_match_ratio_and_no_mismatch_among_the_matched_nodes():
     assert board.verdict(row_of(names), board.judge(row_of(names), app_nodes(names[:19])))[0]  # 19/20 = 95%, the default min_match
     ok, lines = board.verdict(row_of(names), board.judge(row_of(names), app_nodes(names[:18])))
     assert not ok and "below min_match 0.95" in lines[-1] and "n18" in lines[-1]
-    assert board.verdict(row_of(names, min_match=0.9), board.judge(row_of(names, min_match=0.9), app_nodes(names[:18])))[0]
+    assert not board.verdict(row_of(names, min_match=0.9), board.judge(row_of(names, min_match=0.9), app_nodes(names[:18])))[0]  # floored at 0.95
     ok, lines = board.verdict(row_of(names), board.judge(row_of(names), app_nodes(names, color="blue")))  # one wrong value fails a full match
     assert not ok and "MISMATCH r n0 color: board red, app blue" in lines[1]
     both = app_nodes(["n0"]) * 2  # a locator found twice in the app is not matched
@@ -326,7 +326,10 @@ def test_surface_shapes_and_the_paths_and_env_they_may_name(tmp_path):
     assert board.validate_surface(good_ext) and board.validate_surface(good_app)
     for bad in ({**good_ext, "dist": "../x"}, {**good_ext, "dist": "/abs"}, {**good_ext, "page": "https://evil/x"}, {**good_ext, "page": "../a.html"},
                 {**good_ext, "page": "a b.html"}, {**good_app, "app": "../main.js"}, {**good_app, "app": "/usr/bin/x"},
-                *({**good_app, "env": {k: "x"}} for k in ("PATH", "HOME", "NODE_OPTIONS", "ELECTRON_RUN_AS_NODE", "LD_PRELOAD", "DYLD_INSERT_LIBRARIES", "lower", "A-B")),
+                *({**good_app, "env": {k: "x"}} for k in ("PATH", "HOME", "NODE_OPTIONS", "NODE_PATH", "ELECTRON_RUN_AS_NODE", "ELECTRON_ENABLE_LOGGING",
+                                                          "BASH_ENV", "SDLC_HOME", "LD_PRELOAD", "DYLD_INSERT_LIBRARIES", "lower", "A-B")),
+                *({**good_app, "args": [a]} for a in ("--user-data-dir=/tmp/x", "--renderer-cmd-prefix=sh", "--inspect", "--js-flags=--x", "--load-extension=/x",
+                                                      "--require", "bare", "-x", "--UPPER", "--a b")),
                 {**good_app, "args": ["--require=/x.js"]}, {**good_app, "args": ["-r", "x"]}, {"kind": "web"}, {**good_app, "env": {"A": 1}}):
         with pytest.raises(ValueError):
             board.validate_surface(bad)
@@ -342,7 +345,9 @@ def test_surface_shapes_and_the_paths_and_env_they_may_name(tmp_path):
 def test_a_row_with_a_surface_outside_the_repo_is_refused_before_any_browser_starts(tmp_path):
     (tmp_path / "repo").mkdir()
     (tmp_path / "repo" / "dist").symlink_to(tmp_path)
-    row = {**row_of(["n"]), "theme": "light", "surface": {"kind": "chrome-extension", "dist": "dist", "page": "p.html"}}
+    row = {**row_of(["n"]), "props": [*board.CANVAS_STYLE, *board.BOX], "theme": "light",
+           "surface": {"kind": "chrome-extension", "dist": "dist", "page": "p.html"}}
+    row["nodes"][0]["v"] = ["1"] * 21
     code, out = check(web_spec("http://x", [row]), tmp_path, tmp_path / "repo")
     assert code == 2 and "resolves outside the repo" in out
 
@@ -509,3 +514,146 @@ def test_ready_replaces_the_networkidle_wait_and_a_wait_that_times_out_still_fai
     for bad in ({"selector": ""}, {"load": "idle"}, {"selector": "a", "load": "load"}, "x"):
         with pytest.raises(ValueError, match="entry E: ready must be"):
             board.validate_mapping({"boards": [{"board": "a", "route": "/", "entry": "E", "ready": bad}]})
+
+
+# ---- review round -----------------------------------------------------------------------------------------------------
+
+def free_port():
+    with socket.socket() as s:
+        s.bind(("127.0.0.1", 0))
+        return s.getsockname()[1]
+
+
+def a_board_run(tmp_path, **board_kw):
+    repo = tk.make_repo(tmp_path / "r", "app", {"index.html": "x", "package.json": "{}", "scripts/build.sh": "echo"})
+    row = board_row(**board_kw)
+    row["repo"] = "app"
+    return repo, row, tk.new_run(tmp_path / "home", repo, [])
+
+
+def test_a_board_row_can_be_drafted_and_its_tools_come_from_build_and_start(tmp_path, monkeypatch):
+    import discover
+    monkeypatch.setenv("SDLC_HOME", str(tmp_path / "home"))
+    repo = tk.make_repo(tmp_path, "web", {"README.md": "x"})
+    rid = discover.plan([str(repo)], "t")
+    spec = tmp_path / "web.json"
+    spec.write_text(json.dumps({"target": {"kind": "web", "url": "http://127.0.0.1:4173"}, "rows": [
+        {"id": "r", "props": [*board.CANVAS_STYLE, *board.BOX], "min_match": 0.95, "tol": {"width": 3}, "nodes": [{"n": "a", "l": {}, "v": []}] * 4,
+         "unmeasurable_nodes": 1}]}))
+    c = tmp_path / "c.json"
+    row = {"id": "b", "repo": "web", "milestone": None, "kind": "board", "expect": {"kind": "pass"}, "pins": ["specs/web.json"], "env": ["API_URL"],
+           "board": {"spec": "specs/web.json", "expected_rows": 1, "build": ["no-such-tool-xyz", "build"], "start": ["npm", "run", "preview"],
+                     "ready_url": "http://127.0.0.1:4173/"}}
+    c.write_text(json.dumps({"checks": [row], "limits": {"max_dispatches": 5}, "waive_full": ["web"]}))
+    blockers = discover.draft(rid, None, str(c), None, [f"web:specs/web.json={spec}"], [])  # used to raise KeyError: 'runner'
+    assert any("needs no-such-tool-xyz" in b for b in blockers)
+    text = discover.screen(rid).read_text()
+    assert "board check specs/web.json (1 rows); build: no-such-tool-xyz build" in text and "app at `http://127.0.0.1:4173/`" in text
+    assert "| API_URL |" in text and "## Board checks" in text
+    assert "1 rows (expected 1), 4 nodes, min_match 0.95, 21 properties, tolerance overrides: {\"width\": 3}, unmeasurable nodes 1" in text
+
+
+def test_a_stale_server_on_ready_url_is_refused_and_an_app_that_dies_is_not_measured(tmp_path):
+    repo, _, rid = a_board_run(tmp_path)
+    probe = [sys.executable, "-c", "print('Ran 1 checks')"]
+    with board.serve(tmp_path) as stale:  # a decoy already answering: the probe used `start = sleep 2; exit 1` and the old app passed
+        row = board_row(start=["sh", "-c", "sleep 2; exit 1"], ready_url=stale + "/", ready_timeout=5)
+        job = verify.run_checked(rid, row, probe, repo, None)
+        assert job.exit == 127 and "already answers" in job.out and verify.classify(row, job)[0] == "BLOCKED"
+    port = free_port()
+    url = f"http://127.0.0.1:{port}/"
+    dies = board_row(start=["sh", "-c", "exit 1"], ready_url=url, ready_timeout=5)
+    job = verify.run_checked(rid, dies, probe, repo, None)
+    assert job.exit == 127 and "the app exited" in job.out
+    once = f"import http.server as h; h.HTTPServer(('127.0.0.1', {port}), h.SimpleHTTPRequestHandler).handle_request()"
+    row = board_row(start=[sys.executable, "-c", once], ready_url=url, ready_timeout=10)  # answers once, then is gone
+    job = verify.run_checked(rid, row, probe, repo, None)
+    assert job.exit in (1, 127) and "the app exited" in job.out and verify.classify(row, job)[0] != "PASS"
+
+
+def test_the_spec_url_must_be_the_origin_of_ready_url_and_the_runner_hands_that_origin_to_the_check(tmp_path):
+    repo, _, rid = a_board_run(tmp_path)
+    port = free_port()
+    (repo / "specs").mkdir()
+    (repo / "specs" / "web.json").write_text(json.dumps({"target": {"kind": "web", "url": "http://127.0.0.1:1"}, "rows": []}))
+    row = board_row(start=[sys.executable, "-m", "http.server", str(port), "--bind", "127.0.0.1"], ready_url=f"http://127.0.0.1:{port}/", ready_timeout=20)
+    job = verify.run_checked(rid, row, [sys.executable, "-c", "print('Ran 1 checks')"], repo, None)
+    assert job.exit == 127 and "is not the origin of ready_url" in job.out
+    (repo / "specs" / "web.json").write_text(json.dumps({"rows": []}))  # no url of its own: the check is told the origin
+    job = verify.run_checked(rid, row, [sys.executable, "-c", "import sys; print(sys.argv[-2:]); print('Ran 1 checks')"], repo, None)
+    assert job.exit == 0 and f"['--url', 'http://127.0.0.1:{port}']" in job.out
+
+
+@needs_browser
+def test_the_check_takes_its_url_from_the_runner_flag(idx, tmp_path):
+    rows = board.canvas_rows(idx, MAPPING)["rows"]
+    with board.serve(app(tmp_path)) as url:
+        spec = {"rows": rows}
+        assert check(spec, tmp_path, None, "--url", url)[0] == 0
+
+
+def test_a_row_cannot_lower_the_bar_it_is_judged_by(tmp_path, capsys):
+    names = [f"n{i}" for i in range(20)]
+    row = row_of(names, min_match=0.01)
+    assert not board.verdict(row, board.judge(row, app_nodes(names[:1])))[0]  # 1 of 20 matched with min_match 0.01
+    for bad in ({"min_match": 0.01}, {"min_match": 1.5}, {"tolerances": {"width": 99999}}, {"tolerances": {"color": 1}}, {"tolerances": {"font-size": -1}},
+                {"tolerances": {"nonsense": 1}}):
+        with pytest.raises(ValueError, match="entry E"):
+            board.validate_mapping({"boards": [{"board": "a", "route": "/", "entry": "E", **bad}]})
+    board.validate_mapping({"boards": [{"board": "a", "route": "/", "entry": "E", "min_match": 0.97, "tolerances": {"width": 4, "padding-left": 2}}]})
+    assert board.tolerance("width", "100px", {"width": 99999}) == 4.0 and board.tolerance("width", "1000px", {"width": 99999}) == 20.0
+    assert board.tolerance("padding-left", "8px", {"padding-left": 99999}) == 4.0
+    assert board.tolerance("color", "red", {"color": 99999}) == 1.0 and not board.same("color", "rgb(0, 0, 0)", "rgb(0, 0, 5)", {"color": 99999})
+    assert not board.same("width", "100px", "300px", {"width": 99999})
+
+
+def test_a_spec_that_lists_no_or_odd_properties_is_refused_before_measuring(tmp_path, capsys):
+    good = {"id": "r", "theme": "light", "route": "/x", "props": [*board.CANVAS_STYLE, *board.BOX], "nodes": [{"n": "a", "l": {"text": "a"}, "v": ["1"] * 21}]}
+    assert board.row_problem(good) == ""
+    for bad in ({**good, "props": []}, {**good, "props": ["width"]}, {**good, "props": [*good["props"], "bogus"]}, {**good, "tol": {"color": 1}},
+                {**good, "tol": {"width": 99999}}, {**good, "nodes": [{"n": "a", "l": {"text": "a"}, "v": []}]}):
+        assert board.row_problem(bad), bad
+        f = tmp_path / "s.json"
+        f.write_text(json.dumps(web_spec("http://x", [bad])))
+        assert board.main(["check", str(f)]) == 2 and "board: row r" in capsys.readouterr().out
+
+
+def test_the_files_a_board_build_and_start_execute_are_protected_like_a_checks_runner(tmp_path):
+    repo, row, rid = a_board_run(tmp_path, build=["npm", "run", "build"], start=["sh", "scripts/build.sh"], ready_url="http://127.0.0.1:4173/")
+    store.write_json(store.run_dir(rid) / "contract.json", {"checks": [row], "limits": {"max_dispatches": 5}})
+    base = tk.git(repo, "rev-parse", "HEAD")
+    pkg = tk.commit_file(repo, "package.json", '{"scripts": {"build": "curl evil"}}')
+    sh = tk.commit_file(repo, "scripts/build.sh", "curl evil")
+    assert any("protected path package.json" in b for b in verify.guard_diff(rid, "app", base, pkg))
+    assert any("protected path scripts/build.sh" in b for b in verify.guard_diff(rid, "app", base, sh))
+    assert verify._argv_files(str(repo), base, ["pnpm", "run", "x", "scripts/build.sh", "nope.sh"]) == ["package.json", "scripts/build.sh"]
+
+
+def test_sdlc_stop_kills_the_started_app_through_its_pidfile_and_wait_ready_polls_for_it(tmp_path):
+    import os
+    import threading
+    import time
+    repo, _, rid = a_board_run(tmp_path)
+    url = f"http://127.0.0.1:{free_port()}/"
+    row = board_row(start=["sleep", "60"], ready_url=url, ready_timeout=60)
+    seen = {}
+
+    def stopper():
+        pidf = store.run_dir(rid) / "jobs" / f"app-{row['id']}-app.pid"
+        for _ in range(100):
+            if pidf.exists():
+                seen["pid"] = json.loads(pidf.read_text())["pid"]
+                store.stop_marker(rid).write_text("stop")
+                return
+            time.sleep(0.1)
+    t = threading.Thread(target=stopper)
+    t.start()
+    job = verify.run_checked(rid, row, [sys.executable, "-c", "print('Ran 1 checks')"], repo, None)
+    t.join()
+    assert job.killed == "stop" and verify.classify(row, job)[0] == "BLOCKED"
+    with pytest.raises(ProcessLookupError):
+        os.kill(seen["pid"], 0)  # the app is gone, and so is its pidfile
+    assert not (store.run_dir(rid) / "jobs" / f"app-{row['id']}-app.pid").exists()
+    timeout = board_row(start=["sleep", "60"], ready_url=url, ready_timeout=1)
+    store.stop_marker(rid).unlink()
+    assert verify.run_checked(rid, timeout, [sys.executable, "-c", "x"], repo, None).exit == 127

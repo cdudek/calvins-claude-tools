@@ -297,46 +297,90 @@ def verify_check(rid: str, chk: dict, ref: str | None = None, base_sha: str | No
             _drop(repo["path"], contract.wt_path(repo["path"], rid, f"verify-b-{key}"))
 
 
-def wait_ready(url: str, seconds: int, proc: subprocess.Popen) -> bool:
+def answers(url: str) -> bool:
     import urllib.error
     import urllib.request
+    try:
+        urllib.request.urlopen(url, timeout=2).close()  # noqa: S310 - the contract allows only an http://127.0.0.1 or localhost URL
+        return True
+    except urllib.error.HTTPError:
+        return True  # the server answered; a 404 on the root is still a server that is up
+    except Exception:  # noqa: BLE001 - nothing there (yet)
+        return False
+
+
+def wait_ready(rid: str, url: str, seconds: int, proc: subprocess.Popen) -> str:
+    """"" when the app we started answers `url` and still runs, else why not: it exited, the owner stopped the run, or the deadline passed."""
     end = time.time() + seconds
-    while time.time() < end and proc.poll() is None:
-        try:
-            urllib.request.urlopen(url, timeout=2).close()  # noqa: S310 - the contract allows only an http://127.0.0.1 or localhost URL
-            return True
-        except urllib.error.HTTPError:
-            return True  # the server answered; a 404 on the root is still an app that is up
-        except Exception:  # noqa: BLE001 - not up yet
-            pass
+    while time.time() < end:
+        if store.is_stopped(rid):
+            return "stop"
+        if proc.poll() is not None:
+            return f"the app exited (code {proc.returncode}) before {url} answered"
+        if answers(url):
+            time.sleep(0.2)  # a server of ours answers, and must still be ours a moment later (a stale server could have answered)
+            return "" if proc.poll() is None else f"the app exited (code {proc.returncode}) right after {url} answered"
         time.sleep(0.5)
-    return False
+    return f"the app did not answer {url} within {seconds}s"
+
+
+def origin(url: str) -> str:
+    from urllib.parse import urlsplit
+    u = urlsplit(url)
+    return f"{u.scheme}://{u.netloc}"
+
+
+def spec_url_problem(chk: dict, wt: Path, ready_url: str) -> str:
+    """The spec's own target.url must be the origin of ready_url: the check measures the app this run started, not another server."""
+    try:
+        got = (json.loads((wt / chk["board"]["spec"]).read_text()).get("target") or {}).get("url")
+    except (OSError, ValueError):
+        return ""  # the check itself reports an unreadable spec
+    return f"spec target.url {got} is not the origin of ready_url {ready_url}" if got and got.rstrip("/") != origin(ready_url) else ""
 
 
 def run_checked(rid: str, chk: dict, argv: list[str], wt: Path, env: dict | None) -> Job:
-    """run_job, and for a board row with `start`: bring the web app up in its own process group, wait for ready_url, run the check,
-    stop the app afterwards (also when the check fails or the owner stops the run)."""
+    """run_job, and for a board row: `build` first (a failure fails the row unmeasured), then `start`: the web app in its own process
+    group (pidfile written, so `sdlc stop` kills it), refused when ready_url already answers, awaited while it keeps running, the check
+    measuring ready_url's origin, and the app stopped afterwards however the check ended."""
     b = chk.get("board") or {}
+    label = f"{chk['repo']}-{chk['id']}"
     if b.get("build"):  # approved in the contract; same job path, deadline and env allowlist (`env`) as the check itself
-        built = run_job(rid, f"{chk['repo']}-{chk['id']}-build", b["build"], wt, env=env, allow=chk.get("env"))
+        built = run_job(rid, f"{label}-build", b["build"], wt, env=env, allow=chk.get("env"))
         if built.killed or built.exit in (126, 127):
             return built
         if built.exit != 0:
             return Job(built.exit, f"BUILD FAILED (exit {built.exit}): the row was not measured\n{built.out[-400:]}")
     if not b.get("start"):
-        return run_job(rid, f"{chk['repo']}-{chk['id']}", argv, wt, env=env, allow=chk.get("env"))
+        return run_job(rid, label, argv, wt, env=env, allow=chk.get("env"))
+    url = b["ready_url"]
+    if answers(url):
+        return Job(127, f"{url} already answers: a server this run did not start would be measured; stop it or change ready_url")
+    if why := spec_url_problem(chk, wt, url):
+        return Job(127, why)
+    jobs = store.run_dir(rid) / "jobs"
+    jobs.mkdir(parents=True, exist_ok=True)
     try:
         app = subprocess.Popen(b["start"], cwd=wt, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL, start_new_session=True,
                                env=clean_env(env, chk.get("env")))
     except (FileNotFoundError, PermissionError) as e:
         return Job(127, f"cannot start the app {b['start'][0]}: {e}")
+    pidf = jobs / f"{label}-app.pid"
+    pidf.write_text(json.dumps({"pid": app.pid, "ident": store.proc_ident(app.pid)}))
     try:
-        if not wait_ready(b["ready_url"], b.get("ready_timeout", 120), app):
-            return Job(127, f"the app did not answer {b['ready_url']} within {b.get('ready_timeout', 120)}s")
-        return run_job(rid, f"{chk['repo']}-{chk['id']}", argv, wt, env=env, allow=chk.get("env"))
+        why = wait_ready(rid, url, b.get("ready_timeout", 120), app)
+        if why == "stop":
+            return Job(143, "", "stop")
+        if why:
+            return Job(127, why)
+        job = run_job(rid, label, [*argv, "--url", origin(url)], wt, env=env, allow=chk.get("env"))
+        if job.exit == 0 and app.poll() is not None:
+            return Job(1, f"the app exited during the check (code {app.returncode}): the result is not proof\n{job.out[-300:]}")
+        return job
     finally:
         kill_group(app.pid)
         app.wait()
+        pidf.unlink(missing_ok=True)
 
 
 def install_dependencies(rid: str, chk: dict, wt: Path) -> str:
@@ -442,6 +486,19 @@ def replaceable(rel: str, globs: list[str]) -> bool:
     return any(fnmatch.fnmatch(rel, g) for g in globs)
 
 
+SCRIPT_RUNNERS = {"npm": "package.json", "pnpm": "package.json", "yarn": "package.json", "bun": "package.json", "npx": "package.json",
+                  "make": "Makefile", "just": "justfile", "task": "Taskfile.yml"}
+
+
+def _argv_files(path: str, base: str, argv: list[str]) -> list[str]:
+    """Files an approved argv runs: the script file of its package manager or make, and every argument naming a file at the base."""
+    out = [SCRIPT_RUNNERS[os.path.basename(argv[0])]] if os.path.basename(argv[0]) in SCRIPT_RUNNERS else []
+    for tok in argv[1:]:
+        if contract.safe_relpath(tok) and subprocess.run(["git", "cat-file", "-e", f"{base}:{tok}"], cwd=path, capture_output=True).returncode == 0:
+            out.append(tok)
+    return out
+
+
 def guard_diff(rid: str, repo_name: str, base: str, cand: str, task: str | None = None) -> list[str]:
     """Compare a candidate against its base for tampering (called before integration). Empty list means clean.
     A task's declared `replaces_tests` may be deleted or rewritten; nothing else may, and the contract's own checks still run."""
@@ -456,6 +513,10 @@ def guard_diff(rid: str, repo_name: str, base: str, cand: str, task: str | None 
     protected = DEFAULT_PROTECTED + c.get("protected", [])
     for k in mine:  # the runner entry and the config the contract names are protected too
         run = contract.runner_of(k)
+        if k.get("kind") == "board":  # what `build` and `start` execute is protected like a check's runner: the manager's manifest or Makefile,
+            for argv in (k["board"].get(w) for w in ("build", "start")):  # and every repo file the argv names
+                if argv:
+                    protected += _argv_files(path, base, argv)
         if run[0] == "make":
             protected.append("Makefile")
         for tok in run[1:]:

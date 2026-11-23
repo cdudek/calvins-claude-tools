@@ -181,9 +181,11 @@ def electron_hidden(main: str) -> tuple[list[str], dict]:
 # A mapping entry names its surface: `route` (a web page, the default), `surface` {"kind": "chrome-extension", "dist", "page"}
 # or {"kind": "electron", "app", "env", "args"}. dist and app are paths inside the consumer repo (the check's working directory).
 ENV_KEY = re.compile(r"^[A-Z][A-Z0-9_]{0,63}$")
-ENV_DENY = re.compile(r"^(PATH|HOME|NODE_OPTIONS|ELECTRON_RUN_AS_NODE|LD_.*|DYLD_.*)$")
+ENV_DENY = re.compile(r"^(PATH|HOME|BASH_ENV|ELECTRON_.*|NODE_.*|SDLC_.*|LD_.*|DYLD_.*)$")  # on top of ENV_KEY: an app's own settings only
+ARG_OK = re.compile(r"^--[a-z][a-z0-9-]{0,60}(=[^\s\0]{0,200})?$")  # a long option of the app; no short options, no bare words
 PAGE_RX = re.compile(r"^[A-Za-z0-9_./-]+(\?[A-Za-z0-9_.~%&=+,:@/-]*)?$")
-ARG_DENY = ("--require", "--inspect", "--remote-debugging", "--js-flags", "--load-extension", "--disable-extensions")
+ARG_DENY = ("--require", "--inspect", "--remote-debugging", "--js-flags", "--load-extension", "--disable-extensions", "--user-data-dir",
+            "--renderer-cmd-prefix", "--no-sandbox", "--disable-web-security", "--host-rules", "--proxy")
 
 
 def _rel_ok(p) -> bool:
@@ -205,9 +207,9 @@ def validate_surface(s) -> dict:
         raise ValueError("surface.app must be a path inside the repo")
     if not isinstance(env, dict) or not all(isinstance(k, str) and isinstance(v, str) and ENV_KEY.match(k) and not ENV_DENY.match(k)
                                             for k, v in env.items()):
-        raise ValueError("surface.env keys must match [A-Z][A-Z0-9_]* and not be PATH, HOME, NODE_OPTIONS, ELECTRON_RUN_AS_NODE, LD_* or DYLD_*")
-    if not isinstance(args, list) or not all(isinstance(a, str) and "\0" not in a and not a.lower().startswith(ARG_DENY) and a != "-r" for a in args):
-        raise ValueError("surface.args must be a list of strings, none of them a code-loading or debugging flag")
+        raise ValueError("surface.env keys must match [A-Z][A-Z0-9_]* and not be PATH, HOME, BASH_ENV, ELECTRON_*, NODE_*, SDLC_*, LD_* or DYLD_*")
+    if not isinstance(args, list) or not all(isinstance(a, str) and ARG_OK.match(a) and not a.lower().startswith(ARG_DENY) for a in args):
+        raise ValueError("surface.args must be long options (--name or --name=value) of the app, none of them a code-loading, profile or debugging flag")
     return s
 
 
@@ -446,12 +448,19 @@ def norm_value(v) -> str:
     return " ".join(_COLOR.sub(_rgba, str(v)).replace('"', "").replace("'", "").split())
 
 
+TOL_PROPS = {"font-size", "line-height", "letter-spacing", "padding-top", "padding-right", "padding-bottom", "padding-left", "margin-top",
+             "margin-right", "margin-bottom", "margin-left", "gap", "border-radius", "width", "height", "x", "y"}  # colours and text stay exact
+TOL_CAP = 4.0  # px: no override reaches further (width and height: or 2% of the board value, whichever is larger)
+
+
 def tolerance(prop: str, board: str, override: dict) -> float:
-    """Colours and text are exact; font and spacing +-1px; width and height +-2px or 1%, whichever is larger; x and y +-2px."""
-    if prop in override:
-        return float(override[prop])
+    """Colours and text are exact; font and spacing +-1px; width and height +-2px or 1%, whichever is larger; x and y +-2px.
+    An override (a mapping entry's `tolerances`) only applies to a numeric property and is capped."""
+    m = _NUM.match(board)
+    if prop in override and prop in TOL_PROPS:
+        cap = max(TOL_CAP, 0.02 * abs(float(m[1]))) if prop in BOX and m else TOL_CAP
+        return min(max(float(override[prop]), 0.0), cap)
     if prop in BOX:
-        m = _NUM.match(board)
         return max(2.0, 0.01 * abs(float(m[1]))) if m else 2.0
     return 2.0 if prop in POS else 1.0
 
@@ -780,11 +789,14 @@ def validate_mapping(mapping: dict) -> None:
             validate_frame(m["frame"], f"entry {who}")
         if m.get("ready") is not None:
             validate_ready(m["ready"], f"entry {who}")
-        for key in ("tolerances", "min_match"):
-            v = m.get(key, mapping.get(key))
-            if v is not None and not (isinstance(v, dict) and all(isinstance(x, (int, float)) and x >= 0 for x in v.values()) if key == "tolerances"
-                                      else isinstance(v, (int, float)) and 0 < v <= 1):
-                raise ValueError(f"entry {who}: {key} is a map of property to px, or a ratio above 0 and up to 1")
+        v = m.get("min_match", mapping.get("min_match"))
+        if v is not None and not (isinstance(v, (int, float)) and not isinstance(v, bool) and MIN_MATCH <= v <= 1):
+            raise ValueError(f"entry {who}: min_match is a ratio from {MIN_MATCH:g} to 1 (it cannot lower the default)")
+        t = m.get("tolerances", mapping.get("tolerances"))
+        if t is not None and not (isinstance(t, dict) and all(k in TOL_PROPS and isinstance(x, (int, float)) and not isinstance(x, bool)
+                                                              and 0 <= x <= TOL_CAP for k, x in t.items())):
+            raise ValueError(f"entry {who}: tolerances map a numeric property ({', '.join(sorted(TOL_PROPS)[:4])} ...) to 0 to {TOL_CAP:g}px; "
+                             "colours and text stay exact")
 
 
 def _pick(indexes: list[dict], vp) -> dict | None:
@@ -885,15 +897,16 @@ def verdict(row: dict, res: dict) -> tuple[bool, list[str]]:
     n_un, total = row.get("unmeasurable_nodes", len(row.get("unmeasurable", []))), res["measurable"] + row.get("unmeasurable_nodes", 0)
     ratio = res["matched"] / res["measurable"] if res["measurable"] else 0.0
     unproven = total == 0 or n_un / total > UNMEASURABLE_MAX
-    ok = not unproven and ratio >= row.get("min_match", MIN_MATCH) and not res["mismatches"]
+    floor = max(float(row.get("min_match", MIN_MATCH)), MIN_MATCH)  # a row cannot lower the bar below the default
+    ok = not unproven and ratio >= floor and not res["mismatches"]
     head = f"{res['matched']}/{res['measurable']} measurable nodes matched ({ratio:.1%}), {len(res['mismatches'])} mismatches, {n_un} unmeasurable"
     lines = [f"{'PASS' if ok else 'FAIL'} {row['id']}: {head}"]
     for m in res["mismatches"][:50]:
         lines.append(f"  MISMATCH {row['id']} {m['node']} {m['prop']}: board {m['board']}, app {m['app']}")
     if len(res["mismatches"]) > 50:
         lines.append(f"  ... {len(res['mismatches']) - 50} more mismatches")
-    if ratio < row.get("min_match", MIN_MATCH):
-        lines.append(f"  below min_match {row.get('min_match', MIN_MATCH):g}; not found once in the app: {', '.join(res['unmatched'][:10])}"
+    if ratio < floor:
+        lines.append(f"  below min_match {floor:g}; not found once in the app: {', '.join(res['unmatched'][:10])}"
                      + (f" (+{len(res['unmatched']) - 10})" if len(res["unmatched"]) > 10 else ""))
     if n_un:
         lines.append(f"  UNMEASURABLE {row['id']}: {n_un} nodes share a locator on the board: {', '.join(row.get('unmeasurable', [])[:10])}")
@@ -949,9 +962,23 @@ def measure_rows(spec: dict, rows: list[dict], executable: str | None, root: Pat
     return out
 
 
+def row_problem(r: dict) -> str:
+    """An aggregate row that cannot be trusted to measure the token properties: wrong or empty props, nodes that do not carry them."""
+    if r.get("props") not in ([*CANVAS_STYLE, *BOX], [*CANVAS_STYLE, *BOX, *POS]):
+        return f"row {r.get('id')}: props must be exactly the token properties (and x, y when opted in), not {r.get('props')!r}"
+    if not isinstance(r.get("nodes"), list) or not all(isinstance(n, dict) and len(n.get("v", [])) == len(r["props"]) and "l" in n for n in r["nodes"]):
+        return f"row {r.get('id')}: every node needs a locator and one value per property"
+    t = r.get("tol") or {}
+    if not (isinstance(t, dict) and all(k in TOL_PROPS and isinstance(x, (int, float)) and 0 <= x <= TOL_CAP for k, x in t.items())):
+        return f"row {r.get('id')}: tolerance overrides are numeric properties up to {TOL_CAP:g}px"
+    return ""
+
+
 def _check_aggregate(spec: dict, rows: list[dict], exe: str | None) -> int:
     root = Path.cwd()
     for r in rows:
+        if why := row_problem(r):
+            raise ValueError(why)
         s = r.get("surface")
         if s:
             validate_surface(s)
@@ -992,6 +1019,8 @@ def _check(spec_path: str, flags: list[str] | None = None) -> int:
         print("board: --waive is gone: unmeasurable nodes are reported and never waived")
         return 2
     spec = json.loads(_safe(spec_path).read_text())
+    if "--url" in flags:  # the runner starts the app and says where it is: the origin of the contract row's ready_url
+        spec["target"] = {**spec.get("target", {}), "kind": "web", "url": _arg(flags, "--url")}
     rows, target, exe = spec.get("rows", []), spec.get("target", {}), spec.get("executable")
     if spec.get("evidence_dir"):
         _safe(spec["evidence_dir"])
