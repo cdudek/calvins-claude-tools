@@ -9,6 +9,7 @@ from __future__ import annotations
 
 import re
 import subprocess
+import sys
 from pathlib import Path
 
 import store
@@ -118,7 +119,7 @@ def validate_placeholders(c: dict) -> None:
     """{base}, {head} and {producer_sha:<repo>} are the only substitutions; a producer_sha must name a repo the contract knows."""
     repos = {k["repo"] for k in c.get("checks", [])} | {e["producer"] for e in c.get("edges", [])} | {e["consumer"] for e in c.get("edges", [])}
     for k in c.get("checks", []):
-        for a in [*k["runner"], *(k["expect"].get("control") or [])]:
+        for a in [*runner_of(k), *(k["expect"].get("control") or [])]:
             if not isinstance(a, str):
                 continue
             if BAD_PLACEHOLDER.search(a):
@@ -128,10 +129,43 @@ def validate_placeholders(c: dict) -> None:
                     raise SdlcError(f"check {k['id']}: {{producer_sha:{m[1]}}} names a repo the contract does not know")
 
 
+READY_URL = re.compile(r"^http://(127\.0\.0\.1|localhost)(:\d{2,5})?(/[A-Za-z0-9._~/%?&=-]*)?$")
+BOARD_KEYS = {"spec", "expected_rows", "start", "ready_url", "ready_timeout"}
+
+
+def runner_of(chk: dict) -> list[str]:
+    """The argv a check runs. A `"kind": "board"` row names no runner path: the runner's own board.py runs the pinned spec."""
+    if chk.get("kind") == "board":
+        b = chk["board"]
+        return [sys.executable, str(Path(__file__).with_name("board.py")), "check", b["spec"], "--expected-rows", str(b["expected_rows"])]
+    return chk["runner"]
+
+
+def validate_board_row(chk: dict) -> None:
+    """`{"kind": "board", "board": {"spec", "expected_rows", "start"?, "ready_url"?, "ready_timeout"?}, "pins": {<spec>: sha256}, ...}`:
+    the spec is a pinned input, the row count is the approved one, and `start` (an argv the contract approved) brings the web app up
+    for the check and is stopped afterwards."""
+    b, who = chk.get("board"), f"check {chk['id']}"
+    if not isinstance(b, dict) or set(b) - BOARD_KEYS:
+        raise SdlcError(f"{who}: board must be an object with only {sorted(BOARD_KEYS)}")
+    if not safe_relpath(b.get("spec")) or b["spec"] not in chk.get("pins", {}):
+        raise SdlcError(f"{who}: board.spec must be a relative path listed in pins, so a modified copy is refused")
+    n = b.get("expected_rows")
+    if not (isinstance(n, int) and not isinstance(n, bool) and n > 0):
+        raise SdlcError(f"{who}: board.expected_rows must be a whole number above 0")
+    start, url, wait = b.get("start"), b.get("ready_url"), b.get("ready_timeout", 120)
+    if start is not None and not (isinstance(start, list) and start and all(isinstance(a, str) for a in start) and isinstance(url, str)):
+        raise SdlcError(f"{who}: board.start is an argv list and needs board.ready_url")
+    if url is not None and not (isinstance(url, str) and READY_URL.match(url)):
+        raise SdlcError(f"{who}: board.ready_url must be an http://127.0.0.1 or http://localhost URL")
+    if not (isinstance(wait, int) and not isinstance(wait, bool) and 1 <= wait <= 600):
+        raise SdlcError(f"{who}: board.ready_timeout is whole seconds from 1 to 600")
+
+
 def validate_board_checks(c: dict) -> None:
     """A board check's spec is a pinned input and its row count comes from the approved row, never from the spec file."""
     for k in c.get("checks", []):
-        r = k["runner"]
+        r = k.get("runner") or []
         for i, a in enumerate(r):
             if isinstance(a, str) and a.rsplit("/", 1)[-1] == "board.py" and r[i + 1:i + 2] == ["check"]:
                 spec = r[i + 2] if len(r) > i + 2 else None
@@ -194,12 +228,14 @@ def validate_contract(c: dict) -> None:
     ids = set()
     for chk in c.get("checks", []):
         for f in CHECK_FIELDS:
-            if f not in chk:
+            if f not in chk and not (f == "runner" and chk.get("kind") == "board"):
                 raise SdlcError(f"contract check {chk.get('id', '?')} lacks {f}")
         if chk["id"] in ids:
             raise SdlcError(f"duplicate contract check {chk['id']}")
         ids.add(chk["id"])
-        if not isinstance(chk["runner"], list) or not chk["runner"]:
+        if chk.get("kind") == "board":
+            validate_board_row(chk)
+        elif not isinstance(chk.get("runner"), list) or not chk["runner"]:
             raise SdlcError(f"check {chk['id']}: runner must be an argv list")
         if chk["expect"].get("kind") not in ("pass", "fails_on_base", "negative_control"):
             raise SdlcError(f"check {chk['id']}: expect.kind must be pass, fails_on_base or negative_control")

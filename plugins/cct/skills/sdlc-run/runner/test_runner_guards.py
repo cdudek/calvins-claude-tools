@@ -194,13 +194,13 @@ def test_replaces_tests_must_be_explicit_and_inside_the_owned_paths():
 # ---- boards.json entry shape ------------------------------------------------------------------------------------
 
 def node(role, name, **style):
-    return {"role": role, "name": name, "locator": {"role": role, "name": name}, "count": 1, "tag": "x",
+    return {"role": role, "name": name, "locator": {"role": role, "name": name}, "frames": [], "tag": "x",
             "style": {"color": "red", **style}, "box": {"x": 0, "y": 0, "width": 10, "height": 5}}
 
 
 def index(vp, themes=("light", "dark")):
-    return {"version": 1, "viewport": {"width": vp[0], "height": vp[1]}, "themes": list(themes), "attr": None,
-            "boards": {"sub/Page.dc.html": {t: {"error": "", "nodes": [node("button", "Go")]} for t in themes}}}
+    return {"version": 2, "viewport": {"width": vp[0], "height": vp[1]}, "themes": list(themes), "attr": None,
+            "boards": {"sub/Page.dc.html": {t: {"error": "", "nodes": [node("button", "Go")], "frames": []} for t in themes}}}
 
 
 def entry(**kw):
@@ -215,7 +215,8 @@ def test_mapping_entries_of_a_real_draft_become_rows_or_named_unsupported_items(
         entry(entry="A01.04", board_file="Missing.dc.html")]}
     out = board.canvas_rows([index((1440, 900)), index((390, 844))], m, "web")
     ids = {r["id"] for r in out["rows"]}
-    assert "A01.01/light/button:Go/width" in ids and "A01.02/light/button:Go/color" in ids and "A01.02/dark/button:Go/color" in ids
+    assert ids == {"A01.01/light", "A01.02/light", "A01.02/dark"}  # one aggregate row per entry and theme
+    assert out["rows"][0]["nodes"][0]["n"] == "button:Go" and "width" in out["rows"][0]["props"] and "x" not in out["rows"][0]["props"]
     assert {r["viewport"]["width"] for r in out["rows"] if r["id"].startswith("A01.02")} == {390}  # the index at the entry's viewport
     reasons = {u["id"]: u["reason"] for u in out["unsupported"]}
     assert "no index measured at viewport [800, 1200]" in reasons["A01.03"] and "0 boards named Missing.dc.html" in reasons["A01.04/light"]
@@ -310,23 +311,21 @@ def test_a_canvas_check_that_measured_nothing_or_dropped_rows_does_not_pass(tmp_
 
 
 @pytest.mark.skipif(not board.browser_available()[0], reason="no Chromium installed here")
-def test_unsupported_entries_are_unproven_unless_the_contract_row_waives_them_by_id(tmp_path):
+def test_unsupported_entries_are_unproven_and_there_is_no_waiver(tmp_path):
     page = tmp_path / "p.html"
     page.write_text("<body style='margin:0'><div style='width:10px;height:5px'>a</div></body>")
     row = {"id": "r", "locator": {"css": "div"}, "prop": "width", "expected": "10px", "tolerance_px": 0.5}
-    spec = {"target": {"kind": "web", "file": str(page)}, "rows": [row], "unsupported": [{"id": "u1", "reason": "2 nodes share a locator"}]}
+    spec = {"target": {"kind": "web", "file": str(page)}, "rows": [row], "unsupported": [{"id": "u1", "reason": "no candidate nodes"}]}
     code, out = run_board_check(tmp_path, spec)
-    assert code == 1 and "UNPROVEN u1: 2 nodes share a locator" in out and "PASS r" in out
-    assert run_board_check(tmp_path, spec, "--waive", "u1")[0] == 0
-    assert run_board_check(tmp_path, spec, "--waive", "other")[0] == 1
-    # a builder editing the spec to waive its own items changes nothing: the spec's keys are not read
-    assert run_board_check(tmp_path, {**spec, "waive_unsupported": ["u1"], "expected_rows": 0})[0] == 1
+    assert code == 1 and "UNPROVEN u1: no candidate nodes" in out and "PASS r" in out
+    code, out = run_board_check(tmp_path, spec, "--waive", "u1")  # the per-id waiver is gone in 4.2
+    assert code == 2 and "--waive is gone" in out
 
 
 def test_a_board_check_row_must_pin_its_spec_and_carry_its_row_count():
     def row(runner, pins):
         return tk.chk("b", "app", runner, pins=pins, count=False)
-    ok = ["python3", "/x/runner/board.py", "check", "spec.json", "--expected-rows", "12", "--waive", "u1"]
+    ok = ["python3", "/x/runner/board.py", "check", "spec.json", "--expected-rows", "12"]
     contract.validate_contract({"checks": [row(ok, {"spec.json": "0" * 64})]})
     for runner, pins, why in ((ok, {}, "must be listed in pins"), (ok[:5] + ok[6:], {"spec.json": "0"}, "needs --expected-rows"),
                               ([*ok[:5], "0"], {"spec.json": "0"}, "needs --expected-rows"), (ok[:4], {"spec.json": "0"}, "needs --expected-rows"),
