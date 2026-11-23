@@ -55,10 +55,11 @@ def bundle_digest(rid: str) -> str:
     """Digest of what the owner approved: plan, contract, task graph and every pinned input file."""
     d = store.run_dir(rid)
     parts = {n: store.sha256((d / n).read_bytes()) for n in ("plan.md", "contract.json", "tasks.json") if (d / n).exists()}
-    ins = d / "inputs"
-    for p in sorted(ins.rglob("*")) if ins.exists() else []:
-        if p.is_file():
-            parts["inputs/" + p.relative_to(ins).as_posix()] = store.sha256(p.read_bytes())
+    for sub in ("inputs", "deps"):  # pinned specs and fixtures; the approved manifest and lockfile contents
+        root = d / sub
+        for p in sorted(root.rglob("*")) if root.exists() else []:
+            if p.is_file():
+                parts[f"{sub}/" + p.relative_to(root).as_posix()] = store.sha256(p.read_bytes())
     return store.sha256(store.canon(parts))
 
 

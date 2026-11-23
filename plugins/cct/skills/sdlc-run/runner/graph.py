@@ -11,7 +11,7 @@ def build(tasks_doc: dict, extra: dict | None = None) -> dict[str, list[str]]:
     for m in tasks_doc.get("milestones", []):
         mid = m["id"]
         deps[f"O:{mid}"] = [f"C:{n}" for n in m.get("needs", [])]
-        deps[f"C:{mid}"] = [f"T:{t['id']}" for t in m.get("tasks", [])]
+        deps[f"C:{mid}"] = [f"O:{mid}"] + [f"T:{t['id']}" for t in m.get("tasks", [])]
         for t in m.get("tasks", []):
             deps[f"T:{t['id']}"] = [f"O:{mid}"] + [f"T:{n}" for n in t.get("needs", [])]
     for tid, t in (extra or {}).items():  # fix tasks added at run time
