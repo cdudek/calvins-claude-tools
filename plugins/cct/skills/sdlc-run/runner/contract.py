@@ -1,0 +1,186 @@
+"""Contract, approval digest, receipts and the `sdlc check` verdict (design 3.2, 3.4).
+
+A receipt is written only by verify.py, from the exit status and output of the process it ran. It binds the run,
+the contract item, the repo head it ran on, the approved-bundle digest, the digest of the pinned inputs, the exit
+code and the collected-test count. `check` recomputes every one of those; a pass for another head, another
+contract or another set of pinned files is stale, and a file nobody signed is forged.
+"""
+from __future__ import annotations
+
+import subprocess
+from pathlib import Path
+
+import store
+from store import SdlcError
+
+READY, FAIL, BLOCKED, PENDING = 0, 1, 2, 3
+NAMES = {READY: "READY", FAIL: "FAIL", BLOCKED: "BLOCKED", PENDING: "PENDING"}
+CHECK_FIELDS = ("id", "repo", "milestone", "runner", "expect")
+
+
+def git(repo: str | Path, *args: str) -> str:
+    r = subprocess.run(["git", *args], cwd=repo, capture_output=True, text=True)
+    if r.returncode:
+        raise SdlcError(f"git {' '.join(args)} failed in {repo}: {r.stderr.strip()}")
+    return r.stdout.strip()
+
+
+def validate_contract(c: dict) -> None:
+    ids = set()
+    for chk in c.get("checks", []):
+        for f in CHECK_FIELDS:
+            if f not in chk:
+                raise SdlcError(f"contract check {chk.get('id', '?')} lacks {f}")
+        if chk["id"] in ids:
+            raise SdlcError(f"duplicate contract check {chk['id']}")
+        ids.add(chk["id"])
+        if not isinstance(chk["runner"], list) or not chk["runner"]:
+            raise SdlcError(f"check {chk['id']}: runner must be an argv list")
+        if chk["expect"].get("kind") not in ("pass", "fails_on_base", "negative_control"):
+            raise SdlcError(f"check {chk['id']}: expect.kind must be pass, fails_on_base or negative_control")
+
+
+def bundle_digest(rid: str) -> str:
+    """Digest of what the owner approved: plan, contract, task graph and every pinned input file."""
+    d = store.run_dir(rid)
+    parts = {n: store.sha256((d / n).read_bytes()) for n in ("plan.md", "contract.json", "tasks.json") if (d / n).exists()}
+    ins = d / "inputs"
+    for p in sorted(ins.rglob("*")) if ins.exists() else []:
+        if p.is_file():
+            parts["inputs/" + p.relative_to(ins).as_posix()] = store.sha256(p.read_bytes())
+    return store.sha256(store.canon(parts))
+
+
+def approve(rid: str, by: str) -> dict:
+    """Record the owner's one approval of the frozen bundle. Called only after the approval gate returned approved."""
+    c = store.read_json(store.run_dir(rid) / "contract.json")
+    validate_contract(c)
+    rec = {"digest": bundle_digest(rid), "by": by, "at": store.iso()}
+    store.write_json(store.run_dir(rid) / "approval.json", rec)
+    store.set_status(rid, "approved", f"by {by}")
+    return rec
+
+
+def approved_digest_ok(rid: str) -> tuple[bool, str]:
+    p = store.run_dir(rid) / "approval.json"
+    if not p.exists():
+        return False, "not approved"
+    rec = store.read_json(p)
+    return (rec["digest"] == bundle_digest(rid)), "approved bundle changed after approval"
+
+
+def pins_digest(chk: dict) -> str:
+    return store.sha256(store.canon(chk.get("pins", {})))
+
+
+def receipt_path(rid: str, check_id: str, repo: str) -> Path:
+    return store.run_dir(rid) / "receipts" / f"{repo}--{check_id.replace('/', '_')}.json"
+
+
+def write_receipt(rid: str, chk: dict, *, sha: str, verdict: str, exit_code: int | None, tests: int | None,
+                  base: dict | None, reason: str = "", deps: dict | None = None) -> dict:
+    body = {
+        "run": rid, "check": chk["id"], "repo": chk["repo"], "sha": sha, "verdict": verdict,
+        "bundle": bundle_digest(rid), "pins": pins_digest(chk), "exit": exit_code, "tests": tests,
+        "base": base, "reason": reason, "deps": deps or {}, "at": store.iso(),
+    }
+    rec = {"body": body, "sig": store.sign(rid, body)}
+    store.write_json(receipt_path(rid, chk["id"], chk["repo"]), rec)
+    return rec
+
+
+def read_receipt(rid: str, chk: dict) -> dict | None:
+    p = receipt_path(rid, chk["id"], chk["repo"])
+    return store.read_json(p) if p.exists() else None
+
+
+def current_head(meta: dict, repo: str) -> str:
+    r = meta["repos"][repo]
+    return git(r["path"], "rev-parse", r["branch"])
+
+
+def evaluate(rid: str, due: str | None = None) -> tuple[int, str, list[dict]]:
+    """Recompute the verdict from records only. Read-only: never builds, reruns, pushes or edits."""
+    meta = store.load_meta(rid)
+    notes: list[dict] = []
+
+    def out(code: int, first: str):
+        return code, first, notes
+
+    if store.is_stopped(rid):
+        return out(BLOCKED, "STOPPED by the owner")
+    ok, why = approved_digest_ok(rid)
+    if not ok:
+        return out(BLOCKED, f"integrity: {why}")
+    contract = store.read_json(store.run_dir(rid) / "contract.json")
+    heads = {}
+    for repo in meta["repos"]:
+        try:
+            heads[repo] = current_head(meta, repo)
+        except SdlcError as e:
+            return out(BLOCKED, f"integrity: {e}")
+    cp = store.load_cp(rid)
+    if cp.get("blocked"):
+        return out(BLOCKED, cp["blocked"])
+    fail = blocked = pending = None
+    for chk in contract["checks"]:
+        if due and chk.get("milestone") not in (due, None) and chk.get("due") != "final":
+            continue
+        rec = read_receipt(rid, chk)
+        key = f"{chk['repo']}:{chk['id']}"
+        if rec is None:
+            pending = pending or f"{key} has no receipt"
+            continue
+        b = rec["body"]
+        if not store.verify_sig(rid, b, rec["sig"]):
+            pending = pending or f"{key} receipt is not signed by the runner (forged or edited)"
+            continue
+        if b["bundle"] != bundle_digest(rid) or b["pins"] != pins_digest(chk) or b["run"] != rid:
+            pending = pending or f"{key} receipt is for another contract"
+            continue
+        if b["sha"] != heads[chk["repo"]]:
+            pending = pending or f"{key} passed on {b['sha'][:9]}, head is {heads[chk['repo']][:9]}"
+            continue
+        stale = _stale_deps(meta, b.get("deps", {}))
+        if stale:
+            pending = pending or f"{key} {stale}"
+            continue
+        if b["verdict"] == "FAIL":
+            fail = fail or f"{key} failed: {b['reason']}"
+        elif b["verdict"] == "BLOCKED":
+            blocked = blocked or f"{key} blocked: {b['reason']}"
+        elif b["verdict"] != "PASS":
+            blocked = blocked or f"{key} has an unknown verdict"
+        notes.append({"check": key, "verdict": b["verdict"], "sha": b["sha"]})
+    if fail:
+        return out(FAIL, fail)
+    if blocked:
+        return out(BLOCKED, blocked)
+    if pending:
+        return out(PENDING, pending)
+    extra = meta.get("extra_gates")  # step 7/8 add CI and release proof here
+    if extra:
+        import ci
+        code, first = ci.gate(rid, meta, heads)
+        if code != READY:
+            return out(code, first)
+    return out(READY, "all required proof is present; the next action is the owner's merge")
+
+
+def status_line(rid: str, code: int, first: str) -> str:
+    meta = store.load_meta(rid)
+    heads = []
+    for r in meta["repos"]:
+        try:
+            heads.append(f"{r}@{current_head(meta, r)[:9]}")
+        except SdlcError:
+            heads.append(f"{r}@?")
+    return f"{NAMES[code]} run={rid} heads={','.join(heads)} first={first}"
+
+
+def _stale_deps(meta: dict, deps: dict) -> str:
+    """A producer that moved after the consumer's receipt invalidates it (design 3.6)."""
+    for producer, sha in deps.items():
+        if producer in meta["repos"] and current_head(meta, producer) != sha:
+            return f"proved against {producer}@{sha[:9]}, which changed"
+    return ""
