@@ -2,6 +2,7 @@
 
     python3 scripts/preflight.py            # prints one `FAIL <what>: <fix>` line per failure, exit 1
     python3 scripts/preflight.py --config   # only the config conflicts (CI: no tool or auth to find yet)
+    python3 scripts/preflight.py doctor     # read-only: one `GAP <name>: <what>. Fix: <fix>` line per gate-config gap
 
 Run it once at plan approval and once at the start of CI, so a missing capability fails in seconds, not
 after an hour of building. It checks only what the repo declares, so it never fails on a tool nobody
@@ -108,10 +109,49 @@ def failures(cfg: dict, config_only: bool = False) -> list[str]:
     return out
 
 
+def doctor(cfg: dict, repo: Path) -> list[str]:
+    """What the gates would refuse later, found now: the gates' own predicates (verify_gate.py, beside this file),
+    one `GAP` line each with its fix. Read-only: it writes nothing and runs no check.
+    Gaps: no full E2E command or x3 repeat (`full_e2e_gap`), app captures without `visual.start`, a project
+    without `milestones.merge: local`, a milestone numbered 0."""
+    sys.dont_write_bytecode = True  # the gate checks the tree is clean afterwards
+    sys.path.insert(0, str(Path(__file__).resolve().parent))
+    import verify_gate as gate
+
+    out = []
+    if gap := gate.full_e2e_gap((cfg.get("checks") or {}).get("milestone") or [], repo):
+        out.append("GAP full-e2e: " + gap)
+    changes = repo / str(cfg.get("changesDir") or "changes")
+    folders = sorted(p for p in changes.glob("*") if p.is_dir()) if changes.is_dir() else []
+    visual = cfg.get("visual") if isinstance(cfg.get("visual"), dict) else {}
+    if (any((f / "screens.json").is_file() for f in folders) or visual) and not str(visual.get("start") or "").strip():
+        out.append(
+            "GAP visual-start: screens are captured from the real app but sdlc.json has no visual.start. "
+            'Fix: set "visual": {"start": "<the command that starts the app on $PORT>"}'
+        )
+    for f in folders:
+        if gate.project_branch(f, cfg) and not gate.merges_locally(cfg):
+            out.append(
+                f"GAP merge-local: {f.name} belongs to a project but sdlc.json milestones.merge is not local, "
+                'so each milestone is pushed alone. Fix: set "milestones": {"merge": "local"}'
+            )
+        out += [f"GAP milestone-zero: {f.name}/{p}. Fix: renumber from 1" for p in gate.zero_milestones(f)]
+    return out
+
+
 def main(argv: list[str]) -> int:
     if argv[:1] in (["-h"], ["--help"]):
         print(__doc__)
         return 0
+    if argv[:1] == ["doctor"]:
+        try:
+            cfg = json.loads(Path("sdlc.json").read_text(encoding="utf-8"))
+        except (OSError, ValueError):
+            print("GAP config: sdlc.json is missing or not valid JSON. Fix: run from the repo root")
+            return 1
+        found = doctor(cfg if isinstance(cfg, dict) else {}, Path.cwd())
+        print("\n".join(found + [f"DOCTOR GAPS {len(found)}" if found else "DOCTOR OK"]))
+        return 1 if found else 0
     try:
         cfg = json.loads(Path("sdlc.json").read_text(encoding="utf-8"))
     except (OSError, ValueError):

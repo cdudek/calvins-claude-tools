@@ -2589,3 +2589,31 @@ def test_an_early_milestone_asks_the_capture_only_for_the_entries_due(tmp_path: 
     assert verify_gate.capture_upto(change, 1) is None  # cannot tell which is last: require all
     (change / "tasks.md").write_text("## Milestones\n\n| Milestone | Tasks | needs |\n|---|---|---|\n| M1 a | T1 | none |\n| M2 b | T2 | M1 |\n")
     assert verify_gate.capture_upto(change, 1) == 1  # layout 4 keeps the table in tasks.md
+
+
+MILESTONES = "## Milestones\n\n| Milestone | Features | needs |\n|---|---|---|\n| {row} | F1 | none |\n"
+FEATURES = "## Feature PRs\n\n| # | Feature | Facts |\n|---|---|---|\n| 1 | {what} | F1 |\n"
+
+
+def test_lint_flags_a_milestone_numbered_zero(tmp_path: Path) -> None:
+    repo = _repo(tmp_path, ["true"])
+    plan = repo / "changes" / ID / "plan.md"
+    plan.write_text(MILESTONES.format(row="M1 Core"))
+    assert _gate(repo, "lint", ID).returncode == 0
+    plan.write_text(MILESTONES.format(row="M0 Core"))
+    r = _gate(repo, "lint", ID)
+    assert r.returncode == 1 and "numbered 0" in r.stdout and "start at 1" in r.stdout
+
+
+def test_lint_flags_a_feature_that_adds_a_package_without_owner_paste_blocks(tmp_path: Path) -> None:
+    repo = _repo(tmp_path, ["true"])
+    plan = repo / "changes" / ID / "plan.md"
+    plan.write_text(FEATURES.format(what="Chart page, runs pnpm add recharts"))
+    r = _gate(repo, "lint", ID)
+    assert r.returncode == 1 and "adds a package" in r.stdout and "Dependency changes (owner paste blocks)" in r.stdout
+    plan.write_text(FEATURES.format(what="Chart page, runs pnpm add recharts") + "\n## Dependency changes (owner paste blocks)\n\nnone\n")
+    assert _gate(repo, "lint", ID).returncode == 1  # `none` is not a block
+    plan.write_text(FEATURES.format(what="Chart page, runs pnpm add recharts") + "\n## Dependency changes (owner paste blocks)\n\n```bash\npnpm add recharts\n```\n")
+    assert _gate(repo, "lint", ID).returncode == 0
+    plan.write_text(FEATURES.format(what="Chart page"))
+    assert _gate(repo, "lint", ID).returncode == 0

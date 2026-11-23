@@ -1119,6 +1119,42 @@ def bare_ids(text: str, defined: set[str], letters: str = LEGACY_LETTERS) -> lis
     return found
 
 
+DEP_HEADING = "Dependency changes (owner paste blocks)"
+DEP_ADD = re.compile(
+    r"\b(?:(?:pnpm|npm|yarn|bun|uv|pip3?|poetry|cargo)\s+(?:add|install)"
+    r"|(?:adds?|installs?|new|upgrades?|bumps?)\s+(?:an?\s+|the\s+)?(?:npm\s+|python\s+)?(?:package|dependency|dependencies|library|tarball))\b",
+    re.I,
+)
+
+
+def zero_milestones(change: Path) -> list[str]:
+    """A milestone numbered 0 in the plan's table or a heading (the doctor runs the same predicate)."""
+    out = []
+    for name in ("plan.md", "tasks.md"):
+        text = read(change / name)
+        for row in table_rows(section(text, "Milestones"))[1:]:
+            if row and re.match(r"M0\b", row[0]):
+                out.append(f"{name}: milestone {row[0][:40]!r} is numbered 0: runner milestones start at 1 (a product's M0 is runner milestone 1)")
+        if re.search(r"^#{2,4} Milestone 0\b", text, re.M):
+            out.append(f"{name}: a heading says Milestone 0: runner milestones start at 1")
+    return out
+
+
+def plan_problems(change: Path) -> list[str]:
+    """Two plan rules learned from a multi-repo project. Runner milestones start at 1 (a product may call its
+    first one M0; the runner number is M+1): a zero removes the capture cutoff and `capture.py` rejects it. A
+    feature row that adds a package needs the plan's owner paste block, because builders never edit a manifest
+    or lockfile (`codex-build.sh` rejects it)."""
+    out = zero_milestones(change)
+    plan = read(change / "plan.md")
+    block = re.sub(r"<!--.*?-->", "", section(plan, DEP_HEADING), flags=re.S).strip()
+    if not block or block.lower().startswith("none"):
+        for row in table_rows(section(plan, "Feature PRs"))[1:]:
+            if DEP_ADD.search(" ".join(row)):
+                out.append(f"plan.md: feature row {row[0]!r} adds a package but there is no `## {DEP_HEADING}` section with the command to paste")
+    return out
+
+
 def lint_problems(change: Path, body: str | None = None) -> list[str]:
     """Plain language: no sentence over SENTENCE_WORDS words, no leftover template prompts, and
     in the files the owner reads no id outside brackets. With `body`, only that text (the PR body
@@ -1155,7 +1191,7 @@ def lint_problems(change: Path, body: str | None = None) -> list[str]:
         unfenced = re.sub(r"```(.*?)```", lambda m: PLACEHOLDER.sub("", m[1]), text, flags=re.S)
         if "[NEEDS CLARIFICATION" in re.sub(r"`[^`\n]*`|<!--.*?-->", "", unfenced, flags=re.S):
             problems.append(f"{name}: an open [NEEDS CLARIFICATION] remains")
-    return problems
+    return problems + plan_problems(change)
 
 
 def lint(change: Path, body: str | None = None) -> int:
