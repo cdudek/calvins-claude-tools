@@ -133,7 +133,7 @@ A one-line fix gets one plan paragraph, one executable acceptance check and the 
 
 - **Existing runs finish on their pinned 3.x installation.** Keep HeyDiff on its active version through its final merge. The inspected skill declares `3.21.0`. Confirm the installed version before treating the proposed `3.27.0` stopgap as available.
 - **`sdlc clean <repo>` inventories by default.** Compare installed paths with known shipped hashes. List exact matches, locally edited copies, shared-file fragments and unknown files separately. `--apply` prepares the reviewed removals on a cleanup branch. Remove only matching kit files and exact owned fragments. Preserve mixed or modified files, native CI, `changes/`, living specs and `docs/designs/`. A second run produces no further diff.
-- **Roll out once per kit.** Reconcile OMR’s existing cleanup PRs against that inventory. Pilot 4.0 in `calvins-claude-tools` with one personal repo, then a producer–consumer pair. Port the verified runner to `omr-ai-kit`. Later plugin upgrades need no product-repo PR.
+- **Roll out once per kit.** Reconcile the work kit's existing cleanup PRs against that inventory. Pilot 4.0 in `calvins-claude-tools` with one personal repo, then a producer–consumer pair. Port the verified runner to the work kit. Later plugin upgrades need no product-repo PR.
 
 ## 6. Questions for the owner
 
