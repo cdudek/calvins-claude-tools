@@ -24,8 +24,8 @@ differs it prints a MANUAL line with the exact format command instead.
 **Ask first, every time.** Before each run, on the first adopt and on every upgrade, ask the
 engineer in one `AskUserQuestion`: "Use Ship/Show/Ask merge tiers in this repo?" Say what
 `sdlc.json` `tiers` is now, if it is set. Options, the kit default first and marked
-(Recommended): "Yes" (a code owner approves risky PRs before merge, the co-owner sees the rest
-after) and "No" (every PR auto-merges on green; right for a repo with one owner). Pass the
+(Recommended): "Yes" (risky PRs are labelled `ask` and never auto-merge, the rest are labelled
+and merge on green) and "No" (every PR auto-merges on green; right for a repo with one owner). Pass the
 answer as `--tiers yes|no`; adopt writes it to `sdlc.json` and adds or removes the tier files.
 The kit default is `TIERS_DEFAULT` in `scripts/adopt.py`; it is also what a missing key means.
 
@@ -54,11 +54,6 @@ that exist (`git rm`). `docs/sdlc.md` then says "auto-merge on green" instead of
 and MANUAL drops the App secrets and the Slack token setup notes. You arm auto-merge on each PR yourself: `gh pr merge <n> --merge --auto` for a milestone or
 project PR, `--squash` for anything else.
 
-**CODEOWNERS is a team-repo choice, never installer-managed.** Adopt never creates, edits or
-deletes it, including older generated files, regardless of `codeowners`, `tiers`, `keep`,
-upgrade or dry-run settings. Team repos maintain their own routing and required owner
-review rule; solo-owner repos need no self-approval listing.
-
 The four issue templates mirror the Linear templates in `cct:linear-manage`, so an issue reads
 the same whichever tracker it started in. They are kept once written — a team that adds a field to
 its own bug form does not lose it on the next run. The PR template carries the requirement-to-proof
@@ -80,7 +75,7 @@ table, which is what makes `F1` traceable from `facts.md` through the test to th
 ## After the script
 
 1. Read `sdlc.json` with the user: `linear.team` / `project`, `verify`, `verifyStop`,
-   `planGate`, `testGlobs`, `prototypeDirs`, `feedback`, `blocked`, `codeowners`, `tiers`,
+   `planGate`, `testGlobs`, `prototypeDirs`, `feedback`, `blocked`, `tiers`,
    `claude`, `keep`, `rules` (optional, kept as written), and `ciPaths` (adopt writes the stack's default once and adds keys a newer kit introduced; edit the folder
    names to the repo's own, `ci-blueprint.md`). Read `.github/tiers.json` (skip it with
    `tiers: false`): the `ask` globs must name what really hurts here (migrations, integrations that write, cluster, workflows, deps, the rules).

@@ -96,7 +96,7 @@ REASONS = {
     "attempts",  # three failed runs of one scope, whatever the failures were
     "flaky",
     "unknown-verdict",
-    "needs-baseline",
+    "needs-comparison",
     "allowlist-request",
     "scope-growth",
     "spec-conflict",
@@ -195,11 +195,11 @@ def criteria_hash(change: Path, checks: object, plan: bool = True, design: bool 
 
 
 # the checks of capture.py a close relies on (evidence.py keeps the same list for the gallery): a kept older file lacking one is refused
-CAPTURE_CHECKS = ("binding_tag", "deviation_tag", "lock_sha", "image_problems", "link", "replayed", "board_file", "read_board", "design_problems", "uncovered")
+CAPTURE_CHECKS = ("image_problems", "board_file", "read_board", "design_problems", "read_comparison")
 
 
 def stale_capture(script: Path) -> str:
-    """"" when scripts/capture.py has every check and the strict chain; else the refusal line naming what is missing."""
+    """"" when scripts/capture.py has every check; else the refusal line naming what is missing."""
     import importlib.util
 
     spec_ = importlib.util.spec_from_file_location("capture_close_probe", script)
@@ -210,9 +210,6 @@ def stale_capture(script: Path) -> str:
     except Exception as err:  # an unreadable file is as stale as an old one
         return f"scripts/capture.py cannot be loaded ({type(err).__name__}): run `adopt --migrate`"
     missing = [n for n in CAPTURE_CHECKS if not hasattr(module, n)]
-    chain = getattr(module, "chain_problems", None)
-    if not missing and (chain is None or "strict" not in chain.__code__.co_varnames):
-        missing = ["chain_problems"]
     return f"scripts/capture.py is older than this gate and lacks `{missing[0]}`: run `adopt --migrate`" if missing else ""
 
 
@@ -402,8 +399,20 @@ def table_rows(text: str) -> list[list[str]]:
 
 
 def section(text: str, heading: str) -> str:
-    m = re.search(rf"^#{{2,3}} {re.escape(heading)}\s*$(.*?)(?=^#{{1,3}} |\Z)", text, re.M | re.S)
-    return m.group(1) if m else ""
+    """The body of `## heading` up to the next heading of level 1 to 3; a `# comment` line inside a code fence is
+    not a heading."""
+    out, inside, fenced = [], False, False
+    for line in text.splitlines(keepends=True):
+        if line.lstrip().startswith("```"):
+            fenced = not fenced
+        elif not fenced and re.match(r"#{1,3} ", line):
+            if inside:
+                break
+            inside = bool(re.fullmatch(rf"#{{2,3}} {re.escape(heading)}\s*", line.rstrip("\n")))
+            continue
+        if inside:
+            out.append(line)
+    return "".join(out)
 
 
 def open_criticals(change: Path, name: str) -> list[str]:
@@ -431,11 +440,11 @@ def approval_blockers(change: Path) -> list[str]:
 E2E_ENTRY = re.compile(r"playwright|test:e2e|\be2e\b|cypress")
 E2E_SCOPED = re.compile(
     r"--grep|--only-changed|--last-failed|--repeat-each|\bseq\b|\bfor\b|\brelated\b"
-    r"|\.(?:spec|test)\.\w+|test_\w+\.py|\$specs"
+    r"|\.(?:spec|test)\.\w+|test_\w+\.py|\$specs|e2e-repeat\.sh"
 )
 
 
-E2E_REPEAT = re.compile(r"--repeat-each|\bseq\s+3\b|\bin\s+1\s+2\s+3\b|--count[= ]3")
+E2E_REPEAT = re.compile(r"e2e-repeat\.sh|--repeat-each|\bseq\s+3\b|\bin\s+1\s+2\s+3\b|--count[= ]3")
 
 
 def has_e2e_config(repo: Path) -> bool:
@@ -1036,7 +1045,7 @@ def approve(change: Path, cfg: dict) -> int:
             if images := capture.image_digests(change):
                 lock["designImages"] = images  # the gallery and the close refuse an image that changed since
         else:
-            lock["design"] = "none"  # no inventory, but a 3.26+ lock: the decision log must be a full hash chain (capture.uncovered)
+            lock["design"] = "none"  # no inventory, but a 3.26+ lock (the key marks the 3.26 lock format)
         # the folders the plan says new files go in: the chain-gate scope guard reads this snapshot, not the plan
         found = re.findall(r"`([^`]+/)`", section(read(change / "plan.md"), "Where things go") + section(read(change / "design.md"), "Where things go"))
         lock["scopeFolders"] = sorted({f.strip("/") for f in found if f.strip("/") and ".." not in f.split("/")})
@@ -1119,6 +1128,53 @@ def bare_ids(text: str, defined: set[str], letters: str = LEGACY_LETTERS) -> lis
     return found
 
 
+DEP_HEADING = "Dependency changes (owner paste blocks)"
+DEP_ADD = re.compile(
+    r"\b(?:(?:pnpm|npm|yarn|bun|uv|pip3?|poetry|cargo)\s+(?:add|install)"
+    r"|(?:adds?|installs?|new|upgrades?|bumps?)\s+(?:an?\s+|the\s+)?(?:npm\s+|python\s+)?(?:package|dependency|dependencies|library|tarball))\b",
+    re.I,
+)
+
+
+ZERO = re.compile(r"(?:m(?:ilestone)?\s*)?0+(?!\d)", re.I)
+
+
+def zero_milestones(change: Path) -> list[str]:
+    """A milestone numbered 0 in the plan's table or a heading, in any markdown (`**M0**`, `` `M0` ``, `Milestone 0`, a
+    bare `0`). The doctor runs the same predicate."""
+    plain = lambda cell: re.sub(r"[*_`\[\]()]", "", cell).strip()  # noqa: E731
+    out = []
+    for name in ("plan.md", "tasks.md"):
+        text = read(change / name)
+        for row in table_rows(section(text, "Milestones"))[1:]:
+            if row and ZERO.match(plain(row[0])):
+                out.append(f"{name}: milestone {row[0][:40]!r} is numbered 0: runner milestones start at 1, label it M1, not M0 (a product's M0 is runner milestone 1)")
+        for heading in re.findall(r"^#{2,4}\s+(.+)$", text, re.M):
+            if re.match(r"milestone\s*0+(?!\d)", plain(heading), re.I):
+                out.append(f"{name}: a heading says Milestone 0: runner milestones start at 1, label it M1, not M0")
+    return out
+
+
+def plan_problems(change: Path) -> list[str]:
+    """Two plan rules learned from a multi-repo project. Runner milestones start at 1 (a product may call its
+    first one M0; the runner number is M+1): a zero removes the capture cutoff and `capture.py` rejects it. A
+    feature row that adds a package needs the plan's owner paste block, because builders never edit a manifest
+    or lockfile (`codex-build.sh` rejects it)."""
+    out = zero_milestones(change)
+    plan = read(change / "plan.md")
+    body = re.sub(r"<!--.*?-->", "", section(plan, DEP_HEADING), flags=re.S)
+    fences = re.findall(r"```[^\n]*\n(.*?)```", body, flags=re.S)
+    has_command = any(  # a real command line: not blank, not a `#` comment, not a `<placeholder>`
+        ln.strip() and not ln.lstrip().startswith("#") and not re.search(r"<[^>]*>", ln)
+        for fence in fences for ln in fence.splitlines()
+    )
+    if not has_command:
+        for row in table_rows(section(plan, "Feature PRs"))[1:]:
+            if DEP_ADD.search(" ".join(row)):
+                out.append(f"plan.md: feature row {row[0]!r} adds a package but there is no `## {DEP_HEADING}` section with the command to paste")
+    return out
+
+
 def lint_problems(change: Path, body: str | None = None) -> list[str]:
     """Plain language: no sentence over SENTENCE_WORDS words, no leftover template prompts, and
     in the files the owner reads no id outside brackets. With `body`, only that text (the PR body
@@ -1155,7 +1211,7 @@ def lint_problems(change: Path, body: str | None = None) -> list[str]:
         unfenced = re.sub(r"```(.*?)```", lambda m: PLACEHOLDER.sub("", m[1]), text, flags=re.S)
         if "[NEEDS CLARIFICATION" in re.sub(r"`[^`\n]*`|<!--.*?-->", "", unfenced, flags=re.S):
             problems.append(f"{name}: an open [NEEDS CLARIFICATION] remains")
-    return problems
+    return problems + plan_problems(change)
 
 
 def lint(change: Path, body: str | None = None) -> int:
@@ -1730,7 +1786,7 @@ def run_close(
                 "dialog `Change <id>, finding visual-skip: ...` answered Skip visual evidence)",
             )
         )
-    if app:  # one capture batch inside this close: preview reachability, two passes, the approved baselines
+    if app:  # one capture batch inside this close: preview reachability, two passes, the agents' comparison verdicts
         script = Path(__file__).with_name("capture.py")
         stale = stale_capture(script) if script.is_file() else ""
         evidence.append(

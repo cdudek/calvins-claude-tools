@@ -1312,3 +1312,208 @@ def test_worktrees_refuses_outside_an_adopted_repo(tmp_path: Path) -> None:
         [sys.executable, str(SCRIPT), "worktrees"], cwd=plain, capture_output=True, text=True
     )
     assert res.returncode == 2 and "sdlc.json" in res.stdout
+
+
+def _two_repos(tmp_path: Path) -> tuple[Path, Path]:
+    """A start repo with an approved change, and another adopted repo that has no folder for it yet."""
+    import test_verify_gate as tvg
+
+    start = tvg._repo(tmp_path / "a", ["true"])
+    tvg._approve(start)
+    other = tvg._repo(tmp_path / "b", ["true"])
+    shutil.rmtree(other / "changes" / tvg.ID)
+    shutil.copytree(SCRIPT.parent.parent / "templates" / "scripts", other / "scripts", ignore=shutil.ignore_patterns("__pycache__"))
+    tvg._git(other, "add", ".")
+    tvg._git(other, "commit", "-qm", "adopted")
+    return start, other
+
+
+def _records(start: Path, other: Path, *extra: str) -> subprocess.CompletedProcess[str]:
+    import test_verify_gate as tvg
+
+    return subprocess.run(
+        [sys.executable, str(SCRIPT), "repo-records", tvg.ID, "--repo", str(other), *extra],
+        cwd=start, capture_output=True, text=True, env={**_env(), "HOME": str(start.parent / "home")},
+    )  # fmt: skip
+
+
+def _locks(folder: Path) -> list[Path]:
+    return [p for p in (folder / "lock.json", folder / "state" / "lock.json") if p.is_file()]
+
+
+def test_repo_records_writes_every_record_and_the_other_repos_own_lock(tmp_path: Path) -> None:
+    import test_verify_gate as tvg
+
+    start, other = _two_repos(tmp_path)
+    r = _records(start, other)
+    assert r.returncode == 0 and r.stdout.startswith(f"REPO-RECORDS {tvg.ID} repo"), r.stdout + r.stderr
+    folder = other / "changes" / tvg.ID
+    for name in ("facts.md", "plan.md"):
+        assert (folder / name).read_bytes() == (start / "changes" / tvg.ID / name).read_bytes()
+    assert (folder / "done.json").read_bytes() == (start / "changes" / tvg.ID / "done.json").read_bytes()
+    assert _locks(folder)
+
+
+def test_repo_records_refuses_to_overwrite_without_replace_and_keeps_local_skips(tmp_path: Path) -> None:
+    import test_verify_gate as tvg
+
+    start, other = _two_repos(tmp_path)
+    assert _records(start, other).returncode == 0
+    again = _records(start, other)
+    assert again.returncode == 1 and "--replace" in again.stdout
+    folder = other / "changes" / tvg.ID
+    path = next(p for p in (folder / "state" / "intake.json", folder / "decisions.json") if p.is_file())
+    local = json.loads(path.read_text()) | {"skips": {"visual": "skip -- mine"}, "protectedEdit": ["x"]}
+    path.write_text(json.dumps(local))
+    assert _records(start, other, "--replace").returncode == 0
+    kept = json.loads(path.read_text())
+    assert kept["skips"] == {"visual": "skip -- mine"} and kept["protectedEdit"] == ["x"]
+
+
+def test_repo_records_refuses_a_source_that_changed_since_its_lock(tmp_path: Path) -> None:
+    import test_verify_gate as tvg
+
+    start, other = _two_repos(tmp_path)
+    facts = start / "changes" / tvg.ID / "facts.md"
+    facts.write_text(facts.read_text() + "- [ ] **F2** Sneaked in.\n")
+    r = _records(start, other)
+    assert r.returncode == 1 and "facts.md" in r.stdout and "no longer matches" in r.stdout
+    assert not (other / "changes" / tvg.ID).exists()
+
+
+def test_repo_records_checks_every_criterion_including_routing_and_checks(tmp_path: Path) -> None:
+    import test_verify_gate as tvg
+
+    start, other = _two_repos(tmp_path)
+    folder = start / "changes" / tvg.ID
+    path = next(p for p in (folder / "state" / "intake.json", folder / "decisions.json") if p.is_file())
+    path.write_text(json.dumps({"size": "XL"}))  # a routing field moved after approval
+    r = _records(start, other)
+    assert r.returncode == 1 and "decisions.routing" in r.stdout
+    path.write_text('{"size": "S"}\n')
+    cfg = json.loads((start / "sdlc.json").read_text())
+    cfg["checks"] = {"feature": ["false"]}  # the checks moved after approval
+    (start / "sdlc.json").write_text(json.dumps(cfg))
+    r = _records(start, other)
+    assert r.returncode == 1 and "checks" in r.stdout
+    lock = folder / "lock.json" if (folder / "lock.json").is_file() else folder / "state" / "lock.json"
+    data = json.loads(lock.read_text())
+    data["criteria"]["unknown.key"] = "x"  # a key nothing can recompute
+    lock.write_text(json.dumps(data))
+    (start / "sdlc.json").write_text(json.dumps({"checks": {"feature": ["true"]}}))
+    r = _records(start, other)
+    assert r.returncode == 1 and "unknown.key" in r.stdout
+    lock.write_text("[]")
+    assert "no intact lock.json" in _records(start, other).stdout
+
+
+def _break_target_approve(other: Path) -> None:
+    """A real refusal from the target's own gate: the repo has an E2E suite and no full E2E check."""
+    (other / "e2e").mkdir(exist_ok=True)
+    (other / "sdlc.json").write_text(json.dumps({"checks": {"milestone": ["true"]}}))
+    (other / "e2e" / "a.spec.ts").write_text("x")
+    import test_verify_gate as tvg
+
+    tvg._git(other, "add", ".")
+    tvg._git(other, "commit", "-qm", "e2e without a full e2e check")
+
+
+def test_a_refused_replace_puts_the_old_folder_and_lock_back_byte_for_byte(tmp_path: Path) -> None:
+    import test_verify_gate as tvg
+
+    start, other = _two_repos(tmp_path)
+    _break_target_approve(other)
+    folder = other / "changes" / tvg.ID
+    folder.mkdir(parents=True)
+    (folder / "facts.md").write_text("mine\n")
+    (folder / "lock.json").write_text('{"mine": 1}\n')
+    (folder / "notes.md").write_text("keep\n")
+    r = _records(start, other, "--replace")
+    assert r.returncode == 1 and "nothing was left behind" in r.stdout, r.stdout
+    assert (folder / "facts.md").read_text() == "mine\n" and (folder / "lock.json").read_text() == '{"mine": 1}\n'
+    assert (folder / "notes.md").read_text() == "keep\n" and not (folder / "plan.md").exists()
+    assert not [p for p in other.rglob(".*replaced-*")]
+
+
+def test_a_refused_first_write_leaves_no_folder_and_no_empty_changes_dir(tmp_path: Path) -> None:
+    import test_verify_gate as tvg
+
+    start, other = _two_repos(tmp_path)
+    _break_target_approve(other)
+    shutil.rmtree(other / "changes", ignore_errors=True)
+    r = _records(start, other)
+    assert r.returncode == 1 and "nothing was left behind" in r.stdout, r.stdout
+    assert not (other / "changes").exists()
+
+
+def test_nothing_of_the_targets_is_ever_executed(tmp_path: Path) -> None:
+    import test_verify_gate as tvg
+
+    start, other = _two_repos(tmp_path)
+    marker = tmp_path / "executed"
+    evil = f"import pathlib\npathlib.Path({str(marker)!r}).write_text('ran')\nraise SystemExit(1)\n"
+    for name in ("verify_gate.py", "spec.py", "capture.py", "marks.py", "heavy.py", "evidence.py", "preflight.py", "design_index.py"):
+        (other / "scripts" / name).write_text(evil)
+    (other / "sitecustomize.py").write_text(evil)  # a file the target's cwd could shadow
+    tvg._git(other, "add", ".")
+    tvg._git(other, "commit", "-qm", "tampered scripts")
+    r = _records(start, other)
+    assert r.returncode == 0, r.stdout
+    assert not marker.exists()
+    assert (other / "changes" / tvg.ID).is_dir()
+
+
+def test_repo_records_refuses_a_lock_sha_that_is_not_a_commit_and_unapproved_facts(tmp_path: Path) -> None:
+    import test_verify_gate as tvg
+
+    start, other = _two_repos(tmp_path)
+    folder = start / "changes" / tvg.ID
+    lock = folder / "lock.json" if (folder / "lock.json").is_file() else folder / "state" / "lock.json"
+    data = json.loads(lock.read_text())
+    good = data["sha"]
+    data["sha"] = "0" * 40
+    lock.write_text(json.dumps(data))
+    assert "lock's sha is not a commit" in _records(start, other).stdout
+    data["sha"] = good
+    lock.write_text(json.dumps(data))
+    facts = folder / "facts.md"
+    facts.write_text(facts.read_text().replace("status: approved", "status: draft"))
+    r = _records(start, other)
+    assert r.returncode == 1 and ("not `status: approved`" in r.stdout or "no longer matches" in r.stdout)
+
+
+@pytest.mark.parametrize("bad", ["/tmp/elsewhere", "../outside", "a/../../b"])
+def test_repo_records_rejects_an_unsafe_changes_dir(tmp_path: Path, bad: str) -> None:
+    start, other = _two_repos(tmp_path)
+    (other / "sdlc.json").write_text(json.dumps({"changesDir": bad}))
+    r = _records(start, other)
+    assert r.returncode == 1 and "changesDir" in r.stdout
+
+
+def test_repo_records_refuses_two_decisions_files(tmp_path: Path) -> None:
+    import test_verify_gate as tvg
+
+    start, other = _two_repos(tmp_path)
+    folder = other / "changes" / tvg.ID
+    (folder / "state").mkdir(parents=True)
+    (folder / "decisions.json").write_text("{}")
+    (folder / "state" / "intake.json").write_text("{}")
+    r = _records(start, other, "--replace")
+    assert r.returncode == 1 and "two decisions files" in r.stdout
+
+
+def test_repo_records_refuses_an_unapproved_source_and_an_unadopted_target(tmp_path: Path) -> None:
+    import test_verify_gate as tvg
+
+    start = tvg._repo(tmp_path / "a", ["true"])  # never approved: no lock
+    other = tmp_path / "plain"
+    other.mkdir()
+    assert _records(start, other).returncode == 2
+    (other / "sdlc.json").write_text("{}")
+    tvg._git(other, "init", "-q")
+    (other / "scripts").mkdir()
+    shutil.copyfile(SCRIPT.parent.parent / "templates" / "scripts" / "verify_gate.py", other / "scripts" / "verify_gate.py")
+    tvg._git(other, "add", ".")
+    tvg._git(other, "commit", "-qm", "kit gate")
+    r = _records(start, other)
+    assert r.returncode == 1 and "no intact lock.json" in r.stdout

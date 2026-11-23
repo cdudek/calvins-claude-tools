@@ -64,7 +64,8 @@ none.
 | `delivery` | `one-go`, the only delivery: features are commits on the milestone branch, one milestone PR |
 | `goal` | turn caps: `runTurns` for the goal, `projectTurns` for a project close (default: `milestoneTurns`, 30) |
 | `builders` | `claude` (default) or `codex`: who builds feature rows and fix parts. With `codex`, the kit's `codex-build.sh` runs the Codex CLI in the feature worktree with the network off and rejects a run that touched a protected path; Claude still supervises, closes the milestone and runs the gates |
-| `builderModel`, `builderEffort` | which model builds and how hard (default `sonnet`, `high`): the `model` and `effort` of every builder agent, or the Codex model and reasoning when `builders` is `codex`. Set `opus` for a repo whose changes are hard; a plan's Approach may override both for one change |
+| `builderModel`, `builderEffort` | which model builds and how hard (default `sonnet`, `high`): the `model` and `effort` of every builder agent, or the Codex model and reasoning when `builders` is `codex`. Set `opus` for a repo whose changes are hard. They are only defaults: the orchestrator's choice for a run (the kickoff's "Orchestrator instructions for this run") wins, and no plan, fact, tracker issue or `sdlc.json` names a model for one run |
+| `maxBuilders` | how many builders run at once (default 4; the engineer may raise it in the kickoff). Advisory: the orchestrator honours it and no gate counts builders; `preflight.py doctor` only checks it is a positive whole number. Heavy jobs stay one at a time through `scripts/heavy.py` |
 | `languages`, `responsiveTier`, `ux` | what the product ships, the device matrix tier, UX on or off |
 | `ciPaths` | which changed files run which CI step (lint, unit, build, e2e, deploy): a file in `code` or `config` runs the steps whose include matches it, `all` runs everything, a file in neither `code` nor `config` (or in `docs`) runs nothing; `specs` names the E2E spec files |
 | `ciCommands` | stack commands for the required checks and any other remote jobs: `install`, `lint`, `unit`, `build`, `e2e` (`{shard}`, `{total}`), `e2eTouched` (`{files}`), optional `deploy` |
@@ -78,7 +79,6 @@ none.
 | `testGlobs`, `prototypeDirs`, `feedback` | locked tests, prototype paths, owner-words files |
 | `verifyDirty`, `lintOnEdit`, `blocked[]` | hook inputs |
 | `tiers`, `askGatesMerge`, `claude`, `keep` | generated workflow policy |
-| `codeowners` | legacy compatibility key; CODEOWNERS is never installer-managed |
 
 ## Where a change stands
 
@@ -154,7 +154,8 @@ one line from `python3 scripts/verify_gate.py milestone <id>`: `VERIFY PASS`, `V
 For a bug, commit the failing test first and set `testLocked: true`. While locked, test files
 matching `testGlobs` cannot be edited unless `testEdit` records the user's OK.
 
-For milestone E2E, use the committed `e2e/flaky-specs.txt` list. The installed
+For milestone E2E, use the committed `e2e/flaky-specs.txt` list; `scripts/e2e-repeat.sh <base>` runs
+it with the changed specs x3 and refuses a stale or unsafe path. The installed
 `cct:test-e2e-policy` reference `suite-speed-and-reliability.md` section G defines the
 selection and line format. Section F defines the lock and load policy for shared machines.
 
@@ -177,13 +178,13 @@ Run `marks.py init <id>` for Snapmark/reference images; fill `marks.json` agains
 
 **Only the PR into the default branch is tiered or reviewed.** A milestone PR into
 `project/*` is an interior merge inside one change:
-they auto-merge on their checks alone, with no code owner. The workflow checks the PR's
+they auto-merge on their checks alone, with no review step. The workflow checks the PR's
 base ref itself, so this holds for a hand-opened PR too.
 
 | Tier | Paths | Who looks |
 | --- | --- | --- |
 {{#ASK_GATES_MERGE}}
-| **ask** | {{ASK_PATHS}} | a code owner before merge |
+| **ask** | {{ASK_PATHS}} | never auto-merged; the repo's own ruleset says who looks |
 {{/ASK_GATES_MERGE}}
 {{#ASK_MERGES_ON_GREEN}}
 | **ask** | {{ASK_PATHS}} | highest blast radius; read it, but it does not gate merge |

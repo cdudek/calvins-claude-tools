@@ -95,7 +95,6 @@ OWNER_LABELS = {
     "hold": "hold",
     "skip visual evidence": "skip",
     "run visual evidence": "run",
-    "approve screens": "screens",
     "confirm inventory": "design-inventory",
 }
 DEFER = re.compile(r"defer to milestone (\d+)", re.I)

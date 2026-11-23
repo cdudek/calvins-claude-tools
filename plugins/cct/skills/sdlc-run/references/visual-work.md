@@ -9,10 +9,9 @@ live in `../../ux-build-validate/references/build.md` (Measurements) and the sha
 ## Changes approved from 3.25.0: the app's own screenshots (lock `"visual": "app"`)
 
 The design is binding for which screens and states exist and how each is structured
-([design inputs](design-inputs.md): `design.json`, the `design` mapping, `deviates`); pixel detail is
-decided by the owner on the real app's screenshots, and nothing measures pixels against the design. The
-screens are built in the real app and the owner approves screenshots of the real app; the approved shots
-become exact visual tests (the same renderer against itself). A change with no design input has no
+([design inputs](design-inputs.md): `design.json`, the `design` mapping, `deviates`). The screens are
+built in the real app and agents compare screenshots of the real app with the pinned design; a screen
+that matches is accepted for that close only; nothing is stored as a baseline. No owner approves a screen. A change with no design input has no
 `design.json` and works as before.
 
 1. **Plan (Stage 2).** The UX plan writes `screens.json` in the change folder: one entry per screen and
@@ -26,59 +25,31 @@ become exact visual tests (the same renderer against itself). A change with no d
 3. **Capture (Stage 6, one batch).** Every entry is shot at its viewport, twice; two different shots of
    one entry mean the page is unstable, which is a problem to fix. The latest shots are
    `verify/shots/<entry>.png`.
-4. **Approval.** `python3 scripts/evidence.py gallery <change>` writes `verify/gallery.html`: one
-   offline file, every shot grouped by screen, with its route and accept / send back. The owner
-   downloads `answers.json` and the agent runs `evidence.py gallery <change> --import answers.json`:
-   an accepted shot is copied to `screens/<entry>.png` (tracked) and its sha256 goes into
-   `screens/approved.json` with the approver and the date; a send back removes the entry and prints
-   `reopened: <entry>`. An answer for a shot that changed after the gallery was made is refused.
-   Regenerating the gallery never touches an approval.
-   **The owner approves, never the agent.** The answers file is only a list: an agent could write one
-   that accepts everything. So the import writes nothing until the owner has answered `Approve screens`
-   to a dialog of exactly that batch (the same transcript-backed owner answer the findings use). The
-   first import run prints the question to ask with `AskUserQuestion` (`Change <id>, finding
-   screens-<id of the batch>: Approve these N screens? ...`, options `Approve screens` | `Hold`); the
-   owner opens `verify/gallery.html`, picks per screen, downloads `answers.json`, and confirms the
-   import in that one dialog; the agent runs the import again. `approved.json` records the batch
-   (`batches`) and every entry names it (`decision`); the milestone gate (`capture.py`) fails with
-   `CAPTURE FAIL approval` for an entry no owner answer covers, and the edit hook protects
-   `screens/approved.json` and `screens/*.png` of an app-locked change like the other locked files.
-   A send back that removes an approval needs the owner's answer the same way, and every decision is
-   logged in order (`log`: entry, answer, batch, time); an owner answer that was given before a later
-   send back of the same screen is spent, so a screen sent back needs a new capture and a new batch.
-   An early close (`--upto N`) checks coverage only for the entries due; the last close checks every
-   approval. The owner's answers are read from the Claude Code transcripts of every worktree of the repo,
-   matched by exact path (`git worktree list`, plus the paths listed before and since removed, kept in
-   the common git dir): a folder whose name merely begins like a worktree's is never read.
-   **Known limit.** Owner decisions everywhere in sdlc-run trust the local session transcripts. An agent
-   with filesystem access could write a fake transcript; the check stops a careless agent, not a hostile
-   one. A real fix needs a signing key the agent cannot read. An empty or restored decision log cannot be detected without an anchor outside the files an agent can write.
-   Each entry may carry `"milestone": N` (default 1): a milestone close captures the entries with
-   milestone <= N and the last milestone requires all of them, so an early close never needs a screen
-   a later milestone builds. Two entries never share a route and viewport (the fixture shows only
-   through the route), ids differ by more than case, and `visual.threshold` is a number from 0 to 1.
-5. **Exact tests.** From then on the gate compares each entry's capture with its approved sha256
-   (zero tolerance; `visual.threshold` in `sdlc.json`, default 0). A difference fails with the entry
-   name and a diff image path, and needs a new approval.
-6. **Status.** `screens: N of M approved · K changed since approval · L not captured`, and for a change
-   with `design.json` a second line `design: N boards · M mapped · K dropped · D deviations`.
-
-**The gallery shows the design next to the app (from 3.26.0).** For an entry with `design` boards the
-page shows each board's image beside the app shot (a board without an image shows its name and the
-source link), the entry's `deviates` text highlighted above both, and a header
-`N boards · M mapped · K dropped · D deviations`. An entry with a `deviates` text cannot be accepted in
-bulk: the answers file must name the deviation (`"deviation": "<tag>"`, which the page's checkbox writes),
-it is part of the batch the owner dialog names, and the question says how many deviations it covers.
-Board images are embedded: the page stays one offline file. The decision log is a hash chain (each entry
-holds the hash of the one before it and the lock sha; `approved.json` holds the last as `head`), and the
-gate refuses a trimmed or rewritten log and a batch a later send back spent.
-Known limit: the chain lives in the repo, so an older, whole `approved.json` put back (or a deleted one) is a
-rollback it cannot see without an anchor outside the repo; the owner's answers in their own transcript still bind each batch.
-The head is not repeated in `lock.json`, on purpose: the lock sits in the same repo and is written by the same scripts, so a
-copy of the head there is restored together with the file it anchors (`git checkout <old> -- <change>`), and writing it on
-every send back would change a locked file mid-build and void every pass gated before. The only anchors outside the repo are
-the owner's transcript and a signing key; the first answers a batch, not a head, and the second is an owner step 3.26.x does not add.
-Two more known limits of the board-image read: a folder of the change the user can search but not read (`--x`) cannot be opened folder by folder, so its image counts as missing and the gate fails closed; and the archive lookup of `adopt --migrate` asks for PRs from the repo's own branches only, so a PR from a fork is not found and its archive is kept.
+4. **Comparison, not approval (every milestone close).** There is no owner screenshot approval and no stored
+   baseline anywhere. The close captures that milestone's screens (entries with `milestone` <= N; the last
+   close takes all), light and dark (a theme is its own entry, set by the route or fixture), and agents compare
+   every capture with the pinned design: the repo's UX validate build mode (`cct:ux-build-validate`) plus the
+   UX review (`cct:ux-assessment-run`). Differences are fixed in the fix round. The comparison is written to
+   `verify/comparison.json`, which only `python3 scripts/capture.py verdict <change> <id> --verdict match|differs
+   --report <file> [--differences TEXT]` writes (the hooks refuse a direct edit): it computes the shot's sha256
+   and the mapped boards' sha256s, keeps the compared shot in `verify/compared/`, and refuses a `match` whose
+   `report` is not a real file inside the change that names the sha256, or for a screen that maps no design board
+   and has no `deviates` text. The gate re-checks all of that. It passes visual
+   work only when THIS run captured the due screens and each has a `match` carrying the sha256 the gate
+   computed from that capture: a comparison of an earlier capture or a forged entry counts for nothing, and the
+   gate blocks `VERIFY BLOCKED reason=needs-comparison` (an agent step: compare, write the file, rerun). A
+   `differs` verdict that survives the fix round is a blocking finding (`CAPTURE FAIL comparison`), never an
+   owner question. An entry with a `deviates` text is compared against the design plus that text.
+5. **Later changes are compared again.** Nothing is persisted as a baseline and nobody (agent, owner or gate)
+   writes `screens/approved.json` or `screens/<entry>.png`; a screen that matched once is captured and
+   compared again at the next close. Each entry may carry `"milestone": N` (default 1, a positive integer:
+   runner milestones start at 1). Two entries never share a route and viewport, ids differ by more than case,
+   and `visual.threshold` is a number from 0 to 1 (validated, no longer used for a pixel test).
+6. **Status.** `screens: N of M compared · K differ · L not compared · P not captured`, and for a change with
+   `design.json` a second line `design: N boards · M mapped · K dropped · D deviations`.
+   `python3 scripts/evidence.py gallery <change>` stays as an optional read-only report
+   (`verify/gallery.html`, the design boards beside the app shots) for anyone who wants to look; it
+   decides nothing.
 
 Retired for these changes: design-bundle pinning, `marks.py` rows against bundles and references, the
 six-layer geometry tolerances and the design-system audit tied to board counts (the design-system pin

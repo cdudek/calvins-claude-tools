@@ -1,6 +1,6 @@
 # sdlc-run, end to end
 
-Describes sdlc-run 3.26.4.
+Describes sdlc-run 3.27.0.
 
 `/cct:sdlc-run` runs an AI-native software lifecycle in any repo. The agent drafts the intent, the UX plan, the facts and the tech plan. You confirm twice. Then one `/goal` builds the whole milestone as commits, runs the heavy checks once, and opens one PR.
 
@@ -135,7 +135,7 @@ Acceptance is separate from PR approval: you accept each milestone at stage 6, a
 | `VERIFY FAIL ... check=<name>` | fixes that check and runs verify again |
 | `VERIFY BLOCKED reason=<code>` | stops and asks you |
 
-Blocked reasons: `validation-not-met`, `findings-open`, `findings-blocked`, `not-converged`, `not-approved`, `protected-path`, `no-progress`, `attempts`, `flaky`, `unknown-verdict`, `needs-baseline`, `allowlist-request`, `scope-growth`, `spec-conflict`, `env`, `test-proves-nothing`. `env` also covers a heavy slot that never frees and a parent branch the gate cannot find; the line names the fix.
+Blocked reasons: `validation-not-met`, `findings-open`, `findings-blocked`, `not-converged`, `not-approved`, `protected-path`, `no-progress`, `attempts`, `flaky`, `unknown-verdict`, `needs-comparison`, `allowlist-request`, `scope-growth`, `spec-conflict`, `env`, `test-proves-nothing`. `env` also covers a heavy slot that never frees and a parent branch the gate cannot find; the line names the fix.
 
 The agent may never build outside `/goal`, change the approved plan, edit a test to make it pass, start a second fix round at a milestone, decide scope for you, or open a PR for work that belongs to an open milestone.
 
@@ -235,7 +235,7 @@ Run `adopt` once per repo, from the repo root, on a branch:
 /cct:sdlc-run adopt
 ```
 
-It first asks whether to use Ship/Show/Ask merge tiers (a code owner approves risky PRs; the right answer for a one-owner repo is no). Then it installs:
+It first asks whether to use Ship/Show/Ask merge tiers (risky PRs are labelled ask and never auto-merge; the right answer for a one-owner repo is no). Then it installs:
 
 - `sdlc.json`, from a preset, including the stack's default `ciPaths` and `ciCommands` (written once, never overwritten; edit the folder names to your repo's own), and the `sdlcVersion` stamp.
 - Hooks in `.claude/hooks/` that refuse edits outside `/goal` and to locked files, and `scripts/verify_gate.py`.
@@ -245,7 +245,7 @@ It first asks whether to use Ship/Show/Ask merge tiers (a code owner approves ri
 
 ## Staying current
 
-`adopt` writes `"sdlcVersion": "3.26.4"` into `sdlc.json`. Every time the skill runs in the repo, `status` and the verify gate compare the stamp with the installed plugin and print one line when it is missing or older, for example:
+`adopt` writes `"sdlcVersion": "3.27.0"` into `sdlc.json`. Every time the skill runs in the repo, `status` and the verify gate compare the stamp with the installed plugin and print one line when it is missing or older, for example:
 
 ```text
 This repo runs sdlc-run 3.2.0; the kit is 3.3.1. Run `adopt --upgrade` (changes: 3.3.1: adopt --upgrade never overwrites or moves anything; 3.3.0: the CI workflow ships as a template, ciPaths by file type, versioned repos).
@@ -269,4 +269,4 @@ Each version's headline and migration steps are in the skill's [changelog](../pl
 - **One close job, one queue per machine (3.22):** the milestone close takes one heavy slot, builds once and uses one test database copy; heavy commands are recognised by program and script; one queue serves every repo on the machine; the test template is kept per migration version and works with Docker or Podman; preflight checks free disk and merged builder worktrees are removed. See [Heavy work](#heavy-work-builds-browsers-and-databases).
 - **Screens mode (3.23):** one record per screen with its frozen defect list and round count, checked by `marks.py`; capture once; status in screens; one owner sheet per screen group; the design-system version frozen at approval; a visual change refuses migrations, auth and new pages.
 - **A lighter front (3.24):** the three-document layout by default for new adoptions, size S skips the UX stage and the checklist, analyze and challenge passes, one PR per change (the next change's first commit removes the merged folder), and one delivery mode.
-- **Design in the real app (3.25):** a change approved from 3.25.0 (lock `"visual": "app"`) binds the design for which screens and states exist (from 3.26.0: `design.json` lists every board, each mapped to a screen or dropped by the owner; `deviates` records where a screen differs) but never measures pixels against it. The UX plan writes `screens.json` (one entry per screen and state) and names a sample-data fixture; every entry gets a preview page in the app; the close takes one capture batch; `evidence.py gallery <change>` writes one offline page where the owner accepts or sends back each shot; the answers are imported into `screens/approved.json`, and the approved shots become exact visual tests. Status in screens: `screens: N of M approved · K changed since approval · L not captured`. Changes approved earlier keep the old path.
+- **Design in the real app (3.25):** a change approved from 3.25.0 (lock `"visual": "app"`) binds the design for which screens and states exist (from 3.26.0: `design.json` lists every board, each mapped to a screen or dropped by the owner; `deviates` records where a screen differs) but never measures pixels against it. The UX plan writes `screens.json` (one entry per screen and state) and names a sample-data fixture; every entry gets a preview page in the app; the close takes one capture batch; agents compare each milestone's captures (light and dark) with the pinned design and fix differences in the fix round; the gate passes a screen only on a `match` bound to the sha256 of its own capture (nothing is stored as a baseline, nobody approves a screen; `evidence.py gallery` is an optional read-only report), and a screen still differing is a blocking finding. Status in screens: `screens: N of M compared · K differ · L not compared · P not captured`. Changes approved earlier keep the old path.

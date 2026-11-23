@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import importlib.util
 import json
+import shutil
 import subprocess
 import sys
 from pathlib import Path
@@ -226,6 +227,8 @@ def test_an_e2e_suite_added_after_a_new_approval_blocks_the_milestone(tmp_path: 
 def test_a_repeat_fails_when_git_cannot_select_the_specs(tmp_path: Path, stack: str) -> None:
     """The diff is run before the pipe, so an unknown base is an error, never an empty selection."""
     repo = _repo(tmp_path, [])
+    (repo / "scripts").mkdir(exist_ok=True)  # the node entry runs the script `adopt` installs
+    shutil.copy(Path(__file__).resolve().parent.parent / "templates/scripts/e2e-repeat.sh", repo / "scripts/e2e-repeat.sh")
     cmd = _entry("e2e-repeat", stack)["run"].replace("{base}", "origin/does-not-exist")
     bad = subprocess.run(cmd, shell=True, cwd=repo, capture_output=True, text=True, env=_env())
     assert bad.returncode != 0
@@ -257,6 +260,8 @@ def test_audit_understands_the_preset_repeat_and_its_base_placeholder(tmp_path: 
 
     entry = _entry("e2e-repeat", stack)
     repo, env = _audit_repo(tmp_path, [entry], required=None)
+    (repo / "scripts").mkdir(exist_ok=True)
+    shutil.copy(Path(__file__).resolve().parent.parent / "templates/scripts/e2e-repeat.sh", repo / "scripts/e2e-repeat.sh")
     expanded = entry["run"].replace("{base}", "origin/master")
     verify = repo / "changes" / ID / "verify"
     verify.mkdir()

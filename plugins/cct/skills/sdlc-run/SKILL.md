@@ -12,7 +12,7 @@ description: >-
 allowed-tools: "Read Grep Glob Edit Write Agent Skill AskUserQuestion Bash(bash */sdlc-run/scripts/*) Bash(python3 */sdlc-run/scripts/*) Bash(python3 */sdlc-run/templates/scripts/sdlc_version.py*) Bash(python3 scripts/sdlc_version.py*) Bash(python3 scripts/verify_gate.py *) Bash(wt *) Bash(git *) Bash(gh *) Bash(bd *) Bash(plannotator *) Bash(make *) Bash(pnpm *) Bash(uv *) Bash(npx *) EnterWorktree mcp__claude_ai_Linear__* mcp__linear__*"
 user_invocable: true
 metadata:
-  version: 3.26.4
+  version: 3.27.0
   author: calvindudek
 effort: high
 ---
@@ -138,12 +138,12 @@ tests are light. A heavy job takes a slot in a per-machine queue (`scripts/heavy
 one slot by default), and the milestone gate runs every check through it. A helper's heavy command
 that skips the queue is refused by `helper-guard.sh`. `scripts/db.py test` gives each job a private
 copy of a migrated local Postgres; `db.py dev` connects the engineer to their own cloud database;
-`scripts/preflight.py` checks tools, sign-in and Docker once. All optional (`heavy`, `db`,
+`scripts/preflight.py` checks tools, sign-in and Docker once, and `preflight.py doctor` (read-only; run by `adopt`, at Stage 1.0 and before the plan gate) names every gate-config gap with its fix. All optional (`heavy`, `db`,
 `preflight` in `sdlc.json`); `references/heavy-work.md`.
 
 ## Agents and models
 
-Agents: every build, fix, test, capture, restack or records agent is `cct:sdlc-feature-builder` (Sonnet); review and checks use their typed agents (`cct:review-code-reviewer`, `cct:test-behavior-verifier`, `cct:review-criteria-auditor`, `cct:ux-usability-reviewer`, `cct:review-finding-validator`). Never launch general-purpose for this work: it inherits the session's model. Any other subagent gets `model: sonnet` explicitly. The session's own model is only for the gate's visual judgement and for decisions. Dispatch builders yourself, never through a closer agent that spawns its own.
+Agents: every build, fix, test, capture, restack or records agent is `cct:sdlc-feature-builder`; review and checks use their typed agents (`cct:review-code-reviewer`, `cct:test-behavior-verifier`, `cct:review-criteria-auditor`, `cct:ux-usability-reviewer`, `cct:review-finding-validator`). Never launch general-purpose for this work: it inherits the session's model. Any other subagent gets an explicit model from the kickoff's orchestrator instructions. The session's own model is only for the gate's visual judgement and for decisions. Dispatch builders yourself, never through a closer agent that spawns its own.
 
 Every step, input, output, skip and failure mode: `references/stages.md`. How to wait (CI, deploy, success measure): its "Waiting" section; never a `/loop` inside a running `/goal`. A step whose skill is
 not installed is skipped with a printed note naming it, never silently.
@@ -175,7 +175,7 @@ No design gate exists. `cct:ux-spec-validate spec` runs once and its findings go
 `sdlc.json` `checks.<scope>` in order, writes `changes/<id>/verify/report.{json,md}` and ends
 with one line: `VERIFY PASS <scope> <id> <sha>`, `VERIFY FAIL … check=<name>` (fix and rerun) or
 `VERIFY BLOCKED reason=<code>` (stop and ask the engineer). Reasons: `validation-not-met`, `findings-open`, `findings-blocked`, `not-converged`, `not-approved`,
-`protected-path`, `no-progress`, `attempts`, `flaky`, `unknown-verdict`, `needs-baseline`,
+`protected-path`, `no-progress`, `attempts`, `flaky`, `unknown-verdict`, `needs-comparison`,
 `allowlist-request`, `scope-growth`, `spec-conflict`, `env`, `test-proves-nothing`. A milestone blocks on a `not met` or `partly` row in `validation.md`, an unchecked item in `findings.md` outside `## Advisory`, and a `## Converge` section without `Converged:`.
 `goal` ends in `DONE` or `BLOCKED` with a state; `references/states.json` lists every state and who leaves it.
 Snapmark feedback and supplied reference images require comparison against fresh headless
@@ -212,12 +212,12 @@ Only a project that asks for a branch (`project.branch: true`) adds one level ab
 - The build works in the supervisor's worktree on `milestone/<slug>-<n>`
   itself, a commit per feature. Parallel builders, when used, start from the milestone head and
   merge back locally, one at a time, through the shared policy’s `wt merge` flow (Git fallback).
-- Builders are `cct:sdlc-feature-builder` agents, at most 4 at once (inside about 6 helpers), each dispatched with
+- Builders are `cct:sdlc-feature-builder` agents, at most `sdlc.json` `maxBuilders` at once (default 4; the engineer may raise it in the kickoff), plus about 2 helpers, each dispatched with
   `isolation: "worktree"` and `Repo`, `Worktree`, `Change` and `Base: <milestone head sha>` lines, checked and reset to before any
   edit: a worktree hook cuts from the trunk. The supervisor commits its records first, edits no
-  code, runs no test suite, and is the one integrator. Every builder dispatch carries `sdlc.json` `builderModel` and `builderEffort`
-  (default `sonnet`, `high`; set `opus` for a hard change, or let one plan's Approach override
-  them for that change). With `sdlc.json` `builders: "codex"`, every feature row and fix part runs
+  code, runs no test suite, and is the one integrator. Every builder dispatch carries a model and effort the orchestrator chooses
+  (`references/stages.md`, "Models are an orchestrator choice"): `sdlc.json` `builderModel` and `builderEffort` are only the
+  defaults (`sonnet`, `high`), and the engineer's "Orchestrator instructions for this run" in the kickoff win. With `sdlc.json` `builders: "codex"`, every feature row and fix part runs
   instead through `scripts/codex-build.sh` (the Codex CLI in the same worktree, network off,
   `.git` read-only; the wrapper checks the result and makes the commit; `references/stages.md`
   → Wall clock); the supervisor, the milestone close and the gates stay Claude.
@@ -255,8 +255,8 @@ E2E at the close, while the supervisor dispatches the reviews and the validation
 `builders: "codex"` the close builder implements nothing: the fix parts go to `codex-build.sh`,
 then the close builder runs the gate once. Only its
 `VERIFY PASS` head is pushed, once, with one PR; auto-merge is armed only after the owner and visual dispositions are recorded (never arm an `ask`-labelled or a closed PR), while the supervisor builds
-the next independent milestone (at most 4 builders). CI is the last check, never the test loop:
-a red check uses the exact-test local failure loop in `references/local-first.md`, then the full suite once and one batched push. Another repository follows
+the next independent milestone (up to `maxBuilders` builders). CI is the last check, never the test loop:
+a red check uses the exact-test local failure loop in `references/local-first.md`, then the full suite once and one batched push. Several repos in one project: [multi-repo](references/multi-repo.md). Another repository follows
 the same rule on its own milestone branch; an exception needs the engineer's words in
 `decisions.json` `prExceptions`. Agents run only the tests they touched.
 GitHub's required checks are the merge gate; `pr-gate.sh` only enforces branch order (a milestone

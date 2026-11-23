@@ -98,6 +98,9 @@ Worktree lifecycle commands follow the [shared worktree policy](../../../referen
 - **Steps:** Run `status.sh`; `templates=stale` → run `adopt` first. No `tracker` in `sdlc.json`:
   run `scripts/tracker.py detect`, ask, set it up (`references/trackers.md`). Check plannotator, the tracker
   MCP and `gh`; say once what is missing and continue where the chain allows.
+- **Gate-config doctor:** `python3 scripts/preflight.py doctor` (read-only) prints one `GAP <name>: <what>. Fix: <fix>`
+  line per gap the gates would refuse later: no full E2E command or x3 repeat, no `visual.start` for app
+  captures, a project without `milestones.merge: local`, a milestone numbered 0. Fix each before drafting.
 - **Failure modes:** stale templates, no `sdlc.json`, missing `scripts/verify_gate.py`.
 
 ### 1.1 The dialog
@@ -280,7 +283,8 @@ package), `tracking-apply` (the success-measure events). Each result lands in th
 
 ### 4.3 The gate
 
-0. **Lint first.** `python3 scripts/verify_gate.py lint <id>` on the drafts, before either reviewer
+0. **Doctor and lint first.** `python3 scripts/preflight.py doctor` (every `GAP` line is a refusal waiting at `approve`
+   or the close; fix it now), then `python3 scripts/verify_gate.py lint <id>` on the drafts, before either reviewer
    is dispatched; fix every line it names. Run it again right before the owner gate (step 1).
 0a. **Analyze pass** (not on size S), read-only (`references/quality-passes.md`): six passes over intent, facts,
    plan and `spec/`, findings into `analyze.md`. Fix every CRITICAL in its source file and mark it
@@ -409,6 +413,9 @@ while a dependency PR's CI ran. Four rules, for every stack.
   `/goal` any other PR or push. Another repository follows the same rule with its own milestone
   branch. The only exception is the engineer's words in `decisions.json` `prExceptions`. The
   folder removal (Stage 7) is the next change's first commit, never a commit of this PR.
+- **A project across several repos follows `multi-repo.md`.** One start repo owns the goal; a dependency
+  repo is milestone M-first and consumers use a packed tarball of a frozen commit; every release PR in
+  another repo happens after the goal finishes; `sdlc_status.py repo-records` writes the per-repo records.
 - **A cross-repo dependency builds against a local copy.** When this repo needs another repo's
   unreleased code (a kit fix found by the app), link or pack it locally (`npm pack`, a
   workspace `file:` path that is not committed) and build on. The published version arrives with
@@ -425,7 +432,7 @@ while a dependency PR's CI ran. Four rules, for every stack.
   the PR in the background (`gh pr checks <n> --watch` as a background command, or `Monitor`),
   and start the next independent row at once. The supervisor watches, not the builder; a
   builder returns when it has pushed. A red check interrupts: dispatch a builder to the PR's
-  branch, then go back. Independent rows build in parallel builders, at most 4, inside about 6 helpers (Wall clock).
+  branch, then go back. Independent rows build in parallel builders, at most `maxBuilders` (default 4), plus about 2 helpers (Wall clock).
 - **Agents run what they touched.** A builder runs only the tests or specs its change touched
   (the command per stack: `../../test-e2e-policy/references/suite-speed-and-reliability.md`
   section K, column "Touched tests"). The full suite runs once on the final head before each push; the required GitHub checks are the merge gate, see [local-first](local-first.md).
@@ -447,14 +454,20 @@ disappear.
   command (Git fallback), and never while a close runs. Independent features
   build at the same time. Features that edit the same files run one after another, the second
   cut after the first has merged.
+- **Models are an orchestrator choice.** The plan, the facts, tracker issues and `sdlc.json` never
+  name a model for a specific run. The engineer may add an optional "Orchestrator instructions for
+  this run" block to the goal kickoff (`templates/goal/run.txt`, the plan's Goal handover) that
+  names the builder model and effort, the reviewer model and the builders at once; the orchestrator
+  passes them on every dispatch (agent `model` and `effort`, or `codex-build.sh --model --reasoning`).
+  `sdlc.json` `builderModel` and `builderEffort` are only the defaults when the kickoff says nothing.
 - **The supervisor plans, dispatches, judges and merges.** The session that runs this skill edits
   no code and runs no test suite; the builders and the gate do. Every feature and fix part goes to
   an `cct:sdlc-feature-builder`, never to `general-purpose`, dispatched with `model` and `effort` set to
-  `sdlc.json` `builderModel` and `builderEffort` (default `sonnet`, `high`; the agent's own
-  frontmatter says the same, so the default changes nothing), or to the pair the plan's
-  Approach names for this change. A subagent's result comes back as a file path
-  plus a summary of at most about 2k tokens. At most 4 builders run at once, inside about 6 helpers
-  in all (builders plus the reviewers, validators and fix parts out at the same moment); heavy
+  the model and effort the orchestrator chose for this run (see **Models are an orchestrator choice**
+  below); with none chosen, `sdlc.json` `builderModel` and `builderEffort` (default `sonnet`, `high`; the agent's own
+  frontmatter says the same, so the default changes nothing). A subagent's result comes back as a file path
+  plus a summary of at most about 2k tokens. At most `sdlc.json` `maxBuilders` builders run at once (default 4; the engineer may raise it in the
+  kickoff), plus about 2 helpers in all (builders plus the reviewers, validators and fix parts out at the same moment); heavy
   slots are counted separately ([heavy work](heavy-work.md)).
 - **Dispatch names the workspace.** Every builder prompt (and every Codex brief) starts with four
   lines: `Repo: <git remote url, no credentials>`, `Worktree: <absolute path>`,
@@ -470,8 +483,7 @@ disappear.
   worktree once (`ciCommands.install`; the sandbox has no network, so nothing installs later),
   write the brief to a file (the feature row, its facts, the worker branch), start
   `codex-build.sh --worktree <wt> --change <id> --brief <file> --model <M> --reasoning <R>` as a
-  **background Bash** with `sdlc.json` `builderModel` and `builderEffort` (or the pair the plan's
-  Approach names for this change), and watch it with
+  **background Bash** with the model and reasoning the orchestrator chose (the defaults are `sdlc.json` `builderModel` and `builderEffort`), and watch it with
   `Monitor`. The script waits on Codex, writes `<out>/run.json` (model, reasoning, branch, base,
   pid = process group) and `<out>/result.json`, checks a `done` (the tree changed; no protected
   path, lockfile, manifest or locked test among the changes, else exit 3 `rejected`, left
@@ -534,10 +546,11 @@ Diffing a project's milestone against the trunk pulls in the sibling milestones 
 merged into the project branch, and reviews them again.
 
 Capture rules (headless, never the owner's browser) and the visual rules: [visual work](visual-work.md).
-For a change with `screens.json` the close takes **one capture batch** of every entry, then
-`evidence.py gallery <change>` writes one offline page for the owner (the board images beside the app
-shots, every deviation shown); the owner's `answers.json` is imported with `gallery <change> --import`,
-and the approved shots become the exact tests of later runs.
+For a change with `screens.json` the close takes **one capture batch** of the entries due, light and dark,
+then agents compare each capture with the pinned design (`cct:ux-build-validate` build mode and
+the UX review) into `verify/comparison.json`, fix differences in the fix round, and the gate
+passes a screen only on a `match` bound to the sha256 of this run's own capture. No baseline is stored and no
+owner approves a screen; a screen still differing after the fix round is a blocking finding.
 
 1. The same goal continues from Stage 5.
 2. Run on the diff, each once and in parallel: `cct:ux-assessment-run scope=change base=<parent>
@@ -555,7 +568,9 @@ and the approved shots become the exact tests of later runs.
    as written, never a 320 × 256 window; the states of every changed page are in the same
    captures. The full E2E suite is not in this list:
    `verify_gate.py milestone` is the only runner of the full suite and the full E2E at the close
-   (step 6). Changed and flaky specs run ×3 on the final integrated build; use the committed
+   (step 6). Changed and flaky specs run ×3 on the final integrated build through
+   `scripts/e2e-repeat.sh <base>` (never a hand-written one-liner: it accepts only existing spec
+   paths, passes them after `--` and never uses `--pass-with-no-tests`); use the committed
    `e2e/flaky-specs.txt` list and the selection and line-format rules in
    `../../test-e2e-policy/references/suite-speed-and-reliability.md` section G. Send inconsistent
    results to `test-flake-fix`. Build QA (`cct:ux-build-validate`, report-only at the
@@ -580,8 +595,9 @@ and the approved shots become the exact tests of later runs.
    the capture of every marked and referenced screen into `marks.json`: [visual work](visual-work.md).
    **A lock with `"visual": "app"` (approved from 3.25.0) skips both:** no marks, no `--visual-run`.
    The close job's gate runs one `app-screens` check (`capture.py run`: every `screens.json` entry due by
-   this milestone, twice, against the approved baselines). With no baseline yet it blocks
-   `needs-baseline`: build `evidence.py gallery <id>`, have the owner approve, import, run the gate again.
+   this milestone, twice, against the agents' comparison of this run's capture). A screen with no comparison of it blocks
+   `needs-comparison`: compare the shots with the design, write `verify/comparison.json`, run the gate again;
+   `differs` fails `CAPTURE FAIL comparison` (fix round).
 2a. **Validation: does each feature do what the plan said?** Separate from the checks, which
    prove the code is sound. For every fact and every ask of this milestone, exercise the
       built app (E2E with the fact's tag, a headless capture of the named screen and state, or
@@ -604,7 +620,7 @@ and the approved shots become the exact tests of later runs.
    after under `## Advisory`; the gate treats every other unchecked item as open. Link the visual
    ledgers and checks. A missing or failed visual check is BLOCKED: the review did not run.
    For a lock without `"visual": "app"`: run `python3 scripts/marks.py check <id>`; open rows are blocking findings.
-   An app-locked change has no marks ledger; its screens are the gallery and `approved.json`.
+   An app-locked change has no marks ledger; its screens are the comparison report.
    A `fixed` row names the passing test tag that proves it in `test` (`@F<n>`); the tag must
    appear in a `testGlobs` file or the check fails.
    Only the engineer's words in `accepted` can accept a non-fixed row; never infer acceptance.
@@ -626,7 +642,7 @@ and the approved shots become the exact tests of later runs.
    `findings.md` item ticked. **What the round leaves is settled by the owner's answer.** Per residual finding the supervisor asks one `AskUserQuestion` whose question text starts `Change <change id>, finding <finding id>: ` (for example `Change 2026-11-19-x, finding B2: the card overflows at 320. What now?`) and whose options are exactly `Fix it now`, `Accept as is`, `Defer to milestone <n>` and `Block the close`. The gate reads the structured tool result of that dialog from the session transcript (never typed text): `Accept as is` and `Defer to milestone <n>` settle the item, `Fix it now` keeps it open, `Block the close` is terminal (`findings-blocked`, also against a ticked box). The latest answer wins, an answer older than the finding is ignored, the item needs an explicit bold id (`**B2**`, `**C1**`) that no other open item shares, and the agent cannot answer for the owner. A fact that is `partly`
    or `not met` in `validation.md` is never cleared by an answer: change the scope with a new
    approval, or the milestone is held.
-6. Reopen recaptured images and rerun their visual checks (an app-locked change reviews the gallery instead). Then
+6. Reopen recaptured images and rerun their visual checks (an app-locked change reviews the comparison report instead). Then
    `python3 scripts/verify_gate.py milestone <id> --visual-check "<checker>" --visual-run "<run>"`
    once, after the fixes, never between them, run by the close builder (`Mode: close`) on a
    head nothing else touches. The gate runs the offline evidence checks first (`owner-marks`, the

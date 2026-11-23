@@ -387,15 +387,16 @@ def test_chain_gate_protects_screens_json_after_an_app_approval(tmp_path: Path) 
     assert r.returncode == 2 and "protectedEdit" in r.stderr
 
 
-@pytest.mark.parametrize("file", ["screens/approved.json", "screens/leads.list.empty.png"])
-def test_chain_gate_protects_the_approved_screens_of_an_app_change(tmp_path: Path, file: str) -> None:
+def test_chain_gate_no_longer_protects_stored_baselines_but_protects_the_verdict_file(tmp_path: Path) -> None:
     repo = make(tmp_path)
     lock = repo / "changes" / ID / "lock.json"
-    assert edit(repo, f"changes/{ID}/{file}").returncode == 0  # a change that never approved screens
     lock.write_text(json.dumps({"layout": 4, "visual": "app", "criteria": {}}))
-    r = edit(repo, f"changes/{ID}/{file}")
-    assert r.returncode == 2 and "protectedEdit" in r.stderr
-    assert edit(repo, f"changes/{ID}/screens/some-record.json").returncode == 0  # the per-screen records stay open
+    for file in ("screens/approved.json", "screens/leads.list.empty.png"):  # nothing is stored as a baseline since 3.27.0
+        assert edit(repo, f"changes/{ID}/{file}").returncode == 0, file
+    for name in (f"changes/{ID}/verify/comparison.json", f"changes/{ID}/Verify/Comparison.json"):  # only `capture.py verdict` writes it
+        r = edit(repo, name, content="{}")
+        assert r.returncode == 2 and "capture.py verdict" in r.stderr, name
+    assert edit(repo, f"changes/{ID}/verify/ux/report.md", content="x").returncode == 0  # the report the verdict cites stays open
 
 
 ROWS = '[{"id": "a", "route": "/a", "design": ["b1"]}]'
@@ -491,7 +492,7 @@ def test_the_routing_fields_are_the_gates(tmp_path: Path) -> None:
     assert pass_proof.ROUTING == verify_gate.ROUTING
 
 
-@pytest.mark.parametrize("name", ["Screens.json", "SCREENS.JSON", "screens/APPROVED.json", "Screens/approved.json", "Design.json"])
+@pytest.mark.parametrize("name", ["Screens.json", "SCREENS.JSON", "Design.json"])
 def test_the_locked_files_are_matched_whatever_the_capitalization(tmp_path: Path, name: str) -> None:
     repo, _ = _inventory_change(tmp_path)  # a case-insensitive volume opens the locked file under any spelling
     r = edit(repo, f"changes/{ID}/{name}", content="[]")

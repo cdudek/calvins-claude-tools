@@ -79,6 +79,14 @@ to the runner. Each entry explains why it still needs repeats. For example:
 e2e/navigation.spec.ts # navigation race under investigation
 ```
 
+Two rules for the repeat, because a hand-written one-liner breaks both. First, accept a name only
+if it matches `^[A-Za-z0-9._/-]+\.spec\.(ts|tsx|js|mjs)$`, does not start with `-` and is an
+existing file; anything else fails the run, and the paths go to the runner after `--`, so a
+filtered-out name is never read as a flag. Second, never pass `--pass-with-no-tests`: an empty
+set runs nothing and exits 0 by itself, while a stale list entry must fail, not pass silently.
+An sdlc-run repo gets this as `scripts/e2e-repeat.sh <base>` (installed by `adopt`, the
+`e2e-repeat` milestone check); a repo without sdlc-run copies the same two rules.
+
 Keep failures visible. Repeats collect reliability evidence; they never turn a failed first
 run into a passing gate. Targeted calibration during diagnosis is separate from this gate
 policy (`waiting.md` section 11).

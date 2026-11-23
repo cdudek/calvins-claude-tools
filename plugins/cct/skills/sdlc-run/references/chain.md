@@ -325,7 +325,6 @@ permalinks; local laptop paths are refused.
 | `blocked[]` | Bash hook, tests | blocked shell patterns with routes |
 | `toolsCommand` | SessionStart, docs | installs plannotator and plugin |
 | `tests`, `testFile` | adopt | rendered guardrail test type and path |
-| `codeowners` | compatibility only | ignored; the repository team owns CODEOWNERS |
 | `claude` | adopt, test | whether Claude workflows are generated |
 | `claudeAllow` | none | obsolete since 3.7.0, when `claude.yml` went; `adopt` leaves the key alone |
 | `showChannel` | adopt | Slack channel for show notices |
@@ -341,7 +340,8 @@ permalinks; local laptop paths are refused.
 | `delivery` | skill | `one-go`, the only delivery since 3.24.0: one `/goal` builds every feature as commits on the milestone branch and closes the milestone. `feature-prs` is gone: `adopt --upgrade` prints a MANUAL line for a repo that still sets it |
 | `goal` | skill | `{runTurns, milestoneTurns, projectTurns}`; default 150, 30 and the milestone cap (`featureTurns` is obsolete) |
 | `builders` | skill, adopt | who builds feature rows and fix parts: `claude` (`cct:sdlc-feature-builder` agents, default) or `codex` (`scripts/codex-build.sh` runs the Codex CLI in the worktree, network off, `.git` read-only; the wrapper checks the result and makes the commit). The supervisor, the milestone close and the gates stay Claude either way |
-| `builderModel`, `builderEffort` | skill, adopt | which model builds and how hard: for `claude` the `model` and `effort` of every `cct:sdlc-feature-builder` dispatch (a Claude Code alias `sonnet`, `opus`, `haiku` or a model id; default `sonnet`, `high`), for `codex` the `--model` and `--reasoning` of `codex-build.sh` (default `gpt-5.5`, `high`). Effort is one of `low`, `medium`, `high`, `xhigh`. A plan's Approach may name another pair for that one change |
+| `builderModel`, `builderEffort` | skill, adopt | which model builds and how hard: for `claude` the `model` and `effort` of every `cct:sdlc-feature-builder` dispatch (a Claude Code alias `sonnet`, `opus`, `haiku` or a model id; default `sonnet`, `high`), for `codex` the `--model` and `--reasoning` of `codex-build.sh` (default `gpt-5.5`, `high`). Effort is one of `low`, `medium`, `high`, `xhigh`. Only defaults: the orchestrator's choice for a run (the kickoff's "Orchestrator instructions for this run") wins; no plan, fact, tracker issue or `sdlc.json` names a model for one run |
+| `maxBuilders` | skill, adopt | how many builders run at once (default 4; a positive whole number, validated by `adopt` and `preflight.py doctor`; advisory: the orchestrator honours it, no gate counts builders; the engineer may raise it in the kickoff); heavy jobs stay one at a time through `heavy.py` |
 | `languages` | skill, checks | the languages the product ships; default `["en"]` |
 | `ciPaths` | CI, agents | `{docs, all, code, config, specs, lint, unit, build, e2e, deploy}`: which changed files switch which CI step on (`code`/`config` gate, `include`/`exclude` globs per step); a file in neither runs nothing; not under `checks`, so no lock; defaults per stack in `templates/ci-paths.json`; `references/ci-blueprint.md` |
 | `ciCommands` | CI | `{install, lint, unit, build, e2e, e2eTouched, deploy}`: what each job of `templates/ci/github-actions.yml` runs; defaults per stack in `templates/ci-commands.json` |

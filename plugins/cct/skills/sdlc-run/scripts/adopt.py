@@ -740,7 +740,7 @@ def delivery_values(cfg: dict) -> dict[str, str]:
     }
 
 
-E2E_CMD = re.compile(r"playwright|test:e2e")
+E2E_CMD = re.compile(r"playwright|test:e2e|e2e-repeat\.sh")
 # `--repeat-each` is a Playwright flag, so it marks an E2E check even behind a wrapper script
 # (samplewerk: `sh scripts/e2e.sh --repeat-each 3`). The match covers its own value.
 WHOLE_SUITE_REPEAT = re.compile(r"\s*--repeat-each(?:=|\s+)\S+")
@@ -854,6 +854,9 @@ def add_builders(cfg: dict) -> None:
         wrote.append("sdlc.json: builderEffort added (high)")
     elif e not in EFFORTS:
         sys.exit(f"sdlc.json builderEffort must be one of {', '.join(EFFORTS)}, not {e!r}")
+    mb = cfg.get("maxBuilders")  # 3.27.0, optional (default 4, never written): how many builders run at once
+    if mb is not None and not (isinstance(mb, int) and not isinstance(mb, bool) and mb >= 1):
+        sys.exit(f"sdlc.json maxBuilders must be a whole number of at least 1, not {mb!r}")
 
 
 def check_rules(cfg: dict) -> None:
@@ -923,7 +926,7 @@ def adopt_ci(cfg: dict, preset: str) -> None:
 
 E2E_SCOPED = re.compile(
     r"--grep|--only-changed|--last-failed|--repeat-each|\bseq\b|\bfor\b|\brelated\b"
-    r"|\.(?:spec|test)\.\w+|test_\w+\.py|\$specs"
+    r"|\.(?:spec|test)\.\w+|test_\w+\.py|\$specs|e2e-repeat\.sh"
 )  # keep equal to verify_gate.E2E_SCOPED
 
 
@@ -936,7 +939,7 @@ def e2e_gap_note(milestone: list) -> None:
     x3 repeat of the changed and flaky specs. adopt never re-locks: the engineer approves again."""
     cmds = [c["run"] if isinstance(c, dict) else c for c in milestone]
     full = any(E2E_CMD.search(run) and not E2E_SCOPED.search(run) for run in cmds)
-    repeat = any(E2E_CMD.search(run) and re.search(r"--repeat-each|\bseq\s+3\b|\bin\s+1\s+2\s+3\b", run) for run in cmds)
+    repeat = any(E2E_CMD.search(run) and re.search(r"e2e-repeat\.sh|--repeat-each|\bseq\s+3\b|\bin\s+1\s+2\s+3\b", run) for run in cmds)
     if has_e2e_config() and not (full and repeat):
         what = "no full E2E entry" if not full else "no repeat (x3) of the changed and flaky specs"
         manual.append(
@@ -1104,6 +1107,8 @@ KIT_EVIDENCE = {
     "d3f6a873494adeca",
     "dfc08b78731101be",
     "e79b3688e6abf19b",
+    "07f3e9bea57e3631",
+    "87e8b626858edfdb",
 }
 KIT_PREFLIGHT = {
     "848114ac6dd4a375",
@@ -1111,6 +1116,8 @@ KIT_PREFLIGHT = {
     "9e40826faba1db82",
     "020f538fc743c5b0",
     "800076649e5cd346",
+    "54c99826b071f7f3",
+    "2e60552107696111",
 }
 KIT_CAPTURE = {
     "55464dcaa9fb571a",
@@ -1131,6 +1138,9 @@ KIT_CAPTURE = {
     "abaefad52061ac33",
     "bea4668822a688b4",
     "225c9473fb6d2bf9",
+    "42b03ae95d9f3f0f",
+    "c9e4ae2bba8672bb",
+    "bab204515ff16d7c",
 }
 KIT_HELPER_GUARD = {
     "ca26ffb8ad16e8b3",
@@ -1958,7 +1968,7 @@ def main() -> int:
                 + "\n",
             )
 
-    # --- tiers and classifier (CODEOWNERS is repository-owned)
+    # --- tiers and classifier (the kit has no CODEOWNERS step)
     # sdlc.json `tiers` (default TIERS_DEFAULT): Ship/Show/Ask. False is for a repo with one owner --
     # there is nobody to ask and nobody to show, so every PR auto-merges on green. adopt
     # writes none of the three tier files and removes any that exist.
@@ -2003,7 +2013,7 @@ def main() -> int:
     else:
         d = TIER_DEFAULTS[preset]
         tiers = {
-            "_comment": f"Ship/Show/Ask by blast radius. First tier whose glob matches a changed file wins, in this order. Read by scripts/ship_show_ask.py, .github/workflows/ship-show-ask.yml and the sdlc guardrail test; CODEOWNERS is maintained by the repository team, never by adopt. {docs} explains the tiers.",
+            "_comment": f"Ship/Show/Ask by blast radius. First tier whose glob matches a changed file wins, in this order. Read by scripts/ship_show_ask.py, .github/workflows/ship-show-ask.yml and the sdlc guardrail test. {docs} explains the tiers.",
             "order": ["ask", "show", "ship"],
             "ask": d["ask"],
             "show": d["show"],
@@ -2025,8 +2035,13 @@ def main() -> int:
         "evidence.py",
         "preflight.py",
         "capture.py",
+        "e2e-repeat.sh",
     ):
         _write(ROOT / "scripts" / script, (TPL / "scripts" / script).read_text(encoding="utf-8"))
+    # The gate-config doctor (read-only): what the gates would refuse later. The missing full E2E is already a
+    # MANUAL line above (e2e_gap_note, the same predicate), so it is not repeated.
+    doctor = subprocess.run([sys.executable, str(TPL / "scripts" / "preflight.py"), "doctor"], cwd=ROOT, capture_output=True, text=True)
+    manual.extend(x for x in doctor.stdout.splitlines() if x.startswith("GAP") and not x.startswith("GAP full-e2e"))
     # sdlc_status.py runs from the plugin now and is never copied into a repo.
     remove(ROOT / "scripts" / "sdlc_status.py", "now runs from the plugin")
     for name in ("Makefile", "package.json"):  # named, never edited: they are the repo's own
@@ -2054,9 +2069,6 @@ def main() -> int:
             ROOT / "scripts" / "ship_show_ask.py",
             (TPL / "scripts" / "ship_show_ask.py").read_text(encoding="utf-8"),
         )
-
-    # CODEOWNERS is a team-repo choice. Never create, edit or delete it, even
-    # when an older adopt generated it or tiers/codeowners settings change.
 
     # --- workflows
     adopt_ci(cfg, preset)
@@ -2138,7 +2150,7 @@ def main() -> int:
     ):
         manual.append(
             "ship-show-ask.yml no longer requests the Show reviewer (vars.SDLC_COOWNER, removed in "
-            "sdlc-run 3.18.0): add the reviewer to CODEOWNERS, or a `gh pr edit --add-reviewer` step by hand."
+            "sdlc-run 3.18.0): add the reviewer with a `gh pr edit --add-reviewer` step by hand."
         )
     for src in sorted((TPL / "workflows").glob("*.yml")):
         dest = ROOT / ".github" / "workflows" / src.name

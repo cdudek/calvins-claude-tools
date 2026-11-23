@@ -13,6 +13,8 @@ import subprocess
 import sys
 from pathlib import Path
 
+import pytest
+
 PRE = Path(__file__).resolve().parents[1] / "templates/scripts/preflight.py"
 
 
@@ -124,3 +126,76 @@ def test_the_selected_engine_is_the_one_probed(tmp_path: Path) -> None:
     assert ok.returncode == 0, "podman works; a broken docker is not asked"
     bad = _run(tmp_path, cfg, fakes={"podman": 1})
     assert "FAIL podman" in bad.stdout and "docker" not in bad.stdout.lower().replace("podman", "")
+
+
+def _doctor(tmp: Path, cfg: dict, files: dict[str, str] | None = None, e2e: bool = False):
+    repo = tmp / "repo"
+    repo.mkdir(parents=True, exist_ok=True)
+    (repo / "sdlc.json").write_text(json.dumps(cfg))
+    if e2e:
+        (repo / "e2e").mkdir()
+    for rel, text in (files or {}).items():
+        (repo / rel).parent.mkdir(parents=True, exist_ok=True)
+        (repo / rel).write_text(text)
+    return subprocess.run([sys.executable, str(PRE), "doctor"], capture_output=True, text=True, cwd=repo, env={"PATH": "/usr/bin:/bin", "HOME": str(tmp)})
+
+
+def test_doctor_is_quiet_on_a_clean_config(tmp_path: Path) -> None:
+    res = _doctor(tmp_path, {"checks": {"milestone": ["true"]}})
+    assert res.returncode == 0 and res.stdout.strip() == "DOCTOR OK"
+
+
+def test_doctor_names_a_missing_full_e2e_and_repeat(tmp_path: Path) -> None:
+    res = _doctor(tmp_path, {"checks": {"milestone": ["true"]}}, e2e=True)
+    assert res.returncode == 1 and "GAP full-e2e:" in res.stdout and "add the full E2E command" in res.stdout
+
+
+def test_doctor_names_a_missing_visual_start_only_for_an_app_locked_change(tmp_path: Path) -> None:
+    plain = {"changes/c1/screens.json": "[]"}  # a screens.json alone is not an app-locked change
+    assert _doctor(tmp_path / "a", {"checks": {"milestone": ["true"]}}, plain).stdout.strip() == "DOCTOR OK"
+    files = {**plain, "changes/c1/lock.json": json.dumps({"visual": "app", "criteria": {}})}
+    res = _doctor(tmp_path / "b", {"checks": {"milestone": ["true"]}}, files)
+    assert res.returncode == 1 and "GAP visual-start: c1" in res.stdout and "visual.start" in res.stdout
+    ok = _doctor(tmp_path / "c", {"checks": {"milestone": ["true"]}, "visual": {"start": "npm start"}}, files)
+    assert ok.stdout.strip() == "DOCTOR OK"
+
+
+def test_doctor_skips_a_change_whose_last_milestone_passed(tmp_path: Path) -> None:
+    plan = "## Milestones\n\n| Milestone | Features | needs |\n|---|---|---|\n| M0 Core | F1 | none |\n"
+    files = {"changes/c1/plan.md": plan, "changes/c1/verify/report.json": json.dumps({"result": "VERIFY PASS milestone c1 abc", "milestone": 0})}
+    assert _doctor(tmp_path / "a", {"checks": {"milestone": ["true"]}}, files).stdout.strip() == "DOCTOR OK"
+    files["changes/c1/verify/report.json"] = json.dumps({"result": "VERIFY FAIL milestone c1", "milestone": 0})
+    assert "GAP milestone-zero" in _doctor(tmp_path / "b", {"checks": {"milestone": ["true"]}}, files).stdout
+
+
+@pytest.mark.parametrize("cell", ["M0 Core", "**M0** Core", "`M0`", "Milestone 0", "0"])
+def test_doctor_reads_milestone_zero_in_any_markdown(tmp_path: Path, cell: str) -> None:
+    plan = f"## Milestones\n\n| Milestone | Features | needs |\n|---|---|---|\n| {cell} | F1 | none |\n"
+    res = _doctor(tmp_path, {"checks": {"milestone": ["true"]}}, {"changes/c1/plan.md": plan})
+    assert "GAP milestone-zero" in res.stdout and "label it M1, not M0" in res.stdout, cell
+
+
+@pytest.mark.parametrize("bad", [0, -1, "4", True, 2.5])
+def test_doctor_validates_max_builders(tmp_path: Path, bad: object) -> None:
+    res = _doctor(tmp_path, {"checks": {"milestone": ["true"]}, "maxBuilders": bad})
+    assert res.returncode == 1 and "GAP max-builders" in res.stdout and "advisory" in res.stdout
+    assert _doctor(tmp_path / "ok", {"checks": {"milestone": ["true"]}, "maxBuilders": 6}).stdout.strip() == "DOCTOR OK"
+
+
+def test_doctor_names_a_project_without_local_merge(tmp_path: Path) -> None:
+    files = {"changes/c1/decisions.json": json.dumps({"project": {"slug": "p", "branch": True}})}
+    res = _doctor(tmp_path, {"checks": {"milestone": ["true"]}}, files)
+    assert res.returncode == 1 and "GAP merge-local: c1" in res.stdout
+    ok = _doctor(tmp_path / "ok", {"checks": {"milestone": ["true"]}, "milestones": {"merge": "local"}}, files)
+    assert ok.stdout.strip() == "DOCTOR OK"
+
+
+def test_doctor_names_a_milestone_numbered_zero(tmp_path: Path) -> None:
+    plan = "## Milestones\n\n| Milestone | Features | needs |\n|---|---|---|\n| M0 Core | F1 | none |\n"
+    res = _doctor(tmp_path, {"checks": {"milestone": ["true"]}}, {"changes/c1/plan.md": plan})
+    assert res.returncode == 1 and "GAP milestone-zero: c1/plan.md" in res.stdout and "renumber from 1" in res.stdout
+
+
+def test_doctor_writes_nothing(tmp_path: Path) -> None:
+    _doctor(tmp_path, {"checks": {"milestone": ["true"]}}, e2e=True)
+    assert sorted(p.name for p in (tmp_path / "repo").iterdir()) == ["e2e", "sdlc.json"]

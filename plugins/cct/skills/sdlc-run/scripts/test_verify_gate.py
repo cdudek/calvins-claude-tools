@@ -1585,6 +1585,11 @@ def test_the_presets_run_the_full_e2e_and_repeat_changed_and_flaky_specs_three_t
     preset = json.loads((SKILL / "templates" / "presets" / f"{name}.json").read_text())
     milestone = " ".join(c if isinstance(c, str) else c["run"] for c in preset["checks"]["milestone"])
     assert "e2e" in milestone
+    if name == "node":  # the safe script owns the selection, the x3 repeat and the flaky list
+        script = (SKILL / "templates" / "scripts" / "e2e-repeat.sh").read_text()
+        assert "bash scripts/e2e-repeat.sh {base}" in milestone
+        assert "flaky-specs.txt" in script and "--repeat-each=3" in script and "git diff --name-only" in script
+        return
     assert "flaky-specs.txt" in milestone
     assert "--repeat-each=3" in milestone or "seq 3" in milestone or "1 2 3" in milestone
     assert "git diff --name-only" in milestone and "{base}" in milestone
@@ -2343,14 +2348,14 @@ def test_a_milestone_close_refuses_an_older_capture_py_and_names_the_missing_che
     kit.mkdir()
     for f in GATE.parent.glob("*.py"):
         (kit / f.name).write_text(f.read_text())
-    (kit / "capture.py").write_text((kit / "capture.py").read_text().replace("def replayed(", "def _gone_replayed("))
+    (kit / "capture.py").write_text((kit / "capture.py").read_text().replace("def read_comparison(", "def _gone_read_comparison("))
     repo = _repo(tmp_path, [])
     (repo / "sdlc.json").write_text(json.dumps({"checks": {"milestone": ["true"]}, "ux": "on"}))
     (repo / "changes" / ID / "decisions.json").write_text(json.dumps(VISUAL))
     _screens_json(repo)
     _approve(repo)
     r = subprocess.run([sys.executable, str(kit / "verify_gate.py"), "milestone", ID], cwd=repo, capture_output=True, text=True, env=_env())
-    assert "`replayed`" in r.stdout and "adopt --migrate" in r.stdout and "check=app-screens" in _last(r), r.stdout + r.stderr
+    assert "`read_comparison`" in r.stdout and "adopt --migrate" in r.stdout and "check=app-screens" in _last(r), r.stdout + r.stderr
     import evidence
     import verify_gate
 
@@ -2515,7 +2520,7 @@ def test_the_milestone_gate_captures_the_fixture_app_end_to_end(tmp_path: Path, 
 
     import test_capture as tc
 
-    monkeypatch.setenv("HOME", str(tmp_path / "home"))  # where the owner's answers are read
+    monkeypatch.setenv("HOME", str(tmp_path / "home"))
     repo = _repo(tmp_path, [])
     (repo / "app.py").write_text(tc.APP)
     (repo / "driver.py").write_text(tc.DRIVER)
@@ -2524,33 +2529,25 @@ def test_the_milestone_gate_captures_the_fixture_app_end_to_end(tmp_path: Path, 
     _screens_json(repo, tc.ENTRIES)
     _approve(repo)
     r = _gate(repo, "milestone", ID)
-    assert _last(r) == "VERIFY BLOCKED reason=needs-baseline" and "4 of 4 entries have no approved shot" in r.stdout
+    assert _last(r) == "VERIFY BLOCKED reason=needs-comparison" and "4 of 4 screens have no board-to-build comparison" in r.stdout
     change = repo / "changes" / ID
-    (change / "screens").mkdir()
-    entries = {}
-    for e in tc.ENTRIES:
-        shot = change / "verify/shots" / f"{e['id']}.png"
-        (change / "screens" / f"{e['id']}.png").write_bytes(shot.read_bytes())
-        entries[e["id"]] = {"sha256": hashlib.sha256(shot.read_bytes()).hexdigest(), "file": f"screens/{e['id']}.png"}
-    tc._seal(repo, {"format": 1, "entries": entries}, owner=False, change_id=ID)  # approved.json as an agent could write it
-    path = change / "screens/approved.json"  # this lock is 3.26: every approval has its logged decision, or the log was removed
-    data = json.loads(path.read_text())
-    log: list = []
-    for e in entries:
-        log.append(tc.capture.link(log, {"entry": e, "answer": "accept", "batch": entries[e]["decision"], "time": "t"}, ""))
-    path.write_text(json.dumps({**data, "log": log, "head": log[-1]["hash"]}))
-    _git(repo, "add", ".")
-    _git(repo, "commit", "-qm", "approved.json without the owner")
+
+    def compare(verdict: str) -> None:  # the comparison step: a report naming each sha256, then `capture.py verdict`
+        tc.compare_shots(repo, verdict, change_id=ID)
+
+    compare("differs")
     r = _gate(repo, "milestone", ID)
-    assert _last(r) == f"VERIFY FAIL milestone {ID} check=app-screens" and "no owner decision covers" in r.stdout
-    tc.owner_answers(repo, next(iter(json.loads((change / "screens/approved.json").read_text())["batches"])), change_id=ID)
+    assert _last(r) == f"VERIFY FAIL milestone {ID} check=app-screens" and "not an owner question" in r.stdout
+    compare("match")
     r = _gate(repo, "milestone", ID)
+    assert _last(r).startswith(f"VERIFY PASS milestone {ID}"), r.stdout
+    assert not (change / "screens").exists()  # nothing is stored as a baseline by anyone
+    r = _gate(repo, "milestone", ID)  # the same page, captured and judged again
     assert _last(r).startswith(f"VERIFY PASS milestone {ID}"), r.stdout
     (repo / "app.py").write_text(tc.APP.replace("'MARK', ''", "'MARK', 'x'"))
     _git(repo, "commit", "-qam", "the page changed")
-    r = _gate(repo, "milestone", ID)
-    assert _last(r) == f"VERIFY FAIL milestone {ID} check=app-screens"
-    assert "leads.list.empty: differs from the approved shot" in r.stdout
+    r = _gate(repo, "milestone", ID)  # a changed page is compared again, never waved through
+    assert _last(r) == "VERIFY BLOCKED reason=needs-comparison", r.stdout
 
 
 def test_a_visual_hotfix_runs_the_capture_in_its_feature_gate(tmp_path: Path) -> None:
@@ -2589,3 +2586,48 @@ def test_an_early_milestone_asks_the_capture_only_for_the_entries_due(tmp_path: 
     assert verify_gate.capture_upto(change, 1) is None  # cannot tell which is last: require all
     (change / "tasks.md").write_text("## Milestones\n\n| Milestone | Tasks | needs |\n|---|---|---|\n| M1 a | T1 | none |\n| M2 b | T2 | M1 |\n")
     assert verify_gate.capture_upto(change, 1) == 1  # layout 4 keeps the table in tasks.md
+
+
+MILESTONES = "## Milestones\n\n| Milestone | Features | needs |\n|---|---|---|\n| {row} | F1 | none |\n"
+FEATURES = "## Feature PRs\n\n| # | Feature | Facts |\n|---|---|---|\n| 1 | {what} | F1 |\n"
+
+
+def test_lint_flags_a_milestone_numbered_zero(tmp_path: Path) -> None:
+    repo = _repo(tmp_path, ["true"])
+    plan = repo / "changes" / ID / "plan.md"
+    plan.write_text(MILESTONES.format(row="M1 Core"))
+    assert _gate(repo, "lint", ID).returncode == 0
+    plan.write_text(MILESTONES.format(row="M0 Core"))
+    r = _gate(repo, "lint", ID)
+    assert r.returncode == 1 and "numbered 0" in r.stdout and "label it M1, not M0" in r.stdout
+
+
+def test_lint_flags_a_feature_that_adds_a_package_without_owner_paste_blocks(tmp_path: Path) -> None:
+    repo = _repo(tmp_path, ["true"])
+    plan = repo / "changes" / ID / "plan.md"
+    plan.write_text(FEATURES.format(what="Chart page, runs pnpm add recharts"))
+    r = _gate(repo, "lint", ID)
+    assert r.returncode == 1 and "adds a package" in r.stdout and "Dependency changes (owner paste blocks)" in r.stdout
+    plan.write_text(FEATURES.format(what="Chart page, runs pnpm add recharts") + "\n## Dependency changes (owner paste blocks)\n\nnone\n")
+    assert _gate(repo, "lint", ID).returncode == 1  # `none` is not a command
+    plan.write_text(FEATURES.format(what="Chart page, runs pnpm add recharts") + "\n## Dependency changes (owner paste blocks)\n\n```bash\npnpm add recharts\n```\n")
+    assert _gate(repo, "lint", ID).returncode == 0
+    plan.write_text(FEATURES.format(what="Chart page"))
+    assert _gate(repo, "lint", ID).returncode == 0
+
+
+def test_the_real_plan_template_flags_a_package_row_until_a_real_command_is_pasted(tmp_path: Path) -> None:
+    template = (GATE.parents[1] / "change" / "plan.md").read_text()
+    row = "| 1 | <what it delivers> | F1, F2 | `<slug>/1-<feature>` | todo |"
+    assert row in template
+    repo = _repo(tmp_path, ["true"])
+    plan = repo / "changes" / ID / "plan.md"
+    plan.write_text(template.replace(row, "| 1 | Charts: runs pnpm add recharts | F1 | `x/1-charts` | todo |"))
+    r = _gate(repo, "lint", ID)  # the template's own block holds only a `<placeholder>` line and a `#` comment
+    assert "adds a package" in r.stdout, r.stdout
+    filled = plan.read_text().replace("<pnpm add | uv add> <package>", "pnpm add recharts")
+    plan.write_text(filled)
+    assert "adds a package" not in _gate(repo, "lint", ID).stdout
+    import verify_gate
+
+    assert "# <feature row>" in verify_gate.section(template, "Dependency changes (owner paste blocks)")  # the fence's `#` line is body text

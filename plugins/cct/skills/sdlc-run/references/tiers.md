@@ -23,7 +23,7 @@ milestone close.
 
 | Tier | Typical paths | Worst case if wrong | Who looks |
 |---|---|---|---|
-| **ask** | migrations / schema, integrations that write to real systems, `k8s/**`, `.github/**`, dependency manifests + lockfiles, `REVIEW.md`, `sdlc.json`, `.claude/settings.json`, `.claude/hooks/**` | writes to a CRM, mailbox or billing account; cluster or secret wiring; supply chain; the rules the agents run under | a code owner **before** merge; with no co-owner, a human merges by hand |
+| **ask** | migrations / schema, integrations that write to real systems, `k8s/**`, `.github/**`, dependency manifests + lockfiles, `REVIEW.md`, `sdlc.json`, `.claude/settings.json`, `.claude/hooks/**` | writes to a CRM, mailbox or billing account; cluster or secret wiring; supply chain; the rules the agents run under | never auto-merged; a human looks **before** merge |
 | **show** | `src/**`, `tests/**`, `e2e/**`, `scripts/**` | a bug ships behind CI, e2e and the milestone review | the co-owner **after** merge (optional Slack notice; nothing requests them) |
 | **ship** | docs, changes, designs, skills, `CLAUDE.md` | nothing runs differently | nobody |
 
@@ -41,14 +41,11 @@ notice. Name the merger once per repo: a person merges `needs-merge` PRs on gree
 own bot-merge automation (for example the bot's native auto-merge, enabled on its own PRs). A repo that
 has neither has bot PRs that wait forever; say which one it is in `docs/sdlc.md`, "Repo-specific".
 
-## CODEOWNERS
+## Reviewers
 
-CODEOWNERS is a team-repo choice, never installer-managed. Adopt never creates, edits or
-deletes it, including older generated files, when tiers or configured owners change.
-Teams that choose path-scoped owner review maintain their own CODEOWNERS and GitHub
-ruleset. An author cannot approve their own PR; solo-owner repos need no self-approval
-listing. The legacy `sdlc.json` `codeowners` key is accepted for compatibility and has no
-generation or deletion effect.
+The kit has no code-owner step: adopt writes no CODEOWNERS file, and neither the workflow nor
+the classifier requests a review or reads one. The tier labels are the whole mechanism; who must
+look at an `ask` PR is the repo's own ruleset.
 
 ## Ruleset settings — learned on the first ship PR
 
@@ -57,7 +54,6 @@ generation or deletion effect.
 | `required_status_checks` | CI | `merge-gate` went with the CI review in 3.7.0; drop it from an older ruleset |
 | `strict_required_status_checks_policy` | false | every merge is followed by an image-bump PR; strict makes every other open PR `BEHIND`, and auto-merge never rebases |
 | `required_review_thread_resolution` | false | a human's nits are advisory; blocking findings are fixed before the push |
-| `require_code_owner_review` | only with codeowners | see above |
 | bypass actor | the App, `pull_request` mode | the image-bump PR touches `k8s/**` (ask) and must merge unattended; a human editing the same file still needs an owner |
 
 What replaces strict: deploy triggers on `workflow_run` after CI succeeds on master, so a

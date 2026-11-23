@@ -59,7 +59,7 @@ Report at most five nits per review; summarise the rest as a count.
 - Anything CI already enforces: formatting, lint rules, type checks, the guardrail tests.
   If it would fail there, it is not a finding here.
 - Generated files: lockfiles, image-tag bumps, `changes/**/interview*.json`,
-  `changes/**/facts-*.json`, `changes/**/*annotations*.json`, `CODEOWNERS`.
+  `changes/**/facts-*.json`, `changes/**/*annotations*.json`.
 - Comment density or prose style in code comments — this repo explains its scars on
   purpose.
 
