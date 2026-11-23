@@ -46,21 +46,20 @@ One run has one ID and one approval. Its records live **outside every repo**, in
 | Approved inputs | Pinned acceptance specs, fixtures, board extracts, token mappings and runner version. The approval identifies the digest of the whole bundle. |
 | Checkpoints | Attempt counts, decisions, candidate SHAs, artifact hashes, verifier receipts, PR links and the next unfinished task. Progress is derived from these records. |
 
-**Layout, so nothing is found by scanning folders:**
+**Layout: the run ID is the address, so no index is needed:**
 
 ```
 ~/.sdlc/
-  index.jsonl                         one line per run, the only file a lookup reads
-  runs/2026-11-23-heydiff-web-v1-beta-3f2a/
-    run.json                          id, title, status, repos, branches, PRs, checkpoint
+  runs/2026-11-23-heydiff-web-v1-beta/   <date>-<start repo>-<slug>
+    run.json                              title, status, repos, branches, PRs, checkpoint
     plan.md  contract.json  log.md
-    evidence/                         check output, traces, failure screenshots
+    evidence/
+  active/2026-11-23-heydiff-web-v1-beta -> ../runs/...   only while the run is live
 ```
 
-- **Run ID:** `<date>-<start repo>-<slug>-<4-char hash>`, readable and unique.
-- **Index line:** `{id, title, status, created, updated, repos: [{remote, path, branch, base}], prs: [...]}`. The runner appends or rewrites it atomically on every status change.
-- **Lookup:** `sdlc status` in any repo reads the repo's git remote and current branch, then finds the matching index line. The current run is the one whose branch is checked out. `sdlc list [--repo X] [--active]` filters the index. Neither reads run folders.
-- **Repair:** `sdlc index --rebuild` regenerates the index from the `run.json` files if it is ever lost.
+- **Run ID:** `<date>-<start repo>-<slug>`; a number is appended only if the same ID already exists that day. It sorts by date and reads like a sentence.
+- **Branch = run ID:** every repo in the run works on `sdlc/<run-id>`. From any repo, `sdlc status` reads the current branch name and opens `~/.sdlc/runs/<run-id>/` directly; no search.
+- **Active runs:** `~/.sdlc/active/` holds a link per live run and is cleared when a run ends, so `sdlc list` reads one tiny folder. History is `ls ~/.sdlc/runs`, already sorted by date.
 
 The approval records the digest of the reviewed bundle. Plugin hooks block every agent from writing to `~/.sdlc/runs/`; only the runner's own scripts do. This stops a careless agent, not a hostile process on the same machine, which is an accepted risk for a one-owner setup.
 
