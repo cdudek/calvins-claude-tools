@@ -11,6 +11,7 @@ import pytest
 import sdlc
 import testkit as tk
 import verify
+import store
 from store import SdlcError
 
 HERE = Path(__file__).parent
@@ -42,6 +43,9 @@ CELLS = """<!doctype html><html><head><link rel="stylesheet" href="/_blob/theme.
 <div class="cell"><span class="lbl">Full</span><button class="pay" style="padding:0 20px">Pay</button><button>Other</button></div></body></html>"""
 MIXED = """<!doctype html><html><head><link rel="stylesheet" href="/_blob/theme.css"><script src="./support.js"></script></head><body>
 <dc-import name="Card" tone="a" hidden></dc-import><dc-import name="Card" tone="b"></dc-import></body></html>"""
+LIST = """<!doctype html><html><head><link rel="stylesheet" href="/_blob/theme.css"></head><body><main><h2>Members</h2><ul>
+<li style="width:100px">Row</li><li style="width:110px">Row</li><li style="width:120px">Row</li><li style="width:130px">Row</li><li style="width:140px">Row</li>
+</ul></main></body></html>"""
 POPUP = """<!doctype html><html><head><link rel="stylesheet" href="/_blob/theme.css"></head><body><button class="pay">Pay</button></body></html>"""
 MAPPING = {"boards": [{"board": "checkout.dc.html", "route": "/checkout.html", "state": "default"}]}
 
@@ -52,7 +56,7 @@ def export(tmp_path, blob=True, **boards):
     if blob:
         (root / "_blob" / "theme.css").write_text(BLOB)
     (root / "support.js").write_text(SUPPORT)
-    for name, html in {"checkout": BOARD, "frames": FRAMES, "cells": CELLS, "popup": POPUP, "mixed": MIXED, **boards}.items():
+    for name, html in {"checkout": BOARD, "frames": FRAMES, "cells": CELLS, "popup": POPUP, "mixed": MIXED, "list": LIST, **boards}.items():
         (root / f"{name}.dc.html").write_text(html)
     return root
 
@@ -104,7 +108,10 @@ def test_one_row_per_entry_and_theme_with_token_properties_and_unmeasurable_node
     assert [r["id"] for r in out["rows"]] == ["checkout.dc.html/light", "checkout.dc.html/dark"] and out["unsupported"] == []
     row = out["rows"][0]
     assert labels(row) >= {"button:Pay", "heading:Checkout", "text:Review your order"} and "text:Same" not in labels(row)
-    assert row["unmeasurable"] == ["text:Same"] and row["unmeasurable_nodes"] == 2  # reported on the row, never silently dropped
+    # the two identical paragraphs are anchored to `main` and numbered: measurable, with the anchored locator in the report
+    assert labels(row) >= {"text:Same[0] in main", "text:Same[1] in main"} and row["unmeasurable"] == [] and row["unmeasurable_nodes"] == 0
+    same = [n for n in row["nodes"] if n["n"].startswith("text:Same")]
+    assert [(n["i"], n["g"], n["a"]) for n in same] == [(0, 2, {"role": "main"}), (1, 2, {"role": "main"})]
     assert row["props"][:3] == ["color", "background-color", "border-color"] and row["props"][-2:] == ["width", "height"]
     assert "x" not in row["props"] and board.canvas_rows(idx, {**MAPPING, "position": True})["rows"][0]["props"][-2:] == ["x", "y"]  # position is opt-in
     assert row["min_match"] == 0.95
@@ -118,7 +125,7 @@ def test_app_rows_pass_and_a_drift_lists_node_property_board_value_and_app_value
     with board.serve(app(tmp_path)) as url:
         code, out = check(web_spec(url, rows), tmp_path)
         assert code == 0, out
-        assert "PASS checkout.dc.html/dark: " in out and "0 mismatches, 2 unmeasurable" in out and "UNMEASURABLE checkout.dc.html/light" in out
+        assert "PASS checkout.dc.html/dark: " in out and "0 mismatches, 0 unmeasurable" in out
         assert "Ran 2 checks" in out
         # padding and height beyond their tolerances, and a dark-only colour: each is listed as locator, property, board value, app value
         drift = BLOB.replace("padding:0 16px", "padding:0 12px").replace("height:44px", "height:47px").replace("rgb(10, 20, 30)", "rgb(10, 20, 31)")
@@ -150,7 +157,7 @@ def test_pass_needs_the_match_ratio_and_no_mismatch_among_the_matched_nodes():
     assert board.verdict(row_of(names), board.judge(row_of(names), app_nodes(names[:19])))[0]  # 19/20 = 95%, the default min_match
     ok, lines = board.verdict(row_of(names), board.judge(row_of(names), app_nodes(names[:18])))
     assert not ok and "below min_match 0.95" in lines[-1] and "n18" in lines[-1]
-    assert board.verdict(row_of(names, min_match=0.9), board.judge(row_of(names, min_match=0.9), app_nodes(names[:18])))[0]
+    assert not board.verdict(row_of(names, min_match=0.9), board.judge(row_of(names, min_match=0.9), app_nodes(names[:18])))[0]  # floored at 0.95
     ok, lines = board.verdict(row_of(names), board.judge(row_of(names), app_nodes(names, color="blue")))  # one wrong value fails a full match
     assert not ok and "MISMATCH r n0 color: board red, app blue" in lines[1]
     both = app_nodes(["n0"]) * 2  # a locator found twice in the app is not matched
@@ -322,10 +329,14 @@ def test_frame_and_container_shapes_are_validated():
 def test_surface_shapes_and_the_paths_and_env_they_may_name(tmp_path):
     good_ext = {"kind": "chrome-extension", "dist": "dist/ext", "page": "popup.html?tab=1"}
     good_app = {"kind": "electron", "app": "out/main.js", "env": {"APP_THEME": "dark"}, "args": ["--lang=en"]}
-    assert board.validate_surface(good_ext) and board.validate_surface(good_app)
+    allow = {"args": ["--lang"], "env": ["APP_THEME"]}
+    assert board.validate_surface(good_ext) and board.validate_surface(good_app, allow)
     for bad in ({**good_ext, "dist": "../x"}, {**good_ext, "dist": "/abs"}, {**good_ext, "page": "https://evil/x"}, {**good_ext, "page": "../a.html"},
                 {**good_ext, "page": "a b.html"}, {**good_app, "app": "../main.js"}, {**good_app, "app": "/usr/bin/x"},
-                *({**good_app, "env": {k: "x"}} for k in ("PATH", "HOME", "NODE_OPTIONS", "ELECTRON_RUN_AS_NODE", "LD_PRELOAD", "DYLD_INSERT_LIBRARIES", "lower", "A-B")),
+                *({**good_app, "env": {k: "x"}} for k in ("PATH", "HOME", "NODE_OPTIONS", "NODE_PATH", "ELECTRON_RUN_AS_NODE", "ELECTRON_ENABLE_LOGGING",
+                                                          "BASH_ENV", "SDLC_HOME", "LD_PRELOAD", "DYLD_INSERT_LIBRARIES", "lower", "A-B")),
+                *({**good_app, "args": [a]} for a in ("--user-data-dir=/tmp/x", "--renderer-cmd-prefix=sh", "--inspect", "--js-flags=--x", "--load-extension=/x",
+                                                      "--require", "bare", "-x", "--UPPER", "--a b")),
                 {**good_app, "args": ["--require=/x.js"]}, {**good_app, "args": ["-r", "x"]}, {"kind": "web"}, {**good_app, "env": {"A": 1}}):
         with pytest.raises(ValueError):
             board.validate_surface(bad)
@@ -341,7 +352,9 @@ def test_surface_shapes_and_the_paths_and_env_they_may_name(tmp_path):
 def test_a_row_with_a_surface_outside_the_repo_is_refused_before_any_browser_starts(tmp_path):
     (tmp_path / "repo").mkdir()
     (tmp_path / "repo" / "dist").symlink_to(tmp_path)
-    row = {**row_of(["n"]), "theme": "light", "surface": {"kind": "chrome-extension", "dist": "dist", "page": "p.html"}}
+    row = {**row_of(["n"]), "props": [*board.CANVAS_STYLE, *board.BOX], "theme": "light",
+           "surface": {"kind": "chrome-extension", "dist": "dist", "page": "p.html"}}
+    row["nodes"][0]["v"] = ["1"] * 21
     code, out = check(web_spec("http://x", [row]), tmp_path, tmp_path / "repo")
     assert code == 2 and "resolves outside the repo" in out
 
@@ -389,13 +402,14 @@ def test_electron_reuses_the_hidden_launch_waits_for_the_first_window_and_its_lo
     (tmp_path / "out").mkdir()
     (tmp_path / "out" / "main.js").write_text("")
     p = _Playwright()
-    page, close, nav = board._launch(p, {"kind": "electron", "app": "out/main.js", "env": {"APP_X": "1"}, "args": ["--lang=en"]}, None, tmp_path)
+    page, close, nav = board._launch(p, {"kind": "electron", "app": "out/main.js", "env": {"APP_X": "1"}, "args": ["--lang=en"]}, None, tmp_path,
+                                     {"args": ["--lang"], "env": ["APP_X"]})
     kw = p.calls[0]
     assert page is p.win and p.win.waited == ["load"] and nav is None
     assert kw["args"][0] == "--require" and "--disable-renderer-backgrounding" in kw["args"] and kw["args"][-2] == str((tmp_path / "out" / "main.js").resolve())
     assert kw["args"][-1] == "--lang=en" and kw["env"]["SDLC_HIDDEN"] == "1" and kw["env"]["APP_X"] == "1" and kw["cwd"] == str(tmp_path)
     with pytest.raises(ValueError, match="inside the repo"):
-        board._launch(p, {"kind": "electron", "app": "../../x.js"}, None, tmp_path)
+        board._launch(p, {"kind": "electron", "app": "../../x.js"}, None, tmp_path, None)
 
 
 # ---- 4 contract rows: kind board, no hard-coded runner path -----------------------------------------------------------
@@ -438,3 +452,434 @@ def test_the_web_app_of_a_board_row_is_started_awaited_and_stopped_around_the_ch
     late = board_row(start=[sys.executable, "-c", "import time; time.sleep(30)"], ready_url=url, ready_timeout=1)
     job = verify.run_checked(rid, late, probe, repo, None)
     assert job.exit == 127 and "did not answer" in job.out
+
+
+def test_a_board_build_runs_first_and_a_failed_build_fails_the_row_unmeasured(tmp_path):
+    repo = tk.make_repo(tmp_path / "r", "app", {"index.html": "x"})
+    rid = tk.new_run(tmp_path / "home", repo, [])
+    marker = repo / "built.txt"
+    ok = board_row(build=[sys.executable, "-c", f"open({str(marker)!r}, 'w').write('1')"])
+    measured = [sys.executable, "-c", f"import os; print('Ran 1 checks' if os.path.exists({str(marker)!r}) else 'NOT BUILT')"]
+    job = verify.run_checked(rid, ok, measured, repo, None)
+    assert job.exit == 0 and "Ran 1 checks" in job.out  # the build ran before the measuring
+    marker.unlink()
+    bad = board_row(build=[sys.executable, "-c", "import sys; print('boom'); sys.exit(3)"])
+    job = verify.run_checked(rid, bad, measured, repo, None)
+    assert job.exit == 3 and "NOT BUILT" not in job.out and not marker.exists()  # never measured
+    assert verify.classify(bad, job)[:2] == ("FAIL", "BUILD FAILED (exit 3): the row was not measured")
+    contract.validate_contract({"checks": [{**bad, "runner": None}]} if False else {"checks": [{k: v for k, v in bad.items() if k != "runner"}]})
+    with pytest.raises(SdlcError, match="board.build is an argv list"):
+        contract.validate_contract({"checks": [board_row(build="make")]})
+
+
+def test_board_rows_use_the_check_env_allowlist_for_build_start_and_check_and_the_screen_shows_it(tmp_path, monkeypatch):
+    monkeypatch.setenv("SDLC_SECRET_A", "alpha")
+    monkeypatch.setenv("SDLC_SECRET_B", "beta")
+    repo = tk.make_repo(tmp_path / "r", "app", {"index.html": "x"})
+    rid = tk.new_run(tmp_path / "home", repo, [])
+    show = [sys.executable, "-c", "import os; print(os.environ.get('SDLC_SECRET_A'), os.environ.get('SDLC_SECRET_B'), 'Ran 1 checks')"]
+    row = board_row(build=show)
+    row["env"] = ["SDLC_SECRET_A"]  # the same `env` field the E2E rows use
+    job = verify.run_checked(rid, row, show, repo, None)
+    assert job.exit == 0 and "alpha None Ran 1 checks" in job.out  # only the allowlisted variable reaches the build and the check
+    row.pop("runner", None)
+    d = store.run_dir(rid)
+    store.write_json(d / "contract.json", {"checks": [{**row, "runner": ["true"]}]})
+    import discover
+    text = discover.screen(rid).read_text()
+    assert "| Env passed |" in text and "| SDLC_SECRET_A |" in text
+
+
+POLL = """<!doctype html><html><head><link rel="stylesheet" href="/_blob/theme.css"></head><body><button class="pay">Pay</button>
+<script>setInterval(() => fetch('/_blob/theme.css?' + Math.random()), 40)</script></body></html>"""
+
+
+@needs_browser
+def test_ready_replaces_the_networkidle_wait_and_a_wait_that_times_out_still_fails(tmp_path, monkeypatch):
+    monkeypatch.setattr(board, "NAV_TIMEOUT_MS", 2500)
+    root = export(tmp_path, poll=POLL)
+    ix = board.index_export(root, only=["poll.dc.html"])  # the default stays networkidle: a page that never idles times out
+    assert "Timeout" in ix["boards"]["poll.dc.html"]["light"]["error"]
+    for ready in ({"selector": "button.pay"}, {"load": "domcontentloaded"}, {"load": "load"}):
+        ok = board.index_export(root, only=["poll.dc.html"], ready={"poll.dc.html": ready})["boards"]["poll.dc.html"]["light"]
+        assert ok["error"] == "" and any(n["name"] == "Pay" for n in ok["nodes"]), ready
+    never = board.index_export(root, only=["poll.dc.html"], ready={"poll.dc.html": {"selector": ".nope"}})
+    assert "Timeout" in never["boards"]["poll.dc.html"]["light"]["error"]  # not skipped: the board yields no rows
+    m = {"boards": [{"board": "poll.dc.html", "route": "/p.html", "ready": {"selector": "button.pay"}}]}
+    ok = board.index_export(root, only=["poll.dc.html"], ready={"poll.dc.html": m["boards"][0]["ready"]})
+    rows = board.canvas_rows(ok, m)["rows"]
+    assert rows[0]["ready"] == {"selector": "button.pay"}
+    page = tmp_path / "app"
+    page.mkdir()
+    (page / "p.html").write_text(POLL)
+    (page / "_blob").mkdir()
+    (page / "_blob" / "theme.css").write_text(BLOB)
+    with board.serve(page) as url:
+        res = board.measure_rows({"target": {"url": url}}, rows, None, tmp_path)
+        assert res[0]["mismatches"] == [] and res[0]["matched"] > 0  # the app page never idles either: it is measured on `ready`
+        res = board.measure_rows({"target": {"url": url}}, [{**r, "ready": {"selector": ".nope"}} for r in rows], None, tmp_path)
+    assert "Timeout" in res[0]["error"]
+    for bad in ({"selector": ""}, {"load": "idle"}, {"selector": "a", "load": "load"}, "x"):
+        with pytest.raises(ValueError, match="entry E: ready must be"):
+            board.validate_mapping({"boards": [{"board": "a", "route": "/", "entry": "E", "ready": bad}]})
+
+
+# ---- review round -----------------------------------------------------------------------------------------------------
+
+def free_port():
+    with socket.socket() as s:
+        s.bind(("127.0.0.1", 0))
+        return s.getsockname()[1]
+
+
+def a_board_run(tmp_path, **board_kw):
+    repo = tk.make_repo(tmp_path / "r", "app", {"index.html": "x", "package.json": "{}", "scripts/build.sh": "echo"})
+    row = board_row(**board_kw)
+    row["repo"] = "app"
+    return repo, row, tk.new_run(tmp_path / "home", repo, [])
+
+
+def test_a_board_row_can_be_drafted_and_its_tools_come_from_build_and_start(tmp_path, monkeypatch):
+    import discover
+    monkeypatch.setenv("SDLC_HOME", str(tmp_path / "home"))
+    repo = tk.make_repo(tmp_path, "web", {"README.md": "x"})
+    rid = discover.plan([str(repo)], "t")
+    spec = tmp_path / "web.json"
+    spec.write_text(json.dumps({"target": {"kind": "web", "url": "http://127.0.0.1:4173"}, "rows": [
+        {"id": "r", "props": [*board.CANVAS_STYLE, *board.BOX], "min_match": 0.95, "tol": {"width": 3}, "nodes": [{"n": "a", "l": {}, "v": []}] * 4,
+         "unmeasurable_nodes": 1}]}))
+    c = tmp_path / "c.json"
+    row = {"id": "b", "repo": "web", "milestone": None, "kind": "board", "expect": {"kind": "pass"}, "pins": ["specs/web.json"], "env": ["API_URL"],
+           "board": {"spec": "specs/web.json", "expected_rows": 1, "build": ["no-such-tool-xyz", "build"], "start": ["npm", "run", "preview"],
+                     "ready_url": "http://127.0.0.1:4173/"}}
+    c.write_text(json.dumps({"checks": [row], "limits": {"max_dispatches": 5}, "waive_full": ["web"]}))
+    blockers = discover.draft(rid, None, str(c), None, [f"web:specs/web.json={spec}"], [])  # used to raise KeyError: 'runner'
+    assert any("needs no-such-tool-xyz" in b for b in blockers)
+    text = discover.screen(rid).read_text()
+    assert "board check specs/web.json (1 rows); build: no-such-tool-xyz build" in text and "app at `http://127.0.0.1:4173/`" in text
+    assert "| API_URL |" in text and "## Board checks" in text
+    assert "1 rows (expected 1), 4 nodes, min_match 0.95, 21 properties, tolerance overrides: {\"width\": 3}, unmeasurable nodes 1" in text
+
+
+def test_a_stale_server_on_ready_url_is_refused_and_an_app_that_dies_is_not_measured(tmp_path):
+    repo, _, rid = a_board_run(tmp_path)
+    probe = [sys.executable, "-c", "print('Ran 1 checks')"]
+    with board.serve(tmp_path) as stale:  # a decoy already answering: the probe used `start = sleep 2; exit 1` and the old app passed
+        row = board_row(start=["sh", "-c", "sleep 2; exit 1"], ready_url=stale + "/", ready_timeout=5)
+        job = verify.run_checked(rid, row, probe, repo, None)
+        assert job.exit == 127 and "already answers" in job.out and verify.classify(row, job)[0] == "BLOCKED"
+    port = free_port()
+    url = f"http://127.0.0.1:{port}/"
+    dies = board_row(start=["sh", "-c", "exit 1"], ready_url=url, ready_timeout=5)
+    job = verify.run_checked(rid, dies, probe, repo, None)
+    assert job.exit == 127 and "the app exited" in job.out
+    once = f"import http.server as h; h.HTTPServer(('127.0.0.1', {port}), h.SimpleHTTPRequestHandler).handle_request()"
+    row = board_row(start=[sys.executable, "-c", once], ready_url=url, ready_timeout=10)  # answers once, then is gone
+    job = verify.run_checked(rid, row, probe, repo, None)
+    assert job.exit in (1, 127) and "the app exited" in job.out and verify.classify(row, job)[0] != "PASS"
+
+
+def test_the_spec_url_must_be_the_origin_of_ready_url_and_the_runner_hands_that_origin_to_the_check(tmp_path):
+    repo, _, rid = a_board_run(tmp_path)
+    port = free_port()
+    (repo / "specs").mkdir()
+    (repo / "specs" / "web.json").write_text(json.dumps({"target": {"kind": "web", "url": "http://127.0.0.1:1"}, "rows": []}))
+    row = board_row(start=[sys.executable, "-m", "http.server", str(port), "--bind", "127.0.0.1"], ready_url=f"http://127.0.0.1:{port}/", ready_timeout=20)
+    job = verify.run_checked(rid, row, [sys.executable, "-c", "print('Ran 1 checks')"], repo, None)
+    assert job.exit == 127 and "is not the origin of ready_url" in job.out
+    (repo / "specs" / "web.json").write_text(json.dumps({"rows": []}))  # no url of its own: the check is told the origin
+    job = verify.run_checked(rid, row, [sys.executable, "-c", "import sys; print(sys.argv[-2:]); print('Ran 1 checks')"], repo, None)
+    assert job.exit == 0 and f"['--url', 'http://127.0.0.1:{port}']" in job.out
+
+
+@needs_browser
+def test_the_check_takes_its_url_from_the_runner_flag(idx, tmp_path):
+    rows = board.canvas_rows(idx, MAPPING)["rows"]
+    with board.serve(app(tmp_path)) as url:
+        spec = {"rows": rows}
+        assert check(spec, tmp_path, None, "--url", url)[0] == 0
+
+
+def test_a_row_cannot_lower_the_bar_it_is_judged_by(tmp_path, capsys):
+    names = [f"n{i}" for i in range(20)]
+    row = row_of(names, min_match=0.01)
+    assert not board.verdict(row, board.judge(row, app_nodes(names[:1])))[0]  # 1 of 20 matched with min_match 0.01
+    for bad in ({"min_match": 0.01}, {"min_match": 1.5}, {"tolerances": {"width": 99999}}, {"tolerances": {"color": 1}}, {"tolerances": {"font-size": -1}},
+                {"tolerances": {"nonsense": 1}}):
+        with pytest.raises(ValueError, match="entry E"):
+            board.validate_mapping({"boards": [{"board": "a", "route": "/", "entry": "E", **bad}]})
+    board.validate_mapping({"boards": [{"board": "a", "route": "/", "entry": "E", "min_match": 0.97, "tolerances": {"width": 4, "padding-left": 2}}]})
+    assert board.tolerance("width", "100px", {"width": 99999}) == 4.0 and board.tolerance("width", "1000px", {"width": 99999}) == 20.0
+    assert board.tolerance("padding-left", "8px", {"padding-left": 99999}) == 4.0
+    assert board.tolerance("color", "red", {"color": 99999}) == 1.0 and not board.same("color", "rgb(0, 0, 0)", "rgb(0, 0, 5)", {"color": 99999})
+    assert not board.same("width", "100px", "300px", {"width": 99999})
+
+
+def test_a_spec_that_lists_no_or_odd_properties_is_refused_before_measuring(tmp_path, capsys):
+    good = {"id": "r", "theme": "light", "route": "/x", "props": [*board.CANVAS_STYLE, *board.BOX], "nodes": [{"n": "a", "l": {"text": "a"}, "v": ["1"] * 21}]}
+    assert board.row_problem(good) == ""
+    for bad in ({**good, "props": []}, {**good, "props": ["width"]}, {**good, "props": [*good["props"], "bogus"]}, {**good, "tol": {"color": 1}},
+                {**good, "tol": {"width": 99999}}, {**good, "nodes": [{"n": "a", "l": {"text": "a"}, "v": []}]}):
+        assert board.row_problem(bad), bad
+        f = tmp_path / "s.json"
+        f.write_text(json.dumps(web_spec("http://x", [bad])))
+        assert board.main(["check", str(f)]) == 2 and "board: row r" in capsys.readouterr().out
+
+
+def test_the_files_a_board_build_and_start_execute_are_protected_like_a_checks_runner(tmp_path):
+    repo, row, rid = a_board_run(tmp_path, build=["npm", "run", "build"], start=["sh", "scripts/build.sh"], ready_url="http://127.0.0.1:4173/")
+    store.write_json(store.run_dir(rid) / "contract.json", {"checks": [row], "limits": {"max_dispatches": 5}})
+    base = tk.git(repo, "rev-parse", "HEAD")
+    pkg = tk.commit_file(repo, "package.json", '{"scripts": {"build": "curl evil"}}')
+    sh = tk.commit_file(repo, "scripts/build.sh", "curl evil")
+    assert any("protected path package.json" in b for b in verify.guard_diff(rid, "app", base, pkg))
+    assert any("protected path scripts/build.sh" in b for b in verify.guard_diff(rid, "app", base, sh))
+    assert verify._argv_files(str(repo), base, ["pnpm", "run", "x", "scripts/build.sh", "nope.sh"]) == ["package.json", "scripts/build.sh"]
+
+
+def test_sdlc_stop_kills_the_started_app_through_its_pidfile_and_wait_ready_polls_for_it(tmp_path):
+    import os
+    import threading
+    import time
+    repo, _, rid = a_board_run(tmp_path)
+    url = f"http://127.0.0.1:{free_port()}/"
+    row = board_row(start=["sleep", "60"], ready_url=url, ready_timeout=60)
+    seen = {}
+
+    def stopper():
+        pidf = store.run_dir(rid) / "jobs" / f"app-{row['id']}-app.pid"
+        for _ in range(100):
+            if pidf.exists():
+                seen["pid"] = json.loads(pidf.read_text())["pid"]
+                store.stop_marker(rid).write_text("stop")
+                return
+            time.sleep(0.1)
+    t = threading.Thread(target=stopper)
+    t.start()
+    job = verify.run_checked(rid, row, [sys.executable, "-c", "print('Ran 1 checks')"], repo, None)
+    t.join()
+    assert job.killed == "stop" and verify.classify(row, job)[0] == "BLOCKED"
+    with pytest.raises(ProcessLookupError):
+        os.kill(seen["pid"], 0)  # the app is gone, and so is its pidfile
+    assert not (store.run_dir(rid) / "jobs" / f"app-{row['id']}-app.pid").exists()
+    timeout = board_row(start=["sleep", "60"], ready_url=url, ready_timeout=1)
+    store.stop_marker(rid).unlink()
+    assert verify.run_checked(rid, timeout, [sys.executable, "-c", "x"], repo, None).exit == 127
+
+
+# ---- security review -------------------------------------------------------------------------------------------------------
+
+ALLOW = {"args": ["--theme", "--page"], "env": ["APP_THEME"]}
+
+
+def electron(**kw):
+    return {"kind": "electron", "app": "out/main.js", **kw}
+
+
+def test_surface_args_and_env_need_the_contract_rows_allowlist_and_launcher_switches_stay_denied():
+    ok = electron(args=["--theme=dark", "--page=a/b.html", "--theme"], env={"APP_THEME": "dark"})
+    assert board.validate_surface(ok, ALLOW, enforce=True)
+    for bad in (electron(args=["--gpu-launcher=sh"]), electron(args=["--utility-cmd-prefix=x"]), electron(args=["--browser-subprocess-path=/x"]),
+                electron(args=["--other"]), electron(args=["--theme=/etc/passwd"]), electron(args=["--theme=../x"]), electron(args=["--theme=a;rm"]),
+                electron(args=["--theme=$(id)"]), electron(args=["--theme=~/x"]), electron(args=["--theme=a b"]), electron(env={"OTHER": "1"})):
+        with pytest.raises(ValueError):
+            board.validate_surface(bad, ALLOW, enforce=True)
+    with pytest.raises(ValueError, match="not in the contract row's surface_allow.args"):
+        board.validate_surface(electron(args=["--theme=dark"]), None, enforce=True)  # no allowlist: nothing may be passed
+    assert board.validate_surface(electron(), None, enforce=True)
+    for bad in ({"args": ["--gpu-launcher"]}, {"args": ["--user-data-dir"]}, {"args": ["theme"]}, {"env": ["NODE_OPTIONS"]}, {"env": ["PATH"]},
+                {"env": ["lower"]}, {"other": []}, {"args": "x"}):
+        with pytest.raises(ValueError):
+            board.validate_allow(bad)
+    row = board_row(surface_allow=ALLOW)
+    row.pop("runner", None)
+    contract.validate_contract({"checks": [row]})
+    assert contract.runner_of(row)[-2:] == ["--surface-allow", json.dumps(ALLOW, sort_keys=True)]
+    assert "--surface-allow" not in contract.runner_of(board_row())
+    with pytest.raises(SdlcError, match="surface_allow must be"):
+        contract.validate_contract({"checks": [board_row(surface_allow={"args": ["--gpu-launcher"]})]})
+
+
+def test_a_spec_or_mapping_cannot_widen_what_the_contract_allows(tmp_path, capsys):
+    row = {**row_of(["n"]), "props": [*board.CANVAS_STYLE, *board.BOX], "theme": "light", "surface": electron(args=["--theme=dark"]),
+           "allow": ALLOW}  # an `allow` of its own in the row or the spec is not read
+    row["nodes"][0]["v"] = ["1"] * 21
+    f = tmp_path / "s.json"
+    f.write_text(json.dumps({"rows": [row], "surface_allow": ALLOW, "target": {}}))
+    assert board.main(["check", str(f)]) == 2 and "not in the contract row's surface_allow.args" in capsys.readouterr().out
+    capsys.readouterr()
+    assert board.main(["check", str(f), "--surface-allow", json.dumps({"args": ["--gpu-launcher"]})]) == 2
+    assert "surface_allow must be" in capsys.readouterr().out  # the flag is validated too
+
+
+def test_the_runner_picks_the_port_and_passes_it_as_port_and_in_start_and_ready_url(tmp_path):
+    repo, _, rid = a_board_run(tmp_path)
+    row = board_row(start=[sys.executable, "-m", "http.server", "{port}", "--bind", "127.0.0.1"], ready_url="http://127.0.0.1:{port}/", ready_timeout=20)
+    row.pop("runner", None)
+    contract.validate_contract({"checks": [row]})
+    probe = [sys.executable, "-c", "import os, sys; print(os.environ['PORT'], sys.argv[-1]); print('Ran 1 checks')"]
+    job = verify.run_checked(rid, row, probe, repo, None)
+    port = job.out.split()[0]
+    assert job.exit == 0 and port.isdigit() and f"{port} http://127.0.0.1:{port}" in job.out
+
+
+def test_a_server_that_answers_but_is_not_the_started_app_is_refused(tmp_path):
+    import http.server
+    import threading
+    import time
+    repo, _, rid = a_board_run(tmp_path)
+    port = free_port()
+    started = []
+
+    def late_decoy():  # appears after the runner's "already answers" check, as a race would
+        time.sleep(1.0)
+        srv = http.server.HTTPServer(("127.0.0.1", port), http.server.SimpleHTTPRequestHandler)
+        started.append(srv)
+        threading.Thread(target=srv.serve_forever, daemon=True).start()
+    threading.Thread(target=late_decoy).start()
+    row = board_row(start=["sleep", "30"], ready_url=f"http://127.0.0.1:{port}/", ready_timeout=10)
+    job = verify.run_checked(rid, row, [sys.executable, "-c", "print('Ran 1 checks')"], repo, None)
+    assert job.exit == 127 and "not owned by the app this run started" in job.out and verify.classify(row, job)[0] == "BLOCKED"
+    started[0].shutdown()
+    started[0].server_close()
+    with socket.socket() as s:  # listener_pgids names the owner of a listening socket
+        s.bind(("127.0.0.1", 0))
+        s.listen()
+        import os
+        mine = verify.listener_pgids(s.getsockname()[1])
+        assert mine == {os.getpgid(0)} and os.getpgid(0) != 1
+
+
+def test_without_lsof_the_row_is_blocked_env_and_never_passes(tmp_path, monkeypatch):
+    repo, _, rid = a_board_run(tmp_path)
+    port = free_port()
+    row = board_row(start=[sys.executable, "-m", "http.server", str(port), "--bind", "127.0.0.1"], ready_url=f"http://127.0.0.1:{port}/", ready_timeout=20)
+    real = verify.shutil.which
+    monkeypatch.setattr(verify.shutil, "which", lambda n, *a, **k: None if n == "lsof" else real(n, *a, **k))
+    job = verify.run_checked(rid, row, [sys.executable, "-c", "print('Ran 1 checks')"], repo, None)
+    v, why, _ = verify.classify(row, job)
+    assert v == "BLOCKED" and "lsof is not installed" in why
+    with pytest.raises(OSError), socket.create_connection(("127.0.0.1", port), timeout=1):  # and the app was stopped
+        pass
+
+
+def test_a_check_id_is_one_safe_name_and_the_job_label_is_one_file_name(tmp_path):
+    for bad in ("../../x", "a b", "a/../b", "", "/abs", "x" * 81, "a\nb", ".hidden"):
+        with pytest.raises(SdlcError, match="check id"):
+            contract.validate_contract({"checks": [tk.chk(bad, "app", ["true"])]})
+    contract.validate_contract({"checks": [tk.chk("full:web", "app", ["true"]), tk.chk("ui/checkout-1.a", "app", ["true"])]})
+    assert verify.safe_label("app", "../../x") == "app-x" and "/" not in verify.safe_label("a/b", "c d")
+    repo, _, rid = a_board_run(tmp_path)
+    port = free_port()
+    row = board_row(start=["sleep", "60"], ready_url=f"http://127.0.0.1:{port}/", ready_timeout=1)
+    row["id"] = "../../../escape"  # a hand-edited contract that skipped validation still cannot write outside jobs/
+    verify.run_checked(rid, row, [sys.executable, "-c", "x"], repo, None)
+    assert not (tmp_path / "escape-app.pid").exists() and not any(p.name.startswith("escape") for p in tmp_path.rglob("*escape*") if p.is_file())
+
+
+def test_every_path_that_can_launch_a_surface_enforces_the_contract_allowlist(tmp_path, capsys):
+    unlisted = electron(args=["--theme=dark"], env={"APP_THEME": "dark"})
+    with pytest.raises(ValueError, match="surface_allow"):
+        board.validate_surface(unlisted)  # enforcement is the default: a new caller cannot forget it
+    assert board.validate_surface(unlisted, ALLOW)
+    # _launch (used by measure and by the aggregate path), with no allowlist or one that does not list the arg
+    for allow in (None, {"args": ["--page"], "env": ["APP_THEME"]}, {"args": ["--theme"], "env": []}):
+        with pytest.raises(ValueError, match="surface_allow"):
+            board._launch(_Playwright(), unlisted, None, tmp_path, allow)
+    # the mapping: `boards rows` and `boards index --mapping` refuse an entry whose surface the contract row does not allow
+    m = {"boards": [{"board": "a.dc.html", "entry": "E", "surface": unlisted, "theme": "light"}]}
+    with pytest.raises(ValueError, match="entry E: surface.* not in the contract row's surface_allow"):
+        board.validate_mapping(m)
+    board.validate_mapping(m, ALLOW)
+    with pytest.raises(ValueError, match="entry E"):
+        board.canvas_rows({"boards": {}, "viewport": {"width": 1, "height": 1}, "themes": ["light"]}, m)
+    mf = tmp_path / "m.json"
+    mf.write_text(json.dumps(m))
+    assert sdlc.main(["boards", "rows", str(mf), "--index", str(mf), "--out", str(tmp_path / "s.json")]) == 2
+    assert "surface_allow" in capsys.readouterr().out
+    # a non-aggregate (per-node) row: the check refuses the unlisted arg and env before any launch
+    spec = {"target": unlisted, "rows": [{"id": "r", "locator": {"css": "body"}, "prop": "width", "expected": "1px", "tolerance_px": 1}]}
+    f = tmp_path / "spec.json"
+    f.write_text(json.dumps(spec))
+    assert board.main(["check", str(f)]) == 2 and "not in the contract row's surface_allow" in capsys.readouterr().out
+    assert board.main(["check", str(f), "--surface-allow", json.dumps({"args": ["--theme"], "env": ["OTHER"]})]) == 2
+    assert "surface.env APP_THEME is not in the contract row's surface_allow.env" in capsys.readouterr().out
+
+
+# ---- ordinal locators for repeated nodes -----------------------------------------------------------------------------------
+# (`position` is the x and y geometry option and does not do this: it measures where a node is, not which of several it is.)
+
+LIST_MAP = {"boards": [{"board": "list.dc.html", "route": "/list.html", "entry": "L1", "theme": "light"}]}
+
+
+def list_app(tmp_path, widths=(100, 110, 120, 130, 140)):
+    root = tmp_path / "listapp"
+    root.mkdir(parents=True)
+    rows = "".join(f'<li style="width:{w}px">Row</li>' for w in widths)
+    (root / "list.html").write_text(f'<!doctype html><html><head><style>{BLOB}</style></head><body><main><h2>Members</h2><ul>{rows}</ul></main></body></html>')
+    return root
+
+
+@needs_browser
+def test_a_list_of_five_identical_rows_matches_five_of_five_and_a_reorder_or_a_dropped_row_fails(idx, tmp_path):
+    row = board.canvas_rows(idx, LIST_MAP)["rows"][0]
+    rows_ = [n for n in row["nodes"] if n["n"].startswith("text:Row")]
+    assert [(n["i"], n["g"]) for n in rows_] == [(i, 5) for i in range(5)] and rows_[0]["a"] == {"role": "main"} and row["unmeasurable_nodes"] == 0
+    assert rows_[2]["n"] == "text:Row[2] in main"  # the report shows the anchored locator
+
+    def run(widths):
+        with board.serve(list_app(tmp_path / str(len(widths)) / "-".join(map(str, widths)), widths)) as url:
+            return check({"target": {"kind": "web", "url": url}, "rows": [{**row, "id": "L1/light", "route": "/list.html"}]}, tmp_path)
+    code, out = run((100, 110, 120, 130, 140))
+    assert code == 0 and "PASS L1/light: 7/7 measurable nodes matched (100.0%), 0 mismatches, 0 unmeasurable" in out, out  # same order: 5 of 5 rows
+    code, out = run((100, 120, 110, 130, 140))  # reordered: the 2nd and 3rd rows swap their widths
+    assert code == 1 and "MISMATCH L1/light text:Row[1] in main width: board 110px, app 120px" in out
+    code, out = run((100, 110, 120, 130))  # one row dropped
+    assert code == 1 and "MISMATCH L1/light text:Row[0] in main occurrences: board 5, app 4" in out and "not found once in the app: text:Row[4] in main" in out
+    code, out = run((100, 110, 120, 130, 140, 150))  # one row added
+    assert code == 1 and "occurrences: board 5, app 6" in out
+
+
+def idx_node(role, name, parent=-1, **loc):
+    return {"role": role, "name": name, "locator": loc or ({"role": role, "name": name} if name else {"role": role}), "parent": parent, "frames": [],
+            "tag": "x", "style": {}, "box": {"width": 10, "height": 5, "x": 0, "y": 0}}
+
+
+def test_anchors_are_the_nearest_unique_ancestor_else_the_root_and_a_long_rootless_group_stays_unmeasurable():
+    props = ["width", "height"]
+    nodes = [idx_node("main", ""), idx_node("heading", "Team", 0), idx_node("region", "Inner", 0),  # 0 main, 1 heading, 2 region
+             idx_node("text", "Item", 2, text="Item"), idx_node("text", "Item", 2, text="Item"),  # two items under the region
+             idx_node("region", "Dup", 0), idx_node("region", "Dup", 0),  # two same-named regions: not unique, so not anchors
+             idx_node("text", "Leaf", 5, text="Leaf"), idx_node("text", "Leaf", 6, text="Leaf")]  # each under a different "Dup"
+    out, bad = board.anchor_nodes(nodes, None, props)
+    by = {n["n"]: n for n in out}
+    assert by["text:Item[0] in region:Inner"]["a"] == {"role": "region", "name": "Inner"} and by["text:Item[1] in region:Inner"]["i"] == 1
+    assert by["text:Leaf[0] in main"]["a"] == {"role": "main"} and by["text:Leaf[1] in main"]["g"] == 2  # skipped the duplicate regions
+    assert bad == []
+    rootless = [idx_node("text", "Row", -1, text="Row") for _ in range(board.MAX_ROOT_GROUP + 1)] + [idx_node("text", "One", -1, text="One")]
+    out, bad = board.anchor_nodes(rootless, None, props)
+    assert [n["n"] for n in out] == ["text:One"] and len(bad) == board.MAX_ROOT_GROUP + 1  # order alone is no anchor for a long list
+    short, bad = board.anchor_nodes(rootless[:5], None, props)
+    assert bad == [] and [n["n"] for n in short][0] == "text:Row[0] in page" and short[0]["a"] is None
+    framed, _ = board.anchor_nodes(nodes, {id(n) for n in nodes[2:5]}, props)  # inside a frame: the anchor must be in the frame too
+    assert {n["n"] for n in framed} == {"region:Inner", "text:Item[0] in region:Inner", "text:Item[1] in region:Inner"}
+
+
+def app_node(role, name, parent=-1, **loc):
+    n = idx_node(role, name, parent, **loc)
+    n["style"] = {}
+    return n
+
+
+def test_an_anchor_or_index_the_app_cannot_resolve_is_unmatched_never_passed():
+    props = ["width"]
+    row = {"props": props, "nodes": [{"n": "text:Row[1] in main", "l": {"text": "Row"}, "v": ["10px"], "a": {"role": "main"}, "i": 1, "g": 2}]}
+    ok = [app_node("main", ""), app_node("text", "Row", 0, text="Row"), app_node("text", "Row", 0, text="Row")]
+    assert board.judge(row, ok)["matched"] == 1
+    assert board.judge(row, ok[:1] + [app_node("text", "Row", -1, text="Row")] * 2)["matched"] == 0  # the rows are outside the anchor
+    assert board.judge(row, [*ok, app_node("main", "")])["matched"] == 0  # the anchor is no longer unique in the app
+    assert board.judge(row, ok[1:])["matched"] == 0  # no anchor in the app at all
+    short = board.judge(row, ok[:2])  # the 2nd row is missing: unmatched, and the count differs
+    assert short["matched"] == 0 and short["unmatched"] == ["text:Row[1] in main"] and short["mismatches"][0]["prop"] == "occurrences"
+    passed, lines = board.verdict({**row, "id": "r", "min_match": 0.95}, short)
+    assert not passed and "occurrences: board 2, app 1" in "\n".join(lines)

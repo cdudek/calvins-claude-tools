@@ -1,5 +1,6 @@
 """4.2: spec traceability (every spec item covered or waived by name) and an approved base per repo."""
 import json
+import re
 
 import contract
 import discover
@@ -17,7 +18,7 @@ def check(id, **kw):
     return tk.chk(id, "web", ["true"], count=False, **kw)
 
 
-def run_with(tmp_path, monkeypatch, c, base_branch=False):
+def run_with(tmp_path, monkeypatch, c, base_branch=False, push=True):
     """A repo with a remote and, when asked, a pushed `project/x` two commits ahead of main; a drafted run with contract `c`."""
     monkeypatch.setenv("SDLC_HOME", str(tmp_path / "home"))
     repo = tk.make_repo(tmp_path, "web", {"README.md": "x\n"}, remote=True)
@@ -25,7 +26,8 @@ def run_with(tmp_path, monkeypatch, c, base_branch=False):
         tk.git(repo, "checkout", "-qb", "project/x")
         tk.commit_file(repo, "a.txt", "1")
         tk.commit_file(repo, "b.txt", "2")
-        tk.git(repo, "push", "-q", "origin", "project/x")
+        if push:
+            tk.git(repo, "push", "-q", "origin", "project/x")
         tk.git(repo, "checkout", "-q", "main")
     rid = discover.plan([str(repo)], "t")
     f = tmp_path / "c.json"
@@ -129,7 +131,7 @@ def test_the_base_ref_is_pinned_to_a_sha_in_the_contract_the_branch_and_the_scre
     repo, rid = run_with(tmp_path, monkeypatch, {"checks": [check("a")], "repos": {"web": {"base": "project/x"}}}, base_branch=True)
     sha = tk.git(repo, "rev-parse", "origin/project/x")
     meta = store.load_meta(rid)["repos"]["web"]
-    assert store.read_json(store.run_dir(rid) / "contract.json")["repos"]["web"] == {"base": "project/x", "base_sha": sha}
+    assert store.read_json(store.run_dir(rid) / "contract.json")["repos"]["web"] == {"base": "project/x", "base_sha": sha, "base_source": "origin"}
     assert meta["base_sha"] == sha and tk.git(repo, "rev-parse", meta["branch"]) == sha  # the run branch is cut from that SHA
     text = discover.screen(rid).read_text()
     assert f"**base:** `web`: `project/x` @ `{sha}` (2 commits not on main)" in text and "`sdlc pr` still targets main" in text
@@ -176,3 +178,62 @@ def test_base_shapes_are_validated():
         with pytest.raises(SdlcError):
             contract.validate_contract({"checks": [], "repos": bad})
     contract.validate_contract({"checks": [], "repos": {"web": {"base": "project/x", "base_sha": "a" * 40}}})
+
+
+# ---- a local-only base ref -------------------------------------------------------------------------------------------------
+
+BASE = {"checks": [check("a")], "repos": {"web": {"base": "project/x"}}}
+
+
+def test_a_local_only_base_branch_is_pinned_from_the_local_ref_and_marked_local(tmp_path, monkeypatch):
+    repo, rid = run_with(tmp_path, monkeypatch, BASE, base_branch=True, push=False)  # never pushed: local by policy
+    sha = tk.git(repo, "rev-parse", "refs/heads/project/x")
+    assert tk.git(repo, "branch", "-r", "--list", "origin/project/x") == ""
+    assert store.read_json(store.run_dir(rid) / "contract.json")["repos"]["web"] == {"base": "project/x", "base_sha": sha, "base_source": "local"}
+    assert store.load_meta(rid)["repos"]["web"]["base_sha"] == sha
+    assert f"@ `{sha}` (local only; 2 commits not on main)" in discover.screen(rid).read_text()
+    tk.approve(rid)  # used to BLOCK: it fetched origin/project/x only
+
+
+def test_the_moved_ref_check_reads_the_local_ref(tmp_path, monkeypatch):
+    repo, rid = run_with(tmp_path, monkeypatch, BASE, base_branch=True, push=False)
+    assert contract.base_problem(rid) == ""
+    tk.git(repo, "checkout", "-q", "project/x")
+    moved = tk.commit_file(repo, "later.txt", "x")
+    tk.git(repo, "checkout", "-q", "main")
+    assert re.search(r"base ref project/x of web moved from \w+ to " + moved[:9] + r" \(local branch\)", contract.base_problem(rid))
+    with pytest.raises(SdlcError, match="not approvable: base ref project/x"):
+        tk.approve(rid)
+
+
+def test_a_base_that_differs_locally_and_on_origin_is_blocked_naming_both_shas(tmp_path, monkeypatch):
+    repo, rid = run_with(tmp_path, monkeypatch, BASE, base_branch=True)  # pushed: origin and local agree
+    pushed = tk.git(repo, "rev-parse", "origin/project/x")
+    assert store.read_json(store.run_dir(rid) / "contract.json")["repos"]["web"]["base_source"] == "origin"
+    tk.git(repo, "checkout", "-q", "project/x")
+    local = tk.commit_file(repo, "unpushed.txt", "x")  # the local branch moved on without a push
+    tk.git(repo, "checkout", "-q", "main")
+    f = tmp_path / "again.json"
+    f.write_text(json.dumps({"limits": LIMITS, "waive_full": ["web"], **BASE}))
+    with pytest.raises(SdlcError, match=rf"local branch is at {local} and origin/project/x is at {pushed}"):
+        discover.draft(rid, None, str(f), None, [], [])
+    assert re.search(r"differ", contract.base_problem(rid))
+    with pytest.raises(SdlcError, match="differ"):
+        tk.approve(rid)
+
+
+def test_a_base_that_exists_nowhere_is_an_env_block_and_the_source_is_in_the_digest(tmp_path, monkeypatch):
+    repo, rid = run_with(tmp_path, monkeypatch, BASE, base_branch=True, push=False)
+    other = tmp_path / "again.json"
+    other.write_text(json.dumps({"limits": LIMITS, "waive_full": ["web"], "checks": [check("a")], "repos": {"web": {"base": "project/none"}}}))
+    with pytest.raises(SdlcError, match="neither as a local branch nor on origin"):
+        discover.draft(rid, None, str(other), None, [], [])
+    tk.approve(rid)
+    d = store.run_dir(rid)
+    c = store.read_json(d / "contract.json")
+    c["repos"]["web"]["base_source"] = "origin"  # the digest binds the source too
+    store.write_json(d / "contract.json", c)
+    assert contract.approved_digest_ok(rid) == (False, "approved bundle changed after approval")
+    for bad in ({"base": "x", "base_source": "elsewhere", "base_sha": "a" * 40}, {"base": "x", "base_source": "local"}):
+        with pytest.raises(SdlcError, match="base_source"):
+            contract.validate_contract({"checks": [], "repos": {"web": bad}})

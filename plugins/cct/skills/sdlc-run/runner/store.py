@@ -106,9 +106,10 @@ def briefs_dir(rid: str) -> Path:
 
 
 def proc_ident(pid: int) -> str:
-    """Start time and command of a live process, so a recycled PID is never mistaken for our job."""
+    """Start time of a live process, so a recycled PID is never mistaken for our job. Not the command: a child recorded right after the
+    fork and read again after its exec has another command, which made `sdlc stop` skip a live job."""
     import subprocess
-    r = subprocess.run(["ps", "-o", "lstart=,command=", "-p", str(pid)], capture_output=True, text=True)
+    r = subprocess.run(["ps", "-o", "lstart=", "-p", str(pid)], capture_output=True, text=True)
     return r.stdout.strip() if r.returncode == 0 else ""
 
 

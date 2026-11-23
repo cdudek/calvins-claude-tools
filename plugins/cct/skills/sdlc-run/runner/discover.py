@@ -122,7 +122,7 @@ def probe(d: dict, contract_doc: dict | None = None) -> dict:
         if argv[0] == "bash":
             wanted |= {w for w in re.findall(r"(?:^|&&\s*|;\s*)([\w.-]+)", argv[2])}
     for c in (contract_doc or {}).get("checks", []):
-        wanted.add(c["runner"][0])
+        wanted |= set(check_tools(c))
         wanted |= {p["tool"] for p in c.get("prereqs", []) if "tool" in p}
     for t in sorted(wanted - {"bash", "cd"}):
         tools[t] = shutil.which(t)
@@ -134,11 +134,19 @@ def probe(d: dict, contract_doc: dict | None = None) -> dict:
             "browser": {"available": ok, "why": "" if ok else why}, "ci_jobs": [j["job"] for j in d["ci"]["jobs"]]}
 
 
+def check_tools(c: dict) -> list[str]:
+    """The executables a check needs: its runner's, or for a board row the ones its approved build and start argvs name."""
+    if c.get("kind") == "board":
+        return [c["board"][k][0] for k in ("build", "start") if c["board"].get(k)]
+    return [c["runner"][0]]
+
+
 def blockers(probe_doc: dict, contract_doc: dict) -> list[str]:
     out = []
     for c in contract_doc.get("checks", []):
-        if c["runner"][0] in probe_doc["missing_tools"]:
-            out.append(f"{c['repo']}:{c['id']} needs {c['runner'][0]}, which is not installed")
+        for t in check_tools(c):
+            if t in probe_doc["missing_tools"]:
+                out.append(f"{c['repo']}:{c['id']} needs {t}, which is not installed")
         for p in c.get("prereqs", []):
             if "browser" in p and not probe_doc["browser"]["available"]:
                 out.append(f"{c['repo']}:{c['id']} needs a browser ({probe_doc['browser']['why']})")
@@ -198,18 +206,19 @@ def pin_bases(rid: str, c: dict, meta: dict) -> None:
         if name not in meta["repos"]:
             raise SdlcError(f"contract repos.{name} is not a repo of this run")
         spec.pop("base_sha", None)
+        spec.pop("base_source", None)
         r = meta["repos"][name]
         if not spec.get("base"):
             if r.get("base_ref"):
                 raise SdlcError(f"{name}: the run branch was cut from {r['base_ref']}; start a new run to build on the default branch")
             continue
-        sha = contract.resolve_base(r, spec["base"])
+        sha, source = contract.resolve_base(r, spec["base"])
         tip = git(r["path"], "rev-parse", r["branch"])
         if tip not in (r["base_sha"], sha):
             raise SdlcError(f"{name}: the run branch already has commits; start a new run for a new base")
         if tip != sha:
             git(r["path"], "branch", "-f", r["branch"], sha)
-        spec["base_sha"], r["base_sha"], r["base_ref"] = sha, sha, spec["base"]
+        spec["base_sha"], spec["base_source"], r["base_sha"], r["base_ref"] = sha, source, sha, spec["base"]
     store.save_meta(rid, meta)
 
 
@@ -344,9 +353,35 @@ def _base_lines(c: dict, meta: dict) -> list[str]:
         if s.get("base") and n in meta["repos"]:
             r = meta["repos"][n]
             out.append(f"- **base:** {_code(n)}: {_code(s['base'])} @ `{s.get('base_sha', 'unresolved')}` "
-                       f"({contract.base_ahead(r, s['base_sha']) if s.get('base_sha') else '?'} commits not on {r['default_branch']}); "
+                       f"({'local only; ' if s.get('base_source') == 'local' else ''}"
+                       f"{contract.base_ahead(r, s['base_sha']) if s.get('base_sha') else '?'} commits not on {r['default_branch']}); "
                        f"`sdlc pr` still targets {r['default_branch']}, so the PR also carries these base commits")
     return ["", "## Base", ""] + out if out else []
+
+
+def _board_lines(d: Path, c: dict) -> list[str]:
+    """What each board check measures, read from the pinned spec the owner approves: rows, nodes, thresholds, properties and overrides."""
+    out = []
+    for k in c.get("checks", []):
+        if k.get("kind") != "board":
+            continue
+        f = d / "inputs" / k["repo"] / k["board"]["spec"]
+        try:
+            rows = json.loads(f.read_text()).get("rows", [])
+        except (OSError, ValueError):
+            out.append(f"- {_code(k['id'])}: the pinned spec {_code(k['board']['spec'])} cannot be read")
+            continue
+        mm = sorted({r.get("min_match", 0.95) for r in rows})
+        props = sorted({tuple(r.get("props", [])) for r in rows})
+        ov = sorted({json.dumps(r.get("tol") or {}, sort_keys=True) for r in rows} - {"{}"})
+        out.append(f"- {_code(k['id'])}: {len(rows)} rows (expected {k['board']['expected_rows']}), {sum(len(r.get('nodes', [])) for r in rows)} nodes, "
+                   f"min_match {', '.join(f'{x:g}' for x in mm) or '-'}, {len(props[0]) if props else 0} properties"
+                   f"{' (' + str(len(props)) + ' different lists)' if len(props) > 1 else ''}, tolerance overrides: {_one('; '.join(ov), 200) if ov else 'none'}, "
+                   f"unmeasurable nodes {sum(r.get('unmeasurable_nodes', 0) for r in rows)}"
+                   + (f", app at {_code(k['board']['ready_url'])}" if k["board"].get("ready_url") else "")
+                   + (f", surface args and env allowed: {_code(json.dumps(k['board']['surface_allow'], sort_keys=True))}"
+                      if k["board"].get("surface_allow") else ", no surface args or env allowed"))
+    return ["", "## Board checks", ""] + out if out else []
 
 
 def _spec_lines(c: dict) -> list[str]:
@@ -371,12 +406,16 @@ def screen(rid: str) -> Path:
     meta = store.load_meta(rid)
     pr = store.read_json(d / "probe.json", [{"missing_tools": [], "browser": {"available": True, "why": ""}, "credentials": {"github": False}}])
     miss = sorted({t for p in pr for t in p["missing_tools"]})
-    rows = ["| Check | Repo | Command | Expect | Where | Pinned |", "|---|---|---|---|---|---|"]
+    rows = ["| Check | Repo | Command | Expect | Where | Pinned | Env passed |", "|---|---|---|---|---|---|---|"]
     for k in c["checks"]:
         cell = lambda x: _one(x, 90).replace("|", "\\|")  # noqa: E731 - one table cell, no pipes, one line
         shown = f"board check {k['board']['spec']} ({k['board']['expected_rows']} rows)" if k.get("kind") == "board" else " ".join(k["runner"])
+        if k.get("kind") == "board":
+            shown += "".join(f"; {w}: {' '.join(k['board'][w])}" for w in ("build", "start") if k["board"].get(w))
+            shown += f"; ready_url {k['board']['ready_url']}" if k["board"].get("ready_url") else ""
+            shown += f"; surface_allow {json.dumps(k['board']['surface_allow'], sort_keys=True)}" if k["board"].get("surface_allow") else ""
         rows.append(f"| {cell(k['id'])} | {cell(k['repo'])} | {cell(shown)} | {cell(k['expect']['kind'])}"
-                    f"{cell('; ' + json.dumps(k['expect'].get('value'))) if 'value' in k['expect'] else ''} | {cell(k.get('site', 'local'))} | {cell(', '.join(k.get('pins', {})) or '-')} |")
+                    f"{cell('; ' + json.dumps(k['expect'].get('value'))) if 'value' in k['expect'] else ''} | {cell(k.get('site', 'local'))} | {cell(', '.join(k.get('pins', {})) or '-')} | {cell(', '.join(k.get('env', [])) or '-')} |")
     import deps as deps_mod
     ui = [k for k in c["checks"] if k.get("design")]
     deps = c.get("deps", {})
@@ -396,7 +435,7 @@ def screen(rid: str) -> Path:
         [f"- {'**PROTECTED — sensitive:** ' if x else ''}{_code(f'{r}:{p}')}\n\n{_fence(df, 'diff')}" for r, p, df, x in pinned] or ["- none"]) + [
              "", "## Tests a task may delete or rewrite", ""] + (repl or ["- none"]) + [
              ] + _spec_lines(c) + [
-             "", "## Checks that decide the result", ""] + rows + [
+             "", "## Checks that decide the result", ""] + rows + _board_lines(d, c) + [
              "", "## Dependency and lockfile changes", ""] + (
         [f"- {_code(r)}: applied by the runner, then a frozen install with install scripts and source builds off; a manager with no such flag is not run\n\n{_fence(deps_mod.diff_text(rid, r), 'diff')}" for r in deps]
         or ["- none"]) + [

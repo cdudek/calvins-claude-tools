@@ -7,6 +7,7 @@ contract or another set of pinned files is stale. Receipts are unsigned: the plu
 """
 from __future__ import annotations
 
+import json
 import re
 import subprocess
 import sys
@@ -129,15 +130,18 @@ def validate_placeholders(c: dict) -> None:
                     raise SdlcError(f"check {k['id']}: {{producer_sha:{m[1]}}} names a repo the contract does not know")
 
 
-READY_URL = re.compile(r"^http://(127\.0\.0\.1|localhost)(:\d{2,5})?(/[A-Za-z0-9._~/%?&=-]*)?$")
-BOARD_KEYS = {"spec", "expected_rows", "start", "ready_url", "ready_timeout"}
+READY_URL = re.compile(r"^http://(127\.0\.0\.1|localhost)(:(\d{2,5}|\{port\}))?(/[A-Za-z0-9._~/%?&=-]*)?$")
+BOARD_KEYS = {"spec", "expected_rows", "build", "start", "ready_url", "ready_timeout", "surface_allow"}
 
 
 def runner_of(chk: dict) -> list[str]:
     """The argv a check runs. A `"kind": "board"` row names no runner path: the runner's own board.py runs the pinned spec."""
     if chk.get("kind") == "board":
         b = chk["board"]
-        return [sys.executable, str(Path(__file__).with_name("board.py")), "check", b["spec"], "--expected-rows", str(b["expected_rows"])]
+        argv = [sys.executable, str(Path(__file__).with_name("board.py")), "check", b["spec"], "--expected-rows", str(b["expected_rows"])]
+        if b.get("surface_allow"):  # from the approved row, never from the spec: the spec cannot widen what a surface may be given
+            argv += ["--surface-allow", json.dumps(b["surface_allow"], sort_keys=True)]
+        return argv
     return chk["runner"]
 
 
@@ -153,6 +157,15 @@ def validate_board_row(chk: dict) -> None:
     n = b.get("expected_rows")
     if not (isinstance(n, int) and not isinstance(n, bool) and n > 0):
         raise SdlcError(f"{who}: board.expected_rows must be a whole number above 0")
+    if b.get("surface_allow") is not None:
+        import board
+        try:
+            board.validate_allow(b["surface_allow"], f"{who}: board.surface_allow")
+        except ValueError as e:
+            raise SdlcError(str(e)) from None
+    build = b.get("build")
+    if build is not None and not (isinstance(build, list) and build and all(isinstance(a, str) for a in build)):
+        raise SdlcError(f"{who}: board.build is an argv list")
     start, url, wait = b.get("start"), b.get("ready_url"), b.get("ready_timeout", 120)
     if start is not None and not (isinstance(start, list) and start and all(isinstance(a, str) for a in start) and isinstance(url, str)):
         raise SdlcError(f"{who}: board.start is an argv list and needs board.ready_url")
@@ -230,6 +243,8 @@ def validate_contract(c: dict) -> None:
         for f in CHECK_FIELDS:
             if f not in chk and not (f == "runner" and chk.get("kind") == "board"):
                 raise SdlcError(f"contract check {chk.get('id', '?')} lacks {f}")
+        if not (isinstance(chk["id"], str) and CHECK_ID.match(chk["id"]) and ".." not in chk["id"]):
+            raise SdlcError(f"check id {chk['id']!r} must be letters, digits and . _ : / - (up to 80), starting with a letter or digit, no ..")
         if chk["id"] in ids:
             raise SdlcError(f"duplicate contract check {chk['id']}")
         ids.add(chk["id"])
@@ -246,6 +261,7 @@ def validate_contract(c: dict) -> None:
 
 
 # ---- the spec the checks must cover (4.2) -------------------------------------------------------------------------------
+CHECK_ID = re.compile(r"^[A-Za-z0-9][A-Za-z0-9._:/-]{0,79}$")
 SPEC_ID = re.compile(r"^[A-Za-z0-9][A-Za-z0-9._-]{0,39}$")
 
 
@@ -336,23 +352,41 @@ def validate_bases(c: dict) -> None:
     if not isinstance(repos, dict):
         raise SdlcError("contract repos must map a repo name to {base}")
     for name, r in repos.items():
-        ref, sha = (r.get("base"), r.get("base_sha")) if isinstance(r, dict) and set(r) <= {"base", "base_sha"} else (0, 0)
+        ref, sha = (r.get("base"), r.get("base_sha")) if isinstance(r, dict) and set(r) <= {"base", "base_sha", "base_source"} else (0, 0)
         if ref == 0 or not (ref is None or (isinstance(ref, str) and BASE_REF.match(ref) and ".." not in ref and "//" not in ref
                                             and not ref.endswith(("/", ".lock")))):
             raise SdlcError(f"repos.{name}: base must be a branch name (letters, digits, . _ - /)")
         if sha is not None and not (ref and isinstance(sha, str) and re.fullmatch(r"[0-9a-f]{40}", sha)):
             raise SdlcError(f"repos.{name}: base_sha must be a full SHA of its base")
+        if r.get("base_source", "origin") not in ("origin", "local") or ("base_source" in r and sha is None):
+            raise SdlcError(f"repos.{name}: base_source is origin or local and goes with base_sha")
 
 
-def resolve_base(repo: dict, ref: str) -> str:
-    """The full SHA of `ref`, fetched from origin when the repo has one."""
+def resolve_base(repo: dict, ref: str) -> tuple[str, str]:
+    """(full SHA, source) of `ref`: fetched from origin when it is there, else the local branch (a project branch that is local-only by
+    policy, source "local"). When both exist and differ it is an error naming both: one is never chosen silently."""
     p = repo["path"]
+    local = _run_git(p, "rev-parse", "--verify", "-q", f"refs/heads/{ref}^{{commit}}")
+    remote = None
     if repo.get("remote"):
         r = subprocess.run(["git", "fetch", "-q", "origin", f"+refs/heads/{ref}:refs/remotes/origin/{ref}"], cwd=p, capture_output=True, text=True)
-        if r.returncode:
+        if r.returncode == 0:
+            remote = git(p, "rev-parse", "--verify", f"refs/remotes/origin/{ref}^{{commit}}")
+        elif "couldn't find remote ref" not in r.stderr:
             raise SdlcError(f"BLOCKED env cannot fetch origin/{ref}: {r.stderr.strip()[:120]}")
-        return git(p, "rev-parse", "--verify", f"refs/remotes/origin/{ref}^{{commit}}")
-    return git(p, "rev-parse", "--verify", f"refs/heads/{ref}^{{commit}}")
+    if local and remote and local != remote:
+        raise SdlcError(f"BLOCKED base ref {ref}: the local branch is at {local} and origin/{ref} is at {remote}, so they differ; push or reset one of them, "
+                        "the runner does not choose")
+    if remote:
+        return remote, "origin"
+    if local:
+        return local, "local"
+    raise SdlcError(f"BLOCKED env base ref {ref} exists neither as a local branch nor on origin")
+
+
+def _run_git(path: str, *args: str) -> str:
+    r = subprocess.run(["git", *args], cwd=path, capture_output=True, text=True)
+    return r.stdout.strip() if r.returncode == 0 else ""
 
 
 def base_ahead(repo: dict, sha: str) -> int:
@@ -369,11 +403,12 @@ def base_problem(rid: str) -> str:
         if not r.get("base_sha") or name not in meta["repos"]:
             return f"base {r['base']} of {name} was never resolved (run `sdlc draft`)"
         try:
-            now = resolve_base(meta["repos"][name], r["base"])
+            now, source = resolve_base(meta["repos"][name], r["base"])
         except SdlcError as e:
             return str(e)
         if now != r["base_sha"]:
-            return f"base ref {r['base']} of {name} moved from {r['base_sha'][:9]} to {now[:9]}; the run does not follow it (start a new run to build on the new tip)"
+            return (f"base ref {r['base']} of {name} moved from {r['base_sha'][:9]} to {now[:9]}{' (local branch)' if source == 'local' else ''}; "
+                    "the run does not follow it (start a new run to build on the new tip)")
     return ""
 
 

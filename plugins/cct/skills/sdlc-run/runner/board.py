@@ -118,7 +118,7 @@ def extract(board: dict, tokens: dict | None = None) -> dict:
             mapping = {"boards": [entry], **{k: board[k] for k in ("themes", "tolerances", "position") if k in board}}
             idx = index_export(board["root"], board.get("themes", THEMES), board.get("viewport"), board.get("attr"),
                                board.get("executable"), [board["file"]], _containers(mapping))
-            out = canvas_rows(idx, mapping)
+            out = canvas_rows(idx, mapping, None, board.get("surface_allow"))
             rows += out["rows"]
             unsupported += out["unsupported"]
     else:
@@ -181,17 +181,48 @@ def electron_hidden(main: str) -> tuple[list[str], dict]:
 # A mapping entry names its surface: `route` (a web page, the default), `surface` {"kind": "chrome-extension", "dist", "page"}
 # or {"kind": "electron", "app", "env", "args"}. dist and app are paths inside the consumer repo (the check's working directory).
 ENV_KEY = re.compile(r"^[A-Z][A-Z0-9_]{0,63}$")
-ENV_DENY = re.compile(r"^(PATH|HOME|NODE_OPTIONS|ELECTRON_RUN_AS_NODE|LD_.*|DYLD_.*)$")
+ENV_DENY = re.compile(r"^(PATH|HOME|BASH_ENV|ELECTRON_.*|NODE_.*|SDLC_.*|LD_.*|DYLD_.*)$")  # on top of ENV_KEY: an app's own settings only
+ARG_OK = re.compile(r"^--[a-z][a-z0-9-]{0,60}(=[^\s\0]{0,200})?$")  # a long option of the app; no short options, no bare words
 PAGE_RX = re.compile(r"^[A-Za-z0-9_./-]+(\?[A-Za-z0-9_.~%&=+,:@/-]*)?$")
-ARG_DENY = ("--require", "--inspect", "--remote-debugging", "--js-flags", "--load-extension", "--disable-extensions")
+ARG_DENY = ("--require", "--inspect", "--remote-debugging", "--js-flags", "--load-extension", "--disable-extensions", "--user-data-dir",
+            "--renderer-cmd-prefix", "--no-sandbox", "--disable-web-security", "--host-rules", "--proxy")
 
 
 def _rel_ok(p) -> bool:
     return isinstance(p, str) and p != "" and "\\" not in p and "\0" not in p and not p.startswith(("/", "~")) and ".." not in p.split("/")
 
 
-def validate_surface(s) -> dict:
-    """The surface of one entry, or ValueError. Paths are checked lexically here and against the real tree (symlinks) at check time."""
+# a second layer under the contract allowlist: switches that run another program, load code, move the profile or open a debugger
+ARG_DENY_RX = re.compile(r"launcher|cmd-prefix|subprocess|gdb|wrapper|plugin|extension|user-data|crash|debug|inspect|require|js-flags|proxy|host-rules"
+                         r"|no-sandbox|disable-web-security|remote-|exec|preload|flag-switches|enable-features|ozone-platform-hint")
+
+
+def _denied(a: str) -> bool:
+    return a.lower().startswith(ARG_DENY) or ARG_DENY_RX.search(a.partition("=")[0].lower()) is not None
+
+
+OPT_NAME = re.compile(r"^--[a-z][a-z0-9-]{0,60}$")
+ARG_VALUE = re.compile(r"^[A-Za-z0-9_.,:+@%=-]+(/[A-Za-z0-9_.,:+@%=-]+)*$")  # no leading /, ~, spaces, quotes, $, ; | & ` ( )
+
+
+def validate_allow(allow, who: str = "surface_allow") -> dict:
+    """The contract row's list of what an Electron surface may be given: option names and env keys, nothing else."""
+    if allow is None:
+        return {"args": [], "env": []}
+    ok = isinstance(allow, dict) and set(allow) <= {"args", "env"} and all(isinstance(allow.get(k, []), list) for k in ("args", "env"))
+    if ok:
+        ok = all(isinstance(a, str) and OPT_NAME.match(a) and not _denied(a) for a in allow.get("args", [])) and all(
+            isinstance(k, str) and ENV_KEY.match(k) and not ENV_DENY.match(k) for k in allow.get("env", []))
+    if not ok:
+        raise ValueError(f'{who} must be {{"args": ["--option"], "env": ["KEY"]}}: long option names and env keys of the app, none a launcher, '
+                         "code-loading, profile or debugging switch")
+    return {"args": list(allow.get("args", [])), "env": list(allow.get("env", []))}
+
+
+def validate_surface(s, allow: dict | None = None, enforce: bool = True) -> dict:
+    """The surface of one entry, or ValueError. Paths are checked lexically here and against the real tree (symlinks) at check time.
+    By default (`enforce`) an Electron surface may only carry the args and env keys the approved contract row lists (`allow`): the mapping and
+    spec files cannot widen it. The shape rules and the denylist stay as a second layer."""
     if not isinstance(s, dict) or s.get("kind") not in ("chrome-extension", "electron"):
         raise ValueError('surface.kind must be "chrome-extension" or "electron" (a web route needs no surface)')
     if s["kind"] == "chrome-extension":
@@ -205,9 +236,19 @@ def validate_surface(s) -> dict:
         raise ValueError("surface.app must be a path inside the repo")
     if not isinstance(env, dict) or not all(isinstance(k, str) and isinstance(v, str) and ENV_KEY.match(k) and not ENV_DENY.match(k)
                                             for k, v in env.items()):
-        raise ValueError("surface.env keys must match [A-Z][A-Z0-9_]* and not be PATH, HOME, NODE_OPTIONS, ELECTRON_RUN_AS_NODE, LD_* or DYLD_*")
-    if not isinstance(args, list) or not all(isinstance(a, str) and "\0" not in a and not a.lower().startswith(ARG_DENY) and a != "-r" for a in args):
-        raise ValueError("surface.args must be a list of strings, none of them a code-loading or debugging flag")
+        raise ValueError("surface.env keys must match [A-Z][A-Z0-9_]* and not be PATH, HOME, BASH_ENV, ELECTRON_*, NODE_*, SDLC_*, LD_* or DYLD_*")
+    if not isinstance(args, list) or not all(isinstance(a, str) and ARG_OK.match(a) and not _denied(a) for a in args):
+        raise ValueError("surface.args must be long options (--name or --name=value) of the app, none of them a code-loading, profile or debugging flag")
+    if enforce:
+        allow = validate_allow(allow)
+        if bad := [k for k in env if k not in allow["env"]]:
+            raise ValueError(f"surface.env {', '.join(bad)} is not in the contract row's surface_allow.env")
+        for a in args:
+            name, _, value = a.partition("=")
+            if name not in allow["args"]:
+                raise ValueError(f"surface arg {name} is not in the contract row's surface_allow.args")
+            if "=" in a and not ARG_VALUE.match(value) or ".." in value.split("/"):
+                raise ValueError(f"surface arg {name} has a value that looks like an absolute path, a command or a path outside the repo")
     return s
 
 
@@ -238,7 +279,7 @@ def _ext_id(ctx) -> str:
     return sw.url.split("/")[2]
 
 
-def _launch(p, target: dict, executable: str | None, root: Path | None = None):
+def _launch(p, target: dict, executable: str | None, root: Path | None = None, allow: dict | None = None):
     """(page, closer, base) for a target: base is the URL prefix rows navigate under (None for Electron, which has one window)."""
     import tempfile
     root = root or Path.cwd()
@@ -252,7 +293,7 @@ def _launch(p, target: dict, executable: str | None, root: Path | None = None):
                 page.goto(url)
             return page, browser.close, (target.get("url") or "").rstrip("/")
         if kind == "chrome-extension":
-            ext = str(_inside(root, validate_surface(target)["dist"]))
+            ext = str(_inside(root, validate_surface(target, allow)["dist"]))
             ctx = p.chromium.launch_persistent_context(
                 tempfile.mkdtemp(prefix="sdlc-ext-"),
                 executable_path=executable,
@@ -261,7 +302,7 @@ def _launch(p, target: dict, executable: str | None, root: Path | None = None):
             )
             return ctx.new_page(), ctx.close, f"chrome-extension://{_ext_id(ctx)}"
         if kind == "electron":
-            s = validate_surface(target)
+            s = validate_surface(target, allow)
             args, env = electron_hidden(str(_inside(root, s["app"])))
             app = p._electron.launch(args=[*args, *s.get("args", [])], env={**env, **s.get("env", {})}, cwd=str(root))  # noqa: SLF001
             page = app.first_window()
@@ -299,13 +340,13 @@ _CSS = "(el, p) => getComputedStyle(el).getPropertyValue(p)"
 
 
 
-def _read(target: dict, rows: list[dict], executable: str | None = None, evidence_dir: str | None = None) -> list[dict]:
+def _read(target: dict, rows: list[dict], executable: str | None = None, evidence_dir: str | None = None, allow: dict | None = None) -> list[dict]:
     """Per row: {"value": measured string/number or None, "why": ...} (the per-node rows of structured and html boards)."""
     from playwright.sync_api import sync_playwright
 
     out: list[dict] = []
     with sync_playwright() as p:
-        page, close, _ = _launch(p, target, executable)
+        page, close, _ = _launch(p, target, executable, None, allow)
         cache: dict = {}
         try:
             for row in rows:
@@ -372,10 +413,10 @@ def compare(measured: float | str, expected: str, tol_px: float) -> bool:
     return abs(got - want) <= tol_px
 
 
-def measure(target: dict, rows: list[dict], executable: str | None = None, evidence_dir: str | None = None) -> list[dict]:
+def measure(target: dict, rows: list[dict], executable: str | None = None, evidence_dir: str | None = None, allow: dict | None = None) -> list[dict]:
     """One result per row: {id, status PASS|FAIL, why, expected, got, tolerance_px}."""
     results = []
-    for row, got in zip(rows, _read(target, rows, executable, evidence_dir), strict=True):
+    for row, got in zip(rows, _read(target, rows, executable, evidence_dir, allow), strict=True):
         res = {"id": row["id"], "expected": row["expected"], "tolerance_px": row.get("tolerance_px", TOL)}
         if got.get("value") is None:
             results.append({**res, "status": "FAIL", "why": got["why"], "got": None})
@@ -446,12 +487,19 @@ def norm_value(v) -> str:
     return " ".join(_COLOR.sub(_rgba, str(v)).replace('"', "").replace("'", "").split())
 
 
+TOL_PROPS = {"font-size", "line-height", "letter-spacing", "padding-top", "padding-right", "padding-bottom", "padding-left", "margin-top",
+             "margin-right", "margin-bottom", "margin-left", "gap", "border-radius", "width", "height", "x", "y"}  # colours and text stay exact
+TOL_CAP = 4.0  # px: no override reaches further (width and height: or 2% of the board value, whichever is larger)
+
+
 def tolerance(prop: str, board: str, override: dict) -> float:
-    """Colours and text are exact; font and spacing +-1px; width and height +-2px or 1%, whichever is larger; x and y +-2px."""
-    if prop in override:
-        return float(override[prop])
+    """Colours and text are exact; font and spacing +-1px; width and height +-2px or 1%, whichever is larger; x and y +-2px.
+    An override (a mapping entry's `tolerances`) only applies to a numeric property and is capped."""
+    m = _NUM.match(board)
+    if prop in override and prop in TOL_PROPS:
+        cap = max(TOL_CAP, 0.02 * abs(float(m[1]))) if prop in BOX and m else TOL_CAP
+        return min(max(float(override[prop]), 0.0), cap)
     if prop in BOX:
-        m = _NUM.match(board)
         return max(2.0, 0.01 * abs(float(m[1]))) if m else 2.0
     return 2.0 if prop in POS else 1.0
 
@@ -570,7 +618,11 @@ _NODES = """([props, sels, srcImports]) => {
     if (imp) caption(own, at.get(imp));
     else for (const s of sels) { const c = el.closest(s); if (c) caption(own, at.get(c)); }
   }
+  const idxOf = new Map(out.map((n, i) => [n.el, i]));
   for (const n of out) {
+    let a = n.el.parentElement;  // the nearest ancestor that is itself a candidate node: the tree an ordinal locator is anchored in
+    while (a && !idxOf.has(a)) a = a.parentElement;
+    n.parent = a ? idxOf.get(a) : -1;
     n.frames = [];
     for (let a = n.el; a; a = a.parentElement) if (at.has(a)) n.frames.push(at.get(a));
     delete n.el;
@@ -619,6 +671,29 @@ def source_imports(path: Path) -> list[dict]:
     return [{m[1]: next((g for g in m.groups()[1:] if g is not None), "") for m in _ATTR.finditer(tag[1])} for tag in _IMPORT.finditer(text)]
 
 
+NAV_TIMEOUT_MS = 30000
+LOADS = ("domcontentloaded", "load")
+
+
+def validate_ready(r, who: str) -> None:
+    ok = isinstance(r, dict) and len(r) == 1 and (
+        (isinstance(r.get("selector"), str) and 0 < len(r["selector"]) <= 200 and "\n" not in r["selector"]) or r.get("load") in LOADS)
+    if not ok:
+        raise ValueError(f'{who}: ready must be {{"selector": css}} or {{"load": "domcontentloaded" | "load"}}')
+
+
+def goto(page, url: str, ready: dict | None = None) -> None:
+    """Open a page and wait until it is ready: network idle by default, or the entry's `ready` (a selector that must appear, or a load
+    event). A wait that times out raises: the board or row fails, it is never skipped."""
+    if not ready:
+        page.goto(url, wait_until="networkidle", timeout=NAV_TIMEOUT_MS)
+    elif "selector" in ready:
+        page.goto(url, wait_until="domcontentloaded", timeout=NAV_TIMEOUT_MS)
+        page.wait_for_selector(ready["selector"], state="attached", timeout=NAV_TIMEOUT_MS)
+    else:
+        page.goto(url, wait_until=ready["load"], timeout=NAV_TIMEOUT_MS)
+
+
 def _containers(mapping: dict | None, extra: list[str] | None = None) -> list[str]:
     """The caption container selectors an index records frames for: the default plus every one a mapping entry names."""
     sels = [DEFAULT_CONTAINER, *(extra or [])]
@@ -632,7 +707,8 @@ def _containers(mapping: dict | None, extra: list[str] | None = None) -> list[st
 
 
 def index_export(root: str | Path, themes=THEMES, viewport: dict | None = None, attr: str | None = None,
-                 executable: str | None = None, only: list[str] | None = None, containers: list[str] | None = None) -> dict:
+                 executable: str | None = None, only: list[str] | None = None, containers: list[str] | None = None,
+                 ready: dict[str, dict] | None = None) -> dict:
     """Walk every `*.dc.html` board of an export and list its candidate nodes per theme, with measured style and geometry, and its frames:
     every <dc-import> (its attributes) and every element matching a container selector, each with the label captions that sit in it.
     A node records the frames that contain it, so a frame is selected from the index without reloading the board.
@@ -656,7 +732,7 @@ def index_export(root: str | Path, themes=THEMES, viewport: dict | None = None, 
                 for f in files:
                     errors.clear()
                     try:
-                        page.goto(f"{base}/{urllib.parse.quote(f)}", wait_until="networkidle")
+                        goto(page, f"{base}/{urllib.parse.quote(f)}", (ready or {}).get(f))
                         if attr:
                             page.evaluate("([a, v]) => document.documentElement.setAttribute(a, v)", [attr, theme])
                         page.evaluate("document.fonts && document.fonts.ready")
@@ -703,9 +779,9 @@ def select_frame(entry: dict, m: dict, who: str) -> int:
     return hit[0]
 
 
-def check_frames(index: dict | list[dict], mapping: dict) -> None:
+def check_frames(index: dict | list[dict], mapping: dict, allow: dict | None = None) -> None:
     """Every framed entry names exactly one frame of its board (boards missing from the index are rows' business)."""
-    validate_mapping(mapping)
+    validate_mapping(mapping, allow)
     for ix in index if isinstance(index, list) else [index]:
         for m in mapping["boards"]:
             f = m.get("board_file") or m["board"]
@@ -724,7 +800,7 @@ def _want_container(ix: dict, m: dict) -> None:
         raise ValueError(f"entry {m.get('entry') or m['board']}: the index was built without container {sel!r}: run `boards index --mapping` again")
 
 
-def validate_mapping(mapping: dict) -> None:
+def validate_mapping(mapping: dict, allow: dict | None = None) -> None:
     """The mapping file's shape: entries of board (or board_file), route (a path, or null), surface (an extension or Electron app),
     frame (one frame of a multi-frame board), state, theme ("light", "dark" or "light, dark"), viewport ([w, h] or null),
     min_match and tolerances (overrides). Other keys (entry, series, capture, note ...) are bookkeeping."""
@@ -749,16 +825,21 @@ def validate_mapping(mapping: dict) -> None:
             if rt:
                 raise ValueError(f"entry {who}: give a route or a surface, not both")
             try:
-                validate_surface(m["surface"])
+                validate_surface(m["surface"], allow)  # the contract row's allowlist, or none: a mapping cannot widen it
             except ValueError as e:
                 raise ValueError(f"entry {who}: {e}") from None
         if m.get("frame") is not None:
             validate_frame(m["frame"], f"entry {who}")
-        for key in ("tolerances", "min_match"):
-            v = m.get(key, mapping.get(key))
-            if v is not None and not (isinstance(v, dict) and all(isinstance(x, (int, float)) and x >= 0 for x in v.values()) if key == "tolerances"
-                                      else isinstance(v, (int, float)) and 0 < v <= 1):
-                raise ValueError(f"entry {who}: {key} is a map of property to px, or a ratio above 0 and up to 1")
+        if m.get("ready") is not None:
+            validate_ready(m["ready"], f"entry {who}")
+        v = m.get("min_match", mapping.get("min_match"))
+        if v is not None and not (isinstance(v, (int, float)) and not isinstance(v, bool) and MIN_MATCH <= v <= 1):
+            raise ValueError(f"entry {who}: min_match is a ratio from {MIN_MATCH:g} to 1 (it cannot lower the default)")
+        t = m.get("tolerances", mapping.get("tolerances"))
+        if t is not None and not (isinstance(t, dict) and all(k in TOL_PROPS and isinstance(x, (int, float)) and not isinstance(x, bool)
+                                                              and 0 <= x <= TOL_CAP for k, x in t.items())):
+            raise ValueError(f"entry {who}: tolerances map a numeric property ({', '.join(sorted(TOL_PROPS)[:4])} ...) to 0 to {TOL_CAP:g}px; "
+                             "colours and text stay exact")
 
 
 def _pick(indexes: list[dict], vp) -> dict | None:
@@ -774,11 +855,60 @@ def _values(n: dict, props: list[str]) -> list[str]:
     return [n["style"].get(p, "") if p in CANVAS_STYLE else _fmt(n["box"][p], p) for p in props]
 
 
-def canvas_rows(index: dict | list[dict], mapping: dict, repo: str | None = None) -> dict:
+MAX_ROOT_GROUP = 50  # repeated nodes with no unique ancestor: order alone is a stable locator only for a short list
+
+
+def _label(n: dict) -> str:
+    return f"{n['role']}:{n['name']}" if n["name"] else n["role"]
+
+
+def anchor_nodes(all_nodes: list[dict], scope: set[int] | None, props: list[str]) -> tuple[list[dict], list[str]]:
+    """Row nodes of one board (or frame): a node whose locator is unique in scope is matched by it. Nodes that share a locator are
+    anchored: each to its nearest ancestor (a candidate node, not text, with a locator unique in scope: a landmark, heading or named
+    region) and given its occurrence index among the same-locator nodes under that anchor, in document order; with no such ancestor the
+    anchor is the board or frame root. A root-anchored group longer than MAX_ROOT_GROUP has no stable anchored locator: unmeasurable.
+    `scope` holds ids of the nodes inside the selected frame (None: all)."""
+    pick = [i for i, n in enumerate(all_nodes) if scope is None or id(n) in scope]
+    inscope = set(pick)
+    count: dict[str, int] = {}
+    for i in pick:
+        k = _lkey(all_nodes[i]["locator"])
+        count[k] = count.get(k, 0) + 1
+
+    def anchor_of(i: int) -> int:
+        p = all_nodes[i].get("parent", -1)
+        while p >= 0:
+            if p in inscope and all_nodes[p]["role"] != "text" and count[_lkey(all_nodes[p]["locator"])] == 1:
+                return p
+            p = all_nodes[p].get("parent", -1)
+        return -1
+    groups: dict[tuple[str, int], list[int]] = {}
+    for i in pick:
+        k = _lkey(all_nodes[i]["locator"])
+        if count[k] > 1:
+            groups.setdefault((k, anchor_of(i)), []).append(i)
+    out, bad = [], []
+    for i in pick:
+        n = all_nodes[i]
+        k = _lkey(n["locator"])
+        rec = {"n": _label(n), "l": n["locator"], "v": _values(n, props)}
+        if count[k] > 1:
+            a = anchor_of(i)
+            grp = groups[(k, a)]
+            if a < 0 and len(grp) > MAX_ROOT_GROUP:
+                bad.append(_label(n))
+                continue
+            rec |= {"a": all_nodes[a]["locator"] if a >= 0 else None, "i": grp.index(i), "g": len(grp)}
+            rec["n"] += f"[{rec['i']}] in {_label(all_nodes[a]) if a >= 0 else 'page'}"
+        out.append(rec)
+    return out, bad
+
+
+def canvas_rows(index: dict | list[dict], mapping: dict, repo: str | None = None, allow: dict | None = None) -> dict:
     """One aggregate row per mapping entry and theme: every node of the board (of the selected frame) whose locator is unique there,
     with the values of the token properties. Nodes that share a locator are listed on the row as unmeasurable, never dropped silently.
     What cannot be measured at all goes under unsupported. `index` is one index, or one per viewport; `repo` keeps one app's entries."""
-    validate_mapping(mapping)
+    validate_mapping(mapping, allow)
     indexes = index if isinstance(index, list) else [index]
     rows: list[dict] = []
     unsupported: list[dict] = []
@@ -815,38 +945,65 @@ def canvas_rows(index: dict | list[dict], mapping: dict, repo: str | None = None
             if not nodes:
                 unsupported.append({"id": who, "reason": "no candidate nodes" + (" in the frame" if m.get("frame") else "")})
                 continue
-            seen: dict[str, int] = {}
-            for n in nodes:
-                seen[_lkey(n["locator"])] = seen.get(_lkey(n["locator"]), 0) + 1
             if who in ids:
                 raise ValueError(f"two mapping entries produce the row {who}: give each entry its own entry id")
             ids.add(who)
-            label = lambda n: f"{n['role']}:{n['name']}" if n["name"] else n["role"]  # noqa: E731
+            members, unmeasurable = anchor_nodes(entry["nodes"], None if not m.get("frame") else {id(n) for n in nodes}, props)
             rows.append({"id": who, "entry": ident, "board": f, "route": m.get("route"), "surface": m.get("surface"),
                          "theme": theme, "theme_attr": ix.get("attr") or mapping.get("theme_attr"), "viewport": ix["viewport"],
-                         "state": m.get("state", "default"), "frame": m.get("frame"), "props": props,
-                         "nodes": [{"n": label(n), "l": n["locator"], "v": _values(n, props)} for n in nodes if seen[_lkey(n["locator"])] == 1],
-                         "unmeasurable": sorted({label(n) for n in nodes if seen[_lkey(n["locator"])] > 1}),
-                         "unmeasurable_nodes": sum(1 for n in nodes if seen[_lkey(n["locator"])] > 1),
+                         "state": m.get("state", "default"), "frame": m.get("frame"), "ready": m.get("ready"), "props": props,
+                         "nodes": members, "unmeasurable": sorted(set(unmeasurable)), "unmeasurable_nodes": len(unmeasurable),
                          "min_match": m.get("min_match", mapping.get("min_match", MIN_MATCH)),
                          "tol": {**mapping.get("tolerances", {}), **m.get("tolerances", {})}})
     return {"rows": rows, "unsupported": unsupported}
 
 
+def _under(app_nodes: list[dict], j: int, anchor: int) -> bool:
+    p = app_nodes[j].get("parent", -1)
+    while p >= 0:
+        if p == anchor:
+            return True
+        p = app_nodes[p].get("parent", -1)
+    return False
+
+
 def judge(row: dict, app_nodes: list[dict]) -> dict:
-    """Compare a row with the nodes found in the app: a board node is matched when its locator is found exactly once in the app."""
-    found: dict[str, list[dict]] = {}
-    for n in app_nodes:
-        found.setdefault(_lkey(n["locator"]), []).append(n)
+    """Compare a row with the nodes found in the app. A board node with a unique locator is matched when the app has it exactly once.
+    A repeated node is matched by its anchored locator: the anchor must be found exactly once in the app, and the node is the i-th
+    same-locator node under it in document order. An anchor or index the app cannot resolve is unmatched, never a pass; a different
+    number of same-locator nodes under the anchor is a mismatch of its own (a dropped or added row)."""
+    found: dict[str, list[int]] = {}
+    for j, n in enumerate(app_nodes):
+        found.setdefault(_lkey(n["locator"]), []).append(j)
     props, ov = row["props"], row.get("tol") or {}
-    matched, unmatched, mismatches = 0, [], []
+    matched, unmatched, mismatches, counted = 0, [], [], set()
     for bn in row["nodes"]:
-        hit = found.get(_lkey(bn["l"]), [])
-        if len(hit) != 1:
-            unmatched.append(bn["n"])
-            continue
+        k = _lkey(bn["l"])
+        if "i" not in bn:
+            hit = found.get(k, [])
+            if len(hit) != 1:
+                unmatched.append(bn["n"])
+                continue
+            target = app_nodes[hit[0]]
+        else:
+            if bn.get("a") is None:
+                members = found.get(k, [])
+            else:
+                anchors = found.get(_lkey(bn["a"]), [])
+                if len(anchors) != 1:
+                    unmatched.append(bn["n"])
+                    continue
+                members = [j for j in found.get(k, []) if _under(app_nodes, j, anchors[0])]
+            gid = (k, _lkey(bn["a"]) if bn.get("a") is not None else "")
+            if len(members) != bn["g"] and gid not in counted:
+                counted.add(gid)
+                mismatches.append({"node": bn["n"], "prop": "occurrences", "board": str(bn["g"]), "app": str(len(members))})
+            if bn["i"] >= len(members):
+                unmatched.append(bn["n"])
+                continue
+            target = app_nodes[members[bn["i"]]]
         matched += 1
-        for p, want, have in zip(props, bn["v"], _values(hit[0], props), strict=True):
+        for p, want, have in zip(props, bn["v"], _values(target, props), strict=True):
             if not same(p, want, have, ov):
                 mismatches.append({"node": bn["n"], "prop": p, "board": want, "app": have})
     return {"matched": matched, "measurable": len(row["nodes"]), "unmatched": unmatched, "mismatches": mismatches}
@@ -859,15 +1016,16 @@ def verdict(row: dict, res: dict) -> tuple[bool, list[str]]:
     n_un, total = row.get("unmeasurable_nodes", len(row.get("unmeasurable", []))), res["measurable"] + row.get("unmeasurable_nodes", 0)
     ratio = res["matched"] / res["measurable"] if res["measurable"] else 0.0
     unproven = total == 0 or n_un / total > UNMEASURABLE_MAX
-    ok = not unproven and ratio >= row.get("min_match", MIN_MATCH) and not res["mismatches"]
+    floor = max(float(row.get("min_match", MIN_MATCH)), MIN_MATCH)  # a row cannot lower the bar below the default
+    ok = not unproven and ratio >= floor and not res["mismatches"]
     head = f"{res['matched']}/{res['measurable']} measurable nodes matched ({ratio:.1%}), {len(res['mismatches'])} mismatches, {n_un} unmeasurable"
     lines = [f"{'PASS' if ok else 'FAIL'} {row['id']}: {head}"]
     for m in res["mismatches"][:50]:
         lines.append(f"  MISMATCH {row['id']} {m['node']} {m['prop']}: board {m['board']}, app {m['app']}")
     if len(res["mismatches"]) > 50:
         lines.append(f"  ... {len(res['mismatches']) - 50} more mismatches")
-    if ratio < row.get("min_match", MIN_MATCH):
-        lines.append(f"  below min_match {row.get('min_match', MIN_MATCH):g}; not found once in the app: {', '.join(res['unmatched'][:10])}"
+    if ratio < floor:
+        lines.append(f"  below min_match {floor:g}; not found once in the app: {', '.join(res['unmatched'][:10])}"
                      + (f" (+{len(res['unmatched']) - 10})" if len(res["unmatched"]) > 10 else ""))
     if n_un:
         lines.append(f"  UNMEASURABLE {row['id']}: {n_un} nodes share a locator on the board: {', '.join(row.get('unmeasurable', [])[:10])}")
@@ -883,7 +1041,7 @@ def _app_nodes(page, nav: str | None, row: dict, cur: dict) -> list[dict]:
     if nav is not None:
         url = nav + (row["route"] if not s else "/" + s["page"].lstrip("/"))
     if url and url != cur.get("url"):
-        page.goto(url, wait_until="networkidle")
+        goto(page, url, row.get("ready"))
         cur.update(url=url, theme=None)
     if row.get("viewport") and (s or {}).get("kind") != "electron":
         page.set_viewport_size(row["viewport"])
@@ -896,7 +1054,7 @@ def _app_nodes(page, nav: str | None, row: dict, cur: dict) -> list[dict]:
     return page.evaluate(_NODES, [CANVAS_STYLE, [], []])["nodes"]
 
 
-def measure_rows(spec: dict, rows: list[dict], executable: str | None, root: Path) -> list[dict]:
+def measure_rows(spec: dict, rows: list[dict], executable: str | None, root: Path, allow: dict | None = None) -> list[dict]:
     """Judge every row. All rows of one surface run in one browser session: one launch for the web rows, one per extension or app."""
     from playwright.sync_api import sync_playwright
 
@@ -908,7 +1066,7 @@ def measure_rows(spec: dict, rows: list[dict], executable: str | None, root: Pat
         for idxs in groups.values():
             s = rows[idxs[0]].get("surface") or {"kind": "web", **spec.get("target", {})}
             page, close, nav = _launch(p, s if s.get("kind") != "web" else {"kind": "web", "url": spec.get("target", {}).get("url", "")},
-                                       executable, root)
+                                       executable, root, allow)
             cur: dict = {}
             try:
                 for i in idxs:
@@ -923,12 +1081,29 @@ def measure_rows(spec: dict, rows: list[dict], executable: str | None, root: Pat
     return out
 
 
-def _check_aggregate(spec: dict, rows: list[dict], exe: str | None) -> int:
+def row_problem(r: dict) -> str:
+    """An aggregate row that cannot be trusted to measure the token properties: wrong or empty props, nodes that do not carry them."""
+    if r.get("props") not in ([*CANVAS_STYLE, *BOX], [*CANVAS_STYLE, *BOX, *POS]):
+        return f"row {r.get('id')}: props must be exactly the token properties (and x, y when opted in), not {r.get('props')!r}"
+    if not isinstance(r.get("nodes"), list) or not all(
+            isinstance(n, dict) and len(n.get("v", [])) == len(r["props"]) and "l" in n and (
+                "i" not in n or (isinstance(n["i"], int) and isinstance(n.get("g"), int) and 0 <= n["i"] < n["g"]
+                                 and (n.get("a") is None or isinstance(n["a"], dict)))) for n in r["nodes"]):
+        return f"row {r.get('id')}: every node needs a locator, one value per property and, when repeated, an anchor, index and group size"
+    t = r.get("tol") or {}
+    if not (isinstance(t, dict) and all(k in TOL_PROPS and isinstance(x, (int, float)) and 0 <= x <= TOL_CAP for k, x in t.items())):
+        return f"row {r.get('id')}: tolerance overrides are numeric properties up to {TOL_CAP:g}px"
+    return ""
+
+
+def _check_aggregate(spec: dict, rows: list[dict], exe: str | None, allow: dict | None = None) -> int:
     root = Path.cwd()
     for r in rows:
+        if why := row_problem(r):
+            raise ValueError(why)
         s = r.get("surface")
         if s:
-            validate_surface(s)
+            validate_surface(s, allow)
             _inside(root, s.get("dist") or s["app"])
         elif not str(r.get("route", "")).startswith("/"):
             raise ValueError(f"row {r.get('id')}: a web row needs a route")
@@ -938,7 +1113,7 @@ def _check_aggregate(spec: dict, rows: list[dict], exe: str | None) -> int:
             print(f"env: browser unavailable ({why})")
             return 127
     try:
-        results = measure_rows(spec, rows, exe, root)
+        results = measure_rows(spec, rows, exe, root, allow)
     except EnvError as e:
         print(f"env: browser unavailable ({e})")
         return 127
@@ -966,6 +1141,8 @@ def _check(spec_path: str, flags: list[str] | None = None) -> int:
         print("board: --waive is gone: unmeasurable nodes are reported and never waived")
         return 2
     spec = json.loads(_safe(spec_path).read_text())
+    if "--url" in flags:  # the runner starts the app and says where it is: the origin of the contract row's ready_url
+        spec["target"] = {**spec.get("target", {}), "kind": "web", "url": _arg(flags, "--url")}
     rows, target, exe = spec.get("rows", []), spec.get("target", {}), spec.get("executable")
     if spec.get("evidence_dir"):
         _safe(spec["evidence_dir"])
@@ -978,17 +1155,20 @@ def _check(spec_path: str, flags: list[str] | None = None) -> int:
     if len(rows) < expected:
         print(f"FAIL only {len(rows)} rows, the approved contract row expects {expected}")
         return 1
+    allow = json.loads(_arg(flags, "--surface-allow", "null"))
     if any("nodes" in r for r in rows):
         if not all("nodes" in r for r in rows):
             raise ValueError("a spec holds aggregate rows or per-node rows, not both")
-        return _check_aggregate(spec, rows, exe)
+        return _check_aggregate(spec, rows, exe, allow)
+    if target.get("kind") in ("electron", "chrome-extension"):
+        validate_surface(target, allow)  # per-node rows launch the surface too, with the same contract allowlist
     if target.get("kind") != "electron":
         ok, why = browser_available(exe)
         if not ok:
             print(f"env: browser unavailable ({why})")
             return 127
     try:
-        results = measure(target, rows, exe, spec.get("evidence_dir"))
+        results = measure(target, rows, exe, spec.get("evidence_dir"), allow)
     except EnvError as e:
         print(f"env: browser unavailable ({e})")
         return 127
@@ -1038,8 +1218,9 @@ def _index_cli(argv: list[str]) -> int:
     out = _out(argv, "index.json")  # refuse a records path before any work, whether or not a browser exists
     root = _safe(argv[0])
     mapping = json.loads(_safe(_arg(argv, "--mapping")).read_text()) if "--mapping" in argv else None
+    allow = json.loads(_arg(argv, "--surface-allow", "null"))
     if mapping:
-        validate_mapping(mapping)
+        validate_mapping(mapping, allow)
     ok, why = browser_available(_arg(argv, "--executable"))
     if not ok:
         print(f"env: browser unavailable ({why})")
@@ -1051,8 +1232,15 @@ def _index_cli(argv: list[str]) -> int:
         want = {m.get("board_file") or m["board"] for m in mapping["boards"] if not m.get("viewport") or list(m["viewport"]) == [vp["width"], vp["height"]]}
         only = sorted(p.relative_to(root).as_posix() for p in root.rglob("*.dc.html") if p.name in want or p.relative_to(root).as_posix() in want)
     extra = [argv[i + 1] for i, a in enumerate(argv) if a == "--container"]
+    ready: dict[str, dict] = {}
+    for m in (mapping or {}).get("boards", []):  # a board is loaded once: entries sharing it must agree on how it is ready
+        if m.get("ready"):
+            for f in only or []:
+                if f == (m.get("board_file") or m["board"]) or f.rsplit("/", 1)[-1] == (m.get("board_file") or m["board"]):
+                    if ready.setdefault(f, m["ready"]) != m["ready"]:
+                        raise ValueError(f"board {f}: entries name different ready waits")
     idx = index_export(root, _arg(argv, "--themes", ",".join(THEMES)).split(","), vp, _arg(argv, "--attr"), _arg(argv, "--executable"), only,
-                       _containers(mapping, extra))
+                       _containers(mapping, extra), ready)
     Path(out).write_text(json.dumps(idx, separators=(",", ":")) + "\n")
     bad = [f for f, t in idx["boards"].items() if any(v["error"] for v in t.values())]
     n_frames = sum(len(t[idx["themes"][0]]["frames"]) for t in idx["boards"].values() if idx["themes"][0] in t)
@@ -1061,7 +1249,7 @@ def _index_cli(argv: list[str]) -> int:
     for f in bad:
         print(f"WARN {f}: " + "; ".join(v["error"] for v in idx["boards"][f].values() if v["error"]))
     if mapping:
-        check_frames(idx, mapping)
+        check_frames(idx, mapping, allow)
     return 0
 
 
@@ -1070,7 +1258,7 @@ def _rows_cli(argv: list[str]) -> int:
     files = [argv[i + 1] for i, a in enumerate(argv) if a == "--index"] or ["index.json"]  # one per viewport
     idx = [json.loads(_safe(f).read_text()) for f in files]
     try:
-        res = canvas_rows(idx, mapping, _arg(argv, "--repo"))
+        res = canvas_rows(idx, mapping, _arg(argv, "--repo"), json.loads(_arg(argv, "--surface-allow", "null")))
     except ValueError as e:
         print(f"mapping: {e}")
         return 2
@@ -1107,8 +1295,8 @@ def _main(argv: list[str]) -> int:
         return _extract_cli(argv[1:])
     print("usage: board.py check <spec.json> [--expected-rows N] | extract <board.json> [--tokens t.json] [--out rows.json]\n"
           "       board.py index <export-dir> [--out index.json] [--themes light,dark] [--viewport 1280x800] [--attr data-theme]\n"
-          "                      [--mapping mapping.json] [--container SELECTOR]...\n"
-          "       board.py rows <mapping.json> --index index.json [--index other.json] [--repo web] [--url http://app] [--out spec.json]")
+          "                      [--mapping mapping.json] [--container SELECTOR]... [--surface-allow JSON]\n"
+          "       board.py rows <mapping.json> --index index.json [--index other.json] [--repo web] [--url http://app] [--out spec.json] [--surface-allow JSON]")
     return 2
 
 
