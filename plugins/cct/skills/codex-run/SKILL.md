@@ -37,7 +37,7 @@ All have defaults, so the skill runs without interrogating the user. Take any th
 
 | Parameter | Default | Notes |
 | --- | --- | --- |
-| `model` | `gpt-5.5` | Passed as `-c model="<model>"`. |
+| `model` | `gpt-6.2-sol` | Passed as `-c model="<model>"`. |
 | `reasoning` | `high` | Passed as `-c model_reasoning_effort="<level>"`. One of `low`, `medium`, `high`, `xhigh`. |
 | `sandbox` | `read-only` | Codex reads but cannot write/create/delete (OS-enforced). Only widen if the user explicitly wants Codex to edit files. |
 | `prompt` | — | What Codex should do. Required. |
