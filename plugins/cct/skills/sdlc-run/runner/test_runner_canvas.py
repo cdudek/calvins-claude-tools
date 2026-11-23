@@ -657,3 +657,113 @@ def test_sdlc_stop_kills_the_started_app_through_its_pidfile_and_wait_ready_poll
     timeout = board_row(start=["sleep", "60"], ready_url=url, ready_timeout=1)
     store.stop_marker(rid).unlink()
     assert verify.run_checked(rid, timeout, [sys.executable, "-c", "x"], repo, None).exit == 127
+
+
+# ---- security review -------------------------------------------------------------------------------------------------------
+
+ALLOW = {"args": ["--theme", "--page"], "env": ["APP_THEME"]}
+
+
+def electron(**kw):
+    return {"kind": "electron", "app": "out/main.js", **kw}
+
+
+def test_surface_args_and_env_need_the_contract_rows_allowlist_and_launcher_switches_stay_denied():
+    ok = electron(args=["--theme=dark", "--page=a/b.html", "--theme"], env={"APP_THEME": "dark"})
+    assert board.validate_surface(ok, ALLOW, enforce=True)
+    for bad in (electron(args=["--gpu-launcher=sh"]), electron(args=["--utility-cmd-prefix=x"]), electron(args=["--browser-subprocess-path=/x"]),
+                electron(args=["--other"]), electron(args=["--theme=/etc/passwd"]), electron(args=["--theme=../x"]), electron(args=["--theme=a;rm"]),
+                electron(args=["--theme=$(id)"]), electron(args=["--theme=~/x"]), electron(args=["--theme=a b"]), electron(env={"OTHER": "1"})):
+        with pytest.raises(ValueError):
+            board.validate_surface(bad, ALLOW, enforce=True)
+    with pytest.raises(ValueError, match="not in the contract row's surface_allow.args"):
+        board.validate_surface(electron(args=["--theme=dark"]), None, enforce=True)  # no allowlist: nothing may be passed
+    assert board.validate_surface(electron(), None, enforce=True)
+    for bad in ({"args": ["--gpu-launcher"]}, {"args": ["--user-data-dir"]}, {"args": ["theme"]}, {"env": ["NODE_OPTIONS"]}, {"env": ["PATH"]},
+                {"env": ["lower"]}, {"other": []}, {"args": "x"}):
+        with pytest.raises(ValueError):
+            board.validate_allow(bad)
+    row = board_row(surface_allow=ALLOW)
+    row.pop("runner", None)
+    contract.validate_contract({"checks": [row]})
+    assert contract.runner_of(row)[-2:] == ["--surface-allow", json.dumps(ALLOW, sort_keys=True)]
+    assert "--surface-allow" not in contract.runner_of(board_row())
+    with pytest.raises(SdlcError, match="surface_allow must be"):
+        contract.validate_contract({"checks": [board_row(surface_allow={"args": ["--gpu-launcher"]})]})
+
+
+def test_a_spec_or_mapping_cannot_widen_what_the_contract_allows(tmp_path, capsys):
+    row = {**row_of(["n"]), "props": [*board.CANVAS_STYLE, *board.BOX], "theme": "light", "surface": electron(args=["--theme=dark"]),
+           "allow": ALLOW}  # an `allow` of its own in the row or the spec is not read
+    row["nodes"][0]["v"] = ["1"] * 21
+    f = tmp_path / "s.json"
+    f.write_text(json.dumps({"rows": [row], "surface_allow": ALLOW, "target": {}}))
+    assert board.main(["check", str(f)]) == 2 and "not in the contract row's surface_allow.args" in capsys.readouterr().out
+    capsys.readouterr()
+    assert board.main(["check", str(f), "--surface-allow", json.dumps({"args": ["--gpu-launcher"]})]) == 2
+    assert "surface_allow must be" in capsys.readouterr().out  # the flag is validated too
+
+
+def test_the_runner_picks_the_port_and_passes_it_as_port_and_in_start_and_ready_url(tmp_path):
+    repo, _, rid = a_board_run(tmp_path)
+    row = board_row(start=[sys.executable, "-m", "http.server", "{port}", "--bind", "127.0.0.1"], ready_url="http://127.0.0.1:{port}/", ready_timeout=20)
+    row.pop("runner", None)
+    contract.validate_contract({"checks": [row]})
+    probe = [sys.executable, "-c", "import os, sys; print(os.environ['PORT'], sys.argv[-1]); print('Ran 1 checks')"]
+    job = verify.run_checked(rid, row, probe, repo, None)
+    port = job.out.split()[0]
+    assert job.exit == 0 and port.isdigit() and f"{port} http://127.0.0.1:{port}" in job.out
+
+
+def test_a_server_that_answers_but_is_not_the_started_app_is_refused(tmp_path):
+    import http.server
+    import threading
+    import time
+    repo, _, rid = a_board_run(tmp_path)
+    port = free_port()
+    started = []
+
+    def late_decoy():  # appears after the runner's "already answers" check, as a race would
+        time.sleep(1.0)
+        srv = http.server.HTTPServer(("127.0.0.1", port), http.server.SimpleHTTPRequestHandler)
+        started.append(srv)
+        threading.Thread(target=srv.serve_forever, daemon=True).start()
+    threading.Thread(target=late_decoy).start()
+    row = board_row(start=["sleep", "30"], ready_url=f"http://127.0.0.1:{port}/", ready_timeout=10)
+    job = verify.run_checked(rid, row, [sys.executable, "-c", "print('Ran 1 checks')"], repo, None)
+    assert job.exit == 127 and "not owned by the app this run started" in job.out and verify.classify(row, job)[0] == "BLOCKED"
+    started[0].shutdown()
+    started[0].server_close()
+    with socket.socket() as s:  # listener_pgids names the owner of a listening socket
+        s.bind(("127.0.0.1", 0))
+        s.listen()
+        import os
+        mine = verify.listener_pgids(s.getsockname()[1])
+        assert mine == {os.getpgid(0)} and os.getpgid(0) != 1
+
+
+def test_without_lsof_the_row_is_blocked_env_and_never_passes(tmp_path, monkeypatch):
+    repo, _, rid = a_board_run(tmp_path)
+    port = free_port()
+    row = board_row(start=[sys.executable, "-m", "http.server", str(port), "--bind", "127.0.0.1"], ready_url=f"http://127.0.0.1:{port}/", ready_timeout=20)
+    real = verify.shutil.which
+    monkeypatch.setattr(verify.shutil, "which", lambda n, *a, **k: None if n == "lsof" else real(n, *a, **k))
+    job = verify.run_checked(rid, row, [sys.executable, "-c", "print('Ran 1 checks')"], repo, None)
+    v, why, _ = verify.classify(row, job)
+    assert v == "BLOCKED" and "lsof is not installed" in why
+    with pytest.raises(OSError), socket.create_connection(("127.0.0.1", port), timeout=1):  # and the app was stopped
+        pass
+
+
+def test_a_check_id_is_one_safe_name_and_the_job_label_is_one_file_name(tmp_path):
+    for bad in ("../../x", "a b", "a/../b", "", "/abs", "x" * 81, "a\nb", ".hidden"):
+        with pytest.raises(SdlcError, match="check id"):
+            contract.validate_contract({"checks": [tk.chk(bad, "app", ["true"])]})
+    contract.validate_contract({"checks": [tk.chk("full:web", "app", ["true"]), tk.chk("ui/checkout-1.a", "app", ["true"])]})
+    assert verify.safe_label("app", "../../x") == "app-x" and "/" not in verify.safe_label("a/b", "c d")
+    repo, _, rid = a_board_run(tmp_path)
+    port = free_port()
+    row = board_row(start=["sleep", "60"], ready_url=f"http://127.0.0.1:{port}/", ready_timeout=1)
+    row["id"] = "../../../escape"  # a hand-edited contract that skipped validation still cannot write outside jobs/
+    verify.run_checked(rid, row, [sys.executable, "-c", "x"], repo, None)
+    assert not (tmp_path / "escape-app.pid").exists() and not any(p.name.startswith("escape") for p in tmp_path.rglob("*escape*") if p.is_file())

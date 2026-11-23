@@ -192,8 +192,37 @@ def _rel_ok(p) -> bool:
     return isinstance(p, str) and p != "" and "\\" not in p and "\0" not in p and not p.startswith(("/", "~")) and ".." not in p.split("/")
 
 
-def validate_surface(s) -> dict:
-    """The surface of one entry, or ValueError. Paths are checked lexically here and against the real tree (symlinks) at check time."""
+# a second layer under the contract allowlist: switches that run another program, load code, move the profile or open a debugger
+ARG_DENY_RX = re.compile(r"launcher|cmd-prefix|subprocess|gdb|wrapper|plugin|extension|user-data|crash|debug|inspect|require|js-flags|proxy|host-rules"
+                         r"|no-sandbox|disable-web-security|remote-|exec|preload|flag-switches|enable-features|ozone-platform-hint")
+
+
+def _denied(a: str) -> bool:
+    return a.lower().startswith(ARG_DENY) or ARG_DENY_RX.search(a.partition("=")[0].lower()) is not None
+
+
+OPT_NAME = re.compile(r"^--[a-z][a-z0-9-]{0,60}$")
+ARG_VALUE = re.compile(r"^[A-Za-z0-9_.,:+@%=-]+(/[A-Za-z0-9_.,:+@%=-]+)*$")  # no leading /, ~, spaces, quotes, $, ; | & ` ( )
+
+
+def validate_allow(allow, who: str = "surface_allow") -> dict:
+    """The contract row's list of what an Electron surface may be given: option names and env keys, nothing else."""
+    if allow is None:
+        return {"args": [], "env": []}
+    ok = isinstance(allow, dict) and set(allow) <= {"args", "env"} and all(isinstance(allow.get(k, []), list) for k in ("args", "env"))
+    if ok:
+        ok = all(isinstance(a, str) and OPT_NAME.match(a) and not _denied(a) for a in allow.get("args", [])) and all(
+            isinstance(k, str) and ENV_KEY.match(k) and not ENV_DENY.match(k) for k in allow.get("env", []))
+    if not ok:
+        raise ValueError(f'{who} must be {{"args": ["--option"], "env": ["KEY"]}}: long option names and env keys of the app, none a launcher, '
+                         "code-loading, profile or debugging switch")
+    return {"args": list(allow.get("args", [])), "env": list(allow.get("env", []))}
+
+
+def validate_surface(s, allow: dict | None = None, enforce: bool = False) -> dict:
+    """The surface of one entry, or ValueError. Paths are checked lexically here and against the real tree (symlinks) at check time.
+    With `enforce` an Electron surface may only carry the args and env keys the approved contract row lists (`allow`): the mapping and
+    spec files cannot widen it. The shape rules and the denylist stay as a second layer."""
     if not isinstance(s, dict) or s.get("kind") not in ("chrome-extension", "electron"):
         raise ValueError('surface.kind must be "chrome-extension" or "electron" (a web route needs no surface)')
     if s["kind"] == "chrome-extension":
@@ -208,8 +237,18 @@ def validate_surface(s) -> dict:
     if not isinstance(env, dict) or not all(isinstance(k, str) and isinstance(v, str) and ENV_KEY.match(k) and not ENV_DENY.match(k)
                                             for k, v in env.items()):
         raise ValueError("surface.env keys must match [A-Z][A-Z0-9_]* and not be PATH, HOME, BASH_ENV, ELECTRON_*, NODE_*, SDLC_*, LD_* or DYLD_*")
-    if not isinstance(args, list) or not all(isinstance(a, str) and ARG_OK.match(a) and not a.lower().startswith(ARG_DENY) for a in args):
+    if not isinstance(args, list) or not all(isinstance(a, str) and ARG_OK.match(a) and not _denied(a) for a in args):
         raise ValueError("surface.args must be long options (--name or --name=value) of the app, none of them a code-loading, profile or debugging flag")
+    if enforce:
+        allow = validate_allow(allow)
+        if bad := [k for k in env if k not in allow["env"]]:
+            raise ValueError(f"surface.env {', '.join(bad)} is not in the contract row's surface_allow.env")
+        for a in args:
+            name, _, value = a.partition("=")
+            if name not in allow["args"]:
+                raise ValueError(f"surface arg {name} is not in the contract row's surface_allow.args")
+            if "=" in a and not ARG_VALUE.match(value) or ".." in value.split("/"):
+                raise ValueError(f"surface arg {name} has a value that looks like an absolute path, a command or a path outside the repo")
     return s
 
 
@@ -974,14 +1013,14 @@ def row_problem(r: dict) -> str:
     return ""
 
 
-def _check_aggregate(spec: dict, rows: list[dict], exe: str | None) -> int:
+def _check_aggregate(spec: dict, rows: list[dict], exe: str | None, allow: dict | None = None) -> int:
     root = Path.cwd()
     for r in rows:
         if why := row_problem(r):
             raise ValueError(why)
         s = r.get("surface")
         if s:
-            validate_surface(s)
+            validate_surface(s, allow, enforce=True)
             _inside(root, s.get("dist") or s["app"])
         elif not str(r.get("route", "")).startswith("/"):
             raise ValueError(f"row {r.get('id')}: a web row needs a route")
@@ -1036,7 +1075,7 @@ def _check(spec_path: str, flags: list[str] | None = None) -> int:
     if any("nodes" in r for r in rows):
         if not all("nodes" in r for r in rows):
             raise ValueError("a spec holds aggregate rows or per-node rows, not both")
-        return _check_aggregate(spec, rows, exe)
+        return _check_aggregate(spec, rows, exe, json.loads(_arg(flags, "--surface-allow", "null")))
     if target.get("kind") != "electron":
         ok, why = browser_available(exe)
         if not ok:

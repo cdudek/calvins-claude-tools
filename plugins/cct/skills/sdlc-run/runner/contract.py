@@ -7,6 +7,7 @@ contract or another set of pinned files is stale. Receipts are unsigned: the plu
 """
 from __future__ import annotations
 
+import json
 import re
 import subprocess
 import sys
@@ -129,15 +130,18 @@ def validate_placeholders(c: dict) -> None:
                     raise SdlcError(f"check {k['id']}: {{producer_sha:{m[1]}}} names a repo the contract does not know")
 
 
-READY_URL = re.compile(r"^http://(127\.0\.0\.1|localhost)(:\d{2,5})?(/[A-Za-z0-9._~/%?&=-]*)?$")
-BOARD_KEYS = {"spec", "expected_rows", "build", "start", "ready_url", "ready_timeout"}
+READY_URL = re.compile(r"^http://(127\.0\.0\.1|localhost)(:(\d{2,5}|\{port\}))?(/[A-Za-z0-9._~/%?&=-]*)?$")
+BOARD_KEYS = {"spec", "expected_rows", "build", "start", "ready_url", "ready_timeout", "surface_allow"}
 
 
 def runner_of(chk: dict) -> list[str]:
     """The argv a check runs. A `"kind": "board"` row names no runner path: the runner's own board.py runs the pinned spec."""
     if chk.get("kind") == "board":
         b = chk["board"]
-        return [sys.executable, str(Path(__file__).with_name("board.py")), "check", b["spec"], "--expected-rows", str(b["expected_rows"])]
+        argv = [sys.executable, str(Path(__file__).with_name("board.py")), "check", b["spec"], "--expected-rows", str(b["expected_rows"])]
+        if b.get("surface_allow"):  # from the approved row, never from the spec: the spec cannot widen what a surface may be given
+            argv += ["--surface-allow", json.dumps(b["surface_allow"], sort_keys=True)]
+        return argv
     return chk["runner"]
 
 
@@ -153,6 +157,12 @@ def validate_board_row(chk: dict) -> None:
     n = b.get("expected_rows")
     if not (isinstance(n, int) and not isinstance(n, bool) and n > 0):
         raise SdlcError(f"{who}: board.expected_rows must be a whole number above 0")
+    if b.get("surface_allow") is not None:
+        import board
+        try:
+            board.validate_allow(b["surface_allow"], f"{who}: board.surface_allow")
+        except ValueError as e:
+            raise SdlcError(str(e)) from None
     build = b.get("build")
     if build is not None and not (isinstance(build, list) and build and all(isinstance(a, str) for a in build)):
         raise SdlcError(f"{who}: board.build is an argv list")
@@ -233,6 +243,8 @@ def validate_contract(c: dict) -> None:
         for f in CHECK_FIELDS:
             if f not in chk and not (f == "runner" and chk.get("kind") == "board"):
                 raise SdlcError(f"contract check {chk.get('id', '?')} lacks {f}")
+        if not (isinstance(chk["id"], str) and CHECK_ID.match(chk["id"]) and ".." not in chk["id"]):
+            raise SdlcError(f"check id {chk['id']!r} must be letters, digits and . _ : / - (up to 80), starting with a letter or digit, no ..")
         if chk["id"] in ids:
             raise SdlcError(f"duplicate contract check {chk['id']}")
         ids.add(chk["id"])
@@ -249,6 +261,7 @@ def validate_contract(c: dict) -> None:
 
 
 # ---- the spec the checks must cover (4.2) -------------------------------------------------------------------------------
+CHECK_ID = re.compile(r"^[A-Za-z0-9][A-Za-z0-9._:/-]{0,79}$")
 SPEC_ID = re.compile(r"^[A-Za-z0-9][A-Za-z0-9._-]{0,39}$")
 
 

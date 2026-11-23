@@ -309,8 +309,36 @@ def answers(url: str) -> bool:
         return False
 
 
-def wait_ready(rid: str, url: str, seconds: int, proc: subprocess.Popen) -> str:
-    """"" when the app we started answers `url` and still runs, else why not: it exited, the owner stopped the run, or the deadline passed."""
+def safe_label(*parts: str) -> str:
+    """A job label that is one file name: never a path, whatever a check id holds."""
+    return "-".join(re.sub(r"[^A-Za-z0-9._]+", "_", p).strip("._") or "x" for p in parts)[:120]
+
+
+def free_port() -> int:
+    import socket
+    with socket.socket() as s:
+        s.bind(("127.0.0.1", 0))
+        return s.getsockname()[1]
+
+
+def listener_pgids(port: int) -> set[int] | None:
+    """Process groups that listen on 127.0.0.1:<port>, from lsof; None when lsof cannot be run (then nothing can be proven)."""
+    if not shutil.which("lsof"):
+        return None
+    r = subprocess.run(["lsof", "-nP", f"-iTCP:{port}", "-sTCP:LISTEN", "-Fp"], capture_output=True, text=True)
+    out = set()
+    for line in r.stdout.splitlines():
+        if line.startswith("p") and line[1:].isdigit():
+            try:
+                out.add(os.getpgid(int(line[1:])))
+            except ProcessLookupError:
+                pass
+    return out
+
+
+def wait_ready(rid: str, url: str, port: int, seconds: int, proc: subprocess.Popen) -> str:
+    """"" when the app we started answers `url` AND the socket listening on `port` belongs to its process group, else why not: it exited,
+    something else owns the port, the owner stopped the run or the deadline passed. "env:" means nothing could be proven."""
     end = time.time() + seconds
     while time.time() < end:
         if store.is_stopped(rid):
@@ -318,7 +346,14 @@ def wait_ready(rid: str, url: str, seconds: int, proc: subprocess.Popen) -> str:
         if proc.poll() is not None:
             return f"the app exited (code {proc.returncode}) before {url} answered"
         if answers(url):
-            time.sleep(0.2)  # a server of ours answers, and must still be ours a moment later (a stale server could have answered)
+            owners = listener_pgids(port)
+            if owners is None:
+                return "env: lsof is not installed, so the runner cannot prove that the server on the port is the app it started"
+            if proc.poll() is not None:
+                return f"the app exited (code {proc.returncode}) right after {url} answered"
+            if proc.pid not in owners:
+                return f"the server answering {url} is not owned by the app this run started (listening process groups: {sorted(owners) or 'none'})"
+            time.sleep(0.2)  # ours answers, and must still be running a moment later
             return "" if proc.poll() is None else f"the app exited (code {proc.returncode}) right after {url} answered"
         time.sleep(0.5)
     return f"the app did not answer {url} within {seconds}s"
@@ -341,10 +376,11 @@ def spec_url_problem(chk: dict, wt: Path, ready_url: str) -> str:
 
 def run_checked(rid: str, chk: dict, argv: list[str], wt: Path, env: dict | None) -> Job:
     """run_job, and for a board row: `build` first (a failure fails the row unmeasured), then `start`: the web app in its own process
-    group (pidfile written, so `sdlc stop` kills it), refused when ready_url already answers, awaited while it keeps running, the check
-    measuring ready_url's origin, and the app stopped afterwards however the check ended."""
+    group on a port the runner picked (`{port}` in start and ready_url, PORT in the environment), pidfile written so `sdlc stop` kills it,
+    awaited until the listening socket is proven to be the app's, the check measuring ready_url's origin, and the app stopped afterwards
+    however the check ended."""
     b = chk.get("board") or {}
-    label = f"{chk['repo']}-{chk['id']}"
+    label = safe_label(chk["repo"], chk["id"])
     if b.get("build"):  # approved in the contract; same job path, deadline and env allowlist (`env`) as the check itself
         built = run_job(rid, f"{label}-build", b["build"], wt, env=env, allow=chk.get("env"))
         if built.killed or built.exit in (126, 127):
@@ -353,7 +389,11 @@ def run_checked(rid: str, chk: dict, argv: list[str], wt: Path, env: dict | None
             return Job(built.exit, f"BUILD FAILED (exit {built.exit}): the row was not measured\n{built.out[-400:]}")
     if not b.get("start"):
         return run_job(rid, label, argv, wt, env=env, allow=chk.get("env"))
-    url = b["ready_url"]
+    from urllib.parse import urlsplit
+    ready = b["ready_url"]
+    port = free_port() if "{port}" in ready else (urlsplit(ready).port or 80)
+    url = ready.replace("{port}", str(port))
+    env = {**(env or {}), "PORT": str(port)}
     if answers(url):
         return Job(127, f"{url} already answers: a server this run did not start would be measured; stop it or change ready_url")
     if why := spec_url_problem(chk, wt, url):
@@ -361,14 +401,14 @@ def run_checked(rid: str, chk: dict, argv: list[str], wt: Path, env: dict | None
     jobs = store.run_dir(rid) / "jobs"
     jobs.mkdir(parents=True, exist_ok=True)
     try:
-        app = subprocess.Popen(b["start"], cwd=wt, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL, start_new_session=True,
-                               env=clean_env(env, chk.get("env")))
+        app = subprocess.Popen([a.replace("{port}", str(port)) for a in b["start"]], cwd=wt, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL,
+                               start_new_session=True, env=clean_env(env, chk.get("env")))
     except (FileNotFoundError, PermissionError) as e:
         return Job(127, f"cannot start the app {b['start'][0]}: {e}")
     pidf = jobs / f"{label}-app.pid"
-    pidf.write_text(json.dumps({"pid": app.pid, "ident": store.proc_ident(app.pid)}))
     try:
-        why = wait_ready(rid, url, b.get("ready_timeout", 120), app)
+        pidf.write_text(json.dumps({"pid": app.pid, "ident": store.proc_ident(app.pid)}))
+        why = wait_ready(rid, url, port, b.get("ready_timeout", 120), app)
         if why == "stop":
             return Job(143, "", "stop")
         if why:

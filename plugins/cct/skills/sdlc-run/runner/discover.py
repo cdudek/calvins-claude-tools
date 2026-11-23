@@ -376,7 +376,9 @@ def _board_lines(d: Path, c: dict) -> list[str]:
                    f"min_match {', '.join(f'{x:g}' for x in mm) or '-'}, {len(props[0]) if props else 0} properties"
                    f"{' (' + str(len(props)) + ' different lists)' if len(props) > 1 else ''}, tolerance overrides: {_one('; '.join(ov), 200) if ov else 'none'}, "
                    f"unmeasurable nodes {sum(r.get('unmeasurable_nodes', 0) for r in rows)}"
-                   + (f", app at {_code(k['board']['ready_url'])}" if k["board"].get("ready_url") else ""))
+                   + (f", app at {_code(k['board']['ready_url'])}" if k["board"].get("ready_url") else "")
+                   + (f", surface args and env allowed: {_code(json.dumps(k['board']['surface_allow'], sort_keys=True))}"
+                      if k["board"].get("surface_allow") else ", no surface args or env allowed"))
     return ["", "## Board checks", ""] + out if out else []
 
 
@@ -409,6 +411,7 @@ def screen(rid: str) -> Path:
         if k.get("kind") == "board":
             shown += "".join(f"; {w}: {' '.join(k['board'][w])}" for w in ("build", "start") if k["board"].get(w))
             shown += f"; ready_url {k['board']['ready_url']}" if k["board"].get("ready_url") else ""
+            shown += f"; surface_allow {json.dumps(k['board']['surface_allow'], sort_keys=True)}" if k["board"].get("surface_allow") else ""
         rows.append(f"| {cell(k['id'])} | {cell(k['repo'])} | {cell(shown)} | {cell(k['expect']['kind'])}"
                     f"{cell('; ' + json.dumps(k['expect'].get('value'))) if 'value' in k['expect'] else ''} | {cell(k.get('site', 'local'))} | {cell(', '.join(k.get('pins', {})) or '-')} | {cell(', '.join(k.get('env', [])) or '-')} |")
     import deps as deps_mod
