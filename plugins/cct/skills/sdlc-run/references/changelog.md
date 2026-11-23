@@ -5,6 +5,11 @@ version warning, the **Mechanical** lines are what `adopt` does for you (it adds
 with the stack's defaults and never overwrites a value), the **Manual** lines are printed for
 the engineer. A version with no migration lines needs nothing but a re-run of `adopt`.
 
+## 4.2.2 — fix
+
+- **Two kits, one runner.** When a sibling kit ships the same runner, the records guard accepts exactly one plain call of either kit's runner. The sibling is named by the owner in `<claude config dir>/sdlc-sibling-kits.json` (`{"plugins": ["<plugin name>"]}`, default none) and counts only at `skills/sdlc-run/runner/sdlc.py` of its installed copy (the plugin cache, or an install path in `installed_plugins.json`, symlinks resolved). Every other deny is unchanged.
+- **Mechanical:** none. **Manual:** with two kits installed, list the sibling plugin name in that file.
+
 ## 4.2.1 — fix
 
 - **`sdlc clean --apply` report.** The report is rendered from the inventory taken before the removal; it used to crash with FileNotFoundError on a file the apply had just deleted (the commit was already made).
