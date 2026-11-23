@@ -274,6 +274,25 @@ def test_package_json_is_edited_structurally_and_keeps_its_indent_and_key_order(
     assert out.strip() == want.strip()
 
 
+def test_a_producer_pr_passes_its_guard_mid_run_from_per_repo_receipts(tmp_path):
+    """`sdlc verify --repo kit` proves only the producer's rows on its head; `sdlc pr kit` needs no final seal and no built consumer."""
+    from types import SimpleNamespace
+
+    import sdlc
+    kit, app, rid = vendored_pilot(tmp_path)
+    land(rid, "a", {"packages/ui/i.js": "z\n"})
+    assert engine.close_milestone(rid, "m1")["status"] == "merged"
+    with pytest.raises(SdlcError, match="head is"):  # the milestone receipt ran on the milestone branch, not on the merge
+        engine.pr_guard(rid, "kit")
+    assert sdlc.cmd_verify(SimpleNamespace(run=rid, task=None, check=None, repo="kit")) == 0
+    engine.pr_guard(rid, "kit")  # the consumer is unbuilt and `final` has not run
+    with pytest.raises(SdlcError, match="app:app-gate has no receipt"):
+        engine.pr_guard(rid, "app")
+    tk.commit_file(engine.project_wt(rid, "kit"), "packages/ui/late.js", "x\n")  # a head the receipt did not run on
+    with pytest.raises(SdlcError, match="head is"):
+        engine.pr_guard(rid, "kit")
+
+
 # ---- field shapes of a real draft: object packages, a structural pin object, approved dependency lines ---------------
 
 DRAFT_EDGE = {"producer": "kit", "pack": ["npm", "pack", "--ignore-scripts"],
