@@ -652,13 +652,14 @@ def _arg(argv: list[str], flag: str, default=None):
 
 
 def _index_cli(argv: list[str]) -> int:
-    out = _out(argv, "index.json")  # refuse a records path before any work
+    out = _out(argv, "index.json")  # refuse a records path before any work, whether or not a browser exists
+    root = _safe(argv[0])
     ok, why = browser_available(_arg(argv, "--executable"))
     if not ok:
         print(f"env: browser unavailable ({why})")
         return 127
     w, _, h = _arg(argv, "--viewport", "1280x800").partition("x")
-    idx = index_export(_safe(argv[0]), _arg(argv, "--themes", ",".join(THEMES)).split(","), {"width": int(w), "height": int(h)},
+    idx = index_export(root, _arg(argv, "--themes", ",".join(THEMES)).split(","), {"width": int(w), "height": int(h)},
                        _arg(argv, "--attr"), _arg(argv, "--executable"))
     Path(out).write_text(json.dumps(idx, indent=1) + "\n")
     bad = [f for f, t in idx["boards"].items() if any(v["error"] for v in t.values())]
