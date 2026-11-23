@@ -236,7 +236,7 @@ def dispatch(rid: str, tid: str) -> dict:
              f"- Attempt: {store.load_cp(rid)['tasks'][tid]['attempts']} of {ATTEMPTS}\n\n"
              "Rules: commit your work in the worktree and report the commit SHA. Do not edit pinned tests or fixtures, test or CI "
              "configuration, or anything under ~/.sdlc. The result is graded by the runner's verifier, not by what you say.\n\n"
-             "Checks that will run on your commit:\n" + "\n".join(f"- {c['id']}: {' '.join(c['runner'])}" for c in items) + "\n")
+             "Checks that will run on your commit:\n" + "\n".join(f"- {c['id']}: {' '.join(contract.runner_of(c))}" for c in items) + "\n")
     store.atomic_write(d / "brief.md", brief)
     store.log(rid, f"dispatch {tid} attempt {store.load_cp(rid)['tasks'][tid]['attempts']} base {base[:9]}")
     return {"task": tid, "worktree": str(path), "branch": branch, "base": base, "brief": str(d / "brief.md")}
