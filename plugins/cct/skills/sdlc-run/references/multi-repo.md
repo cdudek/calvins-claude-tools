@@ -31,8 +31,8 @@ hand-offs and ran `/goal clear`. Use this pattern instead; it never needs a `/go
    ```
 
    It copies `decisions.json`, `facts.md`, `plan.md` and `done.json` into that repo's change
-   folder of the same id, then runs that repo's own `scripts/verify_gate.py approve`, which writes
-   `state/lock.json`. It refuses an unapproved source, an unadopted target, a different existing
+   folder of the same id, then runs the plugin's own gate (`python3 -E -s`, that repo as the working
+   directory; no script of that repo is ever executed) with `approve`, which writes `state/lock.json`. It refuses an unapproved source, an unadopted target, a different existing
    record and a folder that is already locked. Never write those files or a lock by hand.
 6. **Each repo's project gate runs before its push.** In every repo, `verify_gate.py milestone <id>`
    (and the project gate when the project has a branch) must print `VERIFY PASS` on the head that

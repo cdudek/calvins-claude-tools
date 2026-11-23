@@ -36,8 +36,7 @@ is DONE only with both. The gates persist each milestone's head and base there, 
 
 `repo-records <id> --repo <path>` (a project across several repos, `references/multi-repo.md`) writes the
 records another repo's gate needs under the approved plan of this one: `decisions.json`, `facts.md`, `plan.md` and
-`done.json` copied into that repo's change folder of the same id, then that repo's own `scripts/verify_gate.py approve`
-writes `state/lock.json`. Never a hand-made lock: none is written first, and a refused approve leaves nothing
+`done.json` copied into that repo's change folder of the same id, then the plugin's own gate (`python3 -E -s`, the target as cwd, none of the target's scripts run) writes `state/lock.json`. Never a hand-made lock: none is written first, and a refused approve leaves nothing
 behind. It refuses a source whose lock is not an object with `criteria` and `sha` or whose facts.md, done.json or
 plan Milestones no longer match the lock's hashes, and a folder that already holds a record or a lock unless
 `--replace`. decisions.json is never copied whole (routing fields and project only; the target's `skips` and
@@ -450,28 +449,8 @@ def record_project(root: Path, change: Path, cfg: dict, sha: str, accepted: bool
     return 0, f"recorded project sha={sha} accepted={'yes' if accepted else 'no'}"
 
 
-def target_gate_problem(target: Path, gate: Path) -> str:
-    """Why another repo's scripts/verify_gate.py may not be run by repo-records, or "": it must be a kit version
-    (kit-hashes.json, or the one this plugin ships) and tracked and unmodified in the target's git."""
-    import hashlib
-
-    known = set(read_json(Path(__file__).with_name("kit-hashes.json")).get("scripts/verify_gate.py") or [])
-    shipped = Path(__file__).resolve().parents[1] / "templates" / "scripts" / "verify_gate.py"
-    if shipped.is_file():
-        known.add(hashlib.sha256(shipped.read_bytes()).hexdigest()[:16])
-    if hashlib.sha256(gate.read_bytes()).hexdigest()[:16] not in known:
-        return "is not a version the kit shipped"
-    git = lambda *a: subprocess.run(["git", "-C", str(target), *a], capture_output=True, text=True)  # noqa: E731
-    if git("ls-files", "--error-unmatch", "scripts/verify_gate.py").returncode:
-        return "is not tracked in git"
-    if git("diff", "--quiet", "HEAD", "--", "scripts/verify_gate.py").returncode:
-        return "has uncommitted changes"
-    return ""
-
-
 def repo_records(change: Path, other: Path, replace: bool = False) -> tuple[int, str]:
-    """Write the per-repo records of an approved change into another adopted repo, then let that repo's own gate
-    lock them. The source lock must be intact: an object with `criteria` and `sha`, and EVERY criterion recomputed
+    """Write the per-repo records of an approved change into another adopted repo, then let the plugin's own gate (never a script of the target's) lock them in that repo. The source lock must be intact: an object with `criteria` and `sha`, and EVERY criterion recomputed
     by verify_gate's own `criteria_hash` from the source files and checks (a key it cannot recompute refuses).
     decisions.json is never copied whole (routing fields and project only; the target keeps its `skips` and
     `protectedEdit`). Nothing there is overwritten without `replace`, and then the old folder, lock included, is
@@ -484,13 +463,9 @@ def repo_records(change: Path, other: Path, replace: bool = False) -> tuple[int,
     target = repo_root(other)
     if not target or target != other.resolve():
         return 2, f"{other} is not the root of an adopted repo (no sdlc.json): run `sdlc-run adopt` there first"
-    gate = target / "scripts" / "verify_gate.py"
-    if not gate.is_file():
-        return 2, f"{target} has no scripts/verify_gate.py: run `sdlc-run adopt` there first"
+    gate = Path(__file__).resolve().parents[1] / "templates" / "scripts" / "verify_gate.py"  # the plugin's own: nothing of the target's runs
     if not plain_id(change.name):
         return 1, f"{change.name!r} is not a plain change id"
-    if why := target_gate_problem(target, gate):
-        return 1, f"{target.name}: its scripts/verify_gate.py {why}: run `adopt --migrate` there first"
     lock = read_json(spec.state_path(change, "lock.json"))
     if not (isinstance(lock, dict) and isinstance(lock.get("criteria"), dict) and lock.get("sha")):
         return 1, f"{change.name} has no intact lock.json (an object with `criteria` and `sha`): approve the plan in the start repo first"
@@ -552,7 +527,8 @@ def repo_records(change: Path, other: Path, replace: bool = False) -> tuple[int,
         for name, path in place.items():
             path.parent.mkdir(parents=True, exist_ok=True)
             path.write_bytes(payload[name])
-        run = subprocess.run([sys.executable, str(gate), "approve", change.name], cwd=target, capture_output=True, text=True)
+        env = {k: v for k, v in os.environ.items() if not k.startswith(("PYTHON", "GIT_"))}
+        run = subprocess.run([sys.executable, "-E", "-s", str(gate), "approve", change.name], cwd=target, capture_output=True, text=True, env=env)
         done = run.returncode == 0 and spec.state_path(dest, "lock.json").is_file()
         last = (run.stdout.strip().splitlines() or [""])[-1]
     finally:

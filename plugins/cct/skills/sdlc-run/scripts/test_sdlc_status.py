@@ -1446,25 +1446,21 @@ def test_a_refused_first_write_leaves_no_folder_and_no_empty_changes_dir(tmp_pat
     assert not (other / "changes").exists()
 
 
-def test_the_targets_gate_must_be_a_kit_version_tracked_and_unmodified(tmp_path: Path) -> None:
+def test_nothing_of_the_targets_is_ever_executed(tmp_path: Path) -> None:
     import test_verify_gate as tvg
 
     start, other = _two_repos(tmp_path)
-    gate = other / "scripts" / "verify_gate.py"
-    original = gate.read_text()
-    gate.write_text(original + "\n# local edit\n")  # modified, not committed
-    r = _records(start, other)
-    assert r.returncode == 1 and "not a version the kit shipped" in r.stdout
+    marker = tmp_path / "executed"
+    evil = f"import pathlib\npathlib.Path({str(marker)!r}).write_text('ran')\nraise SystemExit(1)\n"
+    for name in ("verify_gate.py", "spec.py", "capture.py", "marks.py", "heavy.py", "evidence.py", "preflight.py", "design_index.py"):
+        (other / "scripts" / name).write_text(evil)
+    (other / "sitecustomize.py").write_text(evil)  # a file the target's cwd could shadow
     tvg._git(other, "add", ".")
-    tvg._git(other, "commit", "-qm", "edited gate")
-    assert "not a version the kit shipped" in _records(start, other).stdout  # committed but not a kit version
-    gate.write_text(original)
-    tvg._git(other, "commit", "-qam", "kit gate again")
-    gate.write_text(original)
-    tvg._git(other, "rm", "-q", "--cached", "scripts/verify_gate.py")
-    assert "not tracked" in _records(start, other).stdout
-    tvg._git(other, "add", "scripts/verify_gate.py")
-    assert _records(start, other).returncode == 0
+    tvg._git(other, "commit", "-qm", "tampered scripts")
+    r = _records(start, other)
+    assert r.returncode == 0, r.stdout
+    assert not marker.exists()
+    assert (other / "changes" / tvg.ID).is_dir()
 
 
 def test_repo_records_refuses_a_lock_sha_that_is_not_a_commit_and_unapproved_facts(tmp_path: Path) -> None:
