@@ -5,6 +5,7 @@
     python3 ${CLAUDE_SKILL_DIR}/scripts/sdlc_status.py ids [<id>]
     python3 ${CLAUDE_SKILL_DIR}/scripts/sdlc_status.py readme [<id>]
     python3 ${CLAUDE_SKILL_DIR}/scripts/sdlc_status.py record <id> project --sha <sha> [--accepted]
+    python3 ${CLAUDE_SKILL_DIR}/scripts/sdlc_status.py repo-records <id> --repo <path-to-other-repo>
     python3 ${CLAUDE_SKILL_DIR}/scripts/sdlc_status.py worktrees [--remove PATH --into BRANCH]
     python3 ${CLAUDE_SKILL_DIR}/scripts/sdlc_status.py sweep-merged [--apply]
 
@@ -32,6 +33,12 @@ line `Blocking: <what>, because <why>; <who> runs `<step>`.` says the one thing 
 `record <id> project --sha <sha> [--accepted]` persists, for a project with no branch, the default-branch
 commit that holds every milestone and the owner's acceptance (state/heads.json); `goal <id> --project`
 is DONE only with both. The gates persist each milestone's head and base there, and a hotfix head.
+
+`repo-records <id> --repo <path>` (a project across several repos, `references/multi-repo.md`) writes the
+records another repo's gate needs under the approved plan of this one: `decisions.json`, `facts.md`, `plan.md` and
+`done.json` copied into that repo's change folder of the same id, then that repo's own `scripts/verify_gate.py approve`
+writes `state/lock.json`. Never a hand-made lock. It refuses an unapproved source and a folder that already holds a
+different record or a lock.
 
 `handoff <id> --cap turns|fix-rounds|retries [--what <words>] [--next <command>]` writes the one HANDOFF
 record of a hit cap (state/handoff.json: what, why, the exact next command) and prints it; the retry
@@ -438,6 +445,41 @@ def record_project(root: Path, change: Path, cfg: dict, sha: str, accepted: bool
         return 1, f"the owner has not accepted PROJECT-{slug}: ask `Change {change.name}, finding PROJECT-{slug}: ...` (Accept milestone | Hold) first"
     record_head(change, "project", None, {"sha": sha, "accepted": accepted})
     return 0, f"recorded project sha={sha} accepted={'yes' if accepted else 'no'}"
+
+
+def repo_records(change: Path, other: Path) -> tuple[int, str]:
+    """Write the per-repo records of an approved change into another adopted repo, then let that repo's own gate
+    lock them. One command, so no repo gets an invented hand-off or a hand-made lock."""
+    target = repo_root(other)
+    if not target or target != other.resolve():
+        return 2, f"{other} is not the root of an adopted repo (no sdlc.json): run `sdlc-run adopt` there first"
+    if not spec.state_path(change, "lock.json").is_file():
+        return 1, f"{change.name} has no lock.json: approve the plan in the start repo first"
+    changes = read_json(target / "sdlc.json").get("changesDir") or "changes"
+    dest = target / changes / change.name
+    gate = target / "scripts" / "verify_gate.py"
+    if not gate.is_file():
+        return 2, f"{target} has no scripts/verify_gate.py: run `sdlc-run adopt` there first"
+    if spec.state_path(dest, "lock.json").is_file():
+        return 1, f"{dest} is already locked: its records are final"
+    names = ("decisions.json", "facts.md", "plan.md", "done.json")
+    plan = []
+    for name in names:
+        src = spec.state_path(change, name)
+        if not src.is_file():
+            return 1, f"{change.name} has no {name}: the approved plan is incomplete"
+        out = dest / src.relative_to(change)  # state/ files stay in state/
+        if out.is_file() and out.read_bytes() != src.read_bytes():
+            return 1, f"{out} already holds a different {name}: reconcile it by hand, the command never overwrites"
+        plan.append((src, out))
+    for src, out in plan:
+        out.parent.mkdir(parents=True, exist_ok=True)
+        shutil.copyfile(src, out)
+    run = subprocess.run([sys.executable, str(gate), "approve", change.name], cwd=target, capture_output=True, text=True)
+    last = (run.stdout.strip().splitlines() or [""])[-1]
+    if run.returncode:
+        return 1, f"{target.name}: approve refused ({last or run.stderr.strip()[-200:]}). The four records are in place; fix what it names, rerun `verify_gate.py approve {change.name}` there"
+    return 0, f"REPO-RECORDS {change.name} {target.name} {last}"
 
 
 def handoff_of(change: Path) -> dict:
@@ -1162,7 +1204,7 @@ def sweep_merged(root: Path, apply: bool = False, gh=gh_json) -> list[str]:
 
 
 def main(argv: list[str]) -> int:
-    cmds = ("map", "goal", "ids", "readme", "base", "record", "handoff", "worktrees", "sweep-merged")
+    cmds = ("map", "goal", "ids", "readme", "base", "record", "handoff", "worktrees", "sweep-merged", "repo-records")
     if len(argv) < 2 or argv[1] not in cmds:
         print(__doc__)
         return 2
@@ -1187,6 +1229,14 @@ def main(argv: list[str]) -> int:
     if not change:
         print("no change folder for this branch: pass its id")
         return 2
+    if argv[1] == "repo-records":  # repo-records <id> --repo <path>
+        rest = argv[3:]
+        if "--repo" not in rest or rest.index("--repo") + 1 >= len(rest):
+            print(__doc__)
+            return 2
+        code, said = repo_records(change, Path(rest[rest.index("--repo") + 1]))
+        print(said)
+        return code
     if argv[1] == "record":  # record <id> project --sha <sha> [--accepted]
         rest = argv[3:]
         sha = rest[rest.index("--sha") + 1] if "--sha" in rest and rest.index("--sha") + 1 < len(rest) else ""

@@ -1312,3 +1312,56 @@ def test_worktrees_refuses_outside_an_adopted_repo(tmp_path: Path) -> None:
         [sys.executable, str(SCRIPT), "worktrees"], cwd=plain, capture_output=True, text=True
     )
     assert res.returncode == 2 and "sdlc.json" in res.stdout
+
+
+def _two_repos(tmp_path: Path) -> tuple[Path, Path]:
+    """A start repo with an approved change, and another adopted repo that has no folder for it yet."""
+    import test_verify_gate as tvg
+
+    start = tvg._repo(tmp_path / "a", ["true"])
+    tvg._approve(start)
+    other = tvg._repo(tmp_path / "b", ["true"])
+    shutil.rmtree(other / "changes" / tvg.ID)
+    shutil.copytree(SCRIPT.parent.parent / "templates" / "scripts", other / "scripts", ignore=shutil.ignore_patterns("__pycache__"))
+    tvg._git(other, "add", ".")
+    tvg._git(other, "commit", "-qm", "adopted")
+    return start, other
+
+
+def _records(start: Path, other: Path) -> subprocess.CompletedProcess[str]:
+    import test_verify_gate as tvg
+
+    return subprocess.run(
+        [sys.executable, str(SCRIPT), "repo-records", tvg.ID, "--repo", str(other)],
+        cwd=start, capture_output=True, text=True, env={**_env(), "HOME": str(start.parent / "home")},
+    )  # fmt: skip
+
+
+def test_repo_records_writes_every_record_and_the_other_repos_own_lock(tmp_path: Path) -> None:
+    import test_verify_gate as tvg
+
+    start, other = _two_repos(tmp_path)
+    r = _records(start, other)
+    assert r.returncode == 0 and r.stdout.startswith(f"REPO-RECORDS {tvg.ID} repo"), r.stdout + r.stderr
+    folder = other / "changes" / tvg.ID
+    for name in ("decisions.json", "facts.md", "plan.md", "done.json"):
+        assert (folder / name).read_bytes() == (start / "changes" / tvg.ID / name).read_bytes()
+    lock = folder / "state" / "lock.json"
+    assert (lock if lock.is_file() else folder / "lock.json").is_file()
+    again = _records(start, other)
+    assert again.returncode == 1 and "already locked" in again.stdout
+
+
+def test_repo_records_refuses_an_unapproved_source_and_an_unadopted_target(tmp_path: Path) -> None:
+    import test_verify_gate as tvg
+
+    start = tvg._repo(tmp_path / "a", ["true"])  # never approved: no lock
+    other = tmp_path / "plain"
+    other.mkdir()
+    assert _records(start, other).returncode == 2
+    (other / "sdlc.json").write_text("{}")
+    tvg._git(other, "init", "-q")
+    (other / "scripts").mkdir()
+    (other / "scripts" / "verify_gate.py").write_text("")
+    r = _records(start, other)
+    assert r.returncode == 1 and "no lock.json" in r.stdout

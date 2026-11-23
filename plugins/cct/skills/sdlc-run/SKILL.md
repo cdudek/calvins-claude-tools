@@ -256,7 +256,7 @@ E2E at the close, while the supervisor dispatches the reviews and the validation
 then the close builder runs the gate once. Only its
 `VERIFY PASS` head is pushed, once, with one PR; auto-merge is armed only after the owner and visual dispositions are recorded (never arm an `ask`-labelled or a closed PR), while the supervisor builds
 the next independent milestone (up to `maxBuilders` builders). CI is the last check, never the test loop:
-a red check uses the exact-test local failure loop in `references/local-first.md`, then the full suite once and one batched push. Another repository follows
+a red check uses the exact-test local failure loop in `references/local-first.md`, then the full suite once and one batched push. Several repos in one project: [multi-repo](references/multi-repo.md). Another repository follows
 the same rule on its own milestone branch; an exception needs the engineer's words in
 `decisions.json` `prExceptions`. Agents run only the tests they touched.
 GitHub's required checks are the merge gate; `pr-gate.sh` only enforces branch order (a milestone

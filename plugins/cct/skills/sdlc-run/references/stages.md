@@ -413,6 +413,9 @@ while a dependency PR's CI ran. Four rules, for every stack.
   `/goal` any other PR or push. Another repository follows the same rule with its own milestone
   branch. The only exception is the engineer's words in `decisions.json` `prExceptions`. The
   folder removal (Stage 7) is the next change's first commit, never a commit of this PR.
+- **A project across several repos follows `multi-repo.md`.** One start repo owns the goal; a dependency
+  repo is milestone M-first and consumers use a packed tarball of a frozen commit; every release PR in
+  another repo happens after the goal finishes; `sdlc_status.py repo-records` writes the per-repo records.
 - **A cross-repo dependency builds against a local copy.** When this repo needs another repo's
   unreleased code (a kit fix found by the app), link or pack it locally (`npm pack`, a
   workspace `file:` path that is not committed) and build on. The published version arrives with
