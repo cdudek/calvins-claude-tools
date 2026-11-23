@@ -546,10 +546,11 @@ Diffing a project's milestone against the trunk pulls in the sibling milestones 
 merged into the project branch, and reviews them again.
 
 Capture rules (headless, never the owner's browser) and the visual rules: [visual work](visual-work.md).
-For a change with `screens.json` the close takes **one capture batch** of every entry, then
-`evidence.py gallery <change>` writes one offline page for the owner (the board images beside the app
-shots, every deviation shown); the owner's `answers.json` is imported with `gallery <change> --import`,
-and the approved shots become the exact tests of later runs.
+For a change with `screens.json` the close takes **one capture batch** of the entries due, light and dark,
+then agents compare each capture with the pinned design (`cct:ux-build-validate` build mode and
+`cct:ux-assessment-run`) into `verify/comparison.json`, fix differences in the fix round, and the gate
+records every screen that matches as its baseline (the exact test of later runs). No owner approves a
+screen; a screen still differing after the fix round is a blocking finding.
 
 1. The same goal continues from Stage 5.
 2. Run on the diff, each once and in parallel: `cct:ux-assessment-run scope=change base=<parent>
@@ -594,8 +595,9 @@ and the approved shots become the exact tests of later runs.
    the capture of every marked and referenced screen into `marks.json`: [visual work](visual-work.md).
    **A lock with `"visual": "app"` (approved from 3.25.0) skips both:** no marks, no `--visual-run`.
    The close job's gate runs one `app-screens` check (`capture.py run`: every `screens.json` entry due by
-   this milestone, twice, against the approved baselines). With no baseline yet it blocks
-   `needs-baseline`: build `evidence.py gallery <id>`, have the owner approve, import, run the gate again.
+   this milestone, twice, against the recorded baselines). A new or changed screen with no comparison blocks
+   `needs-comparison`: compare the shots with the design, write `verify/comparison.json`, run the gate again;
+   `differs` fails `CAPTURE FAIL comparison` (fix round).
 2a. **Validation: does each feature do what the plan said?** Separate from the checks, which
    prove the code is sound. For every fact and every ask of this milestone, exercise the
       built app (E2E with the fact's tag, a headless capture of the named screen and state, or
@@ -618,7 +620,7 @@ and the approved shots become the exact tests of later runs.
    after under `## Advisory`; the gate treats every other unchecked item as open. Link the visual
    ledgers and checks. A missing or failed visual check is BLOCKED: the review did not run.
    For a lock without `"visual": "app"`: run `python3 scripts/marks.py check <id>`; open rows are blocking findings.
-   An app-locked change has no marks ledger; its screens are the gallery and `approved.json`.
+   An app-locked change has no marks ledger; its screens are the comparison report and `approved.json`.
    A `fixed` row names the passing test tag that proves it in `test` (`@F<n>`); the tag must
    appear in a `testGlobs` file or the check fails.
    Only the engineer's words in `accepted` can accept a non-fixed row; never infer acceptance.
@@ -640,7 +642,7 @@ and the approved shots become the exact tests of later runs.
    `findings.md` item ticked. **What the round leaves is settled by the owner's answer.** Per residual finding the supervisor asks one `AskUserQuestion` whose question text starts `Change <change id>, finding <finding id>: ` (for example `Change 2026-11-19-x, finding B2: the card overflows at 320. What now?`) and whose options are exactly `Fix it now`, `Accept as is`, `Defer to milestone <n>` and `Block the close`. The gate reads the structured tool result of that dialog from the session transcript (never typed text): `Accept as is` and `Defer to milestone <n>` settle the item, `Fix it now` keeps it open, `Block the close` is terminal (`findings-blocked`, also against a ticked box). The latest answer wins, an answer older than the finding is ignored, the item needs an explicit bold id (`**B2**`, `**C1**`) that no other open item shares, and the agent cannot answer for the owner. A fact that is `partly`
    or `not met` in `validation.md` is never cleared by an answer: change the scope with a new
    approval, or the milestone is held.
-6. Reopen recaptured images and rerun their visual checks (an app-locked change reviews the gallery instead). Then
+6. Reopen recaptured images and rerun their visual checks (an app-locked change reviews the comparison report instead). Then
    `python3 scripts/verify_gate.py milestone <id> --visual-check "<checker>" --visual-run "<run>"`
    once, after the fixes, never between them, run by the close builder (`Mode: close`) on a
    head nothing else touches. The gate runs the offline evidence checks first (`owner-marks`, the

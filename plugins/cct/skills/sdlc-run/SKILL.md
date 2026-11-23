@@ -12,7 +12,7 @@ description: >-
 allowed-tools: "Read Grep Glob Edit Write Agent Skill AskUserQuestion Bash(bash */sdlc-run/scripts/*) Bash(python3 */sdlc-run/scripts/*) Bash(python3 */sdlc-run/templates/scripts/sdlc_version.py*) Bash(python3 scripts/sdlc_version.py*) Bash(python3 scripts/verify_gate.py *) Bash(wt *) Bash(git *) Bash(gh *) Bash(bd *) Bash(plannotator *) Bash(make *) Bash(pnpm *) Bash(uv *) Bash(npx *) EnterWorktree mcp__claude_ai_Linear__* mcp__linear__*"
 user_invocable: true
 metadata:
-  version: 3.26.4
+  version: 3.27.0
   author: calvindudek
 effort: high
 ---
@@ -175,7 +175,7 @@ No design gate exists. `cct:ux-spec-validate spec` runs once and its findings go
 `sdlc.json` `checks.<scope>` in order, writes `changes/<id>/verify/report.{json,md}` and ends
 with one line: `VERIFY PASS <scope> <id> <sha>`, `VERIFY FAIL … check=<name>` (fix and rerun) or
 `VERIFY BLOCKED reason=<code>` (stop and ask the engineer). Reasons: `validation-not-met`, `findings-open`, `findings-blocked`, `not-converged`, `not-approved`,
-`protected-path`, `no-progress`, `attempts`, `flaky`, `unknown-verdict`, `needs-baseline`,
+`protected-path`, `no-progress`, `attempts`, `flaky`, `unknown-verdict`, `needs-comparison`,
 `allowlist-request`, `scope-growth`, `spec-conflict`, `env`, `test-proves-nothing`. A milestone blocks on a `not met` or `partly` row in `validation.md`, an unchecked item in `findings.md` outside `## Advisory`, and a `## Converge` section without `Converged:`.
 `goal` ends in `DONE` or `BLOCKED` with a state; `references/states.json` lists every state and who leaves it.
 Snapmark feedback and supplied reference images require comparison against fresh headless

@@ -105,45 +105,28 @@ def owner_answers(repo: Path, bid: str, label: str = "Approve screens", n: int =
         out.write("".join(json.dumps(e) + "\n" for e in entries))
 
 
-def _seal(repo: Path, data: dict, owner: bool = True, change_id: str = ID) -> None:
-    """Write approved.json as one batch the owner's dialog covered (`owner=False`: nobody answered it)."""
-    pairs = [[e, a["sha256"]] for e, a in data["entries"].items()]
-    bid = capture.approval_id(pairs)
-    for a in data["entries"].values():
-        a["decision"] = bid
-    data["batches"] = {bid: pairs}
-    (repo / "changes" / change_id / "screens" / "approved.json").write_text(json.dumps(data))
-    if owner:
-        owner_answers(repo, bid, change_id=change_id)
-
-
-def _seal_3_25_1(repo: Path, data: dict) -> str:
-    """approved.json as 3.25.1 wrote it: the batch id is the sha256 of the newline-joined `<entry> <sha256>` lines, no log, no head."""
-    pairs = [[e, a["sha256"]] for e, a in data["entries"].items()]
-    bid = "screens-" + hashlib.sha256("\n".join(sorted(f"{e} {s}" for e, s in pairs)).encode()).hexdigest()[:16]
-    for a in data["entries"].values():
-        a["decision"] = bid
-    (repo / "changes" / ID / "screens" / "approved.json").write_text(json.dumps({**data, "batches": {bid: pairs}}))
-    owner_answers(repo, bid)
-    return bid
-
-
-def _approve_all(repo: Path, owner: bool = True, seal=None) -> None:
-    """What `evidence.py gallery --import` leaves behind: the shots as baselines, their sha256 in approved.json,
-    one batch the owner's dialog covered (`owner=False`: nobody answered it)."""
+def _compare(repo: Path, verdict: str = "match", only: tuple[str, ...] = ()) -> None:
+    """What the agents' board-to-build comparison leaves behind: one verdict per captured shot, bound to its sha256."""
     change = repo / "changes" / ID
-    (change / "screens").mkdir(exist_ok=True)
     entries = {}
-    for e in ENTRIES:
-        shot = change / "verify" / "shots" / f"{e['id']}.png"
-        (change / "screens" / f"{e['id']}.png").write_bytes(shot.read_bytes())
-        entries[e["id"]] = {"sha256": hashlib.sha256(shot.read_bytes()).hexdigest(), "file": f"screens/{e['id']}.png",
-                            "approvedBy": "owner", "date": "2026-11-20"}  # fmt: skip
-    data = {"format": 1, "entries": entries}
-    if seal:
-        seal(repo, data)
-    else:
-        _seal(repo, data, owner)
+    for shot in sorted((change / "verify" / "shots").glob("*.png")):
+        if only and shot.stem not in only:
+            continue
+        entries[shot.stem] = {"sha256": hashlib.sha256(shot.read_bytes()).hexdigest(), "verdict": verdict,
+                              "report": "verify/ux/qa.md", "differences": "the header is missing"}  # fmt: skip
+    (change / "verify" / "comparison.json").write_text(json.dumps({"format": 1, "entries": entries}))
+
+
+def _apply(repo: Path) -> None:
+    """The gate writes queued baselines after its checks; the capture alone only queues them."""
+    subprocess.run([sys.executable, str(CAPTURE), "apply", str(repo / "changes" / ID)], cwd=repo, check=True, capture_output=True)
+
+
+def _approve_all(repo: Path) -> None:
+    """Baselines the way the gate makes them: a matching comparison, then one run records every shot."""
+    _compare(repo)
+    assert _last(_run(repo)).startswith("CAPTURE PASS")
+    _apply(repo)
 
 
 # --- screens.json ---------------------------------------------------------------------------------
@@ -179,46 +162,6 @@ def test_missing_empty_and_duplicate_screens_json(tmp_path: Path) -> None:
 
 
 # --- the capture, end to end on the fixture app ----------------------------------------------------
-
-
-def test_unapproved_entries_block_with_needs_baseline_and_leave_the_shots(tmp_path: Path) -> None:
-    repo = _repo(tmp_path)
-    r = _run(repo)
-    assert _last(r) == "VERIFY BLOCKED reason=needs-baseline" and r.returncode == 3
-    assert "4 of 4 entries have no approved shot" in r.stdout
-    shots = sorted(p.name for p in (repo / "changes" / ID / "verify/shots").glob("*.png"))
-    assert shots == sorted(f"{e['id']}.png" for e in ENTRIES)  # the second pass is not kept
-
-
-def test_approved_shots_pass_and_a_changed_page_fails_with_the_entry_and_a_diff(tmp_path: Path) -> None:
-    repo = _repo(tmp_path)
-    _run(repo)
-    _approve_all(repo)
-    r = _run(repo)
-    assert _last(r) == "CAPTURE PASS 4" and r.returncode == 0
-    r = _run(repo, MARK="changed")
-    assert _last(r) == "CAPTURE FAIL changed" and r.returncode == 1
-    assert all(f"{e['id']}: differs from the approved shot" in r.stdout for e in ENTRIES)
-
-
-def test_the_threshold_accepts_a_small_share_of_pixels_and_refuses_a_large_one(tmp_path: Path) -> None:
-    repo = _repo(tmp_path, threshold=0.1)
-    _run(repo)
-    _approve_all(repo)
-    change = repo / "changes" / ID
-    # a baseline that differs from the capture in 2 of 128 pixels is inside 10 percent
-    base = change / "screens" / "leads.list.empty.png"
-    w, h, _, raw = capture.pixels(base)
-    tweaked = bytearray(raw)
-    tweaked[0:6] = bytes((tweaked[0] ^ 255, 0, 0, tweaked[3] ^ 255, 0, 0))
-    capture.write_png(base, w, h, bytes(tweaked))
-    approved = json.loads((change / "screens/approved.json").read_text())
-    approved["entries"]["leads.list.empty"]["sha256"] = hashlib.sha256(base.read_bytes()).hexdigest()
-    _seal(repo, approved)  # the owner approved this baseline
-    assert _last(_run(repo)) == "CAPTURE PASS 4"
-    (repo / "sdlc.json").write_text(json.dumps({"visual": {**json.loads((repo / "sdlc.json").read_text())["visual"], "threshold": 0}}))
-    r = _run(repo)
-    assert _last(r) == "CAPTURE FAIL changed" and "leads.list.empty: differs" in r.stdout
 
 
 def test_two_differing_shots_of_one_entry_are_unstable(tmp_path: Path) -> None:
@@ -285,98 +228,6 @@ def test_live_playwright_captures_the_fixture_app_twice_identically(tmp_path: Pa
     assert _last(_run(repo)) == "VERIFY BLOCKED reason=needs-baseline"
 
 
-def test_the_real_gallery_import_makes_the_baselines_capture_compares_against(tmp_path: Path) -> None:
-    """The seam: evidence.py gallery --import writes what capture.py reads, from one {"entries": [...]} file,
-    once the owner has answered the dialog the import asks for."""
-    repo = _repo(tmp_path)
-    change = repo / "changes" / ID
-    (change / "screens.json").write_text(json.dumps({"entries": ENTRIES}))
-    _run(repo)
-    subprocess.run(["git", "add", "."], cwd=repo, check=True)  # the change has a first commit: an answer after it counts
-    subprocess.run(["git", "-c", "user.name=t", "-c", "user.email=t@t", "commit", "-qm", "change"], cwd=repo, check=True)
-    answers = {e["id"]: {"answer": "accept", "sha256": hashlib.sha256((change / "verify/shots" / f"{e['id']}.png").read_bytes()).hexdigest()}
-               for e in ENTRIES}  # fmt: skip
-    (tmp_path / "answers.json").write_text(json.dumps({"format": 1, "approvedBy": "owner", "answers": answers}))
-    env = {**os.environ, "HOME": str(tmp_path / "home")}
-    evidence = [sys.executable, str(SCRIPTS / "evidence.py"), "gallery", str(change)]
-    assert subprocess.run(evidence, capture_output=True, text=True, env=env).returncode == 0
-    ask = subprocess.run([*evidence, "--import", str(tmp_path / "answers.json")], capture_output=True, text=True, env=env)
-    assert ask.returncode == 1 and "AskUserQuestion" in ask.stderr, ask.stderr  # nobody has answered yet
-    owner_answers(repo, re.search(r"finding (screens-\w+):", ask.stderr)[1])
-    r = subprocess.run([*evidence, "--import", str(tmp_path / "answers.json")], capture_output=True, text=True, env=env)
-    assert r.returncode == 0, r.stderr
-    r = _run(repo)
-    assert _last(r) == "CAPTURE PASS 4" and r.returncode == 0, r.stdout
-
-
-def test_an_approval_no_owner_decision_covers_fails_the_capture(tmp_path: Path) -> None:
-    repo = _repo(tmp_path)
-    _run(repo)
-    _approve_all(repo, owner=False)  # an agent wrote approved.json itself
-    r = _run(repo)
-    assert _last(r) == "CAPTURE FAIL approval" and r.returncode == 1 and "leads.list.empty" in r.stdout
-
-
-def test_an_unchanged_3_25_1_baseline_with_its_owner_answer_still_passes(tmp_path: Path) -> None:
-    repo = _repo(tmp_path)
-    _run(repo)
-    _approve_all(repo, seal=_seal_3_25_1)
-    assert _last(_run(repo)) == "CAPTURE PASS 4"
-    change = repo / "changes" / ID
-    data = json.loads((change / "screens/approved.json").read_text())
-    bid = next(iter(data["batches"]))
-    data["batches"][bid][0][1] = "0" * 64  # an edited batch no longer matches the id the owner answered
-    (change / "screens/approved.json").write_text(json.dumps(data))
-    assert _last(_run(repo)) == "CAPTURE FAIL approval"
-
-
-def test_a_legacy_id_is_refused_once_the_decision_log_cites_it(tmp_path: Path) -> None:
-    repo = _repo(tmp_path)
-    _run(repo)
-    _approve_all(repo, seal=_seal_3_25_1)
-    change = repo / "changes" / ID
-    data = json.loads((change / "screens/approved.json").read_text())
-    bid = next(iter(data["batches"]))
-    log = []
-    for e in data["entries"]:
-        log.append(capture.link(log, {"entry": e, "answer": "accept", "batch": bid, "time": "t"}, ""))
-    (change / "screens/approved.json").write_text(json.dumps({**data, "log": log, "head": log[-1]["hash"]}))
-    r = _run(repo)
-    assert _last(r) == "CAPTURE FAIL approval" and "no recorded batch" in r.stdout
-
-
-def test_a_legacy_id_is_refused_once_any_decision_was_logged_after_it(tmp_path: Path) -> None:
-    """A send back of another batch is logged; the older legacy batch must not come back to life behind it."""
-    repo = _repo(tmp_path)
-    _run(repo)
-    _approve_all(repo, seal=_seal_3_25_1)
-    change = repo / "changes" / ID
-    data = json.loads((change / "screens/approved.json").read_text())
-    log = [capture.link([], {"entry": "leads.list.empty", "answer": "send-back", "batch": "screens-other", "time": "t"}, "")]
-    (change / "screens/approved.json").write_text(json.dumps({**data, "log": log, "head": log[-1]["hash"]}))
-    r = _run(repo)
-    assert _last(r) == "CAPTURE FAIL approval" and "no recorded batch" in r.stdout
-
-
-def test_a_legacy_id_is_refused_under_a_strict_lock_with_the_log_emptied(tmp_path: Path) -> None:
-    """3.26.4: the legacy id is read for a pre-3.26 lock only, never because the (writable) log is empty."""
-    repo = _repo(tmp_path)
-    _run(repo)
-    _approve_all(repo, seal=_seal_3_25_1)
-    change = repo / "changes" / ID
-    (change / "state").mkdir(exist_ok=True)
-    (change / "state" / "lock.json").write_text(json.dumps({"sha": "x", "design": {}}))  # a 3.26 lock
-    r = _run(repo)
-    assert _last(r) == "CAPTURE FAIL approval" and "entries were removed" in r.stdout
-
-
-def test_the_legacy_id_needs_the_old_hash_shape() -> None:
-    h = "a" * 64
-    assert capture.legacy_approval_id([["e", h], ["f", h, "send-back"]]) is not None
-    for bad in ([["e f", h]], [["e\nf", h]], [["e", h.upper()]], [["e", "a" * 63]], [["e", h, "x y"]], [["e"]], [["e", h, "a", "b"]]):
-        assert capture.legacy_approval_id(bad) is None, bad
-
-
 @pytest.mark.parametrize("image", ["asks/../x.png", "./a.png", "a/./b.png", "../x.png", "a//b.png"])
 def test_a_board_path_with_dot_parts_is_no_board_image(tmp_path: Path, image: str) -> None:
     for rel in ("x.png", "a.png", "a/b.png", "asks/keep"):
@@ -385,49 +236,6 @@ def test_a_board_path_with_dot_parts_is_no_board_image(tmp_path: Path, image: st
     assert capture.board_file(tmp_path, image) is None
     assert capture.read_board(tmp_path, image) is None
     assert capture.read_board(tmp_path, "a/b.png") == b"png"
-
-
-def test_a_legacy_id_is_refused_on_a_pre_3_26_lock_once_any_decision_was_logged(tmp_path: Path) -> None:
-    """An unlogged 3.25.1 acceptance, then a logged send back of that screen, then the old baseline restored: refused.
-    No `head` and no 3.26 lock, so the lock is not strict; the legacy id is read only while the log is empty."""
-    repo = _repo(tmp_path)
-    _run(repo)
-    _approve_all(repo, seal=_seal_3_25_1)
-    change = repo / "changes" / ID
-    data = json.loads((change / "screens/approved.json").read_text())
-    bid = next(iter(data["batches"]))
-    log = [{"entry": "leads.list.empty", "answer": "send-back", "batch": bid, "time": "t"}]  # unhashed, no head
-    (change / "screens/approved.json").write_text(json.dumps({**data, "log": log}))
-    r = _run(repo)
-    assert _last(r) == "CAPTURE FAIL approval" and "no recorded batch" in r.stdout
-
-
-def test_an_edited_batch_or_a_held_dialog_does_not_cover_an_approval(tmp_path: Path) -> None:
-    repo = _repo(tmp_path)
-    _run(repo)
-    _approve_all(repo, owner=False)
-    change = repo / "changes" / ID
-    data = json.loads((change / "screens/approved.json").read_text())
-    bid = next(iter(data["batches"]))
-    owner_answers(repo, bid, label="Hold")
-    assert _last(_run(repo)) == "CAPTURE FAIL approval"  # the owner said hold
-    owner_answers(repo, bid, n=2)
-    assert _last(_run(repo)) == "CAPTURE PASS 4"  # a later yes covers the same batch
-    data["batches"][bid] = data["batches"][bid][:-1] + [["leads.list.empty", "0" * 64]]  # the batch no longer matches its id
-    (change / "screens/approved.json").write_text(json.dumps(data))
-    assert _last(_run(repo)) == "CAPTURE FAIL approval"
-
-
-def test_an_entry_added_after_the_owner_answered_is_not_covered(tmp_path: Path) -> None:
-    repo = _repo(tmp_path)
-    _run(repo)
-    _approve_all(repo)
-    change = repo / "changes" / ID
-    data = json.loads((change / "screens/approved.json").read_text())
-    data["entries"]["extra.entry"] = {**data["entries"]["leads.list.empty"]}  # copies another entry's decision id
-    (change / "screens/approved.json").write_text(json.dumps(data))
-    r = _run(repo)
-    assert _last(r) == "CAPTURE FAIL approval" and "extra.entry" in r.stdout
 
 
 # --- the 3.25.0 fix round ----------------------------------------------------------------------------
@@ -491,7 +299,7 @@ def test_an_id_that_looks_like_a_second_pass_does_not_collide(tmp_path: Path) ->
     ]
     repo = _repo(tmp_path, ents)
     r = _run(repo)
-    assert _last(r) == "VERIFY BLOCKED reason=needs-baseline" and "3 of 3 entries have no approved shot" in r.stdout
+    assert _last(r) == "VERIFY BLOCKED reason=needs-comparison" and "3 of 3 screens have no board-to-build comparison" in r.stdout
     assert sorted(p.name for p in (repo / "changes" / ID / "verify/shots").glob("*.png")) == ["home.b.png", "home.diff.png", "home.png"]
 
 
@@ -569,13 +377,8 @@ def test_the_milestone_bound_captures_only_the_entries_due(tmp_path: Path) -> No
     change = repo / "changes" / ID
     e = {k: v for k, v in os.environ.items() if not k.startswith("GIT_")}
     r = subprocess.run([sys.executable, str(CAPTURE), "run", str(change), "--upto", "1"], cwd=repo, capture_output=True, text=True, env=e)
-    assert _last(r) == "VERIFY BLOCKED reason=needs-baseline" and "4 of 4 entries" in r.stdout
+    assert _last(r) == "VERIFY BLOCKED reason=needs-comparison" and "4 of 4 screens" in r.stdout
     assert _last(_run(repo)) == "CAPTURE FAIL preview-unreachable"  # the last milestone needs all of them
-
-
-def test_the_handoff_names_the_real_change_path(tmp_path: Path) -> None:
-    r = _run(_repo(tmp_path))
-    assert f"python3 scripts/evidence.py gallery changes/{ID}" in r.stdout
 
 
 def test_group_cleanup_spares_the_shell_that_leads_the_group(tmp_path: Path) -> None:
@@ -590,124 +393,6 @@ def test_group_cleanup_spares_the_shell_that_leads_the_group(tmp_path: Path) -> 
     assert r.returncode == 0 and "CAPTURE PASS 4" in r.stdout and "rc=0" in r.stdout, (r.returncode, r.stdout)
 
 
-def test_an_owner_answer_recorded_in_a_sibling_worktree_counts(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
-    """The owner answers in one worktree and the next milestone closes in another: every transcript folder of
-    the repo's main checkout and its `.worktrees/*` is read, removed worktrees included."""
-    import marks
-
-    main = tmp_path / "main"
-    (main / "changes" / ID).mkdir(parents=True)
-    (main / "changes" / ID / "screens.json").write_text("[]")
-    git = ["git", "-c", "user.name=t", "-c", "user.email=t@t"]
-    for cmd in (["git", "init", "-q"], ["git", "add", "."], [*git, "commit", "-qm", "i"],
-                [*git, "worktree", "add", "-q", "-b", "a", str(main / ".worktrees" / "a")],
-                [*git, "worktree", "add", "-q", "-b", "b", str(main / ".worktrees" / "b")]):  # fmt: skip
-        subprocess.run(cmd, cwd=main, check=True, capture_output=True)
-    home = tmp_path / "home"
-    monkeypatch.setenv("HOME", str(home))
-    (tmp_path / "other-repo").mkdir()
-    owner_answers(main / ".worktrees" / "a", "screens-abc", home=home, cwd=main / ".worktrees" / "a")
-    owner_answers(tmp_path / "other-repo", "screens-other", home=home)  # another repo's answer is never read
-    marks._ANSWERS.clear()
-    decided = marks.owner_decisions(main / ".worktrees" / "b", ID)
-    assert decided.get("screens-abc", ("",))[0] == "screens" and "screens-other" not in decided
-    subprocess.run([*git, "worktree", "remove", "--force", str(main / ".worktrees" / "a")], cwd=main, check=True, capture_output=True)
-    marks._ANSWERS.clear()
-    assert marks.owner_decisions(main, ID).get("screens-abc", ("",))[0] == "screens"  # a removed worktree's answer stays
-    # a folder whose name only begins like a worktree's is another path: its answer is never read (exact names, no prefix)
-    lookalike = main / ".worktrees" / "a-extra"
-    lookalike.mkdir()
-    owner_answers(lookalike, "screens-lookalike", home=home)
-    marks._ANSWERS.clear()
-    assert "screens-lookalike" not in marks.owner_decisions(main, ID)
-
-
-def test_a_worktree_removed_before_the_ledger_counts_only_if_its_sessions_ran_under_the_worktrees_folder(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
-    import marks
-
-    main = tmp_path / "main"
-    (main / "changes" / ID).mkdir(parents=True)
-    (main / "changes" / ID / "screens.json").write_text("[]")
-    git = ["git", "-c", "user.name=t", "-c", "user.email=t@t"]
-    for cmd in (["git", "init", "-q"], ["git", "add", "."], [*git, "commit", "-qm", "i"]):
-        subprocess.run(cmd, cwd=main, check=True, capture_output=True)
-    home = tmp_path / "home"
-    monkeypatch.setenv("HOME", str(home))
-    gone, fake = main / ".worktrees" / "gone", main / ".worktrees" / "fake-copy"  # neither exists, nor is in the ledger
-    owner_answers(gone, "screens-real", home=home, cwd=gone)
-    owner_answers(fake, "screens-fake", home=home, cwd=tmp_path / "elsewhere")  # a folder named like one, run somewhere else
-    marks._ANSWERS.clear()
-    decided = marks.owner_decisions(main, ID)
-    assert decided.get("screens-real", ("",))[0] == "screens" and "screens-fake" not in decided
-    ledger = main / ".git" / "sdlc" / "worktrees.json"
-    assert not list(ledger.parent.glob(".*.tmp")) if ledger.parent.exists() else True  # the ledger is replaced atomically
-
-
-def test_a_ledger_path_counts_only_with_the_proof_a_live_worktree_has(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
-    """The ledger is a file an agent can write: a path in it outside the repo's worktree folder, or inside it with
-    sessions that ran somewhere else, is ignored, so a transcript folder the agent made up is never read."""
-    import marks
-
-    main = tmp_path / "main"
-    (main / "changes" / ID).mkdir(parents=True)
-    (main / "changes" / ID / "screens.json").write_text("[]")
-    git = ["git", "-c", "user.name=t", "-c", "user.email=t@t"]
-    for cmd in (["git", "init", "-q"], ["git", "add", "."], [*git, "commit", "-qm", "i"]):
-        subprocess.run(cmd, cwd=main, check=True, capture_output=True)
-    home = tmp_path / "home"
-    monkeypatch.setenv("HOME", str(home))
-    outside, moved, real = tmp_path / "planted", main / ".worktrees" / "moved", main / ".worktrees" / "real"
-    owner_answers(outside, "screens-outside", home=home, cwd=outside)  # the agent wrote this folder and listed its path
-    owner_answers(moved, "screens-moved", home=home, cwd=tmp_path / "elsewhere")
-    owner_answers(real, "screens-real", home=home, cwd=real)
-    ledger = main / ".git" / "sdlc" / "worktrees.json"
-    ledger.parent.mkdir(exist_ok=True)
-    ledger.write_text(json.dumps([str(outside), str(moved), str(real)]))
-    marks._ANSWERS.clear()
-    decided = marks.owner_decisions(main, ID)
-    assert decided.get("screens-real", ("",))[0] == "screens"
-    assert "screens-outside" not in decided and "screens-moved" not in decided
-
-
-def test_a_session_file_counts_only_when_its_own_records_carry_an_in_tree_cwd(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
-    import marks
-
-    main = tmp_path / "main"
-    (main / "changes" / ID).mkdir(parents=True)
-    (main / "changes" / ID / "screens.json").write_text("[]")
-    git = ["git", "-c", "user.name=t", "-c", "user.email=t@t"]
-    for cmd in (["git", "init", "-q"], ["git", "add", "."], [*git, "commit", "-qm", "i"]):
-        subprocess.run(cmd, cwd=main, check=True, capture_output=True)
-    home = tmp_path / "home"
-    monkeypatch.setenv("HOME", str(home))
-    ghost = main / ".worktrees" / "ghost"  # removed before the ledger existed
-    owner_answers(ghost, "screens-real", home=home, cwd=ghost)
-    folder = home / ".claude/projects" / re.sub(r"[^A-Za-z0-9]", "-", str(ghost.resolve()))
-    other = folder / "forged.jsonl"  # a second file in the folder whose records name no folder at all
-    forged = [json.loads(x) for x in (folder / "session.jsonl").read_text().replace("screens-real", "screens-forged").splitlines()]
-    other.write_text("".join(json.dumps({k: v for k, v in rec.items() if k != "cwd"}) + "\n" for rec in forged))
-    marks._ANSWERS.clear()
-    assert "screens-forged" not in marks.owner_decisions(main, ID) and "screens-real" not in marks.owner_decisions(main, ID)
-
-
-def test_an_early_close_checks_coverage_only_for_the_entries_due(tmp_path: Path) -> None:
-    ents = [{**e, "milestone": 2 if e["id"].startswith("deals") else 1} for e in ENTRIES]
-    repo = _repo(tmp_path, ents)
-    _run(repo)
-    _approve_all(repo)
-    change = repo / "changes" / ID
-    data = json.loads((change / "screens/approved.json").read_text())
-    for e in ("deals.list.empty", "deals.list.full"):  # approved by 3.25.0: no owner decision on record
-        del data["entries"][e]["decision"]
-    (change / "screens/approved.json").write_text(json.dumps(data))
-    env = {**os.environ, "HOME": str(tmp_path / "home")}
-    run = lambda *extra: subprocess.run([sys.executable, str(CAPTURE), "run", str(change), *extra], cwd=repo, capture_output=True, text=True, env=env)  # noqa: E731
-    early = run("--upto", "1")
-    assert _last(early) == "CAPTURE PASS 2", early.stdout
-    final = run()
-    assert _last(final) == "CAPTURE FAIL approval" and "deals.list.empty" in final.stdout
-
-
 def test_the_capture_leaves_no_bytecode_in_the_checkout(tmp_path: Path) -> None:
     repo = _repo(tmp_path)
     _run(repo)
@@ -717,3 +402,153 @@ def test_the_capture_leaves_no_bytecode_in_the_checkout(tmp_path: Path) -> None:
         pyc.unlink()
     assert _last(_run(repo)) == "CAPTURE PASS 4"
     assert not list(cache.glob("marks*.pyc"))
+
+
+def test_new_entries_block_with_needs_comparison_and_leave_the_shots(tmp_path: Path) -> None:
+    repo = _repo(tmp_path)
+    r = _run(repo)
+    assert _last(r) == "VERIFY BLOCKED reason=needs-comparison" and r.returncode == 3
+    assert "4 of 4 screens have no board-to-build comparison" in r.stdout and "No owner answer is needed" in r.stdout
+    assert f"verify/comparison.json" in r.stdout
+    shots = sorted(p.name for p in (repo / "changes" / ID / "verify/shots").glob("*.png"))
+    assert shots == sorted(f"{e['id']}.png" for e in ENTRIES)  # the second pass is not kept
+    assert not (repo / "changes" / ID / "screens" / "approved.json").exists()
+
+
+def test_a_matching_comparison_records_the_baselines_and_later_runs_compare_exactly(tmp_path: Path) -> None:
+    repo = _repo(tmp_path)
+    _run(repo)
+    _compare(repo)
+    r = _run(repo)
+    assert _last(r) == "CAPTURE PASS 4 (4 baselined by comparison)" and r.returncode == 0
+    change = repo / "changes" / ID
+    assert not (change / "screens" / "approved.json").exists()  # only queued: the gate writes it after its checks
+    _apply(repo)
+    data = json.loads((change / "screens/approved.json").read_text())
+    for e in ENTRIES:
+        rec = data["entries"][e["id"]]
+        assert rec["approvedBy"] == "comparison" and rec["report"] == "verify/ux/qa.md"
+        png = change / "screens" / f"{e['id']}.png"
+        assert hashlib.sha256(png.read_bytes()).hexdigest() == rec["sha256"]
+    assert _last(_run(repo)) == "CAPTURE PASS 4"  # unchanged: the exact test, no comparison needed
+    r = _run(repo, MARK="changed")  # a changed page needs a comparison of the new capture
+    assert _last(r) == "VERIFY BLOCKED reason=needs-comparison" and r.returncode == 3
+
+
+def test_a_differing_comparison_is_a_blocking_finding_never_an_owner_question(tmp_path: Path) -> None:
+    repo = _repo(tmp_path)
+    _run(repo)
+    _compare(repo, "differs", only=("leads.list.empty",))
+    _compare_merge = json.loads((repo / "changes" / ID / "verify/comparison.json").read_text())
+    for shot in (repo / "changes" / ID / "verify/shots").glob("*.png"):
+        if shot.stem != "leads.list.empty":
+            _compare_merge["entries"][shot.stem] = {"sha256": hashlib.sha256(shot.read_bytes()).hexdigest(), "verdict": "match", "report": "r"}
+    (repo / "changes" / ID / "verify/comparison.json").write_text(json.dumps(_compare_merge))
+    r = _run(repo)
+    assert _last(r) == "CAPTURE FAIL comparison" and r.returncode == 1
+    assert "leads.list.empty: the header is missing" in r.stdout and "not an owner question" in r.stdout
+    assert not (repo / "changes" / ID / "screens" / "approved.json").exists()  # nothing is baselined while one differs
+    _compare(repo)  # fixed in the fix round: the new capture matches
+    assert _last(_run(repo)).startswith("CAPTURE PASS 4")
+
+
+def test_a_comparison_of_another_shot_does_not_count(tmp_path: Path) -> None:
+    repo = _repo(tmp_path)
+    _run(repo)
+    _compare(repo)
+    path = repo / "changes" / ID / "verify/comparison.json"
+    data = json.loads(path.read_text())
+    data["entries"]["leads.list.empty"]["sha256"] = "0" * 64
+    path.write_text(json.dumps(data))
+    r = _run(repo)
+    assert _last(r) == "VERIFY BLOCKED reason=needs-comparison" and "leads.list.empty" in r.stdout
+
+
+def test_the_threshold_accepts_a_small_share_of_pixels_and_refuses_a_large_one(tmp_path: Path) -> None:
+    repo = _repo(tmp_path, threshold=0.1)
+    _run(repo)
+    _approve_all(repo)
+    change = repo / "changes" / ID
+    base = change / "screens" / "leads.list.empty.png"  # a baseline 2 of 128 pixels away is inside 10 percent
+    w, h, _, raw = capture.pixels(base)
+    tweaked = bytearray(raw)
+    tweaked[0:6] = bytes((tweaked[0] ^ 255, 0, 0, tweaked[3] ^ 255, 0, 0))
+    capture.write_png(base, w, h, bytes(tweaked))
+    approved = json.loads((change / "screens/approved.json").read_text())
+    approved["entries"]["leads.list.empty"]["sha256"] = hashlib.sha256(base.read_bytes()).hexdigest()
+    (change / "screens/approved.json").write_text(json.dumps(approved))
+    assert _last(_run(repo)) == "CAPTURE PASS 4"
+    (repo / "sdlc.json").write_text(json.dumps({"visual": {**json.loads((repo / "sdlc.json").read_text())["visual"], "threshold": 0}}))
+    (change / "verify/comparison.json").unlink()  # exact now: the tweaked baseline needs a comparison of the capture
+    r = _run(repo)
+    assert _last(r) == "VERIFY BLOCKED reason=needs-comparison" and "leads.list.empty" in r.stdout
+
+
+def test_an_early_close_baselines_only_the_entries_due(tmp_path: Path) -> None:
+    ents = [{**e, "milestone": 2 if e["id"].startswith("deals") else 1} for e in ENTRIES]
+    repo = _repo(tmp_path, ents)
+    _run(repo)
+    _compare(repo, only=("leads.list.empty", "leads.list.full"))
+    change = repo / "changes" / ID
+    env = {**os.environ, "HOME": str(tmp_path / "home")}
+    run = lambda *extra: subprocess.run([sys.executable, str(CAPTURE), "run", str(change), *extra], cwd=repo, capture_output=True, text=True, env=env)  # noqa: E731
+    early = run("--upto", "1")
+    assert _last(early) == "CAPTURE PASS 2 (2 baselined by comparison)", early.stdout
+    final = run()
+    assert _last(final) == "VERIFY BLOCKED reason=needs-comparison" and "deals.list.empty" in final.stdout
+
+
+def _queued(repo: Path) -> Path:
+    _run(repo)
+    _compare(repo)
+    assert _last(_run(repo)).startswith("CAPTURE PASS")
+    return repo / "changes" / ID / "verify" / "baselines-pending.json"
+
+
+def _apply_result(repo: Path) -> subprocess.CompletedProcess[str]:
+    return subprocess.run([sys.executable, str(CAPTURE), "apply", str(repo / "changes" / ID)], cwd=repo, capture_output=True, text=True)
+
+
+def test_the_queue_stores_each_compared_sha_and_the_normal_flow_applies_it(tmp_path: Path) -> None:
+    repo = _repo(tmp_path)
+    queue = json.loads(_queued(repo).read_text())
+    shot = repo / "changes" / ID / "verify/shots/leads.list.empty.png"
+    assert queue["leads.list.empty"]["sha256"] == hashlib.sha256(shot.read_bytes()).hexdigest()
+    r = _apply_result(repo)
+    assert r.returncode == 0 and "leads.list.empty" in r.stdout
+    assert (repo / "changes" / ID / "screens/approved.json").is_file()
+
+
+def test_a_hand_written_queue_entry_is_refused(tmp_path: Path) -> None:
+    repo = _repo(tmp_path)
+    _run(repo)  # captured, never compared
+    change = repo / "changes" / ID
+    sha = hashlib.sha256((change / "verify/shots/leads.list.empty.png").read_bytes()).hexdigest()
+    (change / "verify/baselines-pending.json").write_text(json.dumps({"leads.list.empty": {"sha256": sha, "report": "made up"}}))
+    r = _apply_result(repo)
+    assert r.returncode == 1 and "CAPTURE FAIL baselines" in r.stdout and "leads.list.empty" in r.stdout
+    assert not (change / "screens/approved.json").exists()
+    (change / "verify/comparison.json").write_text(json.dumps({"format": 1, "entries": {"leads.list.empty": {"sha256": sha, "verdict": "differs"}}}))
+    assert _apply_result(repo).returncode == 1  # a verdict that is not `match` does not count either
+
+
+def test_a_shot_changed_after_its_comparison_is_refused(tmp_path: Path) -> None:
+    repo = _repo(tmp_path)
+    _queued(repo)
+    change = repo / "changes" / ID
+    shot = change / "verify/shots/leads.list.empty.png"
+    w, h, _, _ = capture.pixels(shot)
+    capture.write_png(shot, w, h, bytes(w * h * 3))
+    r = _apply_result(repo)
+    assert r.returncode == 1 and "leads.list.empty" in r.stdout
+    assert not (change / "screens/approved.json").exists()
+
+
+def test_an_id_the_comparison_never_judged_is_refused(tmp_path: Path) -> None:
+    repo = _repo(tmp_path)
+    queue = _queued(repo)
+    data = json.loads(queue.read_text())
+    data["extra.id"] = data["leads.list.empty"]
+    queue.write_text(json.dumps(data))
+    r = _apply_result(repo)
+    assert r.returncode == 1 and "extra.id" in r.stdout

@@ -96,7 +96,7 @@ REASONS = {
     "attempts",  # three failed runs of one scope, whatever the failures were
     "flaky",
     "unknown-verdict",
-    "needs-baseline",
+    "needs-comparison",
     "allowlist-request",
     "scope-growth",
     "spec-conflict",
@@ -195,11 +195,11 @@ def criteria_hash(change: Path, checks: object, plan: bool = True, design: bool 
 
 
 # the checks of capture.py a close relies on (evidence.py keeps the same list for the gallery): a kept older file lacking one is refused
-CAPTURE_CHECKS = ("binding_tag", "deviation_tag", "lock_sha", "image_problems", "link", "replayed", "board_file", "read_board", "design_problems", "uncovered")
+CAPTURE_CHECKS = ("image_problems", "board_file", "read_board", "design_problems", "read_comparison", "write_baseline")
 
 
 def stale_capture(script: Path) -> str:
-    """"" when scripts/capture.py has every check and the strict chain; else the refusal line naming what is missing."""
+    """"" when scripts/capture.py has every check; else the refusal line naming what is missing."""
     import importlib.util
 
     spec_ = importlib.util.spec_from_file_location("capture_close_probe", script)
@@ -210,9 +210,6 @@ def stale_capture(script: Path) -> str:
     except Exception as err:  # an unreadable file is as stale as an old one
         return f"scripts/capture.py cannot be loaded ({type(err).__name__}): run `adopt --migrate`"
     missing = [n for n in CAPTURE_CHECKS if not hasattr(module, n)]
-    chain = getattr(module, "chain_problems", None)
-    if not missing and (chain is None or "strict" not in chain.__code__.co_varnames):
-        missing = ["chain_problems"]
     return f"scripts/capture.py is older than this gate and lacks `{missing[0]}`: run `adopt --migrate`" if missing else ""
 
 
@@ -1036,7 +1033,7 @@ def approve(change: Path, cfg: dict) -> int:
             if images := capture.image_digests(change):
                 lock["designImages"] = images  # the gallery and the close refuse an image that changed since
         else:
-            lock["design"] = "none"  # no inventory, but a 3.26+ lock: the decision log must be a full hash chain (capture.uncovered)
+            lock["design"] = "none"  # no inventory, but a 3.26+ lock (the key marks the 3.26 lock format)
         # the folders the plan says new files go in: the chain-gate scope guard reads this snapshot, not the plan
         found = re.findall(r"`([^`]+/)`", section(read(change / "plan.md"), "Where things go") + section(read(change / "design.md"), "Where things go"))
         lock["scopeFolders"] = sorted({f.strip("/") for f in found if f.strip("/") and ".." not in f.split("/")})
@@ -1963,6 +1960,15 @@ def run_close(
             "HEAD or the tree changed while the checks ran: nothing may merge or edit during a gate."
         )
         return finish(f"VERIFY FAIL {scope} {change.name} check=moved", 1)
+    if (change / "verify" / "baselines-pending.json").is_file():  # screens that matched their comparison: record them now
+        try:
+            import capture
+
+            made = capture.apply_pending(change)
+            print(f"baselines recorded by comparison: {len(made)} (commit screens/ with the records)")
+        except Exception as err:  # a baseline that cannot be written or checked must not hide behind a PASS
+            print(f"baselines refused ({type(err).__name__}: {err})")
+            return finish(f"VERIFY FAIL {scope} {change.name} check=baselines", 1)
     return finish(f"VERIFY PASS {scope} {change.name} {head}", 0)
 
 

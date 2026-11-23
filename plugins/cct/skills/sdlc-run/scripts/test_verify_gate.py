@@ -1585,6 +1585,11 @@ def test_the_presets_run_the_full_e2e_and_repeat_changed_and_flaky_specs_three_t
     preset = json.loads((SKILL / "templates" / "presets" / f"{name}.json").read_text())
     milestone = " ".join(c if isinstance(c, str) else c["run"] for c in preset["checks"]["milestone"])
     assert "e2e" in milestone
+    if name == "node":  # the safe script owns the selection, the x3 repeat and the flaky list
+        script = (SKILL / "templates" / "scripts" / "e2e-repeat.sh").read_text()
+        assert "bash scripts/e2e-repeat.sh {base}" in milestone
+        assert "flaky-specs.txt" in script and "--repeat-each=3" in script and "git diff --name-only" in script
+        return
     assert "flaky-specs.txt" in milestone
     assert "--repeat-each=3" in milestone or "seq 3" in milestone or "1 2 3" in milestone
     assert "git diff --name-only" in milestone and "{base}" in milestone
@@ -2343,14 +2348,14 @@ def test_a_milestone_close_refuses_an_older_capture_py_and_names_the_missing_che
     kit.mkdir()
     for f in GATE.parent.glob("*.py"):
         (kit / f.name).write_text(f.read_text())
-    (kit / "capture.py").write_text((kit / "capture.py").read_text().replace("def replayed(", "def _gone_replayed("))
+    (kit / "capture.py").write_text((kit / "capture.py").read_text().replace("def read_comparison(", "def _gone_read_comparison("))
     repo = _repo(tmp_path, [])
     (repo / "sdlc.json").write_text(json.dumps({"checks": {"milestone": ["true"]}, "ux": "on"}))
     (repo / "changes" / ID / "decisions.json").write_text(json.dumps(VISUAL))
     _screens_json(repo)
     _approve(repo)
     r = subprocess.run([sys.executable, str(kit / "verify_gate.py"), "milestone", ID], cwd=repo, capture_output=True, text=True, env=_env())
-    assert "`replayed`" in r.stdout and "adopt --migrate" in r.stdout and "check=app-screens" in _last(r), r.stdout + r.stderr
+    assert "`read_comparison`" in r.stdout and "adopt --migrate" in r.stdout and "check=app-screens" in _last(r), r.stdout + r.stderr
     import evidence
     import verify_gate
 
@@ -2515,7 +2520,7 @@ def test_the_milestone_gate_captures_the_fixture_app_end_to_end(tmp_path: Path, 
 
     import test_capture as tc
 
-    monkeypatch.setenv("HOME", str(tmp_path / "home"))  # where the owner's answers are read
+    monkeypatch.setenv("HOME", str(tmp_path / "home"))
     repo = _repo(tmp_path, [])
     (repo / "app.py").write_text(tc.APP)
     (repo / "driver.py").write_text(tc.DRIVER)
@@ -2524,33 +2529,30 @@ def test_the_milestone_gate_captures_the_fixture_app_end_to_end(tmp_path: Path, 
     _screens_json(repo, tc.ENTRIES)
     _approve(repo)
     r = _gate(repo, "milestone", ID)
-    assert _last(r) == "VERIFY BLOCKED reason=needs-baseline" and "4 of 4 entries have no approved shot" in r.stdout
+    assert _last(r) == "VERIFY BLOCKED reason=needs-comparison" and "4 of 4 screens have no board-to-build comparison" in r.stdout
     change = repo / "changes" / ID
-    (change / "screens").mkdir()
-    entries = {}
-    for e in tc.ENTRIES:
-        shot = change / "verify/shots" / f"{e['id']}.png"
-        (change / "screens" / f"{e['id']}.png").write_bytes(shot.read_bytes())
-        entries[e["id"]] = {"sha256": hashlib.sha256(shot.read_bytes()).hexdigest(), "file": f"screens/{e['id']}.png"}
-    tc._seal(repo, {"format": 1, "entries": entries}, owner=False, change_id=ID)  # approved.json as an agent could write it
-    path = change / "screens/approved.json"  # this lock is 3.26: every approval has its logged decision, or the log was removed
-    data = json.loads(path.read_text())
-    log: list = []
-    for e in entries:
-        log.append(tc.capture.link(log, {"entry": e, "answer": "accept", "batch": entries[e]["decision"], "time": "t"}, ""))
-    path.write_text(json.dumps({**data, "log": log, "head": log[-1]["hash"]}))
-    _git(repo, "add", ".")
-    _git(repo, "commit", "-qm", "approved.json without the owner")
+
+    def compare(verdict: str) -> None:  # the agents' comparison of the shots the gate just took
+        rows = {p.stem: {"sha256": hashlib.sha256(p.read_bytes()).hexdigest(), "verdict": verdict, "report": "verify/ux/qa.md", "differences": "x"}
+                for p in (change / "verify/shots").glob("*.png")}
+        (change / "verify/comparison.json").write_text(json.dumps({"format": 1, "entries": rows}))
+
+    compare("differs")
     r = _gate(repo, "milestone", ID)
-    assert _last(r) == f"VERIFY FAIL milestone {ID} check=app-screens" and "no owner decision covers" in r.stdout
-    tc.owner_answers(repo, next(iter(json.loads((change / "screens/approved.json").read_text())["batches"])), change_id=ID)
+    assert _last(r) == f"VERIFY FAIL milestone {ID} check=app-screens" and "not an owner question" in r.stdout
+    compare("match")
+    r = _gate(repo, "milestone", ID)
+    assert _last(r).startswith(f"VERIFY PASS milestone {ID}") or "baselined by comparison" in r.stdout, r.stdout
+    data = json.loads((change / "screens/approved.json").read_text())
+    assert {e["approvedBy"] for e in data["entries"].values()} == {"comparison"} and len(data["entries"]) == 4
+    _git(repo, "add", ".")
+    _git(repo, "commit", "-qm", "baselines recorded by the gate")
     r = _gate(repo, "milestone", ID)
     assert _last(r).startswith(f"VERIFY PASS milestone {ID}"), r.stdout
     (repo / "app.py").write_text(tc.APP.replace("'MARK', ''", "'MARK', 'x'"))
     _git(repo, "commit", "-qam", "the page changed")
-    r = _gate(repo, "milestone", ID)
-    assert _last(r) == f"VERIFY FAIL milestone {ID} check=app-screens"
-    assert "leads.list.empty: differs from the approved shot" in r.stdout
+    r = _gate(repo, "milestone", ID)  # a changed page is compared again, never waved through
+    assert "needs-comparison" in _last(r) or "check=app-screens" in _last(r)
 
 
 def test_a_visual_hotfix_runs_the_capture_in_its_feature_gate(tmp_path: Path) -> None:

@@ -1377,30 +1377,85 @@ def test_repo_records_refuses_a_source_that_changed_since_its_lock(tmp_path: Pat
     facts = start / "changes" / tvg.ID / "facts.md"
     facts.write_text(facts.read_text() + "- [ ] **F2** Sneaked in.\n")
     r = _records(start, other)
-    assert r.returncode == 1 and "facts.md no longer matches" in r.stdout
+    assert r.returncode == 1 and "facts.md" in r.stdout and "no longer matches" in r.stdout
     assert not (other / "changes" / tvg.ID).exists()
-    lock = start / "changes" / tvg.ID / "lock.json"
-    lock = lock if lock.is_file() else start / "changes" / tvg.ID / "state" / "lock.json"
+
+
+def test_repo_records_checks_every_criterion_including_routing_and_checks(tmp_path: Path) -> None:
+    import test_verify_gate as tvg
+
+    start, other = _two_repos(tmp_path)
+    folder = start / "changes" / tvg.ID
+    path = next(p for p in (folder / "state" / "intake.json", folder / "decisions.json") if p.is_file())
+    path.write_text(json.dumps({"size": "XL"}))  # a routing field moved after approval
+    r = _records(start, other)
+    assert r.returncode == 1 and "decisions.routing" in r.stdout
+    path.write_text('{"size": "S"}\n')
+    cfg = json.loads((start / "sdlc.json").read_text())
+    cfg["checks"] = {"feature": ["false"]}  # the checks moved after approval
+    (start / "sdlc.json").write_text(json.dumps(cfg))
+    r = _records(start, other)
+    assert r.returncode == 1 and "checks" in r.stdout
+    lock = folder / "lock.json" if (folder / "lock.json").is_file() else folder / "state" / "lock.json"
+    data = json.loads(lock.read_text())
+    data["criteria"]["unknown.key"] = "x"  # a key nothing can recompute
+    lock.write_text(json.dumps(data))
+    (start / "sdlc.json").write_text(json.dumps({"checks": {"feature": ["true"]}}))
+    r = _records(start, other)
+    assert r.returncode == 1 and "unknown.key" in r.stdout
     lock.write_text("[]")
     assert "no intact lock.json" in _records(start, other).stdout
 
 
-def test_a_refused_approve_leaves_no_folder_and_no_lock_behind(tmp_path: Path) -> None:
+def test_a_refused_replace_puts_the_old_folder_and_lock_back_byte_for_byte(tmp_path: Path) -> None:
     import test_verify_gate as tvg
 
     start, other = _two_repos(tmp_path)
-    (other / "scripts" / "verify_gate.py").write_text("import sys\nsys.exit(1)\n")  # the target gate refuses
-    r = _records(start, other)
-    assert r.returncode == 1 and "nothing was left behind" in r.stdout
-    assert not (other / "changes" / tvg.ID).exists()
-    # an existing folder is restored byte for byte, lock included
     folder = other / "changes" / tvg.ID
     folder.mkdir(parents=True)
     (folder / "facts.md").write_text("mine\n")
     (folder / "lock.json").write_text('{"mine": 1}\n')
-    assert _records(start, other, "--replace").returncode == 1
+    (folder / "notes.md").write_text("keep\n")
+    (other / "scripts" / "verify_gate.py").write_text("import sys\nsys.exit(1)\n")  # the target gate refuses
+    r = _records(start, other, "--replace")
+    assert r.returncode == 1 and "nothing was left behind" in r.stdout
     assert (folder / "facts.md").read_text() == "mine\n" and (folder / "lock.json").read_text() == '{"mine": 1}\n'
-    assert not (folder / "plan.md").exists()
+    assert (folder / "notes.md").read_text() == "keep\n" and not (folder / "plan.md").exists()
+    assert not [p for p in other.rglob(".*replaced-*")]
+    # a gate that exits 0 but writes no lock is a refusal too
+    (other / "scripts" / "verify_gate.py").write_text("import sys\nsys.exit(0)\n")
+    assert _records(start, other, "--replace").returncode == 1
+    assert (folder / "lock.json").read_text() == '{"mine": 1}\n'
+
+
+def test_a_refused_first_write_leaves_no_folder(tmp_path: Path) -> None:
+    import test_verify_gate as tvg
+
+    start, other = _two_repos(tmp_path)
+    (other / "scripts" / "verify_gate.py").write_text("import sys\nsys.exit(1)\n")
+    r = _records(start, other)
+    assert r.returncode == 1 and "nothing was left behind" in r.stdout
+    assert not (other / "changes" / tvg.ID).exists()
+
+
+@pytest.mark.parametrize("bad", ["/tmp/elsewhere", "../outside", "a/../../b"])
+def test_repo_records_rejects_an_unsafe_changes_dir(tmp_path: Path, bad: str) -> None:
+    start, other = _two_repos(tmp_path)
+    (other / "sdlc.json").write_text(json.dumps({"changesDir": bad}))
+    r = _records(start, other)
+    assert r.returncode == 1 and "changesDir" in r.stdout
+
+
+def test_repo_records_refuses_two_decisions_files(tmp_path: Path) -> None:
+    import test_verify_gate as tvg
+
+    start, other = _two_repos(tmp_path)
+    folder = other / "changes" / tvg.ID
+    (folder / "state").mkdir(parents=True)
+    (folder / "decisions.json").write_text("{}")
+    (folder / "state" / "intake.json").write_text("{}")
+    r = _records(start, other, "--replace")
+    assert r.returncode == 1 and "two decisions files" in r.stdout
 
 
 def test_repo_records_refuses_an_unapproved_source_and_an_unadopted_target(tmp_path: Path) -> None:

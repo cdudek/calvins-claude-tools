@@ -452,14 +452,15 @@ def record_project(root: Path, change: Path, cfg: dict, sha: str, accepted: bool
 
 def repo_records(change: Path, other: Path, replace: bool = False) -> tuple[int, str]:
     """Write the per-repo records of an approved change into another adopted repo, then let that repo's own gate
-    lock them. The source lock must be intact (an object with `criteria` and `sha`, and the hashes of facts.md,
-    done.json and the plan's Milestones section recomputed from the files); decisions.json is never copied whole,
-    only its routing fields and project, so the target keeps its own `skips` and `protectedEdit`; nothing already
-    there is overwritten without `replace`; no lock is pre-written (the gate writes it, or nothing is left behind)."""
+    lock them. The source lock must be intact: an object with `criteria` and `sha`, and EVERY criterion recomputed
+    by verify_gate's own `criteria_hash` from the source files and checks (a key it cannot recompute refuses).
+    decisions.json is never copied whole (routing fields and project only; the target keeps its `skips` and
+    `protectedEdit`). Nothing there is overwritten without `replace`, and then the old folder, lock included, is
+    moved aside and put back by a `finally` unless the target gate exits 0 and writes a new lock. No lock is ever
+    pre-written."""
     import hashlib
-    import tempfile
 
-    from verify_gate import ROUTING, section
+    from verify_gate import ROUTING, criteria_hash, plain_id
 
     target = repo_root(other)
     if not target or target != other.resolve():
@@ -467,29 +468,36 @@ def repo_records(change: Path, other: Path, replace: bool = False) -> tuple[int,
     gate = target / "scripts" / "verify_gate.py"
     if not gate.is_file():
         return 2, f"{target} has no scripts/verify_gate.py: run `sdlc-run adopt` there first"
+    if not plain_id(change.name):
+        return 1, f"{change.name!r} is not a plain change id"
     lock = read_json(spec.state_path(change, "lock.json"))
     if not (isinstance(lock, dict) and isinstance(lock.get("criteria"), dict) and lock.get("sha")):
         return 1, f"{change.name} has no intact lock.json (an object with `criteria` and `sha`): approve the plan in the start repo first"
-    digest = lambda data: hashlib.sha256(data).hexdigest()  # noqa: E731
+    source = repo_root(change)
     try:
-        have = {"facts.md": digest((change / "facts.md").read_bytes()),
-                "done.json": digest(spec.state_path(change, "done.json").read_bytes()),
-                "plan.milestones": digest(section((change / "plan.md").read_text(encoding="utf-8"), "Milestones").encode("utf-8"))}  # fmt: skip
+        now = criteria_hash(change, config(source).get("checks", {}) if source else {},
+                            plan="plan.milestones" in lock["criteria"] or "decisions.routing" in lock["criteria"],
+                            design=lock.get("design") == "inventory")  # fmt: skip
     except OSError as err:
-        return 1, f"{change.name} has no {Path(str(err.filename)).name}: the approved plan is incomplete"
-    if stale := [k for k, v in have.items() if lock["criteria"].get(k) != v]:
-        return 1, f"{change.name}: {', '.join(stale)} no longer matches the lock: the source changed since approval, approve it again"
+        return 1, f"{change.name}: cannot recompute the lock hashes ({err.filename}): the approved plan is incomplete"
+    stale = sorted(k for k, v in lock["criteria"].items() if now.get(k) != v)
+    if stale:
+        return 1, f"{change.name}: {', '.join(stale)} no longer matches the lock (or cannot be recomputed): the source changed since approval, approve it again"
     changes = read_json(target / "sdlc.json").get("changesDir") or "changes"
+    if not isinstance(changes, str) or Path(changes).is_absolute() or ".." in Path(changes).parts:
+        return 1, f"sdlc.json changesDir {changes!r} must be a relative path without `..`"
     dest = target / changes / change.name
+    if not dest.resolve().is_relative_to(target.resolve()) or dest.resolve() == target.resolve():
+        return 1, f"{dest} is outside the target repo"
     state = dest / "state"
-    where = {  # a record sits where the target keeps it (state/ once that folder exists)
-        name: (state / spec.STATE_NAMES.get(name, name) if state.is_dir() else dest / name) for name in ("decisions.json", "done.json")
-    } | {"facts.md": dest / "facts.md", "plan.md": dest / "plan.md"}
-    present = [p for p in (*where.values(), dest / "lock.json", state / "lock.json", dest / "decisions.json", dest / "done.json", state / spec.STATE_NAMES.get("decisions.json", "decisions.json"), state / spec.STATE_NAMES.get("done.json", "done.json")) if p.is_file()]
+    homes = [dest / "decisions.json", state / spec.STATE_NAMES.get("decisions.json", "decisions.json")]
+    if all(p.is_file() for p in homes):
+        return 1, f"{dest.name} holds two decisions files ({homes[0].name} and state/{homes[1].name}): keep one by hand first"
+    present = [p for p in (dest / "lock.json", state / "lock.json", *homes, dest / "facts.md", dest / "plan.md", dest / "done.json", state / "done.json") if p.is_file()]
     if present and not replace:
         return 1, f"{dest.name} already holds {', '.join(sorted({p.name for p in present}))}: pass --replace to write over it (its `skips` and `protectedEdit` are kept)"
-    old_decisions = read_json(where["decisions.json"])
     src_decisions = read_json(spec.state_path(change, "decisions.json"))
+    old_decisions = read_json(spec.state_path(dest, "decisions.json"))
     decisions = {**old_decisions, **{k: src_decisions[k] for k in (*ROUTING, "layout", "project") if k in src_decisions}}
     payload = {
         "decisions.json": (json.dumps(decisions, indent=2) + "\n").encode(),
@@ -497,34 +505,33 @@ def repo_records(change: Path, other: Path, replace: bool = False) -> tuple[int,
         "facts.md": (change / "facts.md").read_bytes(),
         "plan.md": (change / "plan.md").read_bytes(),
     }
-    touched = [*where.values(), dest / "lock.json", state / "lock.json"]
-    with tempfile.TemporaryDirectory() as keep:  # what was there, to put back on a refusal
-        saved = {}
-        for i, path in enumerate(touched):
-            if path.is_file():
-                saved[path] = Path(keep) / str(i)
-                shutil.copyfile(path, saved[path])
-        made = not dest.exists()
-        for name, path in where.items():
+    aside = dest.with_name(f".{dest.name}.replaced-{os.getpid()}") if dest.exists() else None
+    done = False
+    try:
+        if aside:
+            os.rename(dest, aside)  # the old folder, lock included, waits here until the new gate has run
+            shutil.copytree(aside, dest, ignore=shutil.ignore_patterns("lock.json"))
+        dest.mkdir(parents=True, exist_ok=True)
+        place = {"facts.md": dest / "facts.md", "plan.md": dest / "plan.md", "decisions.json": spec.state_path(dest, "decisions.json"),
+                 "done.json": spec.state_path(dest, "done.json") if spec.state_path(dest, "done.json").is_file() else dest / "done.json"}  # fmt: skip
+        for name, path in place.items():
             path.parent.mkdir(parents=True, exist_ok=True)
             path.write_bytes(payload[name])
-        for path in (dest / "lock.json", state / "lock.json"):
-            path.unlink(missing_ok=True)  # --replace: the old lock goes, the gate writes the new one
         run = subprocess.run([sys.executable, str(gate), "approve", change.name], cwd=target, capture_output=True, text=True)
-        wrote_lock = any((p).is_file() for p in (dest / "lock.json", state / "lock.json"))
-        if run.returncode or not wrote_lock:
-            if made:
-                shutil.rmtree(dest, ignore_errors=True)
-            else:
-                for path in touched:
-                    if path in saved:
-                        path.parent.mkdir(parents=True, exist_ok=True)
-                        shutil.copyfile(saved[path], path)
-                    else:
-                        path.unlink(missing_ok=True)
-            last = (run.stdout.strip().splitlines() or [""])[-1]
-            return 1, f"{target.name}: approve refused ({last or run.stderr.strip()[-200:]}); nothing was left behind"
-    return 0, f"REPO-RECORDS {change.name} {target.name} " + (run.stdout.strip().splitlines() or [""])[-1]
+        done = run.returncode == 0 and spec.state_path(dest, "lock.json").is_file()
+        last = (run.stdout.strip().splitlines() or [""])[-1]
+    finally:
+        if done:
+            if aside:
+                shutil.rmtree(aside, ignore_errors=True)
+        else:  # whatever happened, the target is as it was
+            if (aside is None or aside.exists()) and dest.resolve().is_relative_to(target.resolve()):
+                shutil.rmtree(dest, ignore_errors=True)  # only a folder this call made or moved aside
+            if aside and aside.exists():
+                os.rename(aside, dest)
+    if not done:
+        return 1, f"{target.name}: approve refused ({last or run.stderr.strip()[-200:]}); nothing was left behind"
+    return 0, f"REPO-RECORDS {change.name} {target.name} {last}"
 
 
 def handoff_of(change: Path) -> dict:
@@ -896,11 +903,11 @@ BLOCKS = {
         "the agent",
         "read verify/report.md, then fix the check's output",
     ),
-    "needs-baseline": (
-        "a check needs a baseline that does not exist",
-        "nothing recorded the passing state to compare with",
-        "you",
-        "decide whether to record the baseline, then rerun `python3 scripts/verify_gate.py {scope} {id}`",
+    "needs-comparison": (
+        "a screen has no board-to-build comparison of its latest capture",
+        "the gate records a baseline only after a comparison matched; no owner approves a screen",
+        "the agent",
+        "compare the shots in verify/shots with the pinned design, write verify/comparison.json, then rerun `python3 scripts/verify_gate.py {scope} {id}`",
     ),
     "allowlist-request": (
         "a check asks for a wider allowlist",

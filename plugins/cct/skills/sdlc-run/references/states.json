@@ -172,10 +172,10 @@
         "gate-pass"
       ]
     },
-    "needs-baseline": {
+    "needs-comparison": {
       "kind": "blocked",
-      "actor": "owner",
-      "command": "decide whether to record the baseline, then rerun `python3 scripts/verify_gate.py {scope} {id}`",
+      "actor": "agent",
+      "command": "compare the shots in verify/shots with the pinned design, write verify/comparison.json, then rerun `python3 scripts/verify_gate.py {scope} {id}`",
       "to": [
         "gate-pass"
       ]
