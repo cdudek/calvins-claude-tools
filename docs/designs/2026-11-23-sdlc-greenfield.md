@@ -46,6 +46,22 @@ One run has one ID and one approval. Its records live **outside every repo**, in
 | Approved inputs | Pinned acceptance specs, fixtures, board extracts, token mappings and runner version. The approval identifies the digest of the whole bundle. |
 | Checkpoints | Attempt counts, decisions, candidate SHAs, artifact hashes, verifier receipts, PR links and the next unfinished task. Progress is derived from these records. |
 
+**Layout, so nothing is found by scanning folders:**
+
+```
+~/.sdlc/
+  index.jsonl                         one line per run, the only file a lookup reads
+  runs/2026-11-23-heydiff-web-v1-beta-3f2a/
+    run.json                          id, title, status, repos, branches, PRs, checkpoint
+    plan.md  contract.json  log.md
+    evidence/                         check output, traces, failure screenshots
+```
+
+- **Run ID:** `<date>-<start repo>-<slug>-<4-char hash>`, readable and unique.
+- **Index line:** `{id, title, status, created, updated, repos: [{remote, path, branch, base}], prs: [...]}`. The runner appends or rewrites it atomically on every status change.
+- **Lookup:** `sdlc status` in any repo reads the repo's git remote and current branch, then finds the matching index line. The current run is the one whose branch is checked out. `sdlc list [--repo X] [--active]` filters the index. Neither reads run folders.
+- **Repair:** `sdlc index --rebuild` regenerates the index from the `run.json` files if it is ever lost.
+
 The approval records the digest of the reviewed bundle. Plugin hooks block every agent from writing to `~/.sdlc/runs/`; only the runner's own scripts do. This stops a careless agent, not a hostile process on the same machine, which is an accepted risk for a one-owner setup.
 
 The runner checkpoints after approval, each milestone merge and each external action: attempt counts, decisions, candidate SHAs, verifier receipts, PR links and the next unfinished task. Work itself lives in git on the run's branches.
