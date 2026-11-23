@@ -3,7 +3,7 @@ from __future__ import annotations
 
 import store
 import verify
-from contract import PENDING, READY, git
+from contract import PENDING, READY, argv_allowed, git, safe_relpath
 from store import SdlcError
 
 
@@ -25,6 +25,8 @@ def merge_order(rid: str) -> list[str]:
 
 
 def _run(rid: str, repo: str, argv: list[str], ref: str, label: str):
+    if not argv_allowed(argv):
+        raise SdlcError(f"BLOCKED integrity {label}: command is not on the allowlist")
     r = store.load_meta(rid)["repos"][repo]
     job = verify.run_job(rid, label, [a.replace("{ref}", ref) for a in argv], __import__("pathlib").Path(r["path"]))
     if job.exit != 0:
@@ -62,7 +64,10 @@ def publish(rid: str, producer: str) -> dict:
     from engine import project_wt
     pwt = project_wt(rid, edge["consumer"])
     pin = edge["pin"]
-    (pwt / pin["file"]).write_text(pin["line"].replace("{digest}", published) + "\n")
+    target = (pwt / pin["file"]).resolve()
+    if not safe_relpath(pin["file"]) or not target.is_relative_to(pwt.resolve()):
+        raise SdlcError(f"BLOCKED integrity pin file {pin['file']} resolves outside the consumer worktree")
+    target.write_text(pin["line"].replace("{digest}", published) + "\n")
     git(pwt, "add", "-A")
     git(pwt, "commit", "-qm", f"sdlc: pin {producer} {published[:12]}")
     rec = {"digest": published, "pin_sha": git(pwt, "rev-parse", "HEAD")}

@@ -253,7 +253,7 @@ def screen(rid: str) -> Path:
              "", "## Milestones", ""] + [f"- **{m['id']}** ({m['repo']}): {len(m.get('tasks', []))} tasks, needs {m.get('needs') or 'nothing'}" for m in tasks.get("milestones", [])] + [
              "", "## Checks that decide the result", ""] + rows + [
              "", "## Dependency and lockfile changes", ""] + (
-        [f"- **{r}:** " + ", ".join(f"`{p}` ({h[:10]})" for p, h in v["files"].items()) + " (applied by the runner, scripts disabled, frozen install)" for r, v in deps.items()]
+        [f"- **{r}:** " + ", ".join(f"`{p}` ({h[:10]})" for p, h in v["files"].items()) + " (applied by the runner; frozen install with install scripts and source builds disabled; a manager with no such flag is not run)" for r, v in deps.items()]
         or ["- none"]) + [
              "", "## Limits", "",
              f"- **Builders:** up to {lim.get('builders', 8)}, fewer when the graph allows less",

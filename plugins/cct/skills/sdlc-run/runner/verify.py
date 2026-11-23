@@ -211,9 +211,10 @@ def verify_check(rid: str, chk: dict, ref: str | None = None, base_sha: str | No
             base_rec = _prove_failing(rid, meta, chk, base_sha or repo["base_sha"], wt, key)
             if base_rec["verdict"] != "OK":
                 return done("BLOCKED", base_rec["reason"], base=base_rec)
-        job = run_job(rid, f"{chk['repo']}-{chk['id']}", chk["runner"], wt, env=_artifact_env(rid, chk))
+        env = _artifact_env(rid, chk)  # one environment for the first run and the retry
+        job = run_job(rid, f"{chk['repo']}-{chk['id']}", chk["runner"], wt, env=env)
         if job.exit != 0 and TRANSIENT.search(job.out) and _spend_retry(rid, f"{chk['repo']}:{chk['id']}"):
-            job = run_job(rid, f"{chk['repo']}-{chk['id']}", chk["runner"], wt)
+            job = run_job(rid, f"{chk['repo']}-{chk['id']}", chk["runner"], wt, env=env)
         verdict, reason, tests = classify(chk, job)
         ev = store.run_dir(rid) / "evidence" / f"{chk['repo']}--{chk['id'].replace('/', '_')}.log"
         store.atomic_write(ev, job.out[-20000:])

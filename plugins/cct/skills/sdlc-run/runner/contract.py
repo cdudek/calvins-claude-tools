@@ -36,7 +36,36 @@ def wt_path(repo_path: str, rid: str, name: str) -> Path:
     return Path(repo_path) / ".worktrees" / f"sdlc-{rid}-{name}"
 
 
+PACK_ALLOWED = (("git", "ls-tree"), ("git", "archive"), ("git", "rev-parse"), ("npm", "pack"), ("uv", "build"), ("python3", "-m", "build"))
+
+
+def safe_relpath(p) -> bool:
+    return (isinstance(p, str) and p != "" and "\\" not in p and not p.startswith(("/", "~")) and ".." not in p.split("/")
+            and "." not in p.split("/")[:1] and "" not in p.split("/"))
+
+
+def argv_allowed(argv) -> bool:
+    return (isinstance(argv, list) and all(isinstance(a, str) for a in argv)
+            and any(argv[:len(a)] == list(a) for a in PACK_ALLOWED))
+
+
+def validate_edges(c: dict) -> None:
+    for e in c.get("edges", []):
+        for k in ("producer", "consumer", "pack"):
+            if k not in e:
+                raise SdlcError(f"edge lacks {k}")
+        if not argv_allowed(e["pack"]):
+            raise SdlcError(f"edge {e['producer']}: pack command is not on the allowlist {[' '.join(a) for a in PACK_ALLOWED]}")
+        rel = e.get("release", {})
+        if rel.get("kind", "none") != "none":
+            if not argv_allowed(rel.get("fetch")):
+                raise SdlcError(f"edge {e['producer']}: fetch command is not on the allowlist")
+            if not safe_relpath(e.get("pin", {}).get("file")) or not isinstance(e["pin"].get("line"), str):
+                raise SdlcError(f"edge {e['producer']}: pin.file must be a relative path inside the repo (no .. or absolute path)")
+
+
 def validate_contract(c: dict) -> None:
+    validate_edges(c)
     ids = set()
     for chk in c.get("checks", []):
         for f in CHECK_FIELDS:

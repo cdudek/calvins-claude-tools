@@ -15,7 +15,7 @@ MANIFEST = re.compile(r"(^|/)(package\.json|package-lock\.json|pnpm-lock\.yaml|y
 FROZEN = {"pnpm-lock.yaml": ["pnpm", "install", "--frozen-lockfile", "--ignore-scripts"],
           "yarn.lock": ["yarn", "install", "--immutable", "--mode=skip-build"],
           "package-lock.json": ["npm", "ci", "--ignore-scripts"],
-          "uv.lock": ["uv", "sync", "--frozen"], "poetry.lock": ["poetry", "install", "--no-root"]}
+          "uv.lock": ["uv", "sync", "--frozen", "--no-build"]}  # no poetry: it has no flag that forbids source builds
 
 
 def approved(rid: str, repo: str) -> dict:
@@ -37,6 +37,7 @@ def guard(rid: str, repo: str, base: str, cand: str) -> list[str]:
     return bad
 
 
+# Python installs forbid source builds (a build backend runs arbitrary code); a manager without a safe flag is not run.
 def frozen_install(path: str | Path) -> list[str] | None:
     for lock, argv in FROZEN.items():
         if (Path(path) / lock).exists():

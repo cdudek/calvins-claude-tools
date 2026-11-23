@@ -1,5 +1,7 @@
 """Step 8: producer and consumer through the final merge sequence, plus the approved-dependency guard."""
 
+from pathlib import Path
+
 import contract
 import deps
 import engine
@@ -110,3 +112,47 @@ def test_only_the_approved_manifest_resolution_may_change(tmp_path):
     assert any("unapproved change to package-lock.json" in b for b in deps.guard(rid, "web", base, sha3))
     assert "left-pad" in deps.diff_text(rid, "web")
     assert deps.frozen_install(repo) == ["npm", "ci", "--ignore-scripts"]
+
+
+def test_edges_are_validated_at_planning(tmp_path):
+    base = {"producer": "lib", "consumer": "app", "pack": ["git", "ls-tree", "-r", "{ref}"],
+            "release": {"kind": "git-tag", "fetch": ["git", "ls-tree", "-r", "{ref}"]}, "pin": {"file": "pin.txt", "line": "lib={digest}"}}
+    contract.validate_edges({"edges": [base]})
+    for bad_pin in ("../x", "/etc/passwd", "a/../../b", "~/x", "a\\b", "", "a//b"):
+        e = {**base, "pin": {"file": bad_pin, "line": "x"}}
+        with pytest.raises(SdlcError, match="pin.file"):
+            contract.validate_edges({"edges": [e]})
+    for cmd in (["curl", "http://x"], ["bash", "-c", "id"], ["git", "push"], "git ls-tree", []):
+        with pytest.raises(SdlcError, match="allowlist"):
+            contract.validate_edges({"edges": [{**base, "pack": cmd}]})
+        with pytest.raises(SdlcError, match="allowlist"):
+            contract.validate_edges({"edges": [{**base, "release": {"kind": "git-tag", "fetch": cmd}}]})
+
+
+def test_publish_refuses_a_pin_path_that_escapes_and_a_disallowed_command(tmp_path):
+    lib, app, rid = pilot(tmp_path)
+    land(rid, "a", {"lib.py": "V = 3\n"})
+    engine.close_milestone(rid, "m1")
+    release.pack(rid, "lib")
+    tk.git(lib, "push", "-q", "origin", f"{store.load_meta(rid)['repos']['lib']['branch']}:main")
+    d = store.run_dir(rid)
+    c = store.read_json(d / "contract.json")
+    c["edges"][0]["pin"]["file"] = "../outside.txt"  # tampered after approval: runtime check still refuses
+    store.write_json(d / "contract.json", c)
+    with pytest.raises(SdlcError, match="outside the consumer worktree"):
+        release.publish(rid, "lib")
+    assert not (Path(store.load_meta(rid)["repos"]["app"]["path"]).parent / "outside.txt").exists()
+    c["edges"][0]["pin"]["file"] = "pin.txt"
+    c["edges"][0]["release"]["fetch"] = ["bash", "-c", "id"]
+    store.write_json(d / "contract.json", c)
+    with pytest.raises(SdlcError, match="allowlist"):
+        release.publish(rid, "lib")
+
+
+def test_python_installs_forbid_source_builds_and_poetry_is_not_run(tmp_path):
+    (tmp_path / "uvapp").mkdir()
+    (tmp_path / "uvapp" / "uv.lock").write_text("")
+    assert deps.frozen_install(tmp_path / "uvapp") == ["uv", "sync", "--frozen", "--no-build"]
+    (tmp_path / "poet").mkdir()
+    (tmp_path / "poet" / "poetry.lock").write_text("")
+    assert deps.frozen_install(tmp_path / "poet") is None

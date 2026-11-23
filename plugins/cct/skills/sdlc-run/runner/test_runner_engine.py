@@ -315,3 +315,14 @@ def test_push_is_not_redone_after_a_crash(tmp_path):
     sha = remote
     store.update_cp(rid, lambda cp: cp["external"].__setitem__("push:app", {"state": "started", "sha": sha}))
     assert engine.push(rid, "app") == "reconciled"  # found on the remote: not pushed a second time
+
+
+def test_transient_retry_keeps_the_artifact_environment(tmp_path):
+    _, rid = approved(tmp_path)
+    store.update_cp(rid, lambda cp: cp.__setitem__("artifacts", {"lib": {"source": "abc", "digest": "d"}}))
+    flag = tmp_path / "flag"
+    code = (f"import os,sys\nf={str(flag)!r}\nif not os.path.exists(f):\n    open(f,'w').write('1')\n    print('ECONNRESET')\n    sys.exit(1)\n"
+            "assert 'SDLC_ARTIFACT_LIB' in os.environ, 'retry lost the artifact env'\nprint('Ran 1 tests')\n")
+    c = tk.chk("net", "app", ["python3", "-c", code], consumes=["lib"])
+    b = verify.verify_check(rid, c)
+    assert b["verdict"] == "PASS" and store.load_cp(rid)["retries"]["app:net"] == 1
