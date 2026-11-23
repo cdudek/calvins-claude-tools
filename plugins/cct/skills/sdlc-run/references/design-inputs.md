@@ -153,3 +153,7 @@ the tech plan; this rule challenges the design the owner supplied.
 
 The ban on HTML and Figma in the prototype rules covers prototypes the agent makes (generated
 images only). It does not cover designs the team supplies: those are read as in the table above.
+
+## 4.0: measured, not looked at
+
+From 4.0 a design input becomes contract rows. A structured export or renderable board is pinned (digest, frame, state, viewport, theme, fonts); `runner/board.py extract` maps nodes to locators and resolves tokens against the pinned design system; `check` measures computed style and geometry on the real surface. A bitmap is never a measurable source: its properties are listed as unsupported before approval, and an inferred value never becomes a measured fact. Screenshots are diagnostic evidence for failures only, with no baseline and no sign-off.

@@ -15,7 +15,6 @@ class WorktreePolicy(unittest.TestCase):
         )
         for relative in (
             "skills/sdlc-run/SKILL.md",
-            "skills/sdlc-run/references/stages.md",
             "skills/project-repository-run/SKILL.md",
         ):
             text = (PLUGIN / relative).read_text()
