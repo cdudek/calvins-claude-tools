@@ -1,6 +1,6 @@
 ---
 type: design
-status: proposal
+status: approved
 author: Claude (Opus 5.5), revised by Codex gpt-6.2-astra
 created: 2026-11-23
 project: sdlc-run
@@ -137,7 +137,7 @@ A one-line fix gets one plan paragraph, one executable acceptance check and the 
 
 ## 6. Questions for the owner
 
-1. **Where run records live.** Recommended: `~/.sdlc/runs/<id>/` on the running machine, never committed, with the plan summary and evidence in each PR body. Alternatives: committed on the run branch and dropped before merge, or a gitignored `.sdlc/` in the start repo (needs a `.gitignore` line in every repo, which breaks "nothing installed").
+1. **Where run records live.** Decided (owner, 23 Nov): `~/.sdlc/runs/<id>/` on the running machine, never committed, with the plan summary and evidence in each PR body. Alternatives: committed on the run branch and dropped before merge, or a gitignored `.sdlc/` in the start repo (needs a `.gitignore` line in every repo, which breaks "nothing installed").
 
 ## Sources
 
