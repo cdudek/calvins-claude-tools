@@ -1117,6 +1117,7 @@ KIT_PREFLIGHT = {
     "020f538fc743c5b0",
     "800076649e5cd346",
     "54c99826b071f7f3",
+    "2e60552107696111",
 }
 KIT_CAPTURE = {
     "55464dcaa9fb571a",
@@ -1139,6 +1140,7 @@ KIT_CAPTURE = {
     "225c9473fb6d2bf9",
     "42b03ae95d9f3f0f",
     "c9e4ae2bba8672bb",
+    "bab204515ff16d7c",
 }
 KIT_HELPER_GUARD = {
     "ca26ffb8ad16e8b3",
