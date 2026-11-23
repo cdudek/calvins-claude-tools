@@ -492,21 +492,61 @@ def _norm(v: str) -> str:
     return "0px" if v.strip() == "normal" else v.strip()
 
 
-def canvas_rows(index: dict, mapping: dict) -> dict:
+def validate_mapping(mapping: dict) -> None:
+    """The mapping file's shape: entries of board (or board_file), route (a path, or null when the screen is not a web route),
+    state, theme ("light", "dark" or "light, dark"), viewport ([w, h] or null). Other keys (entry, series, capture, note ...) are bookkeeping."""
+    boards = mapping.get("boards")
+    if not isinstance(boards, list):
+        raise ValueError("mapping needs a boards list")
+    if "count" in mapping and mapping["count"] != len(boards):
+        raise ValueError(f"mapping count {mapping['count']} is not the {len(boards)} boards listed")
+    for i, m in enumerate(boards):
+        f = m.get("board_file") or m.get("board") if isinstance(m, dict) else None
+        vp, th, rt = (m.get("viewport"), m.get("theme"), m.get("route")) if isinstance(m, dict) else (0, 0, 0)
+        if not isinstance(f, str) or not f:
+            raise ValueError(f"boards[{i}] needs board or board_file")
+        if rt is not None and not (isinstance(rt, str) and rt.startswith("/")):
+            raise ValueError(f"boards[{i}] route must start with / or be null")
+        if vp is not None and not (isinstance(vp, list) and len(vp) == 2 and all(isinstance(n, int) and n > 0 for n in vp)):
+            raise ValueError(f"boards[{i}] viewport must be [width, height] or null")
+        if th is not None and not (isinstance(th, str) and all(t.strip() in THEMES for t in th.split(","))):
+            raise ValueError(f"boards[{i}] theme must be light, dark or 'light, dark'")
+
+
+def _pick(indexes: list[dict], vp) -> dict | None:
+    """The index measured at this entry's viewport (the only one when the entry names none)."""
+    return next((ix for ix in indexes if vp is None or [ix["viewport"]["width"], ix["viewport"]["height"]] == list(vp)), None)
+
+
+def canvas_rows(index: dict | list[dict], mapping: dict, repo: str | None = None) -> dict:
     """Expectation rows for every mapped board, theme and unambiguous node; what cannot be measured goes under unsupported.
-    The mapping is the only hand-written input: boards -> route and state, plus the theme list and tolerances."""
+    The mapping is the only hand-written input. `index` is one index, or one per viewport; `repo` keeps one app's entries."""
+    validate_mapping(mapping)
+    indexes = index if isinstance(index, list) else [index]
     rows: list[dict] = []
     unsupported: list[dict] = []
-    themes = mapping.get("themes") or index["themes"]
     tol, gtol = mapping.get("tolerance_px", TOL), mapping.get("geometry_tolerance_px", 1.0)
     geometry = ["x", "y", "width", "height"] if mapping.get("position") else ["width", "height"]
-    for m in mapping.get("boards", []):
-        f = m["board"]
+    ids: set[str] = set()
+    for m in mapping["boards"]:
+        if repo and m.get("repo") != repo:
+            continue
+        f = m.get("board_file") or m["board"]
+        ident = m.get("entry") or f
+        if not m.get("route"):
+            unsupported.append({"id": ident, "reason": m.get("note") or "no route: not measured as a web route"})
+            continue
+        ix = _pick(indexes, m.get("viewport"))
+        if ix is None:
+            unsupported.append({"id": ident, "reason": f"no index measured at viewport {m['viewport']}"})
+            continue
+        hits = [k for k in ix["boards"] if k == f or k.rsplit("/", 1)[-1] == f]
+        themes = [t.strip() for t in m["theme"].split(",")] if m.get("theme") else (mapping.get("themes") or ix["themes"])
         for theme in themes:
-            entry = index["boards"].get(f, {}).get(theme)
-            who = f"{f}/{theme}"
+            who = f"{ident}/{theme}"
+            entry = ix["boards"][hits[0]].get(theme) if len(hits) == 1 else None
             if entry is None:
-                unsupported.append({"id": who, "reason": "board or theme is not in the index"})
+                unsupported.append({"id": who, "reason": f"{len(hits)} boards named {f} in the index" if len(hits) != 1 else "theme is not in the index"})
                 continue
             if entry["error"] or not entry["nodes"]:
                 unsupported.append({"id": who, "reason": entry["error"] and f"board did not load cleanly ({entry['error']})" or "no candidate nodes"})
@@ -518,9 +558,13 @@ def canvas_rows(index: dict, mapping: dict) -> dict:
                     continue
                 for prop, val in [*n["style"].items(), *((g, n["box"][g]) for g in geometry)]:
                     want = _fmt(val, prop) if isinstance(val, (int, float)) else _norm(val)
-                    rows.append({"id": f"{who}/{label}/{prop}", "frame": f, "node": label, "locator": n["locator"], "state": m.get("state", "default"),
-                                 "route": m["route"], "theme": theme, "theme_attr": index.get("attr") or mapping.get("theme_attr"),
-                                 "viewport": index["viewport"], "prop": prop, "expected": want,
+                    rid = f"{who}/{label}/{prop}"
+                    if rid in ids:
+                        raise ValueError(f"two mapping entries produce the row {rid}: give each entry its own entry id")
+                    ids.add(rid)
+                    rows.append({"id": rid, "frame": f, "node": label, "locator": n["locator"], "state": m.get("state", "default"),
+                                 "route": m["route"], "theme": theme, "theme_attr": ix.get("attr") or mapping.get("theme_attr"),
+                                 "viewport": ix["viewport"], "prop": prop, "expected": want,
                                  "tolerance_px": gtol if prop in GEOMETRY else tol, "source": "measured"})
     return {"rows": rows, "unsupported": unsupported}
 
@@ -582,8 +626,13 @@ def _index_cli(argv: list[str]) -> int:
 
 def _rows_cli(argv: list[str]) -> int:
     mapping = json.loads(Path(argv[0]).read_text())
-    idx = json.loads(Path(_arg(argv, "--index", "index.json")).read_text())
-    res = canvas_rows(idx, mapping)
+    files = [argv[i + 1] for i, a in enumerate(argv) if a == "--index"] or ["index.json"]  # one per viewport
+    idx = [json.loads(Path(f).read_text()) for f in files]
+    try:
+        res = canvas_rows(idx, mapping, _arg(argv, "--repo"))
+    except ValueError as e:
+        print(f"mapping: {e}")
+        return 2
     out = {"target": {"kind": "web", "url": _arg(argv, "--url", mapping.get("url", ""))}, "rows": res["rows"], "unsupported": res["unsupported"]}
     Path(_arg(argv, "--out", "spec.json")).write_text(json.dumps(out, indent=1) + "\n")
     print(f"{len(res['rows'])} rows, {len(res['unsupported'])} unsupported")
@@ -603,7 +652,7 @@ def main(argv: list[str]) -> int:
         return _extract_cli(argv[1:])
     print("usage: board.py check <spec.json> | extract <board.json> [--tokens t.json] [--out rows.json]\n"
           "       board.py index <export-dir> [--out index.json] [--themes light,dark] [--viewport 1280x800] [--attr data-theme]\n"
-          "       board.py rows <mapping.json> --index index.json [--url http://app] [--out spec.json]")
+          "       board.py rows <mapping.json> --index index.json [--index other.json] [--repo web] [--url http://app] [--out spec.json]")
     return 2
 
 

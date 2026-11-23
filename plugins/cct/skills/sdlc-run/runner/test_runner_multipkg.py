@@ -34,7 +34,7 @@ def consumer_manifest(ann="^0.9.0", ui="^0.9.0"):
     return json.dumps({"name": "app", "version": "0.0.1", "private": True, "dependencies": {"@kit/annotations": ann, "@kit/ui": ui}}, indent=2) + "\n"
 
 
-def vendored_pilot(tmp_path, app_files=None, consumers=("app",)):
+def vendored_pilot(tmp_path, app_files=None, consumers=("app",), edge=None, deps_block=None):
     kit = tk.make_repo(tmp_path, "kit", kit_files(), remote=True)
     rid = tk.new_run(tmp_path / "home", kit, [])
     meta = store.load_meta(rid)
@@ -48,10 +48,11 @@ def vendored_pilot(tmp_path, app_files=None, consumers=("app",)):
         meta["repos"][name] = {"path": str(app), "base_sha": tk.git(app, "rev-parse", "main"), "branch": f"sdlc/{rid}", "default_branch": "main"}
         ms.append({"id": f"m{i + 2}", "repo": name, "needs": ["m1"], "tasks": [{"id": f"b{i}", "needs": [], "paths": ["src.js"], "waiver": waiver}]})
         checks.append(tk.chk(f"{name}-gate", name, GATE, f"m{i + 2}", consumes=["kit"]))
-        edges.append({"producer": "kit", "consumer": name, "packages": PKGS, "release": {"kind": contract.VENDORED}, "pin": {"dir": "vendor/kit"}})
+        edges.append(edge or {"producer": "kit", "consumer": name, "packages": PKGS, "release": {"kind": contract.VENDORED}, "pin": {"dir": "vendor/kit"}})
+        edges[-1] = {**edges[-1], "consumer": name}
     store.save_meta(rid, meta)
     store.write_json(d / "tasks.json", {"milestones": ms})
-    store.write_json(d / "contract.json", {"checks": checks, "edges": edges, "limits": {"max_dispatches": 20}})
+    store.write_json(d / "contract.json", {"checks": checks, "edges": edges, "limits": {"max_dispatches": 20}, **({"deps": deps_block} if deps_block else {})})
     engine.validate_plan(rid)
     tk.approve(rid)
     return kit, tk_repo(meta, "app"), rid
@@ -271,3 +272,74 @@ def test_package_json_is_edited_structurally_and_keeps_its_indent_and_key_order(
     want = text.replace("^0.9.0", "@@").replace('"@kit/ui": "@@"', '"@kit/ui": "file:vendor/kit/kit-ui-1.0.0.tgz"').replace(
         '"@kit/annotations": "@@"', '"@kit/annotations": "file:vendor/kit/kit-annotations-1.0.0.tgz"')
     assert out.strip() == want.strip()
+
+
+# ---- field shapes of a real draft: object packages, a structural pin object, approved dependency lines ---------------
+
+DRAFT_EDGE = {"producer": "kit", "pack": ["npm", "pack", "--ignore-scripts"],
+              "packages": [{"name": "@kit/annotations", "dir": "packages/annotations"}, {"name": "@kit/ui", "dir": "packages/ui"}],
+              "release": {"kind": "git-main", "fetch": ["npm", "pack", "--ignore-scripts"]},
+              "pin": {"kind": "package-json", "file": "package.json", "section": "dependencies", "vendor_dir": "vendor/kit/",
+                      "value": "file:vendor/kit/kit-{name}-{version}.tgz", "lockfile": "package-lock.json",
+                      "lockfile_update": "npm install --package-lock-only --ignore-scripts, run by the runner"},
+              "uses_4_1": ["bookkeeping"]}
+LINES = ['    "@kit/annotations": "file:vendor/kit/kit-annotations-1.0.0.tgz"', '    "@kit/ui": "file:vendor/kit/kit-ui-1.0.0.tgz"']
+
+
+def drive(kit, rid):
+    land(rid, "a", {"packages/ui/i.js": "z\n"})
+    engine.close_milestone(rid, "m1")
+    release.pack(rid, "kit")
+    publish_ready(kit, rid)
+
+
+@needs_npm
+def test_the_draft_edge_shape_pins_and_checks_the_approved_lines(tmp_path):
+    contract.validate_edges({"edges": [{**DRAFT_EDGE, "consumer": "app"}]})
+    kit, app, rid = vendored_pilot(tmp_path, edge=DRAFT_EDGE, deps_block={"app": {"files": {}, "kit_tarball_lines": LINES, "lockfile": ["pending"]}})
+    drive(kit, rid)
+    rec = release.publish(rid, "kit")
+    man = json.loads(tk.git(app, "show", f"{store.load_meta(rid)['repos']['app']['branch']}:package.json"))
+    assert man["dependencies"]["@kit/ui"] == "file:vendor/kit/kit-ui-1.0.0.tgz" and rec["consumers"]["app"]["files"]
+    assert deps.guard(rid, "app", store.load_meta(rid)["repos"]["app"]["base_sha"], tk.git(app, "rev-parse", store.load_meta(rid)["repos"]["app"]["branch"])) == []
+
+
+@needs_npm
+@pytest.mark.parametrize("what", ["lines", "value", "lockfile"])
+def test_a_pin_that_differs_from_the_approved_shape_is_blocked_and_leaves_the_consumer_clean(tmp_path, what):
+    edge = {**DRAFT_EDGE, "pin": {**DRAFT_EDGE["pin"], **({"value": "file:vendor/kit/other-{name}-{version}.tgz"} if what == "value" else {}),
+                                  **({"lockfile": "sub/package-lock.json"} if what == "lockfile" else {})}}
+    lines = [LINES[0], '    "@kit/ui": "file:vendor/kit/kit-ui-9.9.9.tgz"'] if what == "lines" else LINES
+    kit, app, rid = vendored_pilot(tmp_path, edge=edge, deps_block={"app": {"kit_tarball_lines": lines}})
+    drive(kit, rid)
+    with pytest.raises(SdlcError, match={"lines": "lacks the approved line", "value": "pin.value gives", "lockfile": "pin.lockfile"}[what]):
+        release.publish(rid, "kit")
+    pwt = engine.project_wt(rid, "app")
+    assert tk.git(pwt, "status", "--porcelain") == "" and not (pwt / "vendor").exists() and deps.pin_record(rid, "app") == {}
+
+
+def test_edge_shapes_are_validated():
+    base = {**DRAFT_EDGE, "consumer": "app"}
+    for bad in ({"packages": [{"name": "../x"}]}, {"packages": [{"name": "a", "dir": "../d"}]}, {"pack": ["npm", "publish"]},
+                {"pin": {**DRAFT_EDGE["pin"], "vendor_dir": "../v"}}, {"pin": {**DRAFT_EDGE["pin"], "section": "scripts"}},
+                {"pin": {**DRAFT_EDGE["pin"], "file": "x.json"}}, {"pin": {**DRAFT_EDGE["pin"], "lockfile": "/abs"}}):
+        with pytest.raises(SdlcError):
+            contract.validate_edges({"edges": [{**base, **bad}]})
+
+
+def test_pinned_inputs_accept_both_shapes_and_reject_bad_paths():
+    for ok in ({"app": ["e2e/playwright.config.ts"]}, [{"repo": "app", "path": "e2e/playwright.config.ts", "source": "x", "why": "y"}]):
+        contract.validate_contract({"pinned_inputs": ok})
+        assert contract.pinned_map({"pinned_inputs": ok}) == {"app": ["e2e/playwright.config.ts"]}
+    for bad in ({"app": ["../x"]}, [{"repo": "app", "path": "/abs"}], [{"path": "x"}], "x", {"app": "x"}):
+        with pytest.raises(SdlcError, match="pinned_inputs"):
+            contract.validate_contract({"pinned_inputs": bad})
+
+
+def test_argv_placeholders_are_validated_in_the_contract():
+    ok = tk.chk("a", "app", ["bash", "-c", "gitleaks --log-opts '{base}..HEAD' --web {head} --c {producer_sha:chrome}"], count=False)
+    contract.validate_contract({"checks": [ok, tk.chk("b", "chrome", ["true"])]})
+    for bad in ("{producer_sha:ghost}", "{producer_sha:}", "{producer_sha:a b}"):
+        with pytest.raises(SdlcError, match="producer_sha"):
+            contract.validate_contract({"checks": [tk.chk("a", "app", ["echo", bad]), tk.chk("b", "chrome", ["true"])]})
+    contract.validate_contract({"checks": [tk.chk("a", "app", ["echo", "{other} ${x}"])]})  # not a placeholder: left alone

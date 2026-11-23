@@ -49,7 +49,7 @@ The user input is: $ARGUMENTS
 
 ## Contract extras (4.1)
 
-A check's `runner` may use `{base}`, `{head}` and `{producer_sha:<repo>}` (full SHAs, resolved by the runner; no other templating). A task may carry `replaces_tests: [paths or globs]` so a rewrite can delete or replace exactly those old tests (everything else stays tamper-checked). `pinned_inputs: {"<repo>": ["playwright.config.ts"]}` names config files (given with `--input`) that the runner writes into each milestone before any dispatch and overlays into every check checkout; builders cannot create or alter them.
+A check's `runner` may use `{base}`, `{head}` and `{producer_sha:<repo>}` (full SHAs, resolved by the runner; no other templating). A task may carry `replaces_tests: [paths or globs]`, each inside the task's owned `paths`, so a rewrite can delete or replace exactly those old tests (everything else stays tamper-checked). `pinned_inputs: {"<repo>": ["playwright.config.ts"]}` names config files (given with `--input`) that the runner writes into each milestone before any dispatch and overlays into every check checkout; builders cannot create or alter them.
 
 ## UI and UX verification
 

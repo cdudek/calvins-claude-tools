@@ -215,7 +215,7 @@ def pinned_inputs(rid: str, repo: str) -> dict:
     """{path: sha256} of the config files the approved contract pins for a repo (playwright.config.*, tsconfig*.json, .npmrc ...)."""
     src = store.run_dir(rid) / "inputs" / repo
     out = {}
-    for rel in store.read_json(store.run_dir(rid) / "contract.json").get("pinned_inputs", {}).get(repo, []):
+    for rel in contract.pinned_map(store.read_json(store.run_dir(rid) / "contract.json")).get(repo, []):
         f = src / rel
         out[rel] = store.sha256(f.read_bytes()) if f.is_file() else ""
     return out

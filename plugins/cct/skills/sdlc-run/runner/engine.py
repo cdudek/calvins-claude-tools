@@ -139,8 +139,21 @@ def validate_plan(rid: str) -> None:
                 raise SdlcError(f"plan error: duplicate task id {t['id']}")
             seen.add(t["id"])
             for g in t.get("replaces_tests", []):
-                if not (contract.safe_relpath(g.replace("*", "x").replace("?", "x")) and verify.TEST_PATH.search(g.replace("*", "x"))):
-                    raise SdlcError(f"plan error: task {t['id']} replaces_tests {g!r} must be a relative test path or glob (no .. or absolute path)")
+                if why := replaces_problem(g, t.get("paths", [])):
+                    raise SdlcError(f"plan error: task {t['id']} replaces_tests {g!r} {why}")
+
+
+def replaces_problem(g, owned: list[str]) -> str:
+    """A replaces_tests entry is an explicit test path or glob inside a path the task owns; anything wider is refused."""
+    if not isinstance(g, str):
+        return "must be a string"
+    plain = g.replace("*", "x").replace("?", "x")
+    if not (contract.safe_relpath(plain) and verify.TEST_PATH.search(plain)):
+        return "must be a relative test path or glob (no .. or absolute path)"
+    static = g.split("*")[0].split("?")[0]  # the part before the first wildcard
+    if not any(static.startswith(o.rstrip("/") + "/") or g == o for o in owned if contract.safe_relpath(o.rstrip("/"))):
+        return "is not inside the paths this task owns"
+    return ""
 
 
 def task_info(rid: str, tid: str) -> dict:

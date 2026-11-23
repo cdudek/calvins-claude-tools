@@ -169,3 +169,55 @@ def test_electron_launch_is_hidden_and_the_shim_makes_every_window_unfocusable(t
     out = subprocess.run(["node", "t.js"], cwd=tmp_path, capture_output=True, text=True)
     assert out.returncode == 0, out.stderr
     assert out.stdout.strip() == '[{"show":false,"focusable":false,"skipTaskbar":true},null,null,true]'
+
+
+# ---- replaces_tests must sit inside the task's owned paths -------------------------------------------------------
+
+def test_replaces_tests_must_be_explicit_and_inside_the_owned_paths():
+    owned = ["test/features/", "e2e/one.spec.ts", "src/x/"]
+    for ok in ("test/features/a.test.ts", "test/features/*.test.ts", "test/features/sub/**", "e2e/one.spec.ts"):
+        assert engine.replaces_problem(ok, owned) == "", ok
+    for bad in ("e2e/two.spec.ts", "test/other/a.test.ts", "test/*", "*", "**/*.test.ts", "test/features/../x.test.ts", "src/x/code.ts", "/test/features/a.ts", 5):
+        assert engine.replaces_problem(bad, owned), bad
+    assert engine.replaces_problem("test/a.test.ts", [])  # a task that owns nothing cannot claim tests
+
+
+# ---- boards.json entry shape ------------------------------------------------------------------------------------
+
+def node(role, name, **style):
+    return {"role": role, "name": name, "locator": {"role": role, "name": name}, "count": 1, "tag": "x",
+            "style": {"color": "red", **style}, "box": {"x": 0, "y": 0, "width": 10, "height": 5}}
+
+
+def index(vp, themes=("light", "dark")):
+    return {"version": 1, "viewport": {"width": vp[0], "height": vp[1]}, "themes": list(themes), "attr": None,
+            "boards": {"sub/Page.dc.html": {t: {"error": "", "nodes": [node("button", "Go")]} for t in themes}}}
+
+
+def entry(**kw):
+    return {"board": "A01.01", "board_file": "Page.dc.html", "frame": None, "entry": "A01.01", "route": "/p/A01.01", "state": "default",
+            "theme": "light", "viewport": [1440, 900], "repo": "web", "series": "A01", "milestone": 2, "fixture": "f", **kw}
+
+
+def test_mapping_entries_of_a_real_draft_become_rows_or_named_unsupported_items():
+    m = {"_comment": "x", "count": 5, "boards": [
+        entry(), entry(entry="A01.02", theme="light, dark", viewport=[390, 844]),
+        entry(entry="C01.01", repo="chrome", route=None, viewport=None, note="client capture"), entry(entry="A01.03", viewport=[800, 1200]),
+        entry(entry="A01.04", board_file="Missing.dc.html")]}
+    out = board.canvas_rows([index((1440, 900)), index((390, 844))], m, "web")
+    ids = {r["id"] for r in out["rows"]}
+    assert "A01.01/light/button:Go/width" in ids and "A01.02/light/button:Go/color" in ids and "A01.02/dark/button:Go/color" in ids
+    assert {r["viewport"]["width"] for r in out["rows"] if r["id"].startswith("A01.02")} == {390}  # the index at the entry's viewport
+    reasons = {u["id"]: u["reason"] for u in out["unsupported"]}
+    assert "no index measured at viewport [800, 1200]" in reasons["A01.03"] and "0 boards named Missing.dc.html" in reasons["A01.04/light"]
+    assert not any(i.startswith("C01.01") for i in ids | set(reasons))  # another repo's entry is not this app's
+    assert board.canvas_rows(index((1440, 900)), m, "chrome")["unsupported"] == [{"id": "C01.01", "reason": "client capture"}]
+
+
+def test_mapping_shape_errors_and_colliding_ids_are_refused():
+    for bad in ({"boards": "x"}, {"boards": [{"route": "/x"}]}, {"boards": [entry(route="x")]}, {"boards": [entry(viewport=[1, 2, 3])]},
+                {"boards": [entry(theme="sepia")]}, {"count": 2, "boards": [entry()]}):
+        with pytest.raises(ValueError):
+            board.validate_mapping(bad)
+    with pytest.raises(ValueError, match="own entry id"):
+        board.canvas_rows(index((1440, 900)), {"boards": [entry(), entry(route="/other")]})

@@ -9,7 +9,7 @@ import re
 import deps
 import store
 import verify
-from contract import PENDING, READY, VENDORED, argv_allowed, edge_packs, git, safe_relpath
+from contract import PENDING, READY, SECTIONS, argv_allowed, edge_packs, git, pin_dir, pin_manifest, pkg_names, safe_relpath, vendored
 from store import SdlcError
 
 
@@ -129,14 +129,21 @@ def publish(rid: str, producer: str) -> dict:
     rec: dict = {"digest": published["digest"], "consumers": {}}
     for edge in _of(rid, producer):
         pwt = project_wt(rid, edge["consumer"])
-        if edge.get("release", {}).get("kind") == VENDORED:
-            files = _pin_vendored(rid, edge, pwt, {n: blobs[n] for n in edge["packages"]})
+        if vendored(edge):
+            files = _pin_vendored(rid, edge, pwt, {n: blobs[n] for n in pkg_names(edge)})
         else:
             files = _pin_line(edge, pwt, published["digest"])
         rec["consumers"][edge["consumer"]] = {"pin_sha": git(pwt, "rev-parse", "HEAD"), "files": files}
         rec["pin_sha"] = rec["consumers"][edge["consumer"]]["pin_sha"]
     store.update_cp(rid, lambda cp: cp.setdefault("release", {}).__setitem__(producer, rec))
     return rec
+
+
+def _tar_version(data: bytes) -> str:
+    import io
+    import tarfile
+    with tarfile.open(fileobj=io.BytesIO(data)) as t:
+        return json.loads(t.extractfile("package/package.json").read())["version"]
 
 
 def _pin_line(edge: dict, pwt, digest: str) -> dict:
@@ -159,7 +166,6 @@ def _pin_line(edge: dict, pwt, digest: str) -> dict:
     return {}
 
 
-SECTIONS = ("dependencies", "devDependencies", "optionalDependencies")
 LOCK = ["npm", "install", "--package-lock-only", "--ignore-scripts", "--offline"]
 
 
@@ -167,9 +173,12 @@ def _pin_vendored(rid: str, edge: dict, pwt, blobs: dict[str, tuple[str, bytes]]
     """Vendor the producer's tarballs into the consumer, point its package.json at them and let npm rewrite the lockfile
     offline with scripts off. The runner then records the resulting bytes as the approved ones. Any failure undoes the worktree."""
     pin, consumer = edge["pin"], edge["consumer"]
-    man_rel = pin.get("manifest", "package.json")
-    vend = pin["dir"].rstrip("/")
+    man_rel = pin_manifest(edge)
+    vend = pin_dir(edge)
     mdir = posixpath.dirname(man_rel) or "."
+    lock_rel = posixpath.normpath(posixpath.join(mdir, "package-lock.json"))
+    if pin.get("lockfile", lock_rel) != lock_rel:  # npm writes the lockfile next to the manifest
+        raise SdlcError(f"BLOCKED plan pin.lockfile {pin['lockfile']} is not where npm writes it for {man_rel} ({lock_rel})")
     root = pwt.resolve()
     man = (pwt / man_rel).resolve()
     if not (pwt / vend).resolve().is_relative_to(root) or not man.is_relative_to(root) or not man.is_file():
@@ -179,7 +188,7 @@ def _pin_vendored(rid: str, edge: dict, pwt, blobs: dict[str, tuple[str, bytes]]
     indent = (re.search(r'^([ \t]+)"', text, re.M) or [None, "  "])[1]
     gone: list[str] = []
     for name, (fname, _) in blobs.items():
-        seen = [s for s in SECTIONS if name in doc.get(s, {})]
+        seen = [s for s in ([pin["section"]] if pin.get("section") else SECTIONS) if name in doc.get(s, {})]
         if not seen:
             raise SdlcError(f"BLOCKED plan {consumer}'s {man_rel} does not depend on {name}, so there is nothing to pin")
         for s in seen:
@@ -187,6 +196,15 @@ def _pin_vendored(rid: str, edge: dict, pwt, blobs: dict[str, tuple[str, bytes]]
             if old.startswith("file:") and old.endswith(".tgz"):
                 gone.append(posixpath.normpath(posixpath.join(mdir, old[5:])))
             doc[s][name] = "file:" + posixpath.relpath(f"{vend}/{fname}", mdir)
+        if pin.get("value"):  # the approved naming scheme must be what npm actually made
+            want = pin["value"].replace("{name}", name.split("/")[-1]).replace("{version}", _tar_version(blobs[name][1]))
+            if want != doc[seen[0]][name]:
+                raise SdlcError(f"BLOCKED plan pin.value gives {want} for {name}, but the packed tarball is {fname}")
+    approved_lines = store.read_json(store.run_dir(rid) / "contract.json").get("deps", {}).get(consumer, {}).get("kit_tarball_lines")
+    if approved_lines is not None:  # the owner approved exactly these dependency lines
+        got = {ln.strip().rstrip(",") for ln in json.dumps(doc, indent=2).splitlines()}
+        if missing := [ln for ln in approved_lines if ln.strip().rstrip(",") not in got]:
+            raise SdlcError(f"BLOCKED integrity the pinned {man_rel} of {consumer} lacks the approved line {missing[0].strip()}")
     gone = [g for g in dict.fromkeys(gone) if g.startswith(vend + "/") and g not in {f"{vend}/{f}" for f, _ in blobs.values()}]
     try:
         for g in gone:
@@ -207,7 +225,6 @@ def _pin_vendored(rid: str, edge: dict, pwt, blobs: dict[str, tuple[str, bytes]]
             with contextlib.suppress(OSError):
                 d.rmdir()
         raise
-    lock_rel = posixpath.normpath(posixpath.join(mdir, "package-lock.json"))
     files = {man_rel: store.sha256(man.read_bytes()), lock_rel: store.sha256((pwt / lock_rel).read_bytes()),
              **{f"{vend}/{f}": store.sha256(d) for f, d in blobs.values()}}
     rec = {k: v for k, v in deps.pin_record(rid, consumer).items() if k not in gone}
@@ -233,7 +250,7 @@ def gate(rid: str, meta: dict, consumer: str | None = None) -> tuple[int, str]:
         if packed["source"] != git(meta["repos"][p]["path"], "rev-parse", meta["repos"][p]["branch"]):
             return PENDING, f"{p} changed after its release was recorded"
         c = meta["repos"][e["consumer"]]
-        if e["release"]["kind"] == VENDORED:  # the consumer's head must hold exactly the bytes the runner pinned
+        if vendored(e):  # the consumer's head must hold exactly the bytes the runner pinned
             want = rel.get("consumers", {}).get(e["consumer"], {}).get("files", {})
             if not want or any(store.sha256(deps.blob(c["path"], c["branch"], f)) != d for f, d in want.items()):
                 return PENDING, f"{e['consumer']} does not carry the pin for {p}"

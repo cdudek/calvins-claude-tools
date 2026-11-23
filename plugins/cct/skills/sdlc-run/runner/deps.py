@@ -36,8 +36,8 @@ def approved(rid: str, repo: str) -> dict:
 
 def vendor_dirs(rid: str, repo: str) -> list[str]:
     """Folders the runner fills with vendored tarballs for this consumer: a candidate may not touch them either."""
-    return [e["pin"]["dir"].rstrip("/") + "/" for e in store.read_json(store.run_dir(rid) / "contract.json").get("edges", [])
-            if e["consumer"] == repo and e.get("release", {}).get("kind") == contract.VENDORED]
+    return [contract.pin_dir(e) + "/" for e in store.read_json(store.run_dir(rid) / "contract.json").get("edges", [])
+            if e["consumer"] == repo and contract.vendored(e)]
 
 
 def blob(path: str | Path, ref: str, rel: str) -> bytes:
