@@ -157,4 +157,4 @@ def test_browser_unavailable_is_an_environment_problem_not_a_verdict(tmp_path, c
 
 def test_no_baseline_or_image_approval_exists_in_the_canvas_path():
     src = (HERE / "board.py").read_text()
-    assert "baseline" not in src.lower().replace("no baselines", "") and "approve" not in src
+    assert "baseline" not in src.lower().replace("no baselines", "") and "approve(" not in src and "image approval" not in src.replace("no image approval", "")

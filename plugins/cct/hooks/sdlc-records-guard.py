@@ -137,6 +137,8 @@ def main() -> None:
         if not (mentions(cmd, words, home, runs, real) or inside or runner):
             return
         if parsed and is_exact_runner(cmd, words):
+            if "boards" in words and mentions(cmd, words, home, runs, real):  # boards writes files: never into the records
+                return deny("`sdlc boards` may not name the run records folder (index, rows and --out write files).")
             return
         if runner and not (mentions(cmd, words, home, runs, real) or inside):
             return deny("The sdlc runner or its modules are only run as exactly one plain call of the plugin's own runner by its absolute path: "

@@ -128,6 +128,20 @@ def validate_placeholders(c: dict) -> None:
                     raise SdlcError(f"check {k['id']}: {{producer_sha:{m[1]}}} names a repo the contract does not know")
 
 
+def validate_board_checks(c: dict) -> None:
+    """A board check's spec is a pinned input and its row count comes from the approved row, never from the spec file."""
+    for k in c.get("checks", []):
+        r = k["runner"]
+        for i, a in enumerate(r):
+            if isinstance(a, str) and a.rsplit("/", 1)[-1] == "board.py" and r[i + 1:i + 2] == ["check"]:
+                spec = r[i + 2] if len(r) > i + 2 else None
+                if spec not in k.get("pins", {}):
+                    raise SdlcError(f"check {k['id']}: the board spec {spec} must be listed in pins, so a modified copy is refused")
+                n = r[r.index("--expected-rows") + 1] if "--expected-rows" in r and len(r) > r.index("--expected-rows") + 1 else None
+                if not (isinstance(n, str) and n.isdigit() and int(n) > 0):
+                    raise SdlcError(f"check {k['id']}: a board check needs --expected-rows N (N > 0) in its approved runner")
+
+
 def validate_edges(c: dict) -> None:
     for e in c.get("edges", []):
         for k in ("producer", "consumer"):
@@ -148,6 +162,8 @@ def validate_edges(c: dict) -> None:
         rel = e.get("release", {})
         pin = e.get("pin", {})
         if vendored(e):
+            if rel.get("kind") != VENDORED:  # a pin kind alone would let a consumer reach READY with no pack, publish or pin
+                raise SdlcError(f"edge {e['producer']}: a vendored pin needs release.kind \"{VENDORED}\"")
             man = pin_manifest(e)
             if not pk:
                 raise SdlcError(f"edge {e['producer']}: {VENDORED} needs packages")
@@ -188,6 +204,7 @@ def validate_contract(c: dict) -> None:
         if chk["expect"].get("kind") not in ("pass", "fails_on_base", "negative_control"):
             raise SdlcError(f"check {chk['id']}: expect.kind must be pass, fails_on_base or negative_control")
     validate_placeholders(c)
+    validate_board_checks(c)
 
 
 def bundle_digest(rid: str) -> str:

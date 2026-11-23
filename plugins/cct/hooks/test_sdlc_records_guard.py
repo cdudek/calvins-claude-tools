@@ -106,3 +106,12 @@ def test_the_glob_is_tested_on_every_path_component(tmp_path):
     for cmd in (f"cat {real_home}/.s?lc/runs/*/contract.json",):
         assert bash(cmd, Path(real_home) / ".sdlc") == "deny", cmd
     assert bash("ls ~/projects/*/src/*.py", home) is None
+
+
+def test_boards_calls_that_name_the_records_folder_are_denied(tmp_path):
+    home = tmp_path / ".sdlc"
+    env = {"SDLC_HOME": str(home)}
+    assert bash(f"python3 {RUNNER} boards index /tmp/export --out /tmp/idx.json", home, env=env) is None
+    for cmd in (f"python3 {RUNNER} boards rows m.json --index i.json --out {home}/runs/r1/contract.json",
+                f"python3 {RUNNER} boards index /tmp/export --out ~/.sdlc/runs/r1/x.json", f"python3 {RUNNER} boards index {home}/runs"):
+        assert bash(cmd, home, env=env) == "deny", cmd

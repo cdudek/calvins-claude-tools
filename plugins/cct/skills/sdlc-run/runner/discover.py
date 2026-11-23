@@ -251,6 +251,69 @@ def draft(rid: str, plan_file: str | None, contract_file: str | None, tasks_file
     return blockers(merged, cdoc)
 
 
+CAP_LINES, CAP_CHARS = 200, 160
+
+
+def _one(x, cap: int = CAP_CHARS) -> str:
+    """An untrusted string as one short line: control characters and newlines become spaces, and it is cut at `cap` characters."""
+    t = " ".join(re.sub(r"[\x00-\x1f\x7f]", " ", str(x)).split())
+    return t if len(t) <= cap else f"{t[:cap]}... (truncated, {len(t) - cap} more characters)"
+
+
+def _code(x) -> str:
+    """An untrusted string as an inline code span its own content cannot close: the delimiter is longer than any backtick run inside."""
+    t = _one(x)
+    n = max((len(m) for m in re.findall(r"`+", t)), default=0) + 1
+    pad = " " if t.startswith("`") or t.endswith("`") else ""
+    return f"{'`' * n}{pad}{t}{pad}{'`' * n}"
+
+
+def _fence(text: str, lang: str = "") -> str:
+    """A fenced block an untrusted text cannot break out of (the fence is longer than any backtick run inside), cut at a fixed line cap."""
+    lines = text.splitlines()
+    body = "\n".join(lines[:CAP_LINES])[:20000]
+    if len(lines) > CAP_LINES or len(body) >= 20000:
+        body += f"\n(truncated, {max(len(lines) - CAP_LINES, 0) or 'more'} more lines)"
+    n = max((len(m) for m in re.findall(r"`+", body)), default=0) + 1
+    f = "`" * max(n, 3)
+    return f"{f}{lang}\n{body}\n{f}"
+
+
+def _pinned_rows(rid: str, c: dict, meta: dict) -> list[tuple[str, str, str, bool]]:
+    """(repo, path, diff against the base, sensitive) for every pinned input: written by the runner, so the owner must see it."""
+    import difflib
+
+    import verify
+    d, out = store.run_dir(rid), []
+    for repo, rels in contract.pinned_map(c).items():
+        for rel in rels:
+            try:
+                old = contract.git(meta["repos"][repo]["path"], "show", f"{meta['repos'][repo]['base_sha']}:{rel}").splitlines(True)
+            except (store.SdlcError, KeyError):
+                old = []
+            f = d / "inputs" / repo / rel
+            new = f.read_text(errors="replace").splitlines(True) if f.is_file() else []
+            diff = "".join(difflib.unified_diff(old, new, f"a/{_one(rel)}", f"b/{_one(rel)}")) or "(no change)\n"
+            hot = verify._protected(rel, verify.DEFAULT_PROTECTED + c.get("protected", [])) or rel.startswith(".github/") or rel.rsplit("/", 1)[-1] == ".npmrc"
+            out.append((repo, rel, diff, hot))
+    return out
+
+
+def _replaces_rows(tasks: dict, meta: dict) -> list[str]:
+    """One line per replaces_tests glob: its task, its owned paths and how many files of the base it matches."""
+    import fnmatch
+    out, listed = [], {}
+    for m in tasks.get("milestones", []):
+        for t in m.get("tasks", []):
+            for g in t.get("replaces_tests", []):
+                r = meta["repos"][m["repo"]]
+                if m["repo"] not in listed:
+                    listed[m["repo"]] = contract.git(r["path"], "ls-tree", "-r", "--name-only", r["base_sha"]).splitlines()
+                n = sum(fnmatch.fnmatch(f, g) for f in listed[m["repo"]])
+                out.append(f"- {_code(t['id'])} ({_one(m['repo'])}): {_code(g)} matches {n} files at the base; the task owns {', '.join(_code(p) for p in t.get('paths', [])) or 'nothing'}")
+    return out
+
+
 def screen(rid: str) -> Path:
     """The single approval screen: plan, the actual checks with expected values, dependency diff, destinations, caps."""
     d = store.run_dir(rid)
@@ -260,20 +323,30 @@ def screen(rid: str) -> Path:
     miss = sorted({t for p in pr for t in p["missing_tools"]})
     rows = ["| Check | Repo | Command | Expect | Where | Pinned |", "|---|---|---|---|---|---|"]
     for k in c["checks"]:
-        rows.append(f"| {k['id']} | {k['repo']} | `{' '.join(k['runner'])[:90]}` | {k['expect']['kind']}"
-                    f"{'; ' + json.dumps(k['expect'].get('value')) if 'value' in k['expect'] else ''} | {k.get('site', 'local')} | {', '.join(k.get('pins', {})) or '-'} |")
+        cell = lambda x: _one(x, 90).replace("|", "\\|")  # noqa: E731 - one table cell, no pipes, one line
+        rows.append(f"| {cell(k['id'])} | {cell(k['repo'])} | {cell(' '.join(k['runner']))} | {cell(k['expect']['kind'])}"
+                    f"{cell('; ' + json.dumps(k['expect'].get('value'))) if 'value' in k['expect'] else ''} | {cell(k.get('site', 'local'))} | {cell(', '.join(k.get('pins', {})) or '-')} |")
     import deps as deps_mod
     ui = [k for k in c["checks"] if k.get("design")]
     deps = c.get("deps", {})
     lim = c.get("limits", {})
     tasks = store.read_json(d / "tasks.json")
-    lines = [f"# Approve run {rid}", "", f"**Bundle digest:** `{contract.bundle_digest(rid)[:16]}`", "", store.read_json(d / 'run.json')['title'], "",
+    pinned = _pinned_rows(rid, c, meta)
+    hot = [f"- **PROTECTED — sensitive:** {_code(f'{r}:{p}')} is a protected path (test or CI config, workflow or registry settings) that the runner will write" for r, p, _, x in pinned if x]
+    repl = _replaces_rows(tasks, meta)
+    lines = [f"# Approve run {rid}", "", f"**Bundle digest:** `{contract.bundle_digest(rid)[:16]}`", ""] + (hot + [""] if hot else []) + [
+             store.read_json(d / 'run.json')['title'], "",
              "## Plan", "", (d / "plan.md").read_text(), "",
-             "## Repos", ""] + [f"- **{n}:** base `{r['base_sha'][:9]}`, branch `{r['branch']}`" for n, r in meta["repos"].items()] + [
-             "", "## Milestones", ""] + [f"- **{m['id']}** ({m['repo']}): {len(m.get('tasks', []))} tasks, needs {m.get('needs') or 'nothing'}" for m in tasks.get("milestones", [])] + [
+             "## Repos", ""] + [f"- {_code(n)}: base `{r['base_sha'][:9]}`, branch {_code(r['branch'])}" for n, r in meta["repos"].items()] + [
+             "", "## Milestones", ""] + [f"- {_code(m['id'])} ({_one(m['repo'])}): {len(m.get('tasks', []))} tasks, needs {_one(m.get('needs') or 'nothing')}" for m in tasks.get("milestones", [])] + [
+             "", "## Paths each task owns", ""] + [f"- {_code(t['id'])} ({_one(m['repo'])}): {', '.join(_code(p) for p in t.get('paths', [])) or 'everything (no paths declared)'}"
+                                                   for m in tasks.get("milestones", []) for t in m.get("tasks", [])] + [
+             "", "## Pinned inputs (written by the runner before any task)", ""] + (
+        [f"- {'**PROTECTED — sensitive:** ' if x else ''}{_code(f'{r}:{p}')}\n\n{_fence(df, 'diff')}" for r, p, df, x in pinned] or ["- none"]) + [
+             "", "## Tests a task may delete or rewrite", ""] + (repl or ["- none"]) + [
              "", "## Checks that decide the result", ""] + rows + [
              "", "## Dependency and lockfile changes", ""] + (
-        [f"- **{r}:** applied by the runner, then a frozen install with install scripts and source builds off; a manager with no such flag is not run\n\n```diff\n{deps_mod.diff_text(rid, r)}```" for r in deps]
+        [f"- {_code(r)}: applied by the runner, then a frozen install with install scripts and source builds off; a manager with no such flag is not run\n\n{_fence(deps_mod.diff_text(rid, r), 'diff')}" for r in deps]
         or ["- none"]) + [
              "", "## Limits", "",
              f"- **Builders:** up to {lim.get('builders', 8)}, fewer when the graph allows less",
