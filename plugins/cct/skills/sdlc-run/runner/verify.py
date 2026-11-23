@@ -412,7 +412,7 @@ def guard_diff(rid: str, repo_name: str, base: str, cand: str, task: str | None 
             if contract.safe_relpath(tok) and subprocess.run(["git", "cat-file", "-e", f"{base}:{tok}"], cwd=path, capture_output=True).returncode == 0:
                 protected.append(tok)
     bad = []
-    for line in contract.git(path, "diff", "--name-status", f"{base}..{cand}").splitlines():
+    for line in contract.git(path, "diff", "--no-renames", "--name-status", f"{base}..{cand}").splitlines():
         status, _, rel = line.partition("\t")
         rel = rel.split("\t")[-1]
         if rel in allowed:
@@ -435,7 +435,7 @@ def guard_diff(rid: str, repo_name: str, base: str, cand: str, task: str | None 
                     bad.append(f"removed an assertion in {name} ({rel})")
     bad += deps.guard(rid, repo_name, base, cand)
     cur = ""
-    for line in contract.git(path, "diff", "-U0", f"{base}..{cand}").splitlines():
+    for line in contract.git(path, "diff", "--no-renames", "-U0", f"{base}..{cand}").splitlines():
         if line.startswith("+++ "):
             cur = line[6:] if line.startswith("+++ b/") else ""
         elif cur and cur not in allowed and TEST_PATH.search(cur) and line.startswith("+") and SKIPS.search(line):

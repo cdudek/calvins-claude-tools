@@ -255,7 +255,7 @@ def submit(rid: str, tid: str) -> dict:
     bad = verify.guard_diff(rid, e["repo"], e["base"], cand, tid)
     owned = e.get("paths") or []
     if owned:
-        for rel in git(path, "diff", "--name-only", f"{e['base']}..{cand}").splitlines():
+        for rel in git(path, "diff", "--no-renames", "--name-only", f"{e['base']}..{cand}").splitlines():
             if not any(rel == p or rel.startswith(p.rstrip("/") + "/") for p in owned):
                 bad.append(f"changed {rel}, outside the paths this task owns")
     if bad:  # back to pending: the attempt stays counted and the next dispatch is a fix

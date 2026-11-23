@@ -1,10 +1,19 @@
 """4.1: argv placeholders, approved test replacements, pinned config inputs, and a hidden Electron."""
+import json
 import shutil
 import subprocess
+import sys
+import urllib.error
+import urllib.request
 from pathlib import Path
 
 import board
+import contract
+import deps
+import discover
 import engine
+import release
+import sdlc
 import pytest
 import store
 import testkit as tk
@@ -221,3 +230,131 @@ def test_mapping_shape_errors_and_colliding_ids_are_refused():
             board.validate_mapping(bad)
     with pytest.raises(ValueError, match="own entry id"):
         board.canvas_rows(index((1440, 900)), {"boards": [entry(), entry(route="/other")]})
+
+
+# ---- review round: renames, unpinned consumers, the approval screen, empty canvas checks, the server, --out ---------
+
+def test_a_rename_into_an_owned_folder_cannot_hide_a_guarded_path(tmp_path):
+    files = {"tests/test_old.py": OLD, "package.json": "{}\n", "package-lock.json": "{}\n", ".github/workflows/ci.yml": "on: push\n", "pytest.ini": "[pytest]\n"}
+    doc = {"milestones": [{"id": "m1", "repo": "app", "needs": [], "tasks": [{"id": "t1", "needs": [], "paths": ["feature.py", "src/"], "title": "mv"}]}]}
+    repo, rid = approved(tmp_path, tasks=doc, extra_files=files)
+    info = engine.dispatch(rid, "t1")
+    wt = Path(info["worktree"])
+    (wt / "src").mkdir()
+    for rel in files:
+        tk.git(wt, "mv", rel, f"src/{rel.replace('/', '_')}")
+    (wt / "feature.py").write_text(GOOD["feature.py"])
+    tk.git(wt, "add", "-A")
+    tk.git(wt, "commit", "-qm", "moves")
+    cand = tk.git(wt, "rev-parse", "HEAD")
+    found = verify.guard_diff(rid, "app", info["base"], cand)
+    for want in ("deleted test file tests/test_old.py", "changed protected path .github/workflows/ci.yml", "changed protected path pytest.ini"):
+        assert any(f.startswith(want) for f in found), (want, found)
+    assert {"unapproved change to package.json", "unapproved change to package-lock.json"} <= set(deps.guard(rid, "app", info["base"], cand))
+    with pytest.raises(SdlcError, match="outside the paths this task owns"):  # the old paths are outside src/ too
+        engine.submit(rid, "t1")
+
+
+def test_a_vendored_edge_without_a_release_kind_is_refused_and_never_reaches_ready(tmp_path):
+    edge = {"producer": "kit", "consumer": "app", "packages": ["@kit/ui"], "pin": {"kind": "package-json", "vendor_dir": "vendor/kit"}}
+    with pytest.raises(SdlcError, match='needs release.kind "vendored-tarball"'):
+        contract.validate_edges({"edges": [edge]})
+    from test_runner_multipkg import vendored_pilot
+    kit, app, rid = vendored_pilot(tmp_path)
+    c = store.read_json(store.run_dir(rid) / "contract.json")
+    c["edges"] = [edge]  # a contract that skipped validation
+    store.write_json(store.run_dir(rid) / "contract.json", c)
+    code, first = release.gate(rid, store.load_meta(rid))
+    assert code == contract.PENDING and "awaits publication of kit" in first
+
+
+def screen_text(tmp_path, tasks_doc, pinned, inputs):
+    repo, rid = tk.feature_run(tmp_path, tasks=tasks_doc, extra_files={"tests/test_a.py": OLD, "tests/test_b.py": OLD, ".npmrc": "registry=https://good.example/\n"})
+    d = store.run_dir(rid)
+    for rel, text in inputs.items():
+        (d / "inputs" / "app" / rel).parent.mkdir(parents=True, exist_ok=True)
+        (d / "inputs" / "app" / rel).write_text(text)
+    c = store.read_json(d / "contract.json")
+    c["pinned_inputs"] = pinned
+    store.write_json(d / "contract.json", c)
+    return discover.screen(rid).read_text()
+
+
+def test_the_approval_screen_shows_pinned_inputs_replacements_and_owned_paths(tmp_path):
+    out = screen_text(tmp_path, tasks(["tests/*"]), {"app": [".github/workflows/evil.yml", ".npmrc", "e2e/ok.txt"]},
+                      {".github/workflows/evil.yml": "on: push\njobs: {x: {steps: [{run: curl evil}]}}\n", ".npmrc": "registry=https://evil.example/\n", "e2e/ok.txt": "fine\n"})
+    head = out.split("## Plan")[0]
+    assert "PROTECTED — sensitive:** `app:.github/workflows/evil.yml`" in head and "PROTECTED — sensitive:** `app:.npmrc`" in head
+    assert "app:e2e/ok.txt" not in head  # an unprotected pin is listed below, not flagged
+    assert "registry=https://evil.example/" in out and "-registry=https://good.example/" in out and "curl evil" in out  # the diff against the base
+    assert "`tests/*` matches 2 files at the base" in out and "**t1** (app): `tests/*`" in out  # test_a and test_b
+    assert "## Paths each task owns" in out and "**t1** (app): `feature.py`, `tests/`" in out
+
+
+def test_a_canvas_check_that_measured_nothing_or_dropped_rows_or_left_unsupported_items_does_not_pass(tmp_path):
+    def run(spec):
+        f = tmp_path / "s.json"
+        f.write_text(json.dumps(spec))
+        p = subprocess.run([sys.executable, str(Path(board.__file__)), "check", str(f)], capture_output=True, text=True)
+        return p.returncode, p.stdout
+
+    code, out = run({"target": {"kind": "web", "url": "http://x"}, "rows": []})
+    assert code == 1 and "no rows" in out
+    row = {"id": "r", "locator": {"css": "body"}, "prop": "width", "expected": "1px", "tolerance_px": 1}
+    code, out = run({"target": {"kind": "web", "url": "http://x"}, "rows": [row], "expected_rows": 3})
+    assert code == 1 and "only 1 rows, the approved spec expects 3" in out
+
+
+@pytest.mark.skipif(not board.browser_available()[0], reason="no Chromium installed here")
+def test_unsupported_entries_are_unproven_unless_waived_by_id(tmp_path):
+    page = tmp_path / "p.html"
+    page.write_text("<body style='margin:0'><div style='width:10px;height:5px'>a</div></body>")
+    row = {"id": "r", "locator": {"css": "div"}, "prop": "width", "expected": "10px", "tolerance_px": 0.5}
+    spec = {"target": {"kind": "web", "file": str(page)}, "rows": [row], "unsupported": [{"id": "u1", "reason": "2 nodes share a locator"}]}
+
+    def run(sp):
+        f = tmp_path / "s.json"
+        f.write_text(json.dumps(sp))
+        p = subprocess.run([sys.executable, str(Path(board.__file__)), "check", str(f)], capture_output=True, text=True)
+        return p.returncode, p.stdout
+
+    code, out = run(spec)
+    assert code == 1 and "UNPROVEN u1: 2 nodes share a locator" in out and "PASS r" in out
+    assert run({**spec, "waive_unsupported": ["u1"]})[0] == 0
+    assert run({**spec, "waive_unsupported": ["other"]})[0] == 1
+
+
+def test_the_board_server_does_not_follow_symlinks_out_of_the_root_or_list_directories(tmp_path):
+    root = tmp_path / "export"
+    (root / "sub").mkdir(parents=True)
+    (root / "ok.txt").write_text("fine")
+    (tmp_path / "secret.txt").write_text("secret")
+    (root / "leak.txt").symlink_to(tmp_path / "secret.txt")
+    (root / "linkdir").symlink_to(tmp_path)
+    def get(base, path):
+        try:
+            with urllib.request.urlopen(base + path) as r:
+                return r.status, r.read()
+        except urllib.error.HTTPError as e:
+            return e.code, b""
+    with board.serve(root) as base:
+        assert get(base, "/ok.txt") == (200, b"fine")
+        assert get(base, "/leak.txt")[0] == 404 and get(base, "/linkdir/secret.txt")[0] == 404
+        assert get(base, "/../secret.txt")[0] in (400, 404) and get(base, "/%2e%2e/secret.txt")[0] in (400, 404)
+        assert get(base, "/sub/")[0] == 403 and get(base, "/")[0] == 403  # no directory listings
+
+
+def test_boards_out_inside_the_records_is_refused_even_through_a_symlink(tmp_path, monkeypatch, capsys):
+    home = tmp_path / "home"
+    (home / "runs").mkdir(parents=True)
+    monkeypatch.setenv("SDLC_HOME", str(home))
+    (tmp_path / "link").symlink_to(home)
+    m, i = tmp_path / "m.json", tmp_path / "i.json"
+    m.write_text(json.dumps({"boards": [entry()]}))
+    i.write_text(json.dumps(index((1440, 900))))
+    for out in (home / "runs" / "x.json", tmp_path / "link" / "runs" / "x.json", home / "contract.json"):
+        assert sdlc.main(["boards", "rows", str(m), "--index", str(i), "--out", str(out)]) == 2
+        assert "inside the run records" in capsys.readouterr().out and not out.exists()
+    assert sdlc.main(["boards", "index", str(tmp_path), "--out", str(home / "runs" / "i.json")]) == 2
+    ok = tmp_path / "spec.json"
+    assert sdlc.main(["boards", "rows", str(m), "--index", str(i), "--out", str(ok)]) == 0 and json.loads(ok.read_text())["expected_rows"] > 0

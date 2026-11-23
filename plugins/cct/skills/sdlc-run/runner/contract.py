@@ -148,6 +148,8 @@ def validate_edges(c: dict) -> None:
         rel = e.get("release", {})
         pin = e.get("pin", {})
         if vendored(e):
+            if rel.get("kind") != VENDORED:  # a pin kind alone would let a consumer reach READY with no pack, publish or pin
+                raise SdlcError(f"edge {e['producer']}: a vendored pin needs release.kind \"{VENDORED}\"")
             man = pin_manifest(e)
             if not pk:
                 raise SdlcError(f"edge {e['producer']}: {VENDORED} needs packages")

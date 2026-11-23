@@ -278,7 +278,7 @@ def test_package_json_is_edited_structurally_and_keeps_its_indent_and_key_order(
 
 DRAFT_EDGE = {"producer": "kit", "pack": ["npm", "pack", "--ignore-scripts"],
               "packages": [{"name": "@kit/annotations", "dir": "packages/annotations"}, {"name": "@kit/ui", "dir": "packages/ui"}],
-              "release": {"kind": "git-main", "fetch": ["npm", "pack", "--ignore-scripts"]},
+              "release": {"kind": "vendored-tarball", "fetch": ["npm", "pack", "--ignore-scripts"]},
               "pin": {"kind": "package-json", "file": "package.json", "section": "dependencies", "vendor_dir": "vendor/kit/",
                       "value": "file:vendor/kit/kit-{name}-{version}.tgz", "lockfile": "package-lock.json",
                       "lockfile_update": "npm install --package-lock-only --ignore-scripts, run by the runner"},

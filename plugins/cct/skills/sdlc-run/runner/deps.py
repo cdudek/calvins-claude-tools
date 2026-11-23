@@ -50,7 +50,7 @@ def guard(rid: str, repo: str, base: str, cand: str) -> list[str]:
     ok = approved(rid, repo)
     vend = vendor_dirs(rid, repo)
     bad = []
-    for rel in contract.git(path, "diff", "--name-only", f"{base}..{cand}").splitlines():
+    for rel in contract.git(path, "diff", "--no-renames", "--name-only", f"{base}..{cand}").splitlines():
         if MANIFEST.search(rel) or rel.startswith(tuple(vend)):
             if rel not in ok:
                 bad.append(f"unapproved change to {rel}")

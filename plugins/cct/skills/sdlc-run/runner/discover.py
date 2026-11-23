@@ -251,6 +251,43 @@ def draft(rid: str, plan_file: str | None, contract_file: str | None, tasks_file
     return blockers(merged, cdoc)
 
 
+def _pinned_rows(rid: str, c: dict, meta: dict) -> list[tuple[str, str, str, bool]]:
+    """(repo, path, diff against the base, sensitive) for every pinned input: written by the runner, so the owner must see it."""
+    import difflib
+    import fnmatch
+
+    import verify
+    d, out = store.run_dir(rid), []
+    for repo, rels in contract.pinned_map(c).items():
+        for rel in rels:
+            try:
+                old = contract.git(meta["repos"][repo]["path"], "show", f"{meta['repos'][repo]['base_sha']}:{rel}").splitlines(True)
+            except (store.SdlcError, KeyError):
+                old = []
+            f = d / "inputs" / repo / rel
+            new = f.read_text(errors="replace").splitlines(True) if f.is_file() else []
+            diff = "".join(difflib.unified_diff(old, new, f"a/{rel}", f"b/{rel}")) or "(no change)\n"
+            hot = verify._protected(rel, verify.DEFAULT_PROTECTED) or rel.startswith(".github/") or rel.rsplit("/", 1)[-1] == ".npmrc" \
+                or any(fnmatch.fnmatch(rel, g) for g in c.get("protected", []))
+            out.append((repo, rel, diff, hot))
+    return out
+
+
+def _replaces_rows(tasks: dict, meta: dict) -> list[str]:
+    """One line per replaces_tests glob: its task, its owned paths and how many files of the base it matches."""
+    import fnmatch
+    out, listed = [], {}
+    for m in tasks.get("milestones", []):
+        for t in m.get("tasks", []):
+            for g in t.get("replaces_tests", []):
+                r = meta["repos"][m["repo"]]
+                if m["repo"] not in listed:
+                    listed[m["repo"]] = contract.git(r["path"], "ls-tree", "-r", "--name-only", r["base_sha"]).splitlines()
+                n = sum(fnmatch.fnmatch(f, g) for f in listed[m["repo"]])
+                out.append(f"- **{t['id']}** ({m['repo']}): `{g}` matches {n} files at the base; the task owns {', '.join(f'`{p}`' for p in t.get('paths', [])) or 'nothing'}")
+    return out
+
+
 def screen(rid: str) -> Path:
     """The single approval screen: plan, the actual checks with expected values, dependency diff, destinations, caps."""
     d = store.run_dir(rid)
@@ -267,10 +304,19 @@ def screen(rid: str) -> Path:
     deps = c.get("deps", {})
     lim = c.get("limits", {})
     tasks = store.read_json(d / "tasks.json")
-    lines = [f"# Approve run {rid}", "", f"**Bundle digest:** `{contract.bundle_digest(rid)[:16]}`", "", store.read_json(d / 'run.json')['title'], "",
+    pinned = _pinned_rows(rid, c, meta)
+    hot = [f"- **PROTECTED — sensitive:** `{r}:{p}` is a protected path (test or CI config, workflow or registry settings) that the runner will write" for r, p, _, x in pinned if x]
+    repl = _replaces_rows(tasks, meta)
+    lines = [f"# Approve run {rid}", "", f"**Bundle digest:** `{contract.bundle_digest(rid)[:16]}`", ""] + (hot + [""] if hot else []) + [
+             store.read_json(d / 'run.json')['title'], "",
              "## Plan", "", (d / "plan.md").read_text(), "",
              "## Repos", ""] + [f"- **{n}:** base `{r['base_sha'][:9]}`, branch `{r['branch']}`" for n, r in meta["repos"].items()] + [
              "", "## Milestones", ""] + [f"- **{m['id']}** ({m['repo']}): {len(m.get('tasks', []))} tasks, needs {m.get('needs') or 'nothing'}" for m in tasks.get("milestones", [])] + [
+             "", "## Paths each task owns", ""] + [f"- **{t['id']}** ({m['repo']}): {', '.join(f'`{p}`' for p in t.get('paths', [])) or 'everything (no paths declared)'}"
+                                                   for m in tasks.get("milestones", []) for t in m.get("tasks", [])] + [
+             "", "## Pinned inputs (written by the runner before any task)", ""] + (
+        [f"- **{'PROTECTED — sensitive: ' if x else ''}{r}:{p}**\n\n```diff\n{df}```" for r, p, df, x in pinned] or ["- none"]) + [
+             "", "## Tests a task may delete or rewrite", ""] + (repl or ["- none"]) + [
              "", "## Checks that decide the result", ""] + rows + [
              "", "## Dependency and lockfile changes", ""] + (
         [f"- **{r}:** applied by the runner, then a frozen install with install scripts and source builds off; a manager with no such flag is not run\n\n```diff\n{deps_mod.diff_text(rid, r)}```" for r in deps]

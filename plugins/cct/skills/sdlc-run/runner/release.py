@@ -241,7 +241,7 @@ def gate(rid: str, meta: dict, consumer: str | None = None) -> tuple[int, str]:
     It reads the digests `pack` recorded and compares source SHAs; it never packs or runs a command."""
     cp = store.load_cp(rid)
     for e in edges(rid):
-        if e.get("release", {}).get("kind", "none") == "none" or (consumer and e["consumer"] != consumer):
+        if (e.get("release", {}).get("kind", "none") == "none" and not vendored(e)) or (consumer and e["consumer"] != consumer):
             continue
         p = e["producer"]
         rel, packed = cp.get("release", {}).get(p), cp.get("artifacts", {}).get(p)

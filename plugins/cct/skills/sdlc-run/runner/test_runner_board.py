@@ -149,6 +149,6 @@ def test_verify_classifies_cli_output(tmp_path):
     v, why, _ = verify.classify(chk, verify.Job(code, out))
     assert v == "BLOCKED" and why.startswith("env:")
     code, out = run_check(tmp_path, page(tmp_path), [])
-    assert out.strip() == "Ran 0 checks"
+    assert out.startswith("Ran 0 checks") and code == 1
     v, why, _ = verify.classify(chk, verify.Job(code, out))
     assert v == "BLOCKED" and "proves nothing" in why
