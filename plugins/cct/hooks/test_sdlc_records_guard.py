@@ -224,3 +224,27 @@ def test_an_unparsable_command_that_names_the_runner_or_its_modules_is_denied(tm
                 "echo 'unbalanced; from store import write_json", "echo \"x; import contract"):
         assert bash(cmd, home, env=env) == "deny", cmd
     assert bash("echo 'unbalanced", home, env=env) is None  # prose without those names still passes
+
+
+def test_a_command_that_names_the_claude_dir_with_a_glob_expansion_brace_backtick_or_cd_is_denied(tmp_path):
+    home, cfg = tmp_path / "deep" / ".sdlc", tmp_path / "cfg"
+    env = {"SDLC_HOME": str(home), "CLAUDE_CONFIG_DIR": str(cfg)}
+    for cmd in ("ls ~/.claude/*", "ls ~/.claude/plug?ns", "ls ~/.claude/plugins/[c]ache", "cat $HOME/.claude/x", "echo ~/.claude/{plugins,x}", "echo `id` > .claude/x",
+                "cd ~/.claude && touch f", "pushd .claude", "(cd .claude; touch f)", "ls $CLAUDE_CONFIG_DIR", "CLAUDE_CONFIG_DIR=/x ls /x/*", f"ls {cfg}/pl*",
+                f"cd {cfg} && ls"):
+        assert bash(cmd, home, env=env) == "deny", cmd
+    for cmd in ("git add .claude/settings.json", "ls src", "echo $HOME", "ls ~/*.md", "cat .claude/CLAUDE.md"):
+        assert bash(cmd, home, env=env) is None, cmd  # a literal command on the repo's own .claude folder, or no .claude at all
+
+
+def test_a_word_that_expands_onto_a_protected_path_is_denied_whatever_it_looks_like(tmp_path):
+    home, cfg = tmp_path / "deep" / ".sdlc", tmp_path / "cfg"
+    env = {"SDLC_HOME": str(home), "CLAUDE_CONFIG_DIR": str(cfg)}
+    install_kit(cfg)
+    (cfg / "settings.json").write_text("{}")
+    (cfg / "plugins" / "installed_plugins.json").write_text("{}")
+    for cmd in ("ls plugins/c*", "cat sdlc-sib*", "cat sdlc-sibling-k?ts.js?n", "touch plugins/cache/m*/new", "cat plugins/installed_p*"):
+        assert bash(cmd, home, cwd=cfg, env=env) == "deny", cmd  # relative words, resolved against the command's cwd
+    assert bash(f"cat {cfg}/sdlc-sibling-k?ts.json", home, cwd=tmp_path, env=env) == "deny"  # absolute, from another directory
+    for cmd in ("cat settings.json", "ls plugins/zzz*", "ls set*"):
+        assert bash(cmd, home, cwd=cfg, env=env) is None, cmd  # nothing protected comes out of these

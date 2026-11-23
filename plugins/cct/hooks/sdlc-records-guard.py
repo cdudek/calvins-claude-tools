@@ -12,6 +12,7 @@ sibling list, the installed-plugins registry and the plugin cache are what that 
 Edit, NotebookEdit) nor name them in a command. Deny on a match, stay silent otherwise.
 """
 import fnmatch
+import glob
 import json
 import os
 import re
@@ -102,6 +103,37 @@ def names_protected(cmd: str, words: list[str]) -> bool:
     for w in words:
         g = os.path.expanduser(os.path.expandvars(w))
         if re.search(r"[*?\[]", g) and any(glob_matches(g, p) for p in protected_paths()):
+            return True
+    return False
+
+
+def names_claude_dir(cmd: str) -> bool:
+    return ".claude" in cmd or "CLAUDE_CONFIG_DIR" in cmd or claude_home() in cmd
+
+
+def indirect_claude_dir(cmd: str, words: list[str]) -> bool:
+    """A command that names the Claude config dir AND could build or reach a protected path by other means: a glob, an expansion, brace
+    or backtick, or a change of directory. Plain, literal commands on the dir (other than the protected paths) are left alone."""
+    return names_claude_dir(cmd) and bool(re.search(r"[*?\[${`]", cmd) or any(w in ("cd", "pushd") for w in words) or re.search(r"\b(cd|pushd)\b", cmd))
+
+
+def expands_into_protected(words: list[str], cwd: str) -> bool:
+    """Every word, expanded the way the shell would (~, $VAR, then the glob against the file system), may not land on a protected path."""
+    allowed = {RUNNER} | sibling_runners()  # the runner being called (this plugin's or a named sibling's) is the one allowed hit
+    for w in words:
+        e = os.path.expanduser(os.path.expandvars(w))
+        if not e or set(e) <= OPERATORS or os.path.realpath(e) in allowed:
+            continue
+        if not os.path.isabs(e):
+            e = os.path.join(cwd, e)
+        paths = [e]
+        while re.search(r"[*?\[]", paths[-1]) and os.path.dirname(paths[-1]) not in ("", paths[-1]):  # a new file in a directory the glob names
+            paths.append(os.path.dirname(paths[-1]))
+        try:
+            hits = [x for p in paths for x in glob.glob(p)] + ([] if re.search(r"[*?\[]", e) else [e])
+        except (OSError, ValueError):
+            continue
+        if any(inside_protected(x) for x in hits):
             return True
     return False
 
@@ -212,6 +244,9 @@ def main() -> None:
             parsed = True
         except ValueError:
             words, parsed = [], False
+        if indirect_claude_dir(cmd, words) or (parsed and expands_into_protected(words, cwd)):
+            return deny("The Claude config dir holds the sibling-kit list, the plugin registry and the plugin cache, which decide who may touch the "
+                        "run records: no globs, expansions, braces, backticks or cd on it, and no word that expands onto them.")
         if "SDLC_GATE_CMD" in cmd:  # the owner's approval program is not an agent's to set
             return deny("SDLC_GATE_CMD may not be set: the approval gate is a fixed command.")
         inside = under(cwd, real) or inside_protected(cwd)
