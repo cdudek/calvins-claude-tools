@@ -11,6 +11,7 @@ import pytest
 import sdlc
 import testkit as tk
 import verify
+import store
 from store import SdlcError
 
 HERE = Path(__file__).parent
@@ -438,3 +439,73 @@ def test_the_web_app_of_a_board_row_is_started_awaited_and_stopped_around_the_ch
     late = board_row(start=[sys.executable, "-c", "import time; time.sleep(30)"], ready_url=url, ready_timeout=1)
     job = verify.run_checked(rid, late, probe, repo, None)
     assert job.exit == 127 and "did not answer" in job.out
+
+
+def test_a_board_build_runs_first_and_a_failed_build_fails_the_row_unmeasured(tmp_path):
+    repo = tk.make_repo(tmp_path / "r", "app", {"index.html": "x"})
+    rid = tk.new_run(tmp_path / "home", repo, [])
+    marker = repo / "built.txt"
+    ok = board_row(build=[sys.executable, "-c", f"open({str(marker)!r}, 'w').write('1')"])
+    measured = [sys.executable, "-c", f"import os; print('Ran 1 checks' if os.path.exists({str(marker)!r}) else 'NOT BUILT')"]
+    job = verify.run_checked(rid, ok, measured, repo, None)
+    assert job.exit == 0 and "Ran 1 checks" in job.out  # the build ran before the measuring
+    marker.unlink()
+    bad = board_row(build=[sys.executable, "-c", "import sys; print('boom'); sys.exit(3)"])
+    job = verify.run_checked(rid, bad, measured, repo, None)
+    assert job.exit == 3 and "NOT BUILT" not in job.out and not marker.exists()  # never measured
+    assert verify.classify(bad, job)[:2] == ("FAIL", "BUILD FAILED (exit 3): the row was not measured")
+    contract.validate_contract({"checks": [{**bad, "runner": None}]} if False else {"checks": [{k: v for k, v in bad.items() if k != "runner"}]})
+    with pytest.raises(SdlcError, match="board.build is an argv list"):
+        contract.validate_contract({"checks": [board_row(build="make")]})
+
+
+def test_board_rows_use_the_check_env_allowlist_for_build_start_and_check_and_the_screen_shows_it(tmp_path, monkeypatch):
+    monkeypatch.setenv("SDLC_SECRET_A", "alpha")
+    monkeypatch.setenv("SDLC_SECRET_B", "beta")
+    repo = tk.make_repo(tmp_path / "r", "app", {"index.html": "x"})
+    rid = tk.new_run(tmp_path / "home", repo, [])
+    show = [sys.executable, "-c", "import os; print(os.environ.get('SDLC_SECRET_A'), os.environ.get('SDLC_SECRET_B'), 'Ran 1 checks')"]
+    row = board_row(build=show)
+    row["env"] = ["SDLC_SECRET_A"]  # the same `env` field the E2E rows use
+    job = verify.run_checked(rid, row, show, repo, None)
+    assert job.exit == 0 and "alpha None Ran 1 checks" in job.out  # only the allowlisted variable reaches the build and the check
+    row.pop("runner", None)
+    d = store.run_dir(rid)
+    store.write_json(d / "contract.json", {"checks": [{**row, "runner": ["true"]}]})
+    import discover
+    text = discover.screen(rid).read_text()
+    assert "| Env passed |" in text and "| SDLC_SECRET_A |" in text
+
+
+POLL = """<!doctype html><html><head><link rel="stylesheet" href="/_blob/theme.css"></head><body><button class="pay">Pay</button>
+<script>setInterval(() => fetch('/_blob/theme.css?' + Math.random()), 40)</script></body></html>"""
+
+
+@needs_browser
+def test_ready_replaces_the_networkidle_wait_and_a_wait_that_times_out_still_fails(tmp_path, monkeypatch):
+    monkeypatch.setattr(board, "NAV_TIMEOUT_MS", 2500)
+    root = export(tmp_path, poll=POLL)
+    ix = board.index_export(root, only=["poll.dc.html"])  # the default stays networkidle: a page that never idles times out
+    assert "Timeout" in ix["boards"]["poll.dc.html"]["light"]["error"]
+    for ready in ({"selector": "button.pay"}, {"load": "domcontentloaded"}, {"load": "load"}):
+        ok = board.index_export(root, only=["poll.dc.html"], ready={"poll.dc.html": ready})["boards"]["poll.dc.html"]["light"]
+        assert ok["error"] == "" and any(n["name"] == "Pay" for n in ok["nodes"]), ready
+    never = board.index_export(root, only=["poll.dc.html"], ready={"poll.dc.html": {"selector": ".nope"}})
+    assert "Timeout" in never["boards"]["poll.dc.html"]["light"]["error"]  # not skipped: the board yields no rows
+    m = {"boards": [{"board": "poll.dc.html", "route": "/p.html", "ready": {"selector": "button.pay"}}]}
+    ok = board.index_export(root, only=["poll.dc.html"], ready={"poll.dc.html": m["boards"][0]["ready"]})
+    rows = board.canvas_rows(ok, m)["rows"]
+    assert rows[0]["ready"] == {"selector": "button.pay"}
+    page = tmp_path / "app"
+    page.mkdir()
+    (page / "p.html").write_text(POLL)
+    (page / "_blob").mkdir()
+    (page / "_blob" / "theme.css").write_text(BLOB)
+    with board.serve(page) as url:
+        res = board.measure_rows({"target": {"url": url}}, rows, None, tmp_path)
+        assert res[0]["mismatches"] == [] and res[0]["matched"] > 0  # the app page never idles either: it is measured on `ready`
+        res = board.measure_rows({"target": {"url": url}}, [{**r, "ready": {"selector": ".nope"}} for r in rows], None, tmp_path)
+    assert "Timeout" in res[0]["error"]
+    for bad in ({"selector": ""}, {"load": "idle"}, {"selector": "a", "load": "load"}, "x"):
+        with pytest.raises(ValueError, match="entry E: ready must be"):
+            board.validate_mapping({"boards": [{"board": "a", "route": "/", "entry": "E", "ready": bad}]})

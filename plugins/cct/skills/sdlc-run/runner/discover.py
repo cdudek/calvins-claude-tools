@@ -371,12 +371,14 @@ def screen(rid: str) -> Path:
     meta = store.load_meta(rid)
     pr = store.read_json(d / "probe.json", [{"missing_tools": [], "browser": {"available": True, "why": ""}, "credentials": {"github": False}}])
     miss = sorted({t for p in pr for t in p["missing_tools"]})
-    rows = ["| Check | Repo | Command | Expect | Where | Pinned |", "|---|---|---|---|---|---|"]
+    rows = ["| Check | Repo | Command | Expect | Where | Pinned | Env passed |", "|---|---|---|---|---|---|---|"]
     for k in c["checks"]:
         cell = lambda x: _one(x, 90).replace("|", "\\|")  # noqa: E731 - one table cell, no pipes, one line
         shown = f"board check {k['board']['spec']} ({k['board']['expected_rows']} rows)" if k.get("kind") == "board" else " ".join(k["runner"])
+        if k.get("kind") == "board":
+            shown += "".join(f"; {w}: {' '.join(k['board'][w])}" for w in ("build", "start") if k["board"].get(w))
         rows.append(f"| {cell(k['id'])} | {cell(k['repo'])} | {cell(shown)} | {cell(k['expect']['kind'])}"
-                    f"{cell('; ' + json.dumps(k['expect'].get('value'))) if 'value' in k['expect'] else ''} | {cell(k.get('site', 'local'))} | {cell(', '.join(k.get('pins', {})) or '-')} |")
+                    f"{cell('; ' + json.dumps(k['expect'].get('value'))) if 'value' in k['expect'] else ''} | {cell(k.get('site', 'local'))} | {cell(', '.join(k.get('pins', {})) or '-')} | {cell(', '.join(k.get('env', [])) or '-')} |")
     import deps as deps_mod
     ui = [k for k in c["checks"] if k.get("design")]
     deps = c.get("deps", {})

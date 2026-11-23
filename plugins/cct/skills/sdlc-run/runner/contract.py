@@ -130,7 +130,7 @@ def validate_placeholders(c: dict) -> None:
 
 
 READY_URL = re.compile(r"^http://(127\.0\.0\.1|localhost)(:\d{2,5})?(/[A-Za-z0-9._~/%?&=-]*)?$")
-BOARD_KEYS = {"spec", "expected_rows", "start", "ready_url", "ready_timeout"}
+BOARD_KEYS = {"spec", "expected_rows", "build", "start", "ready_url", "ready_timeout"}
 
 
 def runner_of(chk: dict) -> list[str]:
@@ -153,6 +153,9 @@ def validate_board_row(chk: dict) -> None:
     n = b.get("expected_rows")
     if not (isinstance(n, int) and not isinstance(n, bool) and n > 0):
         raise SdlcError(f"{who}: board.expected_rows must be a whole number above 0")
+    build = b.get("build")
+    if build is not None and not (isinstance(build, list) and build and all(isinstance(a, str) for a in build)):
+        raise SdlcError(f"{who}: board.build is an argv list")
     start, url, wait = b.get("start"), b.get("ready_url"), b.get("ready_timeout", 120)
     if start is not None and not (isinstance(start, list) and start and all(isinstance(a, str) for a in start) and isinstance(url, str)):
         raise SdlcError(f"{who}: board.start is an argv list and needs board.ready_url")

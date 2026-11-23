@@ -149,6 +149,8 @@ def classify(chk: dict, job: Job) -> tuple[str, str, int | None]:
         return "BLOCKED", "job deadline reached (30 minutes)", None
     if job.exit in (126, 127):
         return "BLOCKED", f"env: the runner could not start ({job.out.strip()[:120] or 'exit ' + str(job.exit)})", None
+    if chk.get("kind") == "board" and job.out.startswith("BUILD FAILED"):
+        return "FAIL", job.out.splitlines()[0], None
     tests = count_tests(job.out, count_rx(chk)) if chk.get("count", True) else None
     if chk.get("count", True):
         if tests is None:
@@ -315,6 +317,12 @@ def run_checked(rid: str, chk: dict, argv: list[str], wt: Path, env: dict | None
     """run_job, and for a board row with `start`: bring the web app up in its own process group, wait for ready_url, run the check,
     stop the app afterwards (also when the check fails or the owner stops the run)."""
     b = chk.get("board") or {}
+    if b.get("build"):  # approved in the contract; same job path, deadline and env allowlist (`env`) as the check itself
+        built = run_job(rid, f"{chk['repo']}-{chk['id']}-build", b["build"], wt, env=env, allow=chk.get("env"))
+        if built.killed or built.exit in (126, 127):
+            return built
+        if built.exit != 0:
+            return Job(built.exit, f"BUILD FAILED (exit {built.exit}): the row was not measured\n{built.out[-400:]}")
     if not b.get("start"):
         return run_job(rid, f"{chk['repo']}-{chk['id']}", argv, wt, env=env, allow=chk.get("env"))
     try:

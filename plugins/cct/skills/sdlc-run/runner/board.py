@@ -619,6 +619,29 @@ def source_imports(path: Path) -> list[dict]:
     return [{m[1]: next((g for g in m.groups()[1:] if g is not None), "") for m in _ATTR.finditer(tag[1])} for tag in _IMPORT.finditer(text)]
 
 
+NAV_TIMEOUT_MS = 30000
+LOADS = ("domcontentloaded", "load")
+
+
+def validate_ready(r, who: str) -> None:
+    ok = isinstance(r, dict) and len(r) == 1 and (
+        (isinstance(r.get("selector"), str) and 0 < len(r["selector"]) <= 200 and "\n" not in r["selector"]) or r.get("load") in LOADS)
+    if not ok:
+        raise ValueError(f'{who}: ready must be {{"selector": css}} or {{"load": "domcontentloaded" | "load"}}')
+
+
+def goto(page, url: str, ready: dict | None = None) -> None:
+    """Open a page and wait until it is ready: network idle by default, or the entry's `ready` (a selector that must appear, or a load
+    event). A wait that times out raises: the board or row fails, it is never skipped."""
+    if not ready:
+        page.goto(url, wait_until="networkidle", timeout=NAV_TIMEOUT_MS)
+    elif "selector" in ready:
+        page.goto(url, wait_until="domcontentloaded", timeout=NAV_TIMEOUT_MS)
+        page.wait_for_selector(ready["selector"], state="attached", timeout=NAV_TIMEOUT_MS)
+    else:
+        page.goto(url, wait_until=ready["load"], timeout=NAV_TIMEOUT_MS)
+
+
 def _containers(mapping: dict | None, extra: list[str] | None = None) -> list[str]:
     """The caption container selectors an index records frames for: the default plus every one a mapping entry names."""
     sels = [DEFAULT_CONTAINER, *(extra or [])]
@@ -632,7 +655,8 @@ def _containers(mapping: dict | None, extra: list[str] | None = None) -> list[st
 
 
 def index_export(root: str | Path, themes=THEMES, viewport: dict | None = None, attr: str | None = None,
-                 executable: str | None = None, only: list[str] | None = None, containers: list[str] | None = None) -> dict:
+                 executable: str | None = None, only: list[str] | None = None, containers: list[str] | None = None,
+                 ready: dict[str, dict] | None = None) -> dict:
     """Walk every `*.dc.html` board of an export and list its candidate nodes per theme, with measured style and geometry, and its frames:
     every <dc-import> (its attributes) and every element matching a container selector, each with the label captions that sit in it.
     A node records the frames that contain it, so a frame is selected from the index without reloading the board.
@@ -656,7 +680,7 @@ def index_export(root: str | Path, themes=THEMES, viewport: dict | None = None, 
                 for f in files:
                     errors.clear()
                     try:
-                        page.goto(f"{base}/{urllib.parse.quote(f)}", wait_until="networkidle")
+                        goto(page, f"{base}/{urllib.parse.quote(f)}", (ready or {}).get(f))
                         if attr:
                             page.evaluate("([a, v]) => document.documentElement.setAttribute(a, v)", [attr, theme])
                         page.evaluate("document.fonts && document.fonts.ready")
@@ -754,6 +778,8 @@ def validate_mapping(mapping: dict) -> None:
                 raise ValueError(f"entry {who}: {e}") from None
         if m.get("frame") is not None:
             validate_frame(m["frame"], f"entry {who}")
+        if m.get("ready") is not None:
+            validate_ready(m["ready"], f"entry {who}")
         for key in ("tolerances", "min_match"):
             v = m.get(key, mapping.get(key))
             if v is not None and not (isinstance(v, dict) and all(isinstance(x, (int, float)) and x >= 0 for x in v.values()) if key == "tolerances"
@@ -824,7 +850,7 @@ def canvas_rows(index: dict | list[dict], mapping: dict, repo: str | None = None
             label = lambda n: f"{n['role']}:{n['name']}" if n["name"] else n["role"]  # noqa: E731
             rows.append({"id": who, "entry": ident, "board": f, "route": m.get("route"), "surface": m.get("surface"),
                          "theme": theme, "theme_attr": ix.get("attr") or mapping.get("theme_attr"), "viewport": ix["viewport"],
-                         "state": m.get("state", "default"), "frame": m.get("frame"), "props": props,
+                         "state": m.get("state", "default"), "frame": m.get("frame"), "ready": m.get("ready"), "props": props,
                          "nodes": [{"n": label(n), "l": n["locator"], "v": _values(n, props)} for n in nodes if seen[_lkey(n["locator"])] == 1],
                          "unmeasurable": sorted({label(n) for n in nodes if seen[_lkey(n["locator"])] > 1}),
                          "unmeasurable_nodes": sum(1 for n in nodes if seen[_lkey(n["locator"])] > 1),
@@ -883,7 +909,7 @@ def _app_nodes(page, nav: str | None, row: dict, cur: dict) -> list[dict]:
     if nav is not None:
         url = nav + (row["route"] if not s else "/" + s["page"].lstrip("/"))
     if url and url != cur.get("url"):
-        page.goto(url, wait_until="networkidle")
+        goto(page, url, row.get("ready"))
         cur.update(url=url, theme=None)
     if row.get("viewport") and (s or {}).get("kind") != "electron":
         page.set_viewport_size(row["viewport"])
@@ -1051,8 +1077,15 @@ def _index_cli(argv: list[str]) -> int:
         want = {m.get("board_file") or m["board"] for m in mapping["boards"] if not m.get("viewport") or list(m["viewport"]) == [vp["width"], vp["height"]]}
         only = sorted(p.relative_to(root).as_posix() for p in root.rglob("*.dc.html") if p.name in want or p.relative_to(root).as_posix() in want)
     extra = [argv[i + 1] for i, a in enumerate(argv) if a == "--container"]
+    ready: dict[str, dict] = {}
+    for m in (mapping or {}).get("boards", []):  # a board is loaded once: entries sharing it must agree on how it is ready
+        if m.get("ready"):
+            for f in only or []:
+                if f == (m.get("board_file") or m["board"]) or f.rsplit("/", 1)[-1] == (m.get("board_file") or m["board"]):
+                    if ready.setdefault(f, m["ready"]) != m["ready"]:
+                        raise ValueError(f"board {f}: entries name different ready waits")
     idx = index_export(root, _arg(argv, "--themes", ",".join(THEMES)).split(","), vp, _arg(argv, "--attr"), _arg(argv, "--executable"), only,
-                       _containers(mapping, extra))
+                       _containers(mapping, extra), ready)
     Path(out).write_text(json.dumps(idx, separators=(",", ":")) + "\n")
     bad = [f for f, t in idx["boards"].items() if any(v["error"] for v in t.values())]
     n_frames = sum(len(t[idx["themes"][0]]["frames"]) for t in idx["boards"].values() if idx["themes"][0] in t)
