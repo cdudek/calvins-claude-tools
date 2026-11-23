@@ -157,4 +157,4 @@ A one-line fix gets one plan paragraph, one executable acceptance check and the 
 6. Add board extraction and real-surface checks. Demonstrate a spacing failure, an image-only input and an unavailable browser.
 7. Open one product PR and read its existing CI. Test pending, stale, skipped and failed checks.
 8. Run a producer–consumer pilot through the final merge sequence. Verify the published consumer install and both final revisions.
-9. Ship cleanup with dry-run fixtures for mixed files. Release from `calvins-claude-tools`, then port to OMR.
+9. Ship cleanup with dry-run fixtures for mixed files. Release from `calvins-claude-tools`, then port to the work kit.
