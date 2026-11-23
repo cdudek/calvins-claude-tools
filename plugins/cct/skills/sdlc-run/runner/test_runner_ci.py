@@ -252,6 +252,7 @@ def test_open_pr_once_and_auto_merge(tmp_path):
     gh = Gh(head(rid), [])
     assert ci.open_pr(rid, "app", run=gh) == "done"
     assert ci.open_pr(rid, "app", run=gh) == "already-done"
+    contract.seal_final(rid)
     creates = [c for c in gh.calls if c[:3] == ["gh", "pr", "create"]]
     assert len(creates) == 1 and "--base" in creates[0] and "--head" in creates[0]
     assert store.load_meta(rid)["prs"]["app"] == "https://x/pr/1"
@@ -287,6 +288,7 @@ def test_same_named_jobs_use_the_worst_result():
 def test_auto_merge_is_refused_without_required_ci_or_for_a_stale_pr_head(tmp_path):
     _, rid = approved(tmp_path)
     ci.open_pr(rid, "app", run=Gh(head(rid), []))
+    contract.seal_final(rid)
     none_required = Gh(head(rid), [], required=[])
     with pytest.raises(SdlcError, match="no required CI is configured"):
         ci.arm_auto_merge(rid, "app", run=none_required)
@@ -304,14 +306,34 @@ def test_auto_merge_is_refused_without_required_ci_or_for_a_stale_pr_head(tmp_pa
 def test_auto_merge_is_allowed_with_no_required_ci_only_for_an_approved_local_only_repo(tmp_path):
     _, rid = approved(tmp_path, {"local_only_ok": ["app"]})
     ci.open_pr(rid, "app", run=Gh(head(rid), [], required=[]))
+    contract.seal_final(rid)
     assert ci.arm_auto_merge(rid, "app", run=Gh(head(rid), [], required=[])) is True
 
 
 def test_the_pr_guard_refuses_arming_for_the_same_cases(tmp_path, monkeypatch):
     _, rid = approved(tmp_path)
     ci.open_pr(rid, "app", run=Gh(head(rid), []))
+    contract.seal_final(rid)
     monkeypatch.setattr(ci, "RUN", Gh("0" * 40, []))
     monkeypatch.setattr(contract, "evaluate", lambda *a, **k: (READY, "ok", []))  # the repo's own proof is ready
     with pytest.raises(SdlcError, match="not arming auto-merge"):
         engine.pr_guard(rid, "app", arming=True)
     engine.pr_guard(rid, "app")  # opening the PR itself is not refused
+
+
+def test_arming_needs_the_final_seal_even_with_hand_written_pass_receipts(tmp_path, monkeypatch):
+    import sdlc
+    _, rid = approved(tmp_path)
+    for c in store.read_json(store.run_dir(rid) / "contract.json")["checks"]:  # PASS receipts nobody ran
+        contract.write_receipt(rid, c, sha=head(rid), verdict="PASS", exit_code=0, tests=1, base=None)
+    gh = Gh(head(rid), [])
+    monkeypatch.setattr(ci, "RUN", gh)
+    assert contract.evaluate(rid)[0] == PENDING  # `check` says PENDING: no `sdlc final` ran
+    engine.pr_guard(rid, "app")  # opening the PR is still allowed in the normal flow
+    ci.open_pr(rid, "app", run=gh)
+    assert sdlc.main(["pr", rid, "app", "--auto-merge"]) == 2
+    with pytest.raises(SdlcError, match="final gate"):
+        ci.arm_auto_merge(rid, "app", run=gh)
+    assert not [c for c in gh.calls if c[:3] == ["gh", "pr", "merge"]]
+    contract.seal_final(rid)  # what `sdlc final` does
+    assert ci.arm_auto_merge(rid, "app", run=gh) is True

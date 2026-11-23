@@ -316,6 +316,8 @@ def auto_merge_problem(rid: str, repo_name: str, run=None) -> str:
     if not url:
         return f"no PR for {repo_name}"
     proven = contract.current_head(meta, repo_name)
+    if why := contract.final_problem(rid, meta):  # the seal of the final re-run, as `check` requires
+        return f"{repo_name}: {why}"
     try:
         pr = fetch_pr(path, url, run)
         required = required_checks(path, pr["baseRefName"], run)
