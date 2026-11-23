@@ -26,7 +26,7 @@ def tasks_doc(rid: str) -> dict:
 def lim(rid: str) -> dict:
     c = store.read_json(store.run_dir(rid) / "contract.json").get("limits", {})
     a = store.read_json(store.run_dir(rid) / "approval.json", {"deadline": None}) if (store.run_dir(rid) / "approval.json").exists() else {}
-    return {"builders": c.get("builders", BUILDERS), "max_dispatches": c.get("max_dispatches"), "deadline": a.get("deadline")}
+    return {"builders": min(c.get("builders", BUILDERS), contract.MAX_BUILDERS), "max_dispatches": c.get("max_dispatches"), "deadline": a.get("deadline")}
 
 
 def block(rid: str, kind: str, msg: str) -> SdlcError:
@@ -77,6 +77,7 @@ def open_milestone(rid: str, mid: str) -> Path:
     wt = _worktree(r["path"], path, milestone_branch(rid, mid), r["branch"])
     if fresh:
         _approved_dependencies(rid, m["repo"], wt)
+        _pinned_inputs(rid, m["repo"], wt)
     store.update_cp(rid, lambda cp: cp["milestones"].setdefault(mid, {}).update(status="open", base=git(wt, "rev-parse", "HEAD")))
     return wt
 
@@ -84,7 +85,7 @@ def open_milestone(rid: str, mid: str) -> Path:
 def _approved_dependencies(rid: str, repo: str, wt: Path) -> None:
     """The runner, not a builder, puts the approved manifest and lockfile in and runs the frozen install."""
     import deps
-    if not deps.approved(rid, repo):
+    if not deps.planned(rid, repo):
         return
     deps.apply(rid, repo, wt)
     argv = deps.frozen_install(wt)
@@ -92,6 +93,17 @@ def _approved_dependencies(rid: str, repo: str, wt: Path) -> None:
         job = verify.run_job(rid, f"{repo}-install", argv, wt)
         if job.exit != 0:
             raise block(rid, "BLOCKED env", f"the frozen install for {repo} failed: {job.out.strip()[-160:]}")
+
+
+def _pinned_inputs(rid: str, repo: str, wt: Path) -> None:
+    """The runner writes the approved config files (exact bytes, hashed in the bundle) before any task of the milestone is dispatched."""
+    pins = verify.pinned_inputs(rid, repo)
+    if not pins:
+        return
+    verify.overlay(rid, repo, wt, pins)
+    if git(wt, "status", "--porcelain"):
+        git(wt, "add", "--", *pins)
+        git(wt, "commit", "-qm", "sdlc: approved pinned inputs", "--", *pins)
 
 
 def preflight(rid: str, tid: str | None = None) -> None:
@@ -126,6 +138,22 @@ def validate_plan(rid: str) -> None:
             if t["id"] in seen:
                 raise SdlcError(f"plan error: duplicate task id {t['id']}")
             seen.add(t["id"])
+            for g in t.get("replaces_tests", []):
+                if why := replaces_problem(g, t.get("paths", [])):
+                    raise SdlcError(f"plan error: task {t['id']} replaces_tests {g!r} {why}")
+
+
+def replaces_problem(g, owned: list[str]) -> str:
+    """A replaces_tests entry is an explicit test path or glob inside a path the task owns; anything wider is refused."""
+    if not isinstance(g, str):
+        return "must be a string"
+    plain = g.replace("*", "x").replace("?", "x")
+    if not (contract.safe_relpath(plain) and verify.TEST_PATH.search(plain)):
+        return "must be a relative test path or glob (no .. or absolute path)"
+    static = g.split("*")[0].split("?")[0]  # the part before the first wildcard
+    if not any(static.startswith(o.rstrip("/") + "/") or g == o for o in owned if contract.safe_relpath(o.rstrip("/"))):
+        return "is not inside the paths this task owns"
+    return ""
 
 
 def task_info(rid: str, tid: str) -> dict:
@@ -224,7 +252,7 @@ def submit(rid: str, tid: str) -> dict:
     cand = git(path, "rev-parse", "HEAD")
     if cand == e["base"]:
         raise SdlcError(f"task {tid}: no commit was made")
-    bad = verify.guard_diff(rid, e["repo"], e["base"], cand)
+    bad = verify.guard_diff(rid, e["repo"], e["base"], cand, tid)
     owned = e.get("paths") or []
     if owned:
         for rel in git(path, "diff", "--name-only", f"{e['base']}..{cand}").splitlines():

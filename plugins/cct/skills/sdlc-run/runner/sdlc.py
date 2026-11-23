@@ -7,6 +7,7 @@
   status [<id>] | list                  where a run stands; live runs
   resume <id>                           continue after a crash, on the same machine
   stop <id>                             durably stop a run and cancel its jobs
+  boards index <export-dir> | boards rows <mapping> --index F   design-canvas boards: list nodes with measured style, make check rows
   dispatch|submit|integrate|verify|milestone|final|pr|clean ...   see sdlc.py <cmd> -h
 """
 from __future__ import annotations
@@ -186,6 +187,11 @@ def cmd_clean(a) -> int:
     return clean.main(a.rest)
 
 
+def cmd_boards(a) -> int:
+    import board
+    return board.main(a.rest)
+
+
 def build_parser() -> argparse.ArgumentParser:
     p = argparse.ArgumentParser(prog="sdlc")
     sub = p.add_subparsers(dest="cmd", required=True)
@@ -220,6 +226,7 @@ def build_parser() -> argparse.ArgumentParser:
     add("pr", cmd_pr, RUN, ("repo", {}), ("--auto-merge", {"action": "store_true"}))
     add("pack", cmd_pack, RUN, ("producer", {}))
     add("publish", cmd_publish, RUN, ("producer", {}))
+    add("boards", cmd_boards, ("rest", {"nargs": argparse.REMAINDER}))
     add("clean", cmd_clean, ("rest", {"nargs": argparse.REMAINDER}))
     return p
 

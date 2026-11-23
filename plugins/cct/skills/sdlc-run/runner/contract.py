@@ -7,6 +7,7 @@ contract or another set of pinned files is stale. Receipts are unsigned: the plu
 """
 from __future__ import annotations
 
+import re
 import subprocess
 from pathlib import Path
 
@@ -49,27 +50,131 @@ def safe_relpath(p) -> bool:
             and "." not in p.split("/")[:1] and "" not in p.split("/"))
 
 
+# A workspace package name: optional @scope/, no leading dot or dash, so it can never read as an option or a path.
+PKG_NAME = re.compile(r"^(@[a-z0-9][a-z0-9._-]*/)?[a-z0-9][a-z0-9._-]*$")
+VENDORED = "vendored-tarball"
+
+
+def workspace_pack(name: str) -> list[str]:
+    return ["npm", "pack", "--ignore-scripts", "--workspace", name]
+
+
 def argv_allowed(argv) -> bool:
-    return isinstance(argv, list) and tuple(argv) in PACK_ALLOWED
+    if not isinstance(argv, list):
+        return False
+    ws = len(argv) == 5 and isinstance(argv[4], str) and PKG_NAME.fullmatch(argv[4]) is not None and argv == workspace_pack(argv[4])
+    return tuple(argv) in PACK_ALLOWED or ws  # shortcut: npm only; pnpm and yarn packs are not run, 4.1 has no source-building packer
+
+
+def pkg_names(e: dict) -> list[str]:
+    """Package names of an edge: plain names, or {"name": ..., "dir": ...} objects (dir is informational)."""
+    return [x if isinstance(x, str) else x.get("name") for x in e.get("packages") or []]
+
+
+def edge_packs(e: dict) -> dict[str | None, list[str]]:
+    """The pack argv per package of an edge; a plain single-artifact edge is {None: argv}."""
+    return {n: workspace_pack(n) for n in pkg_names(e)} if e.get("packages") else {None: e["pack"]}
+
+
+def vendored(e: dict) -> bool:
+    """A consumer that gets the producer's tarballs vendored and pinned structurally in its package.json."""
+    return e.get("release", {}).get("kind") == VENDORED or e.get("pin", {}).get("kind") in (VENDORED, "package-json")
+
+
+def pin_dir(e: dict) -> str:
+    return (e["pin"].get("dir") or e["pin"].get("vendor_dir") or "").rstrip("/")
+
+
+def pin_manifest(e: dict) -> str:
+    return e["pin"].get("manifest") or e["pin"].get("file") or "package.json"
+
+
+def pinned_map(c: dict) -> dict[str, list[str]]:
+    """pinned_inputs as {repo: [paths]}; the list form [{"repo", "path", ...}] is accepted too."""
+    v = c.get("pinned_inputs") or {}
+    if isinstance(v, list):
+        out: dict[str, list[str]] = {}
+        for x in v:
+            out.setdefault(x["repo"], []).append(x["path"])
+        return out
+    return v
+
+
+def validate_pinned_inputs(c: dict) -> None:
+    v = c.get("pinned_inputs")
+    if v is None:
+        return
+    items = [(x.get("repo") if isinstance(x, dict) else None, x.get("path") if isinstance(x, dict) else None) for x in v] if isinstance(v, list) \
+        else [(r, p) for r, ps in v.items() for p in (ps if isinstance(ps, list) else [None])] if isinstance(v, dict) else [(None, None)]
+    for repo, rel in items:
+        if not (isinstance(repo, str) and repo and safe_relpath(rel)):
+            raise SdlcError("pinned_inputs must be {repo: [paths]} or [{repo, path}] with relative paths inside the repo")
+
+
+BAD_PLACEHOLDER = re.compile(r"\{producer_sha:(?![A-Za-z0-9._-]+\})")
+
+
+def validate_placeholders(c: dict) -> None:
+    """{base}, {head} and {producer_sha:<repo>} are the only substitutions; a producer_sha must name a repo the contract knows."""
+    repos = {k["repo"] for k in c.get("checks", [])} | {e["producer"] for e in c.get("edges", [])} | {e["consumer"] for e in c.get("edges", [])}
+    for k in c.get("checks", []):
+        for a in [*k["runner"], *(k["expect"].get("control") or [])]:
+            if not isinstance(a, str):
+                continue
+            if BAD_PLACEHOLDER.search(a):
+                raise SdlcError(f"check {k['id']}: malformed {{producer_sha:<repo>}} placeholder")
+            for m in re.finditer(r"\{producer_sha:([A-Za-z0-9._-]+)\}", a):
+                if m[1] not in repos:
+                    raise SdlcError(f"check {k['id']}: {{producer_sha:{m[1]}}} names a repo the contract does not know")
 
 
 def validate_edges(c: dict) -> None:
     for e in c.get("edges", []):
-        for k in ("producer", "consumer", "pack"):
+        for k in ("producer", "consumer"):
             if k not in e:
                 raise SdlcError(f"edge lacks {k}")
-        if not argv_allowed(e["pack"]):
+        pk = e.get("packages")
+        if pk is not None:
+            names = pkg_names(e) if isinstance(pk, list) else []
+            if not (names and len(set(names)) == len(names) and all(isinstance(n, str) and PKG_NAME.fullmatch(n) for n in names)
+                    and all(isinstance(x, str) or (isinstance(x, dict) and ("dir" not in x or safe_relpath(str(x["dir"]).rstrip("/")))) for x in pk)):
+                raise SdlcError(f"edge {e['producer']}: packages must be a non-empty list of distinct workspace package names")
+            if "pack" in e and not argv_allowed(e["pack"]):
+                raise SdlcError(f"edge {e['producer']}: pack command is not on the allowlist {[' '.join(a) for a in PACK_ALLOWED]}")
+        elif "pack" not in e:
+            raise SdlcError("edge lacks pack or packages")
+        elif not argv_allowed(e["pack"]):
             raise SdlcError(f"edge {e['producer']}: pack command is not on the allowlist {[' '.join(a) for a in PACK_ALLOWED]}")
         rel = e.get("release", {})
-        if rel.get("kind", "none") != "none":
+        pin = e.get("pin", {})
+        if vendored(e):
+            man = pin_manifest(e)
+            if not pk:
+                raise SdlcError(f"edge {e['producer']}: {VENDORED} needs packages")
+            if not safe_relpath(pin_dir(e)) or not safe_relpath(man) or not man.endswith("package.json") \
+                    or ("lockfile" in pin and not safe_relpath(pin["lockfile"])) or pin.get("section", "dependencies") not in SECTIONS:
+                raise SdlcError(f"edge {e['producer']}: pin.dir and pin.manifest must be relative paths inside the repo (no .. or absolute path)")
+            if rel.get("kind", "none") not in ("none", VENDORED) and "fetch" in rel and not argv_allowed(rel["fetch"]):
+                raise SdlcError(f"edge {e['producer']}: fetch command is not on the allowlist")
+        elif rel.get("kind", "none") != "none":
             if not argv_allowed(rel.get("fetch")):
                 raise SdlcError(f"edge {e['producer']}: fetch command is not on the allowlist")
-            if not safe_relpath(e.get("pin", {}).get("file")) or not isinstance(e["pin"].get("line"), str):
+            if not safe_relpath(pin.get("file")) or not isinstance(pin.get("line"), str):
                 raise SdlcError(f"edge {e['producer']}: pin.file must be a relative path inside the repo (no .. or absolute path)")
+
+
+SECTIONS = ("dependencies", "devDependencies", "optionalDependencies")
+
+
+MAX_BUILDERS = 10  # the default is 8; the contract may raise it to this
 
 
 def validate_contract(c: dict) -> None:
     validate_edges(c)
+    validate_pinned_inputs(c)
+    b = c.get("limits", {}).get("builders", 8)
+    if not (isinstance(b, int) and not isinstance(b, bool) and 1 <= b <= MAX_BUILDERS):
+        raise SdlcError(f"limits.builders must be a whole number from 1 to {MAX_BUILDERS} (default 8)")
     ids = set()
     for chk in c.get("checks", []):
         for f in CHECK_FIELDS:
@@ -82,6 +187,7 @@ def validate_contract(c: dict) -> None:
             raise SdlcError(f"check {chk['id']}: runner must be an argv list")
         if chk["expect"].get("kind") not in ("pass", "fails_on_base", "negative_control"):
             raise SdlcError(f"check {chk['id']}: expect.kind must be pass, fails_on_base or negative_control")
+    validate_placeholders(c)
 
 
 def bundle_digest(rid: str) -> str:
@@ -134,6 +240,10 @@ def approve(rid: str, by: str) -> dict:
     cap = c.get("limits", {}).get("max_dispatches")
     if not isinstance(cap, int) or cap < 1:
         raise SdlcError("not approvable: limits.max_dispatches must be set (a finite dispatch cap)")
+    for repo, rels in pinned_map(c).items():  # exact bytes, hashed in the bundle through inputs/
+        for rel in rels:
+            if not safe_relpath(rel) or not (d / "inputs" / repo / rel).is_file():
+                raise SdlcError(f"not approvable: pinned_inputs {repo}:{rel} needs a relative path and an --input {repo}:{rel}=<file>")
     digest = bundle_digest(rid)
     if not granted("approve", rid):
         raise SdlcError("not approvable: the approval gate has not approved this exact bundle (run `sdlc gate <id> --by <name>`)")
@@ -271,7 +381,8 @@ def _final_state(rid: str, meta: dict) -> dict:
     for chk in store.read_json(d / "contract.json")["checks"]:
         p = receipt_path(rid, chk["id"], chk["repo"])
         receipts[p.name] = store.sha256(p.read_bytes()) if p.exists() else ""
-    return {"bundle": bundle_digest(rid), "heads": heads, "receipts": receipts}
+    pins = {p.stem: store.sha256(p.read_bytes()) for p in sorted((d / "pins").glob("*.json"))}  # what the runner pinned in consumers
+    return {"bundle": bundle_digest(rid), "heads": heads, "receipts": receipts, "pins": pins}
 
 
 def seal_final(rid: str) -> None:

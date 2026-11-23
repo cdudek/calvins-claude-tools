@@ -280,7 +280,10 @@ def screen(rid: str) -> Path:
              f"- **Dispatch cap:** {lim.get('max_dispatches', 'not set: kickoff must set one')}",
              f"- **Run deadline:** {lim.get('deadline_hours', 24)} hours; job deadline 30 minutes; one build plus two fixes per feature",
              "", "## Release and destinations", ""] + (
-        [f"- **{e['producer']} then {e['consumer']}:** {e.get('release', {}).get('kind', 'none')}" for e in c.get("edges", [])] or ["- one PR per repo: project branch into the default branch"]) + [
+        [f"- **{e['producer']} then {e['consumer']}:** {e.get('release', {}).get('kind', 'none')}"
+         + (f"; packages {', '.join(e['packages'])}" if e.get("packages") else "")
+         + (f"; tarballs vendored into `{e['pin']['dir']}`, package.json and lockfile rewritten by the runner (npm, scripts off, offline)"
+            if e.get("release", {}).get("kind") == "vendored-tarball" else "") for e in c.get("edges", [])] or ["- one PR per repo: project branch into the default branch"]) + [
              "", "## Probes", "",
              f"- **Missing tools:** {', '.join(miss) or 'none'}",
              f"- **Browser:** {'available' if pr[0]['browser']['available'] else 'unavailable: ' + pr[0]['browser']['why']}",
