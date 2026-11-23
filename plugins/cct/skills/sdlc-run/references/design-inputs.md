@@ -36,11 +36,11 @@ entry that names a board when there is no `design.json`.
 **The owner confirms the inventory.** An agent could list only some of the boards, so at approval the
 owner answers one dialog bound to a hash of the whole list (board ids, names, count, and the dropped
 list with its reasons): `Change <id>, finding inventory-<hash>: these N boards are the whole design:
-...` (options `Confirm inventory` | `Hold`), the same transcript-backed owner answer the screen
-approval uses. One dialog covers both the board list and the dropped boards, so a dropped board is
+...` (options `Confirm inventory` | `Hold`), the same transcript-backed owner answer the findings
+use (this confirms the board list, not any screenshot). One dialog covers both the board list and the dropped boards, so a dropped board is
 the owner's decision, never the agent's. The lock records the inventory (`"design": "inventory"`,
 `"inventory": <id>`) and the sha256 of every board image (`"designImages"`); `design.json` is locked
-like `screens.json`, so editing it after approval voids the approval, and the gallery and the close
+like `screens.json`, so editing it after approval voids the approval, and the close
 refuse an image that changed or went missing, naming the board. Every hash behind these ids is made of
 canonical JSON, so record boundaries bind.
 
@@ -52,13 +52,9 @@ Such a change needs `screens.json` and `design.json` whatever its size.
 layout, different content structure) says so in the entry's `"deviates": "<what differs and why>"`.
 The build may add or change `deviates` after approval: it is the one field of an entry that does not
 void the approval (the lock hashes `screens.json` without it, and the edit hook lets an edit through
-that changes nothing else). It is not free, though: the gallery shows the text above the board and
-the screenshot, an entry with a deviation is never approved in bulk (the owner ticks it by name, and
-the approval dialog states how many deviations it covers), and a deviation added or changed after the
-owner approved the screen voids a milestone pass already given and fails the capture (`CAPTURE FAIL
-approval`) until the owner approves it in the gallery again. The owner's answer for a screen is also
-bound to the boards the entry maps and their image digests: moving a screen to another board needs a
-new answer, and the gallery shows such a screen as `needs review`, not `approved`.
+that changes nothing else). It is not free, though: the comparison judges the screen against the board
+plus the `deviates` text, which the report must quote, and a deviation added or changed after a screen
+matched needs a new comparison. A verdict is bound to the sha256 of the capture it judged.
 
 Changes approved before 3.26.0 keep their path: the lock says whether it holds an inventory
 (`"design": "inventory"`). An in-flight 3.25 change gets its `design.json` at its next approval;

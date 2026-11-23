@@ -1,9 +1,11 @@
 """The app capture of a change approved from 3.25.0 (lock `"visual": "app"`): one app start, every
-`screens.json` entry at its viewport, twice, compared with the approved baseline.
+`screens.json` entry at its viewport, twice, compared by the agents with the pinned design (no owner approves a screen, no baseline is stored).
 
+    python3 scripts/capture.py verdict <change-dir> <id> --verdict match|differs --report <file> [--differences TEXT]
+        # the one writer of verify/comparison.json (the hooks refuse a direct edit)
     python3 scripts/capture.py check <change-dir>     # validate screens.json only (what `approve` runs)
     python3 scripts/capture.py run <change-dir> [--upto N] [--group]
-        # reachability, capture x2, stability, baseline compare. --upto N: only entries due by milestone N.
+        # reachability, capture x2, stability, the comparison verdicts. --upto N: only entries due by milestone N.
         # --group: the caller (the gate) leads this process group, so the app starts inside it and dies with it.
 
 `screens.json` (in the change folder): a list, or {"entries": [...]}, of
@@ -16,7 +18,7 @@ sdlc.json `visual` (all optional except `start` for `run`):
     start         shell command that starts the app on $PORT (a build step may precede it: `npm run build && npm start`)
     ready         path polled until the app answers (default "/")
     startTimeout  seconds to wait for it (default 120)
-    threshold     fraction of differing pixels still accepted, a number from 0 to 1 (default 0: bytes must be equal)
+    threshold     fraction of differing pixels still accepted, a number from 0 to 1 (validated only: nothing compares pixels against a stored baseline since 3.27.0)
     driver        a capture command of your own: `<driver> <jobs.json>` writes the png of every job (see below);
                   default is the repo's Playwright (`@playwright/test` or `playwright` in package.json)
 
@@ -27,12 +29,21 @@ checks that the response is 2xx and that the final URL is on the origin of `base
 before the driver runs, and every expected file must be newer than the start of the batch.
 
 Shots go to <change>/verify/shots/<id>.png (the second pass to verify/shots/second/<id>.png; a differing pair is
-unstable). The baseline is <change>/screens/approved.json: {"format": 1, "entries": {"<id>": {"sha256", ...}}}
-with the png at <change>/screens/<id>.png, which must hash to that sha256 before any pixel is compared. A difference
-writes verify/shots/diff/<id>.png and needs a new approval.
+unstable). Light and dark are separate entries (a route or fixture that sets the theme).
+
+Comparison, not approval, and no stored baseline. Every run captures the screens due and each needs a board-to-build
+comparison of exactly this capture, written by the agents (`cct:ux-build-validate` build mode and `cct:ux-assessment-run`)
+to <change>/verify/comparison.json: {"format": 1, "entries": {"<id>": {"sha256": "<of verify/shots/<id>.png>",
+"verdict": "match" | "differs", "report": "<report file in the change that names the sha256>", "boards": {"<board id>":
+"<sha256 of its image>"}, "differences": "<text>"}}}, recorded by `capture.py verdict`; a `match` counts only for a screen
+that maps a design board or has a `deviates` text. The gate computes the sha256 of its
+own fresh capture and accepts only a `match` carrying that sha256, so a comparison of an earlier capture or a forged
+entry counts for nothing. No comparison: `VERIFY BLOCKED reason=needs-comparison`. A `differs` verdict: `CAPTURE FAIL
+comparison`, a blocking finding the fix round settles. Nothing is written as a baseline by anyone; a later change is
+compared again.
 
 Last line: `CAPTURE PASS <n>` (exit 0), `CAPTURE FAIL ...` (exit 1) or `VERIFY BLOCKED reason=<code>` (exit 3:
-needs-baseline when an entry has no approved shot, env when the app or Playwright is missing).
+needs-comparison when an entry has no comparison of this capture, env when the app or Playwright is missing).
 Written by `sdlc-run adopt` from the kit; edit the kit, not this copy. stdlib only.
 """
 
@@ -241,21 +252,6 @@ def image_problems(change: Path) -> list[str]:
     return [f"board {b}: its image changed or is missing since approval (approval locked it)" for b, d in locked.items() if now.get(b) != d]
 
 
-def binding_tag(change: Path, design: dict, entry: dict) -> str:
-    """What the owner's answer for a screen is bound to beyond its pixels: the boards it maps (with their image digests)
-    and its deviation text. "" for a screen with neither, so a change with no design input hashes as before."""
-    boards = mapped(entry)
-    text = str(entry.get("deviates") or "").strip()
-    if not boards and not text:
-        return ""
-    return "bind-" + hashlib.sha256(canon({"boards": [[b, board_digest(change, design, b)] for b in boards], "deviates": text}).encode()).hexdigest()[:8]
-
-
-def deviation_tag(text: str) -> str:
-    """What an approval pair carries for an entry with a `deviates` text: the owner accepted exactly this text."""
-    return "dev-" + hashlib.sha256(text.strip().encode()).hexdigest()[:8]
-
-
 def design_problems(change: Path, entries: list[dict], required: bool = False) -> list[str]:
     """Every board of design.json is mapped by an entry's `design` list or dropped with a reason, and every entry
     names only boards design.json lists. `required`: the change has a design input, so design.json must exist."""
@@ -302,51 +298,6 @@ def design_counts(change: Path, entries: list[dict]) -> tuple[int, int, int, int
         return None
     used = {b for e in entries for b in mapped(e)}
     return len(boards), len([b for b in boards if b in used]), len(dropped_of(design)), len([e for e in entries if str(e.get("deviates", "")).strip()])
-
-
-def lock_sha(change: Path) -> str:
-    for rel in ("state/lock.json", "lock.json"):
-        data = read_json(Path(change) / rel)
-        if isinstance(data, dict):
-            return str(data.get("sha", ""))
-    return ""
-
-
-def link(log: list, record: dict, lock: str) -> dict:
-    """`record` chained to the log: the hash of the entry before it and the lock it was decided under go into its own hash."""
-    prev = log[-1].get("hash", "") if log else ""
-    body = {k: v for k, v in record.items() if k not in ("hash", "prev", "lock")}
-    body.update({"prev": prev, "lock": lock})
-    body["hash"] = hashlib.sha256(json.dumps(body, sort_keys=True).encode()).hexdigest()
-    return body
-
-
-def chain_problems(log: list, head: object = None, strict: bool = False) -> list[str]:
-    """A log written before 3.26.0 has no hashes and is read as it is; once an entry is hashed, every later one is,
-    each names the hash of the one before it, and the file's `head` is the last. A trimmed or rewritten log fails.
-    `strict` (a 3.26+ lock): every entry is hashed, none is missing from the chain, and `head` is the last entry's
-    hash even when no entry is hashed."""
-    out, prev, hashed = [], "", False
-    for i, rec in enumerate(log):
-        if "hash" not in rec:
-            if hashed or strict:
-                out.append(f"log entry {i + 1} has no hash" + (" after a hashed one" if hashed else ""))
-            continue
-        body = {k: v for k, v in rec.items() if k != "hash"}
-        want = hashlib.sha256(json.dumps(body, sort_keys=True).encode()).hexdigest()
-        if rec.get("prev") != prev or rec["hash"] != want:
-            out.append(f"log entry {i + 1} ({rec.get('entry')}) does not follow the one before it: the log was changed")
-        prev, hashed = rec["hash"], True
-    last = log[-1].get("hash", "") if log else ""
-    if (hashed or strict) and (head or "") != (prev if hashed else last):
-        out.append("the log does not end where approved.json says it does: entries were removed")
-    return out
-
-
-def replayed(log: list, entry: str, bid: str) -> bool:
-    """`bid` already approved `entry`, and a send back of the entry came after it: that batch is spent."""
-    at = [i for i, r in enumerate(log) if r.get("entry") == entry and r.get("answer") == "accept" and r.get("batch") == bid]
-    return bool(at) and any(r.get("entry") == entry and r.get("answer") == "send-back" for r in log[at[0] + 1 :])
 
 
 def read_config(repo: Path) -> dict:
@@ -595,65 +546,6 @@ def run(change: Path, repo: Path, upto: int | None = None, group: bool = False) 
     return judge(change, entries, shots, float(threshold), started, repo)
 
 
-def approval_id(pairs: list) -> str:
-    """The id of one owner approval: `screens-` and 16 hex of the sorted canonical pairs `[entry, sha256]` (a send back or a
-    screen's board and deviation binding adds a third word). The owner's dialog is `Change <id>, finding <this id>: ...`,
-    so the answer covers exactly these shots and no others."""
-    return "screens-" + hashlib.sha256(canon(sorted(pairs)).encode()).hexdigest()[:16]
-
-
-def legacy_approval_id(pairs: list) -> str | None:
-    """The id 3.25.1 to 3.25.2 made of a batch: the sorted `<entry> <sha256>` lines (a send back's third word included)
-    joined by newlines. A baseline written then keeps this id, and `uncovered` reads it only for a lock that is not
-    strict (pre-3.26) while the decision log is empty (3.26 logs every decision). The join is ambiguous, so it is made only of pairs of the old shape: 2 or 3 fields without
-    whitespace, the digest 64 lowercase hex. None for any other batch."""
-    if not all(isinstance(p, list) and len(p) in (2, 3) and all(isinstance(w, str) and w and not re.search(r"\s", w) for w in p)
-               and re.fullmatch(r"[0-9a-f]{64}", p[1]) for p in pairs):
-        return None
-    return "screens-" + hashlib.sha256("\n".join(sorted(" ".join(p) for p in pairs)).encode()).hexdigest()[:16]
-
-
-def uncovered(change: Path, approved: dict) -> list[str]:
-    """The approved entries no owner decision covers. approved.json is the owner's approval, so each entry
-    names the batch (`decision`) its import was confirmed in: `batches[<id>]` lists that batch's
-    `[entry, sha256]` pairs (a send back adds `"send-back"`, an entry with boards or a `deviates` text its `bind-` tag), the id is their
-    `approval_id`, and the owner answered `Approve screens` to the dialog of that id (`marks.owner_decisions`, the
-    transcript). A file an agent wrote covers nothing, a batch a later send back spent covers nothing (the decision
-    log says so), and a log that was trimmed or rewritten fails the check."""
-    data = read_json(change / "screens" / "approved.json")
-    data = data if isinstance(data, dict) else {}
-    batches = data["batches"] if isinstance(data.get("batches"), dict) else {}
-    log = [r for r in data["log"] if isinstance(r, dict)] if isinstance(data.get("log"), list) else []
-    lock = next((d for rel in ("state/lock.json", "lock.json") if isinstance(d := read_json(change / rel), dict)), {})
-    strict = "design" in lock or "head" in data  # 3.26.1: a 3.26 lock, or the `head` 3.26.0 wrote into every approved.json
-    out = [f"decision log: {p}" for p in chain_problems(log, data.get("head"), strict=strict)]
-    if strict and approved and not log:  # 3.26 logs every decision: approvals beside an empty or absent log mean it was removed
-        out.append("decision log: the log is empty beside approvals: entries were removed")
-    repo = Path(subprocess.run(["git", "-C", str(change), "rev-parse", "--show-toplevel"], capture_output=True, text=True).stdout.strip() or ".")
-    sys.dont_write_bytecode = True  # the gate checks that the tree is clean afterwards: no __pycache__ from here
-    try:
-        from marks import owner_decisions
-
-        decided = owner_decisions(repo, change.name)
-    except ImportError:  # no reader of owner answers: nothing is covered
-        decided = {}
-    design = load_design(change)
-    tags = {e["id"]: binding_tag(change, design, e) for e in load_screens(change)[0]}
-    for entry, a in approved.items():
-        bid = a.get("decision")
-        pairs = batches.get(bid) if isinstance(bid, str) else None
-        ok = isinstance(pairs, list) and all(isinstance(p, list) and len(p) in (2, 3) for p in pairs)
-        # a deviation the owner did not see (added after the approval) is not covered: it needs the gallery again
-        held = ok and any(p[:2] == [entry, a.get("sha256")] and p[2:] != ["send-back"] and p[2:] == ([tags[entry]] if tags.get(entry) else []) for p in pairs)
-        if not ok or bid not in (approval_id(pairs), *([] if strict or log else [legacy_approval_id(pairs)])) or not held:
-            out.append(f"{entry}: no recorded batch of an owner approval holds it" + (" with its current board mapping and deviation" if tags.get(entry) else ""))
-        elif decided.get(bid, ("",))[0] != "screens":
-            out.append(f"{entry}: the owner has not answered the dialog of {bid}")
-        elif replayed(log, entry, bid):
-            out.append(f"{entry}: the owner's answer of {bid} was spent by a later send back: approve the screen again")
-    return out
-
-
 def judge(change: Path, entries: list[dict], shots: Path, threshold: float, started: float = 0.0, repo: Path | None = None) -> int:
     ids = [e["id"] for e in entries]
     second = shots / "second"
@@ -673,53 +565,102 @@ def judge(change: Path, entries: list[dict], shots: Path, threshold: float, star
     if bad := image_problems(change):
         print("\n".join(bad) + "\nRestore the image from git, or have the plan approved again with the new one.")
         return end("CAPTURE FAIL design", 1)
-    try:
-        approved = json.loads((change / "screens" / "approved.json").read_text(encoding="utf-8")).get("entries", {})
-    except (OSError, ValueError, AttributeError):
-        approved = {}
-    approved = {i: a for i, a in approved.items() if isinstance(a, dict)} if isinstance(approved, dict) else {}
-    fresh_ids = [i for i in ids if i not in approved]
-    if fresh_ids:
-        where = os.path.relpath(change, repo) if repo else str(change)
-        print(
-            f"{len(fresh_ids)} of {len(ids)} entries have no approved shot: " + ", ".join(fresh_ids)
-            + f"\nThe shots are in {shots}. Build the gallery (`python3 scripts/evidence.py gallery {where}`) and have the owner approve them."
-        )
-        return end("VERIFY BLOCKED reason=needs-baseline", 3)
-    full = {e["id"] for e in load_screens(change)[0]}  # an early close checks the entries due, the last one every approval
-    if no_owner := uncovered(change, approved if set(ids) >= full else {i: a for i, a in approved.items() if i in ids}):
-        print("approved.json holds approvals no owner decision covers (an agent cannot approve a screen):\n  " + "\n  ".join(no_owner)
-              + "\nImport the gallery answers with `evidence.py gallery <change> --import`: it asks the owner, and records the answer.")
-        return end("CAPTURE FAIL approval", 1)
-    # the baseline is screens/<id>.png (the id is validated: no path comes from the file field) and must be the approved bytes
-    torn = [i for i in ids if sha(change / "screens" / f"{i}.png") != approved[i].get("sha256")]
-    if torn:
-        print("the approved baseline does not match its recorded sha256 (edited or missing): " + ", ".join(torn)
-              + "\nRestore screens/<id>.png from git, or approve the shots again.")
-        return end("CAPTURE FAIL baseline", 1)
-    changed = []
-    (shots / "diff").mkdir(exist_ok=True)
+    # Nothing is persisted as a baseline: a screen passes only when THIS run captured it (the shot above is fresh and
+    # stable) and the agents' comparison says `match` for the sha256 the gate computed from that capture just now.
+    verdicts = read_comparison(change)
+    pending, differing, by_id = [], [], {e["id"]: e for e in entries}
     for i in ids:
-        now, base, diff = shots / f"{i}.png", change / "screens" / f"{i}.png", shots / "diff" / f"{i}.png"
-        if sha(now) == approved[i].get("sha256"):
-            continue
-        try:
-            share = compare(now, base, diff) if threshold else 1.0
-        except (ValueError, zlib.error, struct.error) as err:
-            print(f"{i}: cannot compare by pixels: {err}")
-            share = 1.0
-        if share > threshold:
-            note = f" ({share:.4%} of pixels, diff {diff})" if diff.is_file() else ""
-            changed.append(f"{i}: differs from the approved shot{note}")
-    if changed:
-        print("\n".join(changed) + "\nA changed screen needs a new approval: rebuild the gallery, or fix the page.")
-        return end("CAPTURE FAIL changed", 1)
+        v, now = verdicts.get(i), sha(shots / f"{i}.png")
+        if not isinstance(v, dict) or v.get("sha256") != now:  # none, forged or from another capture: no judgement of this one
+            pending.append(i)
+        elif v.get("verdict") != "match":
+            differing.append(f"{i}: {str(v.get('differences') or 'differs from the pinned design')[:200]} (report {v.get('report', 'none')})")
+        elif why := match_problem(change, by_id.get(i, {}), i, now, v):  # a match that proves nothing is no match
+            print(f"{i}: the match does not count: {why}")
+            pending.append(i)
+    if pending:
+        print(f"{len(pending)} of {len(ids)} screens have no board-to-build comparison of this capture: " + ", ".join(pending)
+              + f"\nThe shots are in {shots} (light and dark are separate entries). Compare each with the pinned design"
+              + " (`cct:ux-build-validate` build mode, then `cct:ux-assessment-run`), fix differences in the fix round,"
+              + f" write {COMPARISON} with the sha256 of each shot (see capture.py docs) and run the gate again. No owner answer is needed or read.")
+        return end("VERIFY BLOCKED reason=needs-comparison", 3)
+    if differing:
+        print("still differs from the pinned design after comparison (a blocking finding, not an owner question):\n  " + "\n  ".join(differing)
+              + "\nFix the page in the fix round; the gate captures and compares again.")
+        return end("CAPTURE FAIL comparison", 1)
     return end(f"CAPTURE PASS {len(ids)}", 0)
+
+
+COMPARISON = "verify/comparison.json"
+
+
+def match_problem(change: Path, entry: dict, entry_id: str, shot_sha: str, v: dict) -> str:
+    """Why a `match` verdict proves nothing, or "": the screen must map a design board or carry a `deviates` text; the
+    report must be a real file of the change (board_file rules) that names the shot's sha256; and `boards` must hold
+    the sha256 of every mapped board image as it is now (a board that changed since the comparison voids it)."""
+    boards = mapped(entry)
+    if not boards and not str(entry.get("deviates") or "").strip():
+        return "the screen maps no design board and has no `deviates` text, so there is nothing to compare it with"
+    report = v.get("report")
+    data = read_board(change, report) if isinstance(report, str) else None
+    if data is None:
+        return "`report` is not a file inside the change folder"
+    if shot_sha not in data.decode("utf-8", "replace"):
+        return "the report does not contain the sha256 of this capture"
+    design = load_design(change)
+    want = {b: board_digest(change, design, b) for b in boards}
+    if v.get("boards", {}) != want:
+        return "`boards` does not hold the sha256 of every mapped board image as it is now"
+    return ""
+
+
+def read_comparison(change: Path) -> dict:
+    """verify/comparison.json, written by the agents' board-to-build comparison:
+    {"format": 1, "entries": {"<id>": {"sha256": <of the compared shot>, "verdict": "match" | "differs",
+    "report": "<path of the comparison report>", "differences": "<text when it differs>"}}}."""
+    data = read_json(change / COMPARISON)
+    entries = data.get("entries") if isinstance(data, dict) else None
+    return entries if isinstance(entries, dict) else {}
 
 
 def end(line: str, code: int) -> int:
     print(line)
     return code
+
+
+def verdict_main(args: list[str]) -> int:
+    """capture.py verdict <change> <id> --verdict match|differs --report <file in the change> [--differences TEXT]:
+    the one writer of verify/comparison.json (the hooks refuse an edit of it). It computes the shot's sha256 and the
+    mapped boards' sha256s itself, refuses a `match` that proves nothing and keeps the compared shot beside the file."""
+    opts = {a: args[k + 1] for k, a in enumerate(args) if a in ("--verdict", "--report", "--differences") and k + 1 < len(args)}
+    pos = [a for k, a in enumerate(args) if not a.startswith("--") and (k == 0 or args[k - 1] not in opts)]
+    if len(pos) != 2 or opts.get("--verdict") not in ("match", "differs"):
+        print(__doc__)
+        return 2
+    change, entry_id = Path(pos[0]).resolve(), pos[1]
+    entries, problems = load_screens(change)
+    entry = next((e for e in entries if e["id"] == entry_id), None)
+    shot = change / "verify" / "shots" / f"{entry_id}.png"
+    if problems or entry is None or not shot.is_file():
+        print(f"CAPTURE FAIL verdict: {entry_id} is not an entry of screens.json with a capture in verify/shots")
+        return 1
+    v = {"sha256": sha(shot), "verdict": opts["--verdict"], "report": opts.get("--report", ""), "differences": opts.get("--differences", ""),
+         "boards": {b: board_digest(change, load_design(change), b) for b in mapped(entry)}}  # fmt: skip
+    if v["verdict"] == "match" and (why := match_problem(change, entry, entry_id, v["sha256"], v)):
+        print(f"CAPTURE FAIL verdict: not recorded: {why}")
+        return 1
+    rows = read_comparison(change)
+    rows[entry_id] = v
+    out = change / COMPARISON
+    out.parent.mkdir(parents=True, exist_ok=True)
+    tmp = out.with_name(f".comparison.{os.getpid()}.tmp")
+    tmp.write_text(json.dumps({"format": 2, "entries": rows}, indent=2, sort_keys=True) + "\n", encoding="utf-8")
+    os.replace(tmp, out)
+    kept = change / "verify" / "compared"
+    kept.mkdir(parents=True, exist_ok=True)
+    shutil.copyfile(shot, kept / f"{entry_id}.png")  # the shot the verdict judged
+    print(f"verdict recorded: {entry_id} {v['verdict']}")
+    return 0
 
 
 def main(argv: list[str]) -> int:
@@ -735,6 +676,8 @@ def main(argv: list[str]) -> int:
             print(__doc__)
             return 2
         del args[k : k + 2]
+    if args[:1] == ["verdict"]:
+        return verdict_main(args[1:])
     if len(args) != 2 or args[0] not in ("check", "run"):
         print(__doc__)
         return 2

@@ -40,7 +40,6 @@
   ],
   "toolsCommand": "install plannotator and its Claude Code plugin (docs/sdlc.md)",
   "tests": "pytest",
-  "codeowners": [],
   "claudeAllow": [
     "Bash(python3 -m unittest:*)",
     "Bash(python3 -m pytest:*)",
@@ -84,7 +83,7 @@
     ]
   },
   "product": "",
-  "kitTemplates": "e4222344ff72",
+  "kitTemplates": "2775ca8e464e",
   "tiers": false,
   "ciPaths": {
     "docs": [
@@ -209,7 +208,7 @@
     "e2e": "true",
     "e2eTouched": "true"
   },
-  "sdlcVersion": "3.26.4",
+  "sdlcVersion": "3.27.0",
   "tracker": {
     "kind": "beads"
   },

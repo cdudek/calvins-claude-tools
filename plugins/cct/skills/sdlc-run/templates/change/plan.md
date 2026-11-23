@@ -67,6 +67,19 @@ section G (selection and line format).
 |---|---|---|---|---|
 | 1 | <what it delivers> | F1, F2 | `<slug>/1-<feature>` | todo |
 
+## Dependency changes (owner paste blocks)
+
+Builders never edit a manifest or lockfile (`codex-build.sh` rejects it) and repos say a human adds
+packages, so a feature that needs a package is not a builder step. List each one here as a block the
+owner pastes; the builder starts after the owner has run it and committed the manifest and lockfile.
+`none` when no feature adds a package. A local dependency repo is a packed tarball of a frozen
+commit (`multi-repo.md`), swapped for the published version in the last block.
+
+```bash
+# <feature row>: <package> because <reason>
+<pnpm add | uv add> <package>
+```
+
 ## Files that change
 
 | File | Change |
@@ -83,7 +96,8 @@ Each step has a proof. The proof is a command, a file, or a fact.
 
 ## Milestones
 
-One row per milestone, in order; a change small enough for one has one. Each milestone is cut
+One row per milestone, in order; a change small enough for one has one. Runner milestones start at
+1: a product may call its first release M0, and the runner number is then M+1 (`lint` flags a 0). Each milestone is cut
 from the default branch and merges on its own, unless `needs` names one whose code it calls.
 Different files do not prove independence: an API and its caller conflict without a merge
 conflict.
@@ -144,8 +158,9 @@ before any check or push: it owns local iteration, failures and the final full c
   those facts cite, not whole files. Dispatch with isolation `worktree` and a `Base: <milestone
   head sha>` line after you commit your records. Merge their branches back one at a time. When
   `sdlc.json` `builders` is `codex`, use the kit's `scripts/codex-build.sh` instead; with codex
-  the close builder runs checks and the gate only. Either way use `builderModel` and
-  `builderEffort`, or the pair this plan's Approach names (`stages.md`).
+  the close builder runs checks and the gate only. Either way pass the model and effort
+  from the kickoff's "Orchestrator instructions for this run" per dispatch (`codex-build.sh --model --reasoning`);
+  `builderModel` and `builderEffort` are only the defaults (`stages.md`).
 - **Records:** plans, handover, findings, validation, gate output and every fix or test repair are
   commits on the milestone branch. Open no other PR and push nothing else (`pr-gate.sh` refuses
   it). A record that can only be written after a merge goes in the next milestone's first commit.
@@ -184,10 +199,10 @@ before any check or push: it owns local iteration, failures and the final full c
   `checks`) or accept baselines.
 - **Bookkeeping:** tick plan tasks as they land. Log departures under `## Revisions`.
 - **Agents:** every build, fix, test, capture, restack or records agent is
-  `cct:sdlc-feature-builder` (Sonnet). Review and checks use their typed agents
+  `cct:sdlc-feature-builder`. Review and checks use their typed agents
   (`cct:review-code-reviewer`, `cct:test-behavior-verifier`, `cct:review-criteria-auditor`,
   `cct:ux-usability-reviewer`, `cct:review-finding-validator`). Never launch general-purpose for
-  this work: it inherits the session's model. Any other subagent gets `model: sonnet` explicitly.
+  this work: it inherits the session's model. Any other subagent gets an explicit model from the kickoff's orchestrator instructions.
   The session's own model is only for the gate's visual judgement and for decisions. Dispatch
   builders yourself, never through a closer agent that spawns its own.
 - **One milestone** (`/goal` from `templates/goal/milestone.txt`): close it per `milestone.md`.
@@ -217,7 +232,15 @@ Kickoff prompt:
 ```
 Run change {{CHANGE}}: follow `## How to run` in changes/{{CHANGE}}/plan.md to the end, then
 print `python3 <STATUS> goal {{CHANGE}}`.
+
+Orchestrator instructions for this run (optional; delete the block when empty):
+- Builder model and effort: <model>, <effort>
+- Reviewer model: <model>
+- Builders at once: <n>
 ```
+
+Models are an orchestrator choice: this plan, the facts, the tracker issues and `sdlc.json` never name a
+model for a specific run. The orchestrator passes the block above per dispatch.
 
 The goal:
 

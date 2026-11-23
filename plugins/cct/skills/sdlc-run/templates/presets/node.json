@@ -50,7 +50,6 @@
   ],
   "toolsCommand": "pnpm sdlc:tools",
   "tests": "vitest",
-  "codeowners": [],
   "claudeAllow": ["Bash(pnpm *)", "Bash(git:*)", "Bash(gh pr:*)"],
   "showChannel": "",
   "keep": [],
@@ -92,7 +91,7 @@
       {
         "name": "e2e-repeat",
         "after": ["e2e"],
-        "run": "changed=$(git diff --name-only --diff-filter=d {base}...HEAD -- 'e2e/*.spec.*') || exit 1; specs=$( { printf '%s\\n' \"$changed\"; sed 's/[[:space:]]*#.*//' e2e/flaky-specs.txt 2>/dev/null; } | awk 'NF' | sort -u ); [ -z \"$specs\" ] || pnpm exec playwright test --repeat-each=3 $specs"
+        "run": "bash scripts/e2e-repeat.sh {base}"
       }
     ]
   },

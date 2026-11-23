@@ -53,20 +53,8 @@ while IFS= read -r -d '' f; do fields+=("$f"); done < <(
   printf '%s' "$payload" | "$SDLC_PY" -c '
 import json, os, re, sys
 def owner(cfg_path):
-    """Who owns sdlc.json: the last CODEOWNERS line for it (or for `*`), else a plain description."""
-    here = os.path.dirname(os.path.abspath(cfg_path))
-    found = ""
-    for rel in (".github/CODEOWNERS", "CODEOWNERS", "docs/CODEOWNERS"):
-        try:
-            lines = open(os.path.join(here, rel), encoding="utf-8").read().splitlines()
-        except OSError:
-            continue
-        for line in lines:
-            parts = line.split("#")[0].split()
-            if len(parts) > 1 and parts[0].lstrip("/") in ("sdlc.json", "*"):
-                found = " ".join(parts[1:])
-        break
-    return found or "the owner of sdlc.json"
+    """Who fixes a rule with no message: a plain description (the kit reads no ownership file)."""
+    return "the owner of sdlc.json"
 try:
     cmd = (json.load(sys.stdin).get("tool_input") or {}).get("command") or ""
     cmd = re.sub(r"\\\r?\n[ \t]*", " ", cmd)  # a backslash-newline continues the command: one line to match

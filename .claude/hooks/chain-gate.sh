@@ -448,6 +448,13 @@ if len(parts) >= 3 and parts[0] == changes:
         inside = {"intake.json": "decisions.json"}.get(inside[6:], inside[6:])
         base = inside.rsplit("/", 1)[-1]
 
+    if inside == "verify/comparison.json":  # the verifier step writes it through `capture.py verdict`, never a builder's edit
+        deny(
+            f"{changes}/{change_id}/verify/comparison.json is the board-to-build verdict file. Only the comparison step writes it, "
+            "through `python3 scripts/capture.py verdict <change> <id> --verdict match|differs --report <file>`.",
+            source=f"{changes}/{change_id}/verify/comparison.json",
+            action="run the comparison step (cct:ux-build-validate build mode); it records verdicts with capture.py verdict",
+        )
     if base == "decisions.json":
         lock = state_file(change_dir, "lock.json")
         if lock.exists() and (state_file(change_dir, "decisions.json")).exists():
