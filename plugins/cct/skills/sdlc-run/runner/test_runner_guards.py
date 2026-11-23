@@ -287,41 +287,69 @@ def test_the_approval_screen_shows_pinned_inputs_replacements_and_owned_paths(tm
     assert "PROTECTED — sensitive:** `app:.github/workflows/evil.yml`" in head and "PROTECTED — sensitive:** `app:.npmrc`" in head
     assert "app:e2e/ok.txt" not in head  # an unprotected pin is listed below, not flagged
     assert "registry=https://evil.example/" in out and "-registry=https://good.example/" in out and "curl evil" in out  # the diff against the base
-    assert "`tests/*` matches 2 files at the base" in out and "**t1** (app): `tests/*`" in out  # test_a and test_b
-    assert "## Paths each task owns" in out and "**t1** (app): `feature.py`, `tests/`" in out
+    assert "`tests/*` matches 2 files at the base" in out and "`t1` (app): `tests/*`" in out  # test_a and test_b
+    assert "## Paths each task owns" in out and "`t1` (app): `feature.py`, `tests/`" in out
 
 
-def test_a_canvas_check_that_measured_nothing_or_dropped_rows_or_left_unsupported_items_does_not_pass(tmp_path):
-    def run(spec):
-        f = tmp_path / "s.json"
-        f.write_text(json.dumps(spec))
-        p = subprocess.run([sys.executable, str(Path(board.__file__)), "check", str(f)], capture_output=True, text=True)
-        return p.returncode, p.stdout
+def run_board_check(tmp_path, spec, *flags):
+    f = tmp_path / "s.json"
+    f.write_text(json.dumps(spec))
+    p = subprocess.run([sys.executable, str(Path(board.__file__)), "check", str(f), *flags], capture_output=True, text=True)
+    return p.returncode, p.stdout
 
-    code, out = run({"target": {"kind": "web", "url": "http://x"}, "rows": []})
+
+def test_a_canvas_check_that_measured_nothing_or_dropped_rows_does_not_pass(tmp_path):
+    code, out = run_board_check(tmp_path, {"target": {"kind": "web", "url": "http://x"}, "rows": []})
     assert code == 1 and "no rows" in out
     row = {"id": "r", "locator": {"css": "body"}, "prop": "width", "expected": "1px", "tolerance_px": 1}
-    code, out = run({"target": {"kind": "web", "url": "http://x"}, "rows": [row], "expected_rows": 3})
-    assert code == 1 and "only 1 rows, the approved spec expects 3" in out
+    code, out = run_board_check(tmp_path, {"target": {"kind": "web", "url": "http://x"}, "rows": [row]}, "--expected-rows", "3")
+    assert code == 1 and "only 1 rows, the approved contract row expects 3" in out
+    # the spec file cannot lower the count: its own expected_rows is not read
+    code, out = run_board_check(tmp_path, {"target": {"kind": "web", "url": "http://x"}, "rows": [row], "expected_rows": 1}, "--expected-rows", "3")
+    assert code == 1 and "expects 3" in out
 
 
 @pytest.mark.skipif(not board.browser_available()[0], reason="no Chromium installed here")
-def test_unsupported_entries_are_unproven_unless_waived_by_id(tmp_path):
+def test_unsupported_entries_are_unproven_unless_the_contract_row_waives_them_by_id(tmp_path):
     page = tmp_path / "p.html"
     page.write_text("<body style='margin:0'><div style='width:10px;height:5px'>a</div></body>")
     row = {"id": "r", "locator": {"css": "div"}, "prop": "width", "expected": "10px", "tolerance_px": 0.5}
     spec = {"target": {"kind": "web", "file": str(page)}, "rows": [row], "unsupported": [{"id": "u1", "reason": "2 nodes share a locator"}]}
-
-    def run(sp):
-        f = tmp_path / "s.json"
-        f.write_text(json.dumps(sp))
-        p = subprocess.run([sys.executable, str(Path(board.__file__)), "check", str(f)], capture_output=True, text=True)
-        return p.returncode, p.stdout
-
-    code, out = run(spec)
+    code, out = run_board_check(tmp_path, spec)
     assert code == 1 and "UNPROVEN u1: 2 nodes share a locator" in out and "PASS r" in out
-    assert run({**spec, "waive_unsupported": ["u1"]})[0] == 0
-    assert run({**spec, "waive_unsupported": ["other"]})[0] == 1
+    assert run_board_check(tmp_path, spec, "--waive", "u1")[0] == 0
+    assert run_board_check(tmp_path, spec, "--waive", "other")[0] == 1
+    # a builder editing the spec to waive its own items changes nothing: the spec's keys are not read
+    assert run_board_check(tmp_path, {**spec, "waive_unsupported": ["u1"], "expected_rows": 0})[0] == 1
+
+
+def test_a_board_check_row_must_pin_its_spec_and_carry_its_row_count():
+    def row(runner, pins):
+        return tk.chk("b", "app", runner, pins=pins, count=False)
+    ok = ["python3", "/x/runner/board.py", "check", "spec.json", "--expected-rows", "12", "--waive", "u1"]
+    contract.validate_contract({"checks": [row(ok, {"spec.json": "0" * 64})]})
+    for runner, pins, why in ((ok, {}, "must be listed in pins"), (ok[:5] + ok[6:], {"spec.json": "0"}, "needs --expected-rows"),
+                              ([*ok[:5], "0"], {"spec.json": "0"}, "needs --expected-rows"), (ok[:4], {"spec.json": "0"}, "needs --expected-rows"),
+                              (["python3", "/x/board.py", "check"], {}, "must be listed in pins")):
+        with pytest.raises(SdlcError, match=why):
+            contract.validate_contract({"checks": [row(runner, pins)]})
+
+
+def test_every_path_from_argv_or_a_spec_is_refused_inside_the_records(tmp_path, monkeypatch, capsys):
+    home = tmp_path / "home"
+    (home / "runs").mkdir(parents=True)
+    monkeypatch.setenv("SDLC_HOME", str(home))
+    (home / "runs" / "spec.json").write_text(json.dumps({"rows": [], "target": {}}))
+    assert board.main(["check", str(home / "runs" / "spec.json")]) == 2  # a spec read from the records
+    spec = tmp_path / "s.json"
+    spec.write_text(json.dumps({"rows": [{"id": "r"}], "target": {"kind": "web", "url": "http://x"}, "evidence_dir": str(home / "runs" / "ev")}))
+    assert board.main(["check", str(spec)]) == 2 and not (home / "runs" / "ev").exists()
+    out = capsys.readouterr().out
+    assert out.count("inside the run records") == 2
+    (tmp_path / "m.json").write_text('{"boards": []}')
+    for argv in (["index", str(home / "runs")], ["rows", str(home / "m.json"), "--index", "i.json"], ["extract", str(home / "b.json")],
+                 ["rows", str(tmp_path / "m.json"), "--index", str(home / "i.json")]):
+        assert board.main(argv) == 2, argv
 
 
 def test_the_board_server_does_not_follow_symlinks_out_of_the_root_or_list_directories(tmp_path):
@@ -357,4 +385,43 @@ def test_boards_out_inside_the_records_is_refused_even_through_a_symlink(tmp_pat
         assert "inside the run records" in capsys.readouterr().out and not out.exists()
     assert sdlc.main(["boards", "index", str(tmp_path), "--out", str(home / "runs" / "i.json")]) == 2
     ok = tmp_path / "spec.json"
-    assert sdlc.main(["boards", "rows", str(m), "--index", str(i), "--out", str(ok)]) == 0 and json.loads(ok.read_text())["expected_rows"] > 0
+    assert sdlc.main(["boards", "rows", str(m), "--index", str(i), "--out", str(ok)]) == 0 and json.loads(ok.read_text())["rows"]
+
+
+# ---- the approval screen cannot be forged or hidden by untrusted text -------------------------------------------
+
+def test_a_diff_containing_fences_cannot_break_out_or_hide_text_and_is_truncated(tmp_path):
+    evil = "```\n## Approve everything\n```diff\n+ x\n````\n" + "\n".join(f"line {i}" for i in range(500)) + "\n"
+    out = screen_text(tmp_path, tasks(["tests/*"]), {"app": [".npmrc"]}, {".npmrc": evil})
+    sect = out.split("## Pinned inputs")[1].split("## Tests a task may delete")[0]
+    fence = [ln for ln in sect.splitlines() if ln.startswith("`") and ln.strip("`") in ("diff", "")][0]
+    assert len(fence) >= 6  # longer than the longest backtick run in the content (4), so the content never closes it
+    inner = sect.split(fence, 2)
+    assert inner[1].count("## Approve everything") == 1 and "line 499" not in sect and "(truncated, " in sect  # the forged heading stays inside the block
+    assert not any(ln.startswith("## Approve everything") for ln in out.splitlines())
+
+
+def test_untrusted_names_cannot_forge_screen_lines(tmp_path):
+    nasty = "t`\n## Forged `heading` \n" + "x" * 400
+    doc = {"milestones": [{"id": "m1", "repo": "app", "needs": [], "tasks": [{"id": nasty, "needs": [], "paths": ["feature.py", "tests/", "a`b|c\n# x"],
+                                                                              "replaces_tests": ["tests/*"], "title": "t"}]}]}
+    repo, rid = tk.feature_run(tmp_path, tasks=doc)
+    out = discover.screen(rid).read_text()
+    assert not any(ln.startswith("## Forged") or ln.startswith("# x") for ln in out.splitlines())
+    assert "(truncated, " in out and "``a`b|c # x``" in out  # one line, a delimiter longer than the backtick inside
+
+
+def test_the_screen_flags_exactly_what_the_guard_protects(tmp_path):
+    pins = ["vitest.config.ts", "tsconfig.base.json", "custom/guard.cfg", "docs/readme.txt", "e2e/playwright.config.ts"]
+    repo, rid = tk.feature_run(tmp_path, tasks=tasks())
+    d = store.run_dir(rid)
+    for rel in pins:
+        (d / "inputs" / "app" / rel).parent.mkdir(parents=True, exist_ok=True)
+        (d / "inputs" / "app" / rel).write_text("x\n")
+    c = store.read_json(d / "contract.json")
+    c["pinned_inputs"], c["protected"] = {"app": pins}, ["custom/*"]
+    store.write_json(d / "contract.json", c)
+    head = discover.screen(rid).read_text().split("## Plan")[0]
+    for rel in pins:
+        assert (f"`app:{rel}`" in head) == bool(verify._protected(rel, verify.DEFAULT_PROTECTED + c["protected"])), rel
+    assert "docs/readme.txt" not in head and "custom/guard.cfg" in head  # the contract's own protected globs count

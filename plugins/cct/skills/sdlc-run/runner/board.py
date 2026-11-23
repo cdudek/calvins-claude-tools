@@ -579,14 +579,22 @@ def canvas_rows(index: dict | list[dict], mapping: dict, repo: str | None = None
     return {"rows": rows, "unsupported": unsupported}
 
 
-def _check(spec_path: str) -> int:
-    spec = json.loads(Path(spec_path).read_text())
+def _check(spec_path: str, flags: list[str] | None = None) -> int:
+    """`--expected-rows N` and `--waive <id>` (repeatable) come from the runner argv, i.e. the approved contract row: a spec
+    file the candidate could edit never sets how many rows must run or which unsupported items are waived."""
+    flags = flags or []
+    spec = json.loads(_safe(spec_path).read_text())
     rows, target, exe = spec.get("rows", []), spec.get("target", {}), spec.get("executable")
+    if spec.get("evidence_dir"):
+        _safe(spec["evidence_dir"])
+    if target.get("file"):
+        _safe(target["file"])
+    expected = int(_arg(flags, "--expected-rows", 0))
     if not rows:  # a check that measured nothing proves nothing
         print("Ran 0 checks\nFAIL no rows: the spec has nothing to measure")
         return 1
-    if len(rows) < spec.get("expected_rows", 0):
-        print(f"FAIL only {len(rows)} rows, the approved spec expects {spec['expected_rows']}")
+    if len(rows) < expected:
+        print(f"FAIL only {len(rows)} rows, the approved contract row expects {expected}")
         return 1
     if rows:
         if target.get("kind") != "electron":
@@ -604,20 +612,20 @@ def _check(spec_path: str) -> int:
     lines, failed = evaluate(results)
     print("\n".join(lines))
     print(f"Ran {len(rows)} checks")
-    waived = set(spec.get("waive_unsupported", []))
+    waived = {flags[i + 1] for i, a in enumerate(flags) if a == "--waive" and i + 1 < len(flags)}
     unproven = [u for u in spec.get("unsupported", []) if u["id"] not in waived]  # listed, never counted as passed
     for u in unproven:
         print(f"UNPROVEN {u['id']}: {u['reason']}")
     if failed:
         print(f"{failed} failed")
     if unproven:
-        print(f"{len(unproven)} not proven (waive each by id in waive_unsupported, or fix it)")
+        print(f"{len(unproven)} not proven (waive each by id with --waive in the contract row's runner, or fix it)")
     return 1 if failed or unproven else 0
 
 
 def _extract_cli(argv: list[str]) -> int:
-    board = json.loads(Path(argv[0]).read_text())
-    tokens = json.loads(Path(argv[argv.index("--tokens") + 1]).read_text()) if "--tokens" in argv else None
+    board = json.loads(_safe(argv[0]).read_text())
+    tokens = json.loads(_safe(argv[argv.index("--tokens") + 1]).read_text()) if "--tokens" in argv else None
     text = json.dumps(extract(board, tokens), indent=2)
     if out := _out(argv):
         out.write_text(text + "\n")
@@ -625,15 +633,18 @@ def _extract_cli(argv: list[str]) -> int:
     return 0
 
 
-def _out(argv: list[str], default: str | None = None) -> Path | None:
-    """The --out path; one under the run records (SDLC_HOME, resolved) is refused: only the runner writes there."""
-    v = _arg(argv, "--out", default)
-    if v is None:
-        return None
+def _safe(path) -> Path:
+    """Every path taken from argv or a spec file goes through here: one inside the run records (SDLC_HOME, resolved) is refused,
+    because only the runner reads or writes there."""
     home = Path(os.environ.get("SDLC_HOME") or Path.home() / ".sdlc").resolve()
-    if Path(v).resolve().is_relative_to(home):
-        raise ValueError(f"--out {v} is inside the run records; write outside {home}")
-    return Path(v)
+    if Path(path).resolve().is_relative_to(home):
+        raise ValueError(f"{path} is inside the run records; use a path outside {home}")
+    return Path(path)
+
+
+def _out(argv: list[str], default: str | None = None) -> Path | None:
+    v = _arg(argv, "--out", default)
+    return None if v is None else _safe(v)
 
 
 def _arg(argv: list[str], flag: str, default=None):
@@ -647,7 +658,7 @@ def _index_cli(argv: list[str]) -> int:
         print(f"env: browser unavailable ({why})")
         return 127
     w, _, h = _arg(argv, "--viewport", "1280x800").partition("x")
-    idx = index_export(argv[0], _arg(argv, "--themes", ",".join(THEMES)).split(","), {"width": int(w), "height": int(h)},
+    idx = index_export(_safe(argv[0]), _arg(argv, "--themes", ",".join(THEMES)).split(","), {"width": int(w), "height": int(h)},
                        _arg(argv, "--attr"), _arg(argv, "--executable"))
     Path(out).write_text(json.dumps(idx, indent=1) + "\n")
     bad = [f for f, t in idx["boards"].items() if any(v["error"] for v in t.values())]
@@ -658,18 +669,17 @@ def _index_cli(argv: list[str]) -> int:
 
 
 def _rows_cli(argv: list[str]) -> int:
-    mapping = json.loads(Path(argv[0]).read_text())
+    mapping = json.loads(_safe(argv[0]).read_text())
     files = [argv[i + 1] for i, a in enumerate(argv) if a == "--index"] or ["index.json"]  # one per viewport
-    idx = [json.loads(Path(f).read_text()) for f in files]
+    idx = [json.loads(_safe(f).read_text()) for f in files]
     try:
         res = canvas_rows(idx, mapping, _arg(argv, "--repo"))
     except ValueError as e:
         print(f"mapping: {e}")
         return 2
-    out = {"target": {"kind": "web", "url": _arg(argv, "--url", mapping.get("url", ""))}, "rows": res["rows"], "expected_rows": len(res["rows"]),
-           "unsupported": res["unsupported"], "waive_unsupported": []}
+    out = {"target": {"kind": "web", "url": _arg(argv, "--url", mapping.get("url", ""))}, "rows": res["rows"], "unsupported": res["unsupported"]}
     _out(argv, "spec.json").write_text(json.dumps(out, indent=1) + "\n")
-    print(f"{len(res['rows'])} rows, {len(res['unsupported'])} unsupported")
+    print(f"{len(res['rows'])} rows, {len(res['unsupported'])} unsupported; the contract row's runner needs --expected-rows {len(res['rows'])}")
     for u in res["unsupported"][:20]:
         print(f"UNSUPPORTED {u['id']}: {u['reason']}")
     return 0 if res["rows"] else 2  # no rows is not a spec
@@ -688,10 +698,10 @@ def _main(argv: list[str]) -> int:
     if len(argv) >= 2 and argv[0] == "rows":
         return _rows_cli(argv[1:])
     if len(argv) >= 2 and argv[0] == "check":
-        return _check(argv[1])
+        return _check(argv[1], argv[2:])
     if len(argv) >= 2 and argv[0] == "extract":
         return _extract_cli(argv[1:])
-    print("usage: board.py check <spec.json> | extract <board.json> [--tokens t.json] [--out rows.json]\n"
+    print("usage: board.py check <spec.json> [--expected-rows N] [--waive id]... | extract <board.json> [--tokens t.json] [--out rows.json]\n"
           "       board.py index <export-dir> [--out index.json] [--themes light,dark] [--viewport 1280x800] [--attr data-theme]\n"
           "       board.py rows <mapping.json> --index index.json [--index other.json] [--repo web] [--url http://app] [--out spec.json]")
     return 2
