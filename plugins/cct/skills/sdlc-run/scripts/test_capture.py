@@ -1,4 +1,4 @@
-"""capture.py: screens.json validation, the app start, reachability, stability and the baseline compare,
+"""capture.py: screens.json validation, the app start, reachability, stability and the comparison verdicts,
 end to end on a tiny fixture app (two screens, two states each). The browser is faked at the driver
 boundary (sdlc.json visual.driver); one live Playwright test runs only with SDLC_LIVE_PLAYWRIGHT=1."""
 
@@ -117,18 +117,6 @@ def _compare(repo: Path, verdict: str = "match", only: tuple[str, ...] = ()) -> 
     (change / "verify" / "comparison.json").write_text(json.dumps({"format": 1, "entries": entries}))
 
 
-def _apply(repo: Path) -> None:
-    """The gate writes queued baselines after its checks; the capture alone only queues them."""
-    subprocess.run([sys.executable, str(CAPTURE), "apply", str(repo / "changes" / ID)], cwd=repo, check=True, capture_output=True)
-
-
-def _approve_all(repo: Path) -> None:
-    """Baselines the way the gate makes them: a matching comparison, then one run records every shot."""
-    _compare(repo)
-    assert _last(_run(repo)).startswith("CAPTURE PASS")
-    _apply(repo)
-
-
 # --- screens.json ---------------------------------------------------------------------------------
 
 
@@ -225,7 +213,7 @@ def test_live_playwright_captures_the_fixture_app_twice_identically(tmp_path: Pa
     del cfg["visual"]["driver"]
     (repo / "sdlc.json").write_text(json.dumps(cfg))
     (repo / "package.json").write_text(json.dumps({"devDependencies": {"@playwright/test": "*"}}))
-    assert _last(_run(repo)) == "VERIFY BLOCKED reason=needs-baseline"
+    assert _last(_run(repo)) == "VERIFY BLOCKED reason=needs-comparison"
 
 
 @pytest.mark.parametrize("image", ["asks/../x.png", "./a.png", "a/./b.png", "../x.png", "a//b.png"])
@@ -251,29 +239,6 @@ def test_an_occupied_port_blocks_before_the_app_starts(tmp_path: Path) -> None:
         port = s.getsockname()[1]
         r = _run(repo, SDLC_APP_PORT=str(port))
     assert _last(r) == "VERIFY BLOCKED reason=env" and r.returncode == 3 and str(port) in r.stdout
-
-
-def test_a_replaced_baseline_file_fails_even_when_the_shots_match_it(tmp_path: Path) -> None:
-    repo = _repo(tmp_path, threshold=0.5)
-    _run(repo)
-    _approve_all(repo)
-    change = repo / "changes" / ID
-    now = change / "verify" / "shots" / "leads.list.empty.png"
-    w, h, _, _ = capture.pixels(now)
-    capture.write_png(change / "screens" / "leads.list.empty.png", w, h, bytes(w * h * 3))  # the digest stays as approved
-    r = _run(repo)
-    assert _last(r) == "CAPTURE FAIL baseline" and "leads.list.empty" in r.stdout
-
-
-def test_the_baseline_path_comes_from_the_id_not_the_file_field(tmp_path: Path) -> None:
-    repo = _repo(tmp_path)
-    _run(repo)
-    _approve_all(repo)
-    change = repo / "changes" / ID
-    approved = json.loads((change / "screens/approved.json").read_text())
-    approved["entries"]["leads.list.empty"]["file"] = "../../../etc/hosts"
-    (change / "screens/approved.json").write_text(json.dumps(approved))
-    assert _last(_run(repo)) == "CAPTURE PASS 4"  # the field is ignored; screens/<id>.png is what is verified
 
 
 @pytest.mark.parametrize(
@@ -386,105 +351,81 @@ def test_group_cleanup_spares_the_shell_that_leads_the_group(tmp_path: Path) -> 
     Stopping the app must not signal that shell, or a passing capture reads as a failure."""
     repo = _repo(tmp_path)
     _run(repo)
-    _approve_all(repo)
+    _compare(repo)
     e = {k: v for k, v in os.environ.items() if not k.startswith("GIT_")} | {"HOME": str(tmp_path / "home")}
     cmd = f"{sys.executable} {CAPTURE} run {repo / 'changes' / ID} --group; echo rc=$?"  # `; echo` keeps sh alive
     r = subprocess.run(["sh", "-c", cmd], cwd=repo, capture_output=True, text=True, env=e, start_new_session=True)
     assert r.returncode == 0 and "CAPTURE PASS 4" in r.stdout and "rc=0" in r.stdout, (r.returncode, r.stdout)
 
 
-def test_the_capture_leaves_no_bytecode_in_the_checkout(tmp_path: Path) -> None:
-    repo = _repo(tmp_path)
-    _run(repo)
-    _approve_all(repo)
-    cache = SCRIPTS / "__pycache__"
-    for pyc in cache.glob("marks*.pyc"):
-        pyc.unlink()
-    assert _last(_run(repo)) == "CAPTURE PASS 4"
-    assert not list(cache.glob("marks*.pyc"))
+def _gate_dirs(repo: Path) -> list[str]:
+    return sorted(p.name for p in (repo / "changes" / ID).iterdir())
 
 
-def test_new_entries_block_with_needs_comparison_and_leave_the_shots(tmp_path: Path) -> None:
+def test_a_run_with_no_comparison_blocks_and_leaves_the_shots(tmp_path: Path) -> None:
     repo = _repo(tmp_path)
     r = _run(repo)
     assert _last(r) == "VERIFY BLOCKED reason=needs-comparison" and r.returncode == 3
     assert "4 of 4 screens have no board-to-build comparison" in r.stdout and "No owner answer is needed" in r.stdout
-    assert f"verify/comparison.json" in r.stdout
     shots = sorted(p.name for p in (repo / "changes" / ID / "verify/shots").glob("*.png"))
     assert shots == sorted(f"{e['id']}.png" for e in ENTRIES)  # the second pass is not kept
-    assert not (repo / "changes" / ID / "screens" / "approved.json").exists()
 
 
-def test_a_matching_comparison_records_the_baselines_and_later_runs_compare_exactly(tmp_path: Path) -> None:
+def test_a_matching_comparison_of_this_capture_passes_and_stores_nothing(tmp_path: Path) -> None:
     repo = _repo(tmp_path)
     _run(repo)
     _compare(repo)
-    r = _run(repo)
-    assert _last(r) == "CAPTURE PASS 4 (4 baselined by comparison)" and r.returncode == 0
+    r = _run(repo)  # recaptured: the same page gives the same bytes, so the verdicts still bind
+    assert _last(r) == "CAPTURE PASS 4" and r.returncode == 0
     change = repo / "changes" / ID
-    assert not (change / "screens" / "approved.json").exists()  # only queued: the gate writes it after its checks
-    _apply(repo)
-    data = json.loads((change / "screens/approved.json").read_text())
-    for e in ENTRIES:
-        rec = data["entries"][e["id"]]
-        assert rec["approvedBy"] == "comparison" and rec["report"] == "verify/ux/qa.md"
-        png = change / "screens" / f"{e['id']}.png"
-        assert hashlib.sha256(png.read_bytes()).hexdigest() == rec["sha256"]
-    assert _last(_run(repo)) == "CAPTURE PASS 4"  # unchanged: the exact test, no comparison needed
-    r = _run(repo, MARK="changed")  # a changed page needs a comparison of the new capture
-    assert _last(r) == "VERIFY BLOCKED reason=needs-comparison" and r.returncode == 3
+    assert not (change / "screens").exists() and not list(change.rglob("approved.json")) and not list(change.rglob("baselines-pending.json"))
+    assert _last(_run(repo, MARK="changed")) == "VERIFY BLOCKED reason=needs-comparison"  # a changed page is compared again
 
 
 def test_a_differing_comparison_is_a_blocking_finding_never_an_owner_question(tmp_path: Path) -> None:
     repo = _repo(tmp_path)
     _run(repo)
     _compare(repo, "differs", only=("leads.list.empty",))
-    _compare_merge = json.loads((repo / "changes" / ID / "verify/comparison.json").read_text())
+    path = repo / "changes" / ID / "verify/comparison.json"
+    data = json.loads(path.read_text())
     for shot in (repo / "changes" / ID / "verify/shots").glob("*.png"):
         if shot.stem != "leads.list.empty":
-            _compare_merge["entries"][shot.stem] = {"sha256": hashlib.sha256(shot.read_bytes()).hexdigest(), "verdict": "match", "report": "r"}
-    (repo / "changes" / ID / "verify/comparison.json").write_text(json.dumps(_compare_merge))
+            data["entries"][shot.stem] = {"sha256": hashlib.sha256(shot.read_bytes()).hexdigest(), "verdict": "match", "report": "r"}
+    path.write_text(json.dumps(data))
     r = _run(repo)
     assert _last(r) == "CAPTURE FAIL comparison" and r.returncode == 1
     assert "leads.list.empty: the header is missing" in r.stdout and "not an owner question" in r.stdout
-    assert not (repo / "changes" / ID / "screens" / "approved.json").exists()  # nothing is baselined while one differs
     _compare(repo)  # fixed in the fix round: the new capture matches
-    assert _last(_run(repo)).startswith("CAPTURE PASS 4")
+    assert _last(_run(repo)) == "CAPTURE PASS 4"
 
 
-def test_a_comparison_of_another_shot_does_not_count(tmp_path: Path) -> None:
+def test_a_forged_comparison_without_the_capture_sha_is_refused(tmp_path: Path) -> None:
+    repo = _repo(tmp_path)
+    change = repo / "changes" / ID
+    (change / "verify").mkdir()
+    forged = {e["id"]: {"verdict": "match", "report": "made up"} for e in ENTRIES}  # no sha256, never captured
+    (change / "verify/comparison.json").write_text(json.dumps({"format": 1, "entries": forged}))
+    r = _run(repo)
+    assert _last(r) == "VERIFY BLOCKED reason=needs-comparison" and "4 of 4 screens" in r.stdout
+
+
+def test_a_comparison_of_an_earlier_capture_or_a_wrong_sha_is_refused(tmp_path: Path) -> None:
     repo = _repo(tmp_path)
     _run(repo)
+    _compare(repo)
+    r = _run(repo, MARK="changed")  # the page changed since the comparison: its shots hash differently
+    assert _last(r) == "VERIFY BLOCKED reason=needs-comparison" and "4 of 4 screens" in r.stdout
     _compare(repo)
     path = repo / "changes" / ID / "verify/comparison.json"
     data = json.loads(path.read_text())
     data["entries"]["leads.list.empty"]["sha256"] = "0" * 64
     path.write_text(json.dumps(data))
-    r = _run(repo)
+    r = _run(repo, MARK="changed")
     assert _last(r) == "VERIFY BLOCKED reason=needs-comparison" and "leads.list.empty" in r.stdout
+    assert "1 of 4 screens" in r.stdout
 
 
-def test_the_threshold_accepts_a_small_share_of_pixels_and_refuses_a_large_one(tmp_path: Path) -> None:
-    repo = _repo(tmp_path, threshold=0.1)
-    _run(repo)
-    _approve_all(repo)
-    change = repo / "changes" / ID
-    base = change / "screens" / "leads.list.empty.png"  # a baseline 2 of 128 pixels away is inside 10 percent
-    w, h, _, raw = capture.pixels(base)
-    tweaked = bytearray(raw)
-    tweaked[0:6] = bytes((tweaked[0] ^ 255, 0, 0, tweaked[3] ^ 255, 0, 0))
-    capture.write_png(base, w, h, bytes(tweaked))
-    approved = json.loads((change / "screens/approved.json").read_text())
-    approved["entries"]["leads.list.empty"]["sha256"] = hashlib.sha256(base.read_bytes()).hexdigest()
-    (change / "screens/approved.json").write_text(json.dumps(approved))
-    assert _last(_run(repo)) == "CAPTURE PASS 4"
-    (repo / "sdlc.json").write_text(json.dumps({"visual": {**json.loads((repo / "sdlc.json").read_text())["visual"], "threshold": 0}}))
-    (change / "verify/comparison.json").unlink()  # exact now: the tweaked baseline needs a comparison of the capture
-    r = _run(repo)
-    assert _last(r) == "VERIFY BLOCKED reason=needs-comparison" and "leads.list.empty" in r.stdout
-
-
-def test_an_early_close_baselines_only_the_entries_due(tmp_path: Path) -> None:
+def test_the_comparison_is_judged_only_for_the_entries_due(tmp_path: Path) -> None:
     ents = [{**e, "milestone": 2 if e["id"].startswith("deals") else 1} for e in ENTRIES]
     repo = _repo(tmp_path, ents)
     _run(repo)
@@ -492,63 +433,6 @@ def test_an_early_close_baselines_only_the_entries_due(tmp_path: Path) -> None:
     change = repo / "changes" / ID
     env = {**os.environ, "HOME": str(tmp_path / "home")}
     run = lambda *extra: subprocess.run([sys.executable, str(CAPTURE), "run", str(change), *extra], cwd=repo, capture_output=True, text=True, env=env)  # noqa: E731
-    early = run("--upto", "1")
-    assert _last(early) == "CAPTURE PASS 2 (2 baselined by comparison)", early.stdout
+    assert _last(run("--upto", "1")) == "CAPTURE PASS 2"
     final = run()
     assert _last(final) == "VERIFY BLOCKED reason=needs-comparison" and "deals.list.empty" in final.stdout
-
-
-def _queued(repo: Path) -> Path:
-    _run(repo)
-    _compare(repo)
-    assert _last(_run(repo)).startswith("CAPTURE PASS")
-    return repo / "changes" / ID / "verify" / "baselines-pending.json"
-
-
-def _apply_result(repo: Path) -> subprocess.CompletedProcess[str]:
-    return subprocess.run([sys.executable, str(CAPTURE), "apply", str(repo / "changes" / ID)], cwd=repo, capture_output=True, text=True)
-
-
-def test_the_queue_stores_each_compared_sha_and_the_normal_flow_applies_it(tmp_path: Path) -> None:
-    repo = _repo(tmp_path)
-    queue = json.loads(_queued(repo).read_text())
-    shot = repo / "changes" / ID / "verify/shots/leads.list.empty.png"
-    assert queue["leads.list.empty"]["sha256"] == hashlib.sha256(shot.read_bytes()).hexdigest()
-    r = _apply_result(repo)
-    assert r.returncode == 0 and "leads.list.empty" in r.stdout
-    assert (repo / "changes" / ID / "screens/approved.json").is_file()
-
-
-def test_a_hand_written_queue_entry_is_refused(tmp_path: Path) -> None:
-    repo = _repo(tmp_path)
-    _run(repo)  # captured, never compared
-    change = repo / "changes" / ID
-    sha = hashlib.sha256((change / "verify/shots/leads.list.empty.png").read_bytes()).hexdigest()
-    (change / "verify/baselines-pending.json").write_text(json.dumps({"leads.list.empty": {"sha256": sha, "report": "made up"}}))
-    r = _apply_result(repo)
-    assert r.returncode == 1 and "CAPTURE FAIL baselines" in r.stdout and "leads.list.empty" in r.stdout
-    assert not (change / "screens/approved.json").exists()
-    (change / "verify/comparison.json").write_text(json.dumps({"format": 1, "entries": {"leads.list.empty": {"sha256": sha, "verdict": "differs"}}}))
-    assert _apply_result(repo).returncode == 1  # a verdict that is not `match` does not count either
-
-
-def test_a_shot_changed_after_its_comparison_is_refused(tmp_path: Path) -> None:
-    repo = _repo(tmp_path)
-    _queued(repo)
-    change = repo / "changes" / ID
-    shot = change / "verify/shots/leads.list.empty.png"
-    w, h, _, _ = capture.pixels(shot)
-    capture.write_png(shot, w, h, bytes(w * h * 3))
-    r = _apply_result(repo)
-    assert r.returncode == 1 and "leads.list.empty" in r.stdout
-    assert not (change / "screens/approved.json").exists()
-
-
-def test_an_id_the_comparison_never_judged_is_refused(tmp_path: Path) -> None:
-    repo = _repo(tmp_path)
-    queue = _queued(repo)
-    data = json.loads(queue.read_text())
-    data["extra.id"] = data["leads.list.empty"]
-    queue.write_text(json.dumps(data))
-    r = _apply_result(repo)
-    assert r.returncode == 1 and "extra.id" in r.stdout

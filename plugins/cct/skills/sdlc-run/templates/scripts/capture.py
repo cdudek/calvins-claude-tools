@@ -1,10 +1,9 @@
 """The app capture of a change approved from 3.25.0 (lock `"visual": "app"`): one app start, every
-`screens.json` entry at its viewport, twice, compared with the baseline the gate recorded (no owner approves a screen).
+`screens.json` entry at its viewport, twice, compared by the agents with the pinned design (no owner approves a screen, no baseline is stored).
 
-    python3 scripts/capture.py apply <change-dir>     # record the baselines a passing run queued (the gate does it)
     python3 scripts/capture.py check <change-dir>     # validate screens.json only (what `approve` runs)
     python3 scripts/capture.py run <change-dir> [--upto N] [--group]
-        # reachability, capture x2, stability, baseline compare. --upto N: only entries due by milestone N.
+        # reachability, capture x2, stability, the comparison verdicts. --upto N: only entries due by milestone N.
         # --group: the caller (the gate) leads this process group, so the app starts inside it and dies with it.
 
 `screens.json` (in the change folder): a list, or {"entries": [...]}, of
@@ -17,7 +16,7 @@ sdlc.json `visual` (all optional except `start` for `run`):
     start         shell command that starts the app on $PORT (a build step may precede it: `npm run build && npm start`)
     ready         path polled until the app answers (default "/")
     startTimeout  seconds to wait for it (default 120)
-    threshold     fraction of differing pixels still accepted, a number from 0 to 1 (default 0: bytes must be equal)
+    threshold     fraction of differing pixels still accepted, a number from 0 to 1 (validated only: nothing compares pixels against a stored baseline since 3.27.0)
     driver        a capture command of your own: `<driver> <jobs.json>` writes the png of every job (see below);
                   default is the repo's Playwright (`@playwright/test` or `playwright` in package.json)
 
@@ -30,19 +29,17 @@ before the driver runs, and every expected file must be newer than the start of 
 Shots go to <change>/verify/shots/<id>.png (the second pass to verify/shots/second/<id>.png; a differing pair is
 unstable). Light and dark are separate entries (a route or fixture that sets the theme).
 
-Comparison, not approval. A screen with no baseline, or one that differs from it, needs a board-to-build comparison of
-exactly this capture, written by the agents (`cct:ux-build-validate` build mode and `cct:ux-assessment-run`) to
-<change>/verify/comparison.json: {"format": 1, "entries": {"<id>": {"sha256": "<of verify/shots/<id>.png>",
-"verdict": "match" | "differs", "report": "<report path>", "differences": "<text>"}}}. No comparison: `VERIFY
-BLOCKED reason=needs-comparison`. A `differs` verdict: `CAPTURE FAIL comparison`, a blocking finding the fix round
-settles. A `match` makes the capture the baseline: the gate (never an agent or an owner), after its checks, copies it to
-<change>/screens/<id>.png and records {"sha256", "approvedBy": "comparison", "report", "at"} in
-<change>/screens/approved.json ({"format": 2, "entries": {...}}). That png must hash to its sha256 before any pixel is
-compared, and later changes compare against it exactly (`visual.threshold`); a difference writes
-verify/shots/diff/<id>.png and needs a new comparison.
+Comparison, not approval, and no stored baseline. Every run captures the screens due and each needs a board-to-build
+comparison of exactly this capture, written by the agents (`cct:ux-build-validate` build mode and `cct:ux-assessment-run`)
+to <change>/verify/comparison.json: {"format": 1, "entries": {"<id>": {"sha256": "<of verify/shots/<id>.png>",
+"verdict": "match" | "differs", "report": "<report path>", "differences": "<text>"}}}. The gate computes the sha256 of its
+own fresh capture and accepts only a `match` carrying that sha256, so a comparison of an earlier capture or a forged
+entry counts for nothing. No comparison: `VERIFY BLOCKED reason=needs-comparison`. A `differs` verdict: `CAPTURE FAIL
+comparison`, a blocking finding the fix round settles. Nothing is written as a baseline by anyone; a later change is
+compared again.
 
 Last line: `CAPTURE PASS <n>` (exit 0), `CAPTURE FAIL ...` (exit 1) or `VERIFY BLOCKED reason=<code>` (exit 3:
-needs-comparison when a changed or new entry has no comparison, env when the app or Playwright is missing).
+needs-comparison when an entry has no comparison of this capture, env when the app or Playwright is missing).
 Written by `sdlc-run adopt` from the kit; edit the kit, not this copy. stdlib only.
 """
 
@@ -564,62 +561,30 @@ def judge(change: Path, entries: list[dict], shots: Path, threshold: float, star
     if bad := image_problems(change):
         print("\n".join(bad) + "\nRestore the image from git, or have the plan approved again with the new one.")
         return end("CAPTURE FAIL design", 1)
-    approved = read_approved(change)
+    # Nothing is persisted as a baseline: a screen passes only when THIS run captured it (the shot above is fresh and
+    # stable) and the agents' comparison says `match` for the sha256 the gate computed from that capture just now.
     verdicts = read_comparison(change)
-    base_dir = change / "screens"
-    torn = [i for i in ids if i in approved and sha(base_dir / f"{i}.png") != approved[i].get("sha256")]
-    if torn:
-        print("the baseline does not match its recorded sha256 (edited or missing): " + ", ".join(torn)
-              + "\nRestore screens/<id>.png from git; the gate writes baselines, nobody edits them.")
-        return end("CAPTURE FAIL baseline", 1)
-    pending, differing, passing = [], [], []
-    (shots / "diff").mkdir(exist_ok=True)
+    pending, differing = [], []
     for i in ids:
-        now, base, diff = shots / f"{i}.png", base_dir / f"{i}.png", shots / "diff" / f"{i}.png"
-        if i in approved:  # exact test: a later change is compared with the baseline the gate recorded
-            if sha(now) == approved[i].get("sha256"):
-                continue
-            try:
-                share = compare(now, base, diff) if threshold else 1.0
-            except (ValueError, zlib.error, struct.error) as err:
-                print(f"{i}: cannot compare by pixels: {err}")
-                share = 1.0
-            if share <= threshold:
-                continue
-        v = verdicts.get(i)
-        if not isinstance(v, dict) or v.get("sha256") != sha(now):  # no comparison of exactly this shot
+        v, now = verdicts.get(i), sha(shots / f"{i}.png")
+        if not isinstance(v, dict) or v.get("sha256") != now:  # none, forged or from another capture: no judgement of this one
             pending.append(i)
         elif v.get("verdict") != "match":
             differing.append(f"{i}: {str(v.get('differences') or 'differs from the pinned design')[:200]} (report {v.get('report', 'none')})")
-        else:
-            passing.append((i, v))
     if pending:
         print(f"{len(pending)} of {len(ids)} screens have no board-to-build comparison of this capture: " + ", ".join(pending)
               + f"\nThe shots are in {shots} (light and dark are separate entries). Compare each with the pinned design"
               + " (`cct:ux-build-validate` build mode, then `cct:ux-assessment-run`), fix differences in the fix round,"
-              + f" write {COMPARISON} (see capture.py docs) and run the gate again. No owner answer is needed or read.")
+              + f" write {COMPARISON} with the sha256 of each shot (see capture.py docs) and run the gate again. No owner answer is needed or read.")
         return end("VERIFY BLOCKED reason=needs-comparison", 3)
     if differing:
         print("still differs from the pinned design after comparison (a blocking finding, not an owner question):\n  " + "\n  ".join(differing)
-              + "\nFix the page in the fix round; the gate compares the new capture again.")
+              + "\nFix the page in the fix round; the gate captures and compares again.")
         return end("CAPTURE FAIL comparison", 1)
-    # A screen that matches becomes its own baseline: the sha256 of exactly the compared shot. The tracked files are
-    # written by the gate after its tree check (`apply_pending`), so nothing in the tree moves while the checks run.
-    pending_file = change / "verify" / "baselines-pending.json"
-    pending_file.unlink(missing_ok=True)
-    if passing:
-        pending_file.write_text(json.dumps({i: {"sha256": sha(shots / f"{i}.png"), "report": str(v.get("report", ""))} for i, v in passing}, indent=2) + "\n", encoding="utf-8")
-    return end(f"CAPTURE PASS {len(ids)}" + (f" ({len(passing)} baselined by comparison)" if passing else ""), 0)
+    return end(f"CAPTURE PASS {len(ids)}", 0)
 
 
 COMPARISON = "verify/comparison.json"
-
-
-def read_approved(change: Path) -> dict:
-    """screens/approved.json entries: {id: {"sha256", "approvedBy": "comparison", "report", "at"}}."""
-    data = read_json(change / "screens" / "approved.json")
-    entries = data.get("entries") if isinstance(data, dict) else None
-    return {i: a for i, a in entries.items() if isinstance(a, dict)} if isinstance(entries, dict) else {}
 
 
 def read_comparison(change: Path) -> dict:
@@ -629,46 +594,6 @@ def read_comparison(change: Path) -> dict:
     data = read_json(change / COMPARISON)
     entries = data.get("entries") if isinstance(data, dict) else None
     return entries if isinstance(entries, dict) else {}
-
-
-def apply_pending(change: Path) -> list[str]:
-    """Write the baselines the last passing run queued (verify/baselines-pending.json): copy each shot to
-    screens/<id>.png and record it in approved.json. Returns the ids written. Called by the gate after its checks.
-    An entry is written only if this run's comparison says `match` for the same sha256, the queue names that sha256
-    and the shot still hashes to it; otherwise nothing is written and ValueError names the entries (a hand-written
-    queue, or a shot changed after it was compared, never becomes a baseline)."""
-    queue = read_json(change / "verify" / "baselines-pending.json")
-    verdicts = read_comparison(change)
-    if not isinstance(queue, dict):
-        raise ValueError("verify/baselines-pending.json is not an object")
-    refused, ready = [], []
-    for entry, v in queue.items():
-        shot = change / "verify" / "shots" / f"{entry}.png"
-        said = verdicts.get(entry) if isinstance(verdicts.get(entry), dict) else {}
-        now = sha(shot) if isinstance(entry, str) and ID.match(entry) and shot.is_file() else ""
-        if not (now and isinstance(v, dict) and v.get("sha256") == now and said.get("verdict") == "match" and said.get("sha256") == now):
-            refused.append(str(entry))
-        else:
-            ready.append((entry, shot, v))
-    if refused:
-        raise ValueError("no matching comparison of exactly this shot for: " + ", ".join(refused))
-    for entry, shot, v in ready:
-        write_baseline(change, entry, shot, v)
-    (change / "verify" / "baselines-pending.json").unlink(missing_ok=True)
-    return [e for e, _, _ in ready]
-
-
-def write_baseline(change: Path, entry: str, shot: Path, verdict: dict) -> None:
-    """Record a screen that matched as its baseline: copy the shot to screens/<id>.png and its sha256 to approved.json."""
-    folder = change / "screens"
-    folder.mkdir(exist_ok=True)
-    shutil.copyfile(shot, folder / f"{entry}.png")
-    entries = read_approved(change)
-    entries[entry] = {"sha256": sha(shot), "approvedBy": "comparison", "report": str(verdict.get("report", "")),
-                      "at": time.strftime("%Y-%m-%d", time.gmtime())}  # fmt: skip
-    tmp = folder / f".approved.json.{os.getpid()}.tmp"
-    tmp.write_text(json.dumps({"format": 2, "entries": entries}, indent=2, sort_keys=True) + "\n", encoding="utf-8")
-    os.replace(tmp, folder / "approved.json")
 
 
 def end(line: str, code: int) -> int:
@@ -689,17 +614,10 @@ def main(argv: list[str]) -> int:
             print(__doc__)
             return 2
         del args[k : k + 2]
-    if len(args) != 2 or args[0] not in ("check", "run", "apply"):
+    if len(args) != 2 or args[0] not in ("check", "run"):
         print(__doc__)
         return 2
     change = Path(args[1]).resolve()
-    if args[0] == "apply":  # write the baselines a passing run queued (the gate does this after its checks)
-        try:
-            print("recorded: " + ", ".join(apply_pending(change)))
-        except ValueError as err:
-            print(f"CAPTURE FAIL baselines: {err}")
-            return 1
-        return 0
     if args[0] == "check":
         entries, problems = load_screens(change)
         problems += design_problems(change, entries) if not problems else []

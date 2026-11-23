@@ -19,10 +19,10 @@ bundle:asks/export/home; the file name is made from it by one shared rule):
     python3 scripts/evidence.py sheet CHANGE [--import]         # changes/<id>/owner-sheet.md; --import records its answers
 
 Changes approved from 3.25.0 (`"visual": "app"`, a screens.json in the change folder) capture the real app;
-no owner approves a screen. The gate records a baseline in screens/approved.json after the agents' board-to-build
-comparison matched (capture.py). `gallery CHANGE` writes verify/gallery.html, an optional read-only report of every
+no owner approves a screen. The gate passes a screen only on the agents' board-to-build
+comparison of this run's capture (verify/comparison.json, capture.py); nothing is stored as a baseline. `gallery CHANGE` writes verify/gallery.html, an optional read-only report of every
 latest shot beside its design boards; it decides nothing. `status` prints
-`screens: N of M with a baseline · K changed since baseline · L not captured`.
+`screens: N of M compared · K differ · L not compared · P not captured`.
 
 The first review writes the defect list and a snapshot of it; it is frozen after that: a later
 review ticks items or adds a High or a flagged regression. A screen is done when it was reviewed
@@ -482,7 +482,7 @@ def sheet_cmd(args) -> int:
     return 0
 
 
-# --- the app flow (lock "visual": "app"): screens.json, shots of the real app, approved.json ---------
+# --- the app flow (lock "visual": "app"): screens.json, shots of the real app, verify/comparison.json ---------
 
 def app_entries(change: str | Path) -> list[dict]:
     """The entries of screens.json (a list, or {"entries": [...]}); [] when absent or unreadable."""
@@ -498,13 +498,9 @@ def shot_of(change: str | Path, entry: str) -> Path:
     return Path(change) / "verify" / "shots" / f"{entry}.png"
 
 
-def approved_path(change: str | Path) -> Path:
-    return screens_dir(change) / "approved.json"
-
-
-def read_approved(change: str | Path) -> dict:
+def read_verdicts(change: str | Path) -> dict:
     try:
-        data = json.loads(approved_path(change).read_text("utf-8"))
+        data = json.loads((Path(change) / "verify" / "comparison.json").read_text("utf-8"))
     except (OSError, ValueError):
         return {}
     return data.get("entries", {}) if isinstance(data, dict) and isinstance(data.get("entries"), dict) else {}
@@ -514,27 +510,28 @@ def sha_of(path: Path) -> str:
     return hashlib.sha256(path.read_bytes()).hexdigest() if path.is_file() else ""
 
 
-def app_state(change: str | Path, entry: str, approved: dict, digest: str | None = None) -> str:
-    """approved | changed | new | not captured, for one entry (`digest`: the shot's, when the caller already read it).
-    `approved` means the gate recorded the shot as the baseline after a passing comparison (capture.py)."""
-    shot, ok = sha_of(shot_of(change, entry)) if digest is None else digest, approved.get(entry)
-    if ok:
-        return "changed" if shot and shot != ok.get("sha256") else "approved"
-    return "new" if shot else "not captured"
+def app_state(change: str | Path, entry: str, verdicts: dict, digest: str | None = None) -> str:
+    """compared | differs | not compared | not captured, for one entry: the agents' verdict in verify/comparison.json
+    counts only when it carries the sha256 of the shot as it is now. Nothing is stored as a baseline."""
+    shot, v = sha_of(shot_of(change, entry)) if digest is None else digest, verdicts.get(entry)
+    if not shot:
+        return "not captured"
+    if not isinstance(v, dict) or v.get("sha256") != shot:
+        return "not compared"
+    return "compared" if v.get("verdict") == "match" else "differs"
 
 
 def app_status_line(change: str | Path) -> str:
-    approved = read_approved(change)
+    verdicts = read_verdicts(change)
     import capture
 
     if missing := shim_old_capture(capture):
         return f"screens: unavailable, {stale_capture(missing)}"
-    design = capture.load_design(Path(change))
-    states = [app_state(change, e["id"], approved) for e in app_entries(change)]
+    states = [app_state(change, e["id"], verdicts) for e in app_entries(change)]
     if not states:
         return ""
-    line = (f"screens: {states.count('approved')} of {len(states)} with a baseline · {states.count('changed')} changed since baseline"
-            f" · {states.count('not captured')} not captured")
+    line = (f"screens: {states.count('compared')} of {len(states)} compared · {states.count('differs')} differ"
+            f" · {states.count('not compared')} not compared · {states.count('not captured')} not captured")
     counts = capture.design_counts(Path(change), app_entries(change))
     return line + (f"\ndesign: {counts[0]} boards · {counts[1]} mapped · {counts[2]} dropped · {counts[3]} deviations" if counts else "")
 
@@ -545,7 +542,7 @@ figure{border:1px solid #ccc;border-radius:8px;padding:1rem;margin:1rem 0}img{ma
 code{background:#eee;padding:0 .3rem}.changed{color:#b00}
 .pair{display:flex;gap:1rem;align-items:flex-start}.pair>div{flex:1;min-width:0}.dev{background:#fff3cd;border:1px solid #d6a300;padding:.5rem;margin:.5rem 0}
 .board{border:1px dashed #999;padding:.5rem}</style>
-<h1>Screens</h1><p>Change <code>__CHANGE__</code>. A read-only report: it decides nothing. The gate records a baseline after a passing board-to-build comparison.</p>
+<h1>Screens</h1><p>Change <code>__CHANGE__</code>. A read-only report: it decides nothing. The gate passes a screen only on a board-to-build comparison of its own capture.</p>
 <p>__COUNTS__</p>
 __BODY__
 """
@@ -624,7 +621,7 @@ def boards_html(change: Path, design: dict, entry: dict) -> str:
 def gallery_write(change: Path, entries: list[dict]) -> int:
     import capture
 
-    approved, body, seen, design = read_approved(change), [], [], capture.load_design(change)
+    approved, body, seen, design = read_verdicts(change), [], [], capture.load_design(change)
     for e in entries:
         group = e["id"].rpartition(".")[0] or e["id"]
         if group not in seen:
@@ -639,11 +636,11 @@ def gallery_write(change: Path, entries: list[dict]) -> int:
         note = f'<p class="dev"><b>Deviates from the design:</b> {html.escape(deviates)}</p>' if deviates else ""
         if raw is not None:
             data = base64.b64encode(raw).decode()
-            cls = ' class="changed"' if state == "changed" else ""
+            cls = ' class="changed"' if state in ("differs", "not compared") else ""
             name = html.escape(e["id"], quote=True)
             body.append(
                 f'<figure data-id="{name}" data-sha="{digest}">{head}<span{cls}>'
-                f'{"changed since baseline" if state == "changed" else state}</span><br>{note}'
+                f'{state}</span><br>{note}'
                 f'<div class="pair">{boards_html(change, design, e)}<div><small>app</small><br>'
                 f'<img alt="{name}" src="data:image/png;base64,{data}"></div></div></figure>')
         else:

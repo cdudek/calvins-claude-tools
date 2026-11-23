@@ -195,7 +195,7 @@ def criteria_hash(change: Path, checks: object, plan: bool = True, design: bool 
 
 
 # the checks of capture.py a close relies on (evidence.py keeps the same list for the gallery): a kept older file lacking one is refused
-CAPTURE_CHECKS = ("image_problems", "board_file", "read_board", "design_problems", "read_comparison", "write_baseline")
+CAPTURE_CHECKS = ("image_problems", "board_file", "read_board", "design_problems", "read_comparison")
 
 
 def stale_capture(script: Path) -> str:
@@ -1763,7 +1763,7 @@ def run_close(
                 "dialog `Change <id>, finding visual-skip: ...` answered Skip visual evidence)",
             )
         )
-    if app:  # one capture batch inside this close: preview reachability, two passes, the approved baselines
+    if app:  # one capture batch inside this close: preview reachability, two passes, the agents' comparison verdicts
         script = Path(__file__).with_name("capture.py")
         stale = stale_capture(script) if script.is_file() else ""
         evidence.append(
@@ -1960,15 +1960,6 @@ def run_close(
             "HEAD or the tree changed while the checks ran: nothing may merge or edit during a gate."
         )
         return finish(f"VERIFY FAIL {scope} {change.name} check=moved", 1)
-    if (change / "verify" / "baselines-pending.json").is_file():  # screens that matched their comparison: record them now
-        try:
-            import capture
-
-            made = capture.apply_pending(change)
-            print(f"baselines recorded by comparison: {len(made)} (commit screens/ with the records)")
-        except Exception as err:  # a baseline that cannot be written or checked must not hide behind a PASS
-            print(f"baselines refused ({type(err).__name__}: {err})")
-            return finish(f"VERIFY FAIL {scope} {change.name} check=baselines", 1)
     return finish(f"VERIFY PASS {scope} {change.name} {head}", 0)
 
 

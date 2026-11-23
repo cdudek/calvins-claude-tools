@@ -549,8 +549,8 @@ Capture rules (headless, never the owner's browser) and the visual rules: [visua
 For a change with `screens.json` the close takes **one capture batch** of the entries due, light and dark,
 then agents compare each capture with the pinned design (`cct:ux-build-validate` build mode and
 `cct:ux-assessment-run`) into `verify/comparison.json`, fix differences in the fix round, and the gate
-records every screen that matches as its baseline (the exact test of later runs). No owner approves a
-screen; a screen still differing after the fix round is a blocking finding.
+passes a screen only on a `match` bound to the sha256 of this run's own capture. No baseline is stored and no
+owner approves a screen; a screen still differing after the fix round is a blocking finding.
 
 1. The same goal continues from Stage 5.
 2. Run on the diff, each once and in parallel: `cct:ux-assessment-run scope=change base=<parent>
@@ -595,7 +595,7 @@ screen; a screen still differing after the fix round is a blocking finding.
    the capture of every marked and referenced screen into `marks.json`: [visual work](visual-work.md).
    **A lock with `"visual": "app"` (approved from 3.25.0) skips both:** no marks, no `--visual-run`.
    The close job's gate runs one `app-screens` check (`capture.py run`: every `screens.json` entry due by
-   this milestone, twice, against the recorded baselines). A new or changed screen with no comparison blocks
+   this milestone, twice, against the agents' comparison of this run's capture). A screen with no comparison of it blocks
    `needs-comparison`: compare the shots with the design, write `verify/comparison.json`, run the gate again;
    `differs` fails `CAPTURE FAIL comparison` (fix round).
 2a. **Validation: does each feature do what the plan said?** Separate from the checks, which
@@ -620,7 +620,7 @@ screen; a screen still differing after the fix round is a blocking finding.
    after under `## Advisory`; the gate treats every other unchecked item as open. Link the visual
    ledgers and checks. A missing or failed visual check is BLOCKED: the review did not run.
    For a lock without `"visual": "app"`: run `python3 scripts/marks.py check <id>`; open rows are blocking findings.
-   An app-locked change has no marks ledger; its screens are the comparison report and `approved.json`.
+   An app-locked change has no marks ledger; its screens are the comparison report.
    A `fixed` row names the passing test tag that proves it in `test` (`@F<n>`); the tag must
    appear in a `testGlobs` file or the check fails.
    Only the engineer's words in `accepted` can accept a non-fixed row; never infer acceptance.

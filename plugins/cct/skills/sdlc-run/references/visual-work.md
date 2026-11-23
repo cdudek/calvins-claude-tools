@@ -11,8 +11,7 @@ live in `../../ux-build-validate/references/build.md` (Measurements) and the sha
 The design is binding for which screens and states exist and how each is structured
 ([design inputs](design-inputs.md): `design.json`, the `design` mapping, `deviates`). The screens are
 built in the real app and agents compare screenshots of the real app with the pinned design; a screen
-that matches is recorded as its baseline and becomes an exact visual test (the same renderer against
-itself). No owner approves a screen. A change with no design input has no
+that matches is accepted for that close only; nothing is stored as a baseline. No owner approves a screen. A change with no design input has no
 `design.json` and works as before.
 
 1. **Plan (Stage 2).** The UX plan writes `screens.json` in the change folder: one entry per screen and
@@ -26,27 +25,25 @@ itself). No owner approves a screen. A change with no design input has no
 3. **Capture (Stage 6, one batch).** Every entry is shot at its viewport, twice; two different shots of
    one entry mean the page is unstable, which is a problem to fix. The latest shots are
    `verify/shots/<entry>.png`.
-4. **Comparison, not approval (every milestone close).** There is no owner screenshot approval anywhere.
-   The close captures that milestone's screens (entries with `milestone` <= N; the last close takes all),
-   light and dark (a theme is its own entry, set by the route or fixture), and agents compare every capture
-   with the pinned design: the repo's UX validate build mode (`cct:ux-build-validate`) plus the UX review
-   (`cct:ux-assessment-run`). Differences are fixed in the fix round. The comparison is written to
+4. **Comparison, not approval (every milestone close).** There is no owner screenshot approval and no stored
+   baseline anywhere. The close captures that milestone's screens (entries with `milestone` <= N; the last
+   close takes all), light and dark (a theme is its own entry, set by the route or fixture), and agents compare
+   every capture with the pinned design: the repo's UX validate build mode (`cct:ux-build-validate`) plus the
+   UX review (`cct:ux-assessment-run`). Differences are fixed in the fix round. The comparison is written to
    `verify/comparison.json` (`{"format": 1, "entries": {"<id>": {"sha256": "<of the compared shot>",
-   "verdict": "match" | "differs", "report": "<path>", "differences": "<text>"}}}`); the report binds to
-   the sha256 of exactly the shot it judged, so a later capture needs its own comparison. Without one,
-   the gate blocks `VERIFY BLOCKED reason=needs-comparison` (an agent step: compare, write the file, rerun).
-   A `differs` verdict that survives the fix round is a blocking finding (`CAPTURE FAIL comparison`),
-   never an owner question. An entry with a `deviates` text is compared against the design plus that text.
-5. **Baselines and exact tests.** A screen whose comparison says `match` becomes its own baseline: the
-   gate copies the shot to `screens/<entry>.png` (tracked) and records its sha256 in `screens/approved.json`
-   (`"approvedBy": "comparison"`, the report path, the date). Agents never write those files and the edit
-   hook protects them like the other locked files. From then on the gate compares each entry's capture with
-   its baseline (zero tolerance; `visual.threshold` in `sdlc.json`, default 0); a difference writes
-   `verify/shots/diff/<id>.png` and needs a new comparison, and a match re-baselines. Each entry may carry
-   `"milestone": N` (default 1, a positive integer: runner milestones start at 1). Two entries never share a
-   route and viewport, ids differ by more than case, and `visual.threshold` is a number from 0 to 1.
-6. **Status.** `screens: N of M with a baseline · K changed since baseline · L not captured`, and for a
-   change with `design.json` a second line `design: N boards · M mapped · K dropped · D deviations`.
+   "verdict": "match" | "differs", "report": "<path>", "differences": "<text>"}}}`). The gate passes visual
+   work only when THIS run captured the due screens and each has a `match` carrying the sha256 the gate
+   computed from that capture: a comparison of an earlier capture or a forged entry counts for nothing, and the
+   gate blocks `VERIFY BLOCKED reason=needs-comparison` (an agent step: compare, write the file, rerun). A
+   `differs` verdict that survives the fix round is a blocking finding (`CAPTURE FAIL comparison`), never an
+   owner question. An entry with a `deviates` text is compared against the design plus that text.
+5. **Later changes are compared again.** Nothing is persisted as a baseline and nobody (agent, owner or gate)
+   writes `screens/approved.json` or `screens/<entry>.png`; a screen that matched once is captured and
+   compared again at the next close. Each entry may carry `"milestone": N` (default 1, a positive integer:
+   runner milestones start at 1). Two entries never share a route and viewport, ids differ by more than case,
+   and `visual.threshold` is a number from 0 to 1 (validated, no longer used for a pixel test).
+6. **Status.** `screens: N of M compared · K differ · L not compared · P not captured`, and for a change with
+   `design.json` a second line `design: N boards · M mapped · K dropped · D deviations`.
    `python3 scripts/evidence.py gallery <change>` stays as an optional read-only report
    (`verify/gallery.html`, the design boards beside the app shots) for anyone who wants to look; it
    decides nothing.

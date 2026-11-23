@@ -2542,17 +2542,14 @@ def test_the_milestone_gate_captures_the_fixture_app_end_to_end(tmp_path: Path, 
     assert _last(r) == f"VERIFY FAIL milestone {ID} check=app-screens" and "not an owner question" in r.stdout
     compare("match")
     r = _gate(repo, "milestone", ID)
-    assert _last(r).startswith(f"VERIFY PASS milestone {ID}") or "baselined by comparison" in r.stdout, r.stdout
-    data = json.loads((change / "screens/approved.json").read_text())
-    assert {e["approvedBy"] for e in data["entries"].values()} == {"comparison"} and len(data["entries"]) == 4
-    _git(repo, "add", ".")
-    _git(repo, "commit", "-qm", "baselines recorded by the gate")
-    r = _gate(repo, "milestone", ID)
+    assert _last(r).startswith(f"VERIFY PASS milestone {ID}"), r.stdout
+    assert not (change / "screens").exists()  # nothing is stored as a baseline by anyone
+    r = _gate(repo, "milestone", ID)  # the same page, captured and judged again
     assert _last(r).startswith(f"VERIFY PASS milestone {ID}"), r.stdout
     (repo / "app.py").write_text(tc.APP.replace("'MARK', ''", "'MARK', 'x'"))
     _git(repo, "commit", "-qam", "the page changed")
     r = _gate(repo, "milestone", ID)  # a changed page is compared again, never waved through
-    assert "needs-comparison" in _last(r) or "check=app-screens" in _last(r)
+    assert _last(r).startswith("VERIFY BLOCKED reason=needs-comparison") or "check=app-screens" in _last(r)
 
 
 def test_a_visual_hotfix_runs_the_capture_in_its_feature_gate(tmp_path: Path) -> None:

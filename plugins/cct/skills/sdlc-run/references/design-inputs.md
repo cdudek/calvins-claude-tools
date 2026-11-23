@@ -54,7 +54,7 @@ The build may add or change `deviates` after approval: it is the one field of an
 void the approval (the lock hashes `screens.json` without it, and the edit hook lets an edit through
 that changes nothing else). It is not free, though: the comparison judges the screen against the board
 plus the `deviates` text, which the report must quote, and a deviation added or changed after a screen
-matched needs a new comparison before the baseline moves. The baseline is bound to the shot's sha256 only.
+matched needs a new comparison. A verdict is bound to the sha256 of the capture it judged.
 
 Changes approved before 3.26.0 keep their path: the lock says whether it holds an inventory
 (`"design": "inventory"`). An in-flight 3.25 change gets its `design.json` at its next approval;

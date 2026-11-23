@@ -60,16 +60,10 @@ def status(repo: Path) -> str:
     return ev(repo, "status", str(ch(repo))).stdout.strip()
 
 
-def baseline(repo: Path, *entries: str) -> None:
-    """What the gate records after a passing comparison: the shot as the baseline and its sha256."""
-    folder = ch(repo) / "screens"
-    folder.mkdir(exist_ok=True)
-    data = {}
-    for e in entries:
-        shot = (ch(repo) / "verify" / "shots" / f"{e}.png").read_bytes()
-        (folder / f"{e}.png").write_bytes(shot)
-        data[e] = {"sha256": sha(shot), "approvedBy": "comparison", "report": "r", "at": "2026-11-23"}
-    (folder / "approved.json").write_text(json.dumps({"format": 2, "entries": data}))
+def verdicts(repo: Path, *entries: str, verdict: str = "match") -> None:
+    """The agents' comparison, bound to the sha256 of each shot as it is now."""
+    rows = {e: {"sha256": sha((ch(repo) / "verify" / "shots" / f"{e}.png").read_bytes()), "verdict": verdict, "report": "r"} for e in entries}
+    (ch(repo) / "verify" / "comparison.json").write_text(json.dumps({"format": 1, "entries": rows}))
 
 
 def test_gallery_is_one_offline_read_only_page_with_every_entry(repo: Path) -> None:
@@ -94,15 +88,17 @@ def test_gallery_marks_an_entry_with_no_shot(repo: Path) -> None:
 
 def test_the_import_flag_is_gone(repo: Path) -> None:
     out = ev(repo, "gallery", str(ch(repo)), "--import", "answers.json")
-    assert out.returncode != 0 and not (ch(repo) / "screens" / "approved.json").exists()
+    assert out.returncode != 0 
 
 
 def test_status_counts(repo: Path) -> None:
-    assert status(repo) == "screens: 0 of 4 with a baseline · 0 changed since baseline · 0 not captured"
-    baseline(repo, "leads.list.empty", "leads.list.full")
-    (ch(repo) / "verify" / "shots" / "leads.list.full.png").write_bytes(PNG + b"changed")
+    assert status(repo) == "screens: 0 of 4 compared · 0 differ · 4 not compared · 0 not captured"
+    verdicts(repo, "leads.list.empty", "leads.list.full")
+    (ch(repo) / "verify" / "shots" / "leads.list.full.png").write_bytes(PNG + b"changed")  # no longer the compared shot
     (ch(repo) / "verify" / "shots" / "leads.detail.open.png").unlink()
-    assert status(repo) == "screens: 1 of 4 with a baseline · 1 changed since baseline · 1 not captured"
+    assert status(repo) == "screens: 1 of 4 compared · 0 differ · 2 not compared · 1 not captured"
+    verdicts(repo, "leads.list.empty", verdict="differs")
+    assert status(repo).startswith("screens: 0 of 4 compared · 1 differ")
 
 
 def test_sdlc_status_prints_the_line(repo: Path) -> None:
@@ -110,14 +106,14 @@ def test_sdlc_status_prints_the_line(repo: Path) -> None:
     sys.path.insert(0, str(EVIDENCE.parent))
     import sdlc_status
 
-    assert sdlc_status.screens_line(ch(repo)).startswith("screens: 0 of 4 with a baseline")
+    assert sdlc_status.screens_line(ch(repo)).startswith("screens: 0 of 4 compared")
 
 
 def test_status_uses_the_app_flow_only_when_the_lock_says_visual_app(repo: Path) -> None:
     (ch(repo) / "lock.json").write_text(json.dumps({"screens": "required", "criteria": {}}))  # a 3.24 lock
-    assert "with a baseline" not in status(repo)
+    assert "compared" not in status(repo)
     (ch(repo) / "lock.json").write_text(json.dumps({"visual": "app", "criteria": {}}))
-    assert status(repo).startswith("screens: 0 of 4 with a baseline")
+    assert status(repo).startswith("screens: 0 of 4 compared")
 
 
 @pytest.mark.parametrize("bad", ["../evil", "a/b", "/etc/passwd"])
