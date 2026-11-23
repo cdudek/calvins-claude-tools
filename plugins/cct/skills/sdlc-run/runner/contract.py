@@ -352,23 +352,41 @@ def validate_bases(c: dict) -> None:
     if not isinstance(repos, dict):
         raise SdlcError("contract repos must map a repo name to {base}")
     for name, r in repos.items():
-        ref, sha = (r.get("base"), r.get("base_sha")) if isinstance(r, dict) and set(r) <= {"base", "base_sha"} else (0, 0)
+        ref, sha = (r.get("base"), r.get("base_sha")) if isinstance(r, dict) and set(r) <= {"base", "base_sha", "base_source"} else (0, 0)
         if ref == 0 or not (ref is None or (isinstance(ref, str) and BASE_REF.match(ref) and ".." not in ref and "//" not in ref
                                             and not ref.endswith(("/", ".lock")))):
             raise SdlcError(f"repos.{name}: base must be a branch name (letters, digits, . _ - /)")
         if sha is not None and not (ref and isinstance(sha, str) and re.fullmatch(r"[0-9a-f]{40}", sha)):
             raise SdlcError(f"repos.{name}: base_sha must be a full SHA of its base")
+        if r.get("base_source", "origin") not in ("origin", "local") or ("base_source" in r and sha is None):
+            raise SdlcError(f"repos.{name}: base_source is origin or local and goes with base_sha")
 
 
-def resolve_base(repo: dict, ref: str) -> str:
-    """The full SHA of `ref`, fetched from origin when the repo has one."""
+def resolve_base(repo: dict, ref: str) -> tuple[str, str]:
+    """(full SHA, source) of `ref`: fetched from origin when it is there, else the local branch (a project branch that is local-only by
+    policy, source "local"). When both exist and differ it is an error naming both: one is never chosen silently."""
     p = repo["path"]
+    local = _run_git(p, "rev-parse", "--verify", "-q", f"refs/heads/{ref}^{{commit}}")
+    remote = None
     if repo.get("remote"):
         r = subprocess.run(["git", "fetch", "-q", "origin", f"+refs/heads/{ref}:refs/remotes/origin/{ref}"], cwd=p, capture_output=True, text=True)
-        if r.returncode:
+        if r.returncode == 0:
+            remote = git(p, "rev-parse", "--verify", f"refs/remotes/origin/{ref}^{{commit}}")
+        elif "couldn't find remote ref" not in r.stderr:
             raise SdlcError(f"BLOCKED env cannot fetch origin/{ref}: {r.stderr.strip()[:120]}")
-        return git(p, "rev-parse", "--verify", f"refs/remotes/origin/{ref}^{{commit}}")
-    return git(p, "rev-parse", "--verify", f"refs/heads/{ref}^{{commit}}")
+    if local and remote and local != remote:
+        raise SdlcError(f"BLOCKED base ref {ref}: the local branch is at {local} and origin/{ref} is at {remote}, so they differ; push or reset one of them, "
+                        "the runner does not choose")
+    if remote:
+        return remote, "origin"
+    if local:
+        return local, "local"
+    raise SdlcError(f"BLOCKED env base ref {ref} exists neither as a local branch nor on origin")
+
+
+def _run_git(path: str, *args: str) -> str:
+    r = subprocess.run(["git", *args], cwd=path, capture_output=True, text=True)
+    return r.stdout.strip() if r.returncode == 0 else ""
 
 
 def base_ahead(repo: dict, sha: str) -> int:
@@ -385,11 +403,12 @@ def base_problem(rid: str) -> str:
         if not r.get("base_sha") or name not in meta["repos"]:
             return f"base {r['base']} of {name} was never resolved (run `sdlc draft`)"
         try:
-            now = resolve_base(meta["repos"][name], r["base"])
+            now, source = resolve_base(meta["repos"][name], r["base"])
         except SdlcError as e:
             return str(e)
         if now != r["base_sha"]:
-            return f"base ref {r['base']} of {name} moved from {r['base_sha'][:9]} to {now[:9]}; the run does not follow it (start a new run to build on the new tip)"
+            return (f"base ref {r['base']} of {name} moved from {r['base_sha'][:9]} to {now[:9]}{' (local branch)' if source == 'local' else ''}; "
+                    "the run does not follow it (start a new run to build on the new tip)")
     return ""
 
 

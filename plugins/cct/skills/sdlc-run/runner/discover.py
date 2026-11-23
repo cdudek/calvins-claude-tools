@@ -206,18 +206,19 @@ def pin_bases(rid: str, c: dict, meta: dict) -> None:
         if name not in meta["repos"]:
             raise SdlcError(f"contract repos.{name} is not a repo of this run")
         spec.pop("base_sha", None)
+        spec.pop("base_source", None)
         r = meta["repos"][name]
         if not spec.get("base"):
             if r.get("base_ref"):
                 raise SdlcError(f"{name}: the run branch was cut from {r['base_ref']}; start a new run to build on the default branch")
             continue
-        sha = contract.resolve_base(r, spec["base"])
+        sha, source = contract.resolve_base(r, spec["base"])
         tip = git(r["path"], "rev-parse", r["branch"])
         if tip not in (r["base_sha"], sha):
             raise SdlcError(f"{name}: the run branch already has commits; start a new run for a new base")
         if tip != sha:
             git(r["path"], "branch", "-f", r["branch"], sha)
-        spec["base_sha"], r["base_sha"], r["base_ref"] = sha, sha, spec["base"]
+        spec["base_sha"], spec["base_source"], r["base_sha"], r["base_ref"] = sha, source, sha, spec["base"]
     store.save_meta(rid, meta)
 
 
@@ -352,7 +353,8 @@ def _base_lines(c: dict, meta: dict) -> list[str]:
         if s.get("base") and n in meta["repos"]:
             r = meta["repos"][n]
             out.append(f"- **base:** {_code(n)}: {_code(s['base'])} @ `{s.get('base_sha', 'unresolved')}` "
-                       f"({contract.base_ahead(r, s['base_sha']) if s.get('base_sha') else '?'} commits not on {r['default_branch']}); "
+                       f"({'local only; ' if s.get('base_source') == 'local' else ''}"
+                       f"{contract.base_ahead(r, s['base_sha']) if s.get('base_sha') else '?'} commits not on {r['default_branch']}); "
                        f"`sdlc pr` still targets {r['default_branch']}, so the PR also carries these base commits")
     return ["", "## Base", ""] + out if out else []
 
