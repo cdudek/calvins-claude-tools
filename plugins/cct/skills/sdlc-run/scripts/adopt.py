@@ -740,7 +740,7 @@ def delivery_values(cfg: dict) -> dict[str, str]:
     }
 
 
-E2E_CMD = re.compile(r"playwright|test:e2e")
+E2E_CMD = re.compile(r"playwright|test:e2e|e2e-repeat\.sh")
 # `--repeat-each` is a Playwright flag, so it marks an E2E check even behind a wrapper script
 # (samplewerk: `sh scripts/e2e.sh --repeat-each 3`). The match covers its own value.
 WHOLE_SUITE_REPEAT = re.compile(r"\s*--repeat-each(?:=|\s+)\S+")
@@ -923,7 +923,7 @@ def adopt_ci(cfg: dict, preset: str) -> None:
 
 E2E_SCOPED = re.compile(
     r"--grep|--only-changed|--last-failed|--repeat-each|\bseq\b|\bfor\b|\brelated\b"
-    r"|\.(?:spec|test)\.\w+|test_\w+\.py|\$specs"
+    r"|\.(?:spec|test)\.\w+|test_\w+\.py|\$specs|e2e-repeat\.sh"
 )  # keep equal to verify_gate.E2E_SCOPED
 
 
@@ -936,7 +936,7 @@ def e2e_gap_note(milestone: list) -> None:
     x3 repeat of the changed and flaky specs. adopt never re-locks: the engineer approves again."""
     cmds = [c["run"] if isinstance(c, dict) else c for c in milestone]
     full = any(E2E_CMD.search(run) and not E2E_SCOPED.search(run) for run in cmds)
-    repeat = any(E2E_CMD.search(run) and re.search(r"--repeat-each|\bseq\s+3\b|\bin\s+1\s+2\s+3\b", run) for run in cmds)
+    repeat = any(E2E_CMD.search(run) and re.search(r"e2e-repeat\.sh|--repeat-each|\bseq\s+3\b|\bin\s+1\s+2\s+3\b", run) for run in cmds)
     if has_e2e_config() and not (full and repeat):
         what = "no full E2E entry" if not full else "no repeat (x3) of the changed and flaky specs"
         manual.append(
@@ -2025,6 +2025,7 @@ def main() -> int:
         "evidence.py",
         "preflight.py",
         "capture.py",
+        "e2e-repeat.sh",
     ):
         _write(ROOT / "scripts" / script, (TPL / "scripts" / script).read_text(encoding="utf-8"))
     # sdlc_status.py runs from the plugin now and is never copied into a repo.

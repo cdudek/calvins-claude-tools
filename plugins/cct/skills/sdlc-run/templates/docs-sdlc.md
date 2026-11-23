@@ -154,7 +154,8 @@ one line from `python3 scripts/verify_gate.py milestone <id>`: `VERIFY PASS`, `V
 For a bug, commit the failing test first and set `testLocked: true`. While locked, test files
 matching `testGlobs` cannot be edited unless `testEdit` records the user's OK.
 
-For milestone E2E, use the committed `e2e/flaky-specs.txt` list. The installed
+For milestone E2E, use the committed `e2e/flaky-specs.txt` list; `scripts/e2e-repeat.sh <base>` runs
+it with the changed specs x3 and refuses a stale or unsafe path. The installed
 `cct:test-e2e-policy` reference `suite-speed-and-reliability.md` section G defines the
 selection and line format. Section F defines the lock and load policy for shared machines.
 

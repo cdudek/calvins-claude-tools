@@ -431,11 +431,11 @@ def approval_blockers(change: Path) -> list[str]:
 E2E_ENTRY = re.compile(r"playwright|test:e2e|\be2e\b|cypress")
 E2E_SCOPED = re.compile(
     r"--grep|--only-changed|--last-failed|--repeat-each|\bseq\b|\bfor\b|\brelated\b"
-    r"|\.(?:spec|test)\.\w+|test_\w+\.py|\$specs"
+    r"|\.(?:spec|test)\.\w+|test_\w+\.py|\$specs|e2e-repeat\.sh"
 )
 
 
-E2E_REPEAT = re.compile(r"--repeat-each|\bseq\s+3\b|\bin\s+1\s+2\s+3\b|--count[= ]3")
+E2E_REPEAT = re.compile(r"e2e-repeat\.sh|--repeat-each|\bseq\s+3\b|\bin\s+1\s+2\s+3\b|--count[= ]3")
 
 
 def has_e2e_config(repo: Path) -> bool:

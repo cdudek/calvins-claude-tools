@@ -555,7 +555,9 @@ and the approved shots become the exact tests of later runs.
    as written, never a 320 × 256 window; the states of every changed page are in the same
    captures. The full E2E suite is not in this list:
    `verify_gate.py milestone` is the only runner of the full suite and the full E2E at the close
-   (step 6). Changed and flaky specs run ×3 on the final integrated build; use the committed
+   (step 6). Changed and flaky specs run ×3 on the final integrated build through
+   `scripts/e2e-repeat.sh <base>` (never a hand-written one-liner: it accepts only existing spec
+   paths, passes them after `--` and never uses `--pass-with-no-tests`); use the committed
    `e2e/flaky-specs.txt` list and the selection and line-format rules in
    `../../test-e2e-policy/references/suite-speed-and-reliability.md` section G. Send inconsistent
    results to `test-flake-fix`. Build QA (`cct:ux-build-validate`, report-only at the

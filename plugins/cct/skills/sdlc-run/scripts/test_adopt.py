@@ -1251,7 +1251,7 @@ def test_adopt_copies_marks_script_verbatim(tmp_path: Path) -> None:
 def test_adopt_copies_the_heavy_work_scripts_verbatim(tmp_path: Path) -> None:
     repo = _repo(tmp_path, "python")
     assert _adopt(repo).returncode == 0
-    for name in ("heavy.py", "db.py", "evidence.py", "preflight.py", "capture.py"):
+    for name in ("heavy.py", "db.py", "evidence.py", "preflight.py", "capture.py", "e2e-repeat.sh"):
         source = ADOPT.parents[1] / "templates/scripts" / name
         assert (repo / "scripts" / name).read_bytes() == source.read_bytes(), name
 
