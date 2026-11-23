@@ -2532,10 +2532,8 @@ def test_the_milestone_gate_captures_the_fixture_app_end_to_end(tmp_path: Path, 
     assert _last(r) == "VERIFY BLOCKED reason=needs-comparison" and "4 of 4 screens have no board-to-build comparison" in r.stdout
     change = repo / "changes" / ID
 
-    def compare(verdict: str) -> None:  # the agents' comparison of the shots the gate just took
-        rows = {p.stem: {"sha256": hashlib.sha256(p.read_bytes()).hexdigest(), "verdict": verdict, "report": "verify/ux/qa.md", "differences": "x"}
-                for p in (change / "verify/shots").glob("*.png")}
-        (change / "verify/comparison.json").write_text(json.dumps({"format": 1, "entries": rows}))
+    def compare(verdict: str) -> None:  # the comparison step: a report naming each sha256, then `capture.py verdict`
+        tc.compare_shots(repo, verdict, change_id=ID)
 
     compare("differs")
     r = _gate(repo, "milestone", ID)
@@ -2549,7 +2547,7 @@ def test_the_milestone_gate_captures_the_fixture_app_end_to_end(tmp_path: Path, 
     (repo / "app.py").write_text(tc.APP.replace("'MARK', ''", "'MARK', 'x'"))
     _git(repo, "commit", "-qam", "the page changed")
     r = _gate(repo, "milestone", ID)  # a changed page is compared again, never waved through
-    assert _last(r).startswith("VERIFY BLOCKED reason=needs-comparison") or "check=app-screens" in _last(r)
+    assert _last(r) == "VERIFY BLOCKED reason=needs-comparison", r.stdout
 
 
 def test_a_visual_hotfix_runs_the_capture_in_its_feature_gate(tmp_path: Path) -> None:
@@ -2601,7 +2599,7 @@ def test_lint_flags_a_milestone_numbered_zero(tmp_path: Path) -> None:
     assert _gate(repo, "lint", ID).returncode == 0
     plan.write_text(MILESTONES.format(row="M0 Core"))
     r = _gate(repo, "lint", ID)
-    assert r.returncode == 1 and "numbered 0" in r.stdout and "start at 1" in r.stdout
+    assert r.returncode == 1 and "numbered 0" in r.stdout and "label it M1, not M0" in r.stdout
 
 
 def test_lint_flags_a_feature_that_adds_a_package_without_owner_paste_blocks(tmp_path: Path) -> None:
@@ -2611,8 +2609,25 @@ def test_lint_flags_a_feature_that_adds_a_package_without_owner_paste_blocks(tmp
     r = _gate(repo, "lint", ID)
     assert r.returncode == 1 and "adds a package" in r.stdout and "Dependency changes (owner paste blocks)" in r.stdout
     plan.write_text(FEATURES.format(what="Chart page, runs pnpm add recharts") + "\n## Dependency changes (owner paste blocks)\n\nnone\n")
-    assert _gate(repo, "lint", ID).returncode == 1  # `none` is not a block
+    assert _gate(repo, "lint", ID).returncode == 1  # `none` is not a command
     plan.write_text(FEATURES.format(what="Chart page, runs pnpm add recharts") + "\n## Dependency changes (owner paste blocks)\n\n```bash\npnpm add recharts\n```\n")
     assert _gate(repo, "lint", ID).returncode == 0
     plan.write_text(FEATURES.format(what="Chart page"))
     assert _gate(repo, "lint", ID).returncode == 0
+
+
+def test_the_real_plan_template_flags_a_package_row_until_a_real_command_is_pasted(tmp_path: Path) -> None:
+    template = (GATE.parents[1] / "change" / "plan.md").read_text()
+    row = "| 1 | <what it delivers> | F1, F2 | `<slug>/1-<feature>` | todo |"
+    assert row in template
+    repo = _repo(tmp_path, ["true"])
+    plan = repo / "changes" / ID / "plan.md"
+    plan.write_text(template.replace(row, "| 1 | Charts: runs pnpm add recharts | F1 | `x/1-charts` | todo |"))
+    r = _gate(repo, "lint", ID)  # the template's own block holds only a `<placeholder>` line and a `#` comment
+    assert "adds a package" in r.stdout, r.stdout
+    filled = plan.read_text().replace("<pnpm add | uv add> <package>", "pnpm add recharts")
+    plan.write_text(filled)
+    assert "adds a package" not in _gate(repo, "lint", ID).stdout
+    import verify_gate
+
+    assert "# <feature row>" in verify_gate.section(template, "Dependency changes (owner paste blocks)")  # the fence's `#` line is body text

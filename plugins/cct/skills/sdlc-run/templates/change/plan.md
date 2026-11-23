@@ -199,10 +199,10 @@ before any check or push: it owns local iteration, failures and the final full c
   `checks`) or accept baselines.
 - **Bookkeeping:** tick plan tasks as they land. Log departures under `## Revisions`.
 - **Agents:** every build, fix, test, capture, restack or records agent is
-  `cct:sdlc-feature-builder` (Sonnet). Review and checks use their typed agents
+  `cct:sdlc-feature-builder`. Review and checks use their typed agents
   (`cct:review-code-reviewer`, `cct:test-behavior-verifier`, `cct:review-criteria-auditor`,
   `cct:ux-usability-reviewer`, `cct:review-finding-validator`). Never launch general-purpose for
-  this work: it inherits the session's model. Any other subagent gets `model: sonnet` explicitly.
+  this work: it inherits the session's model. Any other subagent gets an explicit model from the kickoff's orchestrator instructions.
   The session's own model is only for the gate's visual judgement and for decisions. Dispatch
   builders yourself, never through a closer agent that spawns its own.
 - **One milestone** (`/goal` from `templates/goal/milestone.txt`): close it per `milestone.md`.

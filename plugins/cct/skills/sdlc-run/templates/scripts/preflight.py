@@ -109,6 +109,18 @@ def failures(cfg: dict, config_only: bool = False) -> list[str]:
     return out
 
 
+def change_done(gate, folder: Path) -> bool:
+    """The last milestone of the change passed its gate (report.json): nothing in it can still be fixed."""
+    try:
+        report = json.loads((folder / "verify" / "report.json").read_text(encoding="utf-8"))
+    except (OSError, ValueError):
+        return False
+    last = gate.last_milestone(folder)
+    return isinstance(report, dict) and str(report.get("result", "")).startswith("VERIFY PASS milestone") and (
+        last is None or report.get("milestone") == last
+    )
+
+
 def doctor(cfg: dict, repo: Path) -> list[str]:
     """What the gates would refuse later, found now: the gates' own predicates (verify_gate.py, beside this file),
     one `GAP` line each with its fix. Read-only: it writes nothing and runs no check.
@@ -121,14 +133,23 @@ def doctor(cfg: dict, repo: Path) -> list[str]:
     out = []
     if gap := gate.full_e2e_gap((cfg.get("checks") or {}).get("milestone") or [], repo):
         out.append("GAP full-e2e: " + gap)
+    mb = cfg.get("maxBuilders")
+    if mb is not None and not (isinstance(mb, int) and not isinstance(mb, bool) and mb >= 1):
+        out.append(f"GAP max-builders: maxBuilders is {mb!r}. Fix: a whole number of at least 1 (advisory: the orchestrator honours it, no gate counts builders)")
     changes = repo / str(cfg.get("changesDir") or "changes")
-    folders = sorted(p for p in changes.glob("*") if p.is_dir()) if changes.is_dir() else []
+    folders = sorted(p for p in changes.glob("*") if p.is_dir() and not change_done(gate, p)) if changes.is_dir() else []
     visual = cfg.get("visual") if isinstance(cfg.get("visual"), dict) else {}
-    if (any((f / "screens.json").is_file() for f in folders) or visual) and not str(visual.get("start") or "").strip():
-        out.append(
-            "GAP visual-start: screens are captured from the real app but sdlc.json has no visual.start. "
-            'Fix: set "visual": {"start": "<the command that starts the app on $PORT>"}'
-        )
+    for f in folders:
+        try:
+            lock = json.loads(gate.spec.state_path(f, "lock.json").read_text(encoding="utf-8"))
+        except (OSError, ValueError):
+            lock = {}
+        if isinstance(lock, dict) and lock.get("visual") == "app" and not str(visual.get("start") or "").strip():
+            out.append(
+                f"GAP visual-start: {f.name} captures screens from the real app but sdlc.json has no visual.start. "
+                'Fix: set "visual": {"start": "<the command that starts the app on $PORT>"}'
+            )
+            break
     for f in folders:
         if gate.project_branch(f, cfg) and not gate.merges_locally(cfg):
             out.append(

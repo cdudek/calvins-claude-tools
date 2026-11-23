@@ -143,7 +143,7 @@ copy of a migrated local Postgres; `db.py dev` connects the engineer to their ow
 
 ## Agents and models
 
-Agents: every build, fix, test, capture, restack or records agent is `cct:sdlc-feature-builder` (Sonnet); review and checks use their typed agents (`cct:review-code-reviewer`, `cct:test-behavior-verifier`, `cct:review-criteria-auditor`, `cct:ux-usability-reviewer`, `cct:review-finding-validator`). Never launch general-purpose for this work: it inherits the session's model. Any other subagent gets `model: sonnet` explicitly. The session's own model is only for the gate's visual judgement and for decisions. Dispatch builders yourself, never through a closer agent that spawns its own.
+Agents: every build, fix, test, capture, restack or records agent is `cct:sdlc-feature-builder`; review and checks use their typed agents (`cct:review-code-reviewer`, `cct:test-behavior-verifier`, `cct:review-criteria-auditor`, `cct:ux-usability-reviewer`, `cct:review-finding-validator`). Never launch general-purpose for this work: it inherits the session's model. Any other subagent gets an explicit model from the kickoff's orchestrator instructions. The session's own model is only for the gate's visual judgement and for decisions. Dispatch builders yourself, never through a closer agent that spawns its own.
 
 Every step, input, output, skip and failure mode: `references/stages.md`. How to wait (CI, deploy, success measure): its "Waiting" section; never a `/loop` inside a running `/goal`. A step whose skill is
 not installed is skipped with a printed note naming it, never silently.

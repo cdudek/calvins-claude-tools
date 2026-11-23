@@ -135,7 +135,7 @@ Acceptance is separate from PR approval: you accept each milestone at stage 6, a
 | `VERIFY FAIL ... check=<name>` | fixes that check and runs verify again |
 | `VERIFY BLOCKED reason=<code>` | stops and asks you |
 
-Blocked reasons: `validation-not-met`, `findings-open`, `findings-blocked`, `not-converged`, `not-approved`, `protected-path`, `no-progress`, `attempts`, `flaky`, `unknown-verdict`, `needs-baseline`, `allowlist-request`, `scope-growth`, `spec-conflict`, `env`, `test-proves-nothing`. `env` also covers a heavy slot that never frees and a parent branch the gate cannot find; the line names the fix.
+Blocked reasons: `validation-not-met`, `findings-open`, `findings-blocked`, `not-converged`, `not-approved`, `protected-path`, `no-progress`, `attempts`, `flaky`, `unknown-verdict`, `needs-comparison`, `allowlist-request`, `scope-growth`, `spec-conflict`, `env`, `test-proves-nothing`. `env` also covers a heavy slot that never frees and a parent branch the gate cannot find; the line names the fix.
 
 The agent may never build outside `/goal`, change the approved plan, edit a test to make it pass, start a second fix round at a milestone, decide scope for you, or open a PR for work that belongs to an open milestone.
 

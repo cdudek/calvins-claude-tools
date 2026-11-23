@@ -1,6 +1,8 @@
 """The app capture of a change approved from 3.25.0 (lock `"visual": "app"`): one app start, every
 `screens.json` entry at its viewport, twice, compared by the agents with the pinned design (no owner approves a screen, no baseline is stored).
 
+    python3 scripts/capture.py verdict <change-dir> <id> --verdict match|differs --report <file> [--differences TEXT]
+        # the one writer of verify/comparison.json (the hooks refuse a direct edit)
     python3 scripts/capture.py check <change-dir>     # validate screens.json only (what `approve` runs)
     python3 scripts/capture.py run <change-dir> [--upto N] [--group]
         # reachability, capture x2, stability, the comparison verdicts. --upto N: only entries due by milestone N.
@@ -32,7 +34,9 @@ unstable). Light and dark are separate entries (a route or fixture that sets the
 Comparison, not approval, and no stored baseline. Every run captures the screens due and each needs a board-to-build
 comparison of exactly this capture, written by the agents (`cct:ux-build-validate` build mode and `cct:ux-assessment-run`)
 to <change>/verify/comparison.json: {"format": 1, "entries": {"<id>": {"sha256": "<of verify/shots/<id>.png>",
-"verdict": "match" | "differs", "report": "<report path>", "differences": "<text>"}}}. The gate computes the sha256 of its
+"verdict": "match" | "differs", "report": "<report file in the change that names the sha256>", "boards": {"<board id>":
+"<sha256 of its image>"}, "differences": "<text>"}}}, recorded by `capture.py verdict`; a `match` counts only for a screen
+that maps a design board or has a `deviates` text. The gate computes the sha256 of its
 own fresh capture and accepts only a `match` carrying that sha256, so a comparison of an earlier capture or a forged
 entry counts for nothing. No comparison: `VERIFY BLOCKED reason=needs-comparison`. A `differs` verdict: `CAPTURE FAIL
 comparison`, a blocking finding the fix round settles. Nothing is written as a baseline by anyone; a later change is
@@ -564,13 +568,16 @@ def judge(change: Path, entries: list[dict], shots: Path, threshold: float, star
     # Nothing is persisted as a baseline: a screen passes only when THIS run captured it (the shot above is fresh and
     # stable) and the agents' comparison says `match` for the sha256 the gate computed from that capture just now.
     verdicts = read_comparison(change)
-    pending, differing = [], []
+    pending, differing, by_id = [], [], {e["id"]: e for e in entries}
     for i in ids:
         v, now = verdicts.get(i), sha(shots / f"{i}.png")
         if not isinstance(v, dict) or v.get("sha256") != now:  # none, forged or from another capture: no judgement of this one
             pending.append(i)
         elif v.get("verdict") != "match":
             differing.append(f"{i}: {str(v.get('differences') or 'differs from the pinned design')[:200]} (report {v.get('report', 'none')})")
+        elif why := match_problem(change, by_id.get(i, {}), i, now, v):  # a match that proves nothing is no match
+            print(f"{i}: the match does not count: {why}")
+            pending.append(i)
     if pending:
         print(f"{len(pending)} of {len(ids)} screens have no board-to-build comparison of this capture: " + ", ".join(pending)
               + f"\nThe shots are in {shots} (light and dark are separate entries). Compare each with the pinned design"
@@ -587,6 +594,26 @@ def judge(change: Path, entries: list[dict], shots: Path, threshold: float, star
 COMPARISON = "verify/comparison.json"
 
 
+def match_problem(change: Path, entry: dict, entry_id: str, shot_sha: str, v: dict) -> str:
+    """Why a `match` verdict proves nothing, or "": the screen must map a design board or carry a `deviates` text; the
+    report must be a real file of the change (board_file rules) that names the shot's sha256; and `boards` must hold
+    the sha256 of every mapped board image as it is now (a board that changed since the comparison voids it)."""
+    boards = mapped(entry)
+    if not boards and not str(entry.get("deviates") or "").strip():
+        return "the screen maps no design board and has no `deviates` text, so there is nothing to compare it with"
+    report = v.get("report")
+    data = read_board(change, report) if isinstance(report, str) else None
+    if data is None:
+        return "`report` is not a file inside the change folder"
+    if shot_sha not in data.decode("utf-8", "replace"):
+        return "the report does not contain the sha256 of this capture"
+    design = load_design(change)
+    want = {b: board_digest(change, design, b) for b in boards}
+    if v.get("boards", {}) != want:
+        return "`boards` does not hold the sha256 of every mapped board image as it is now"
+    return ""
+
+
 def read_comparison(change: Path) -> dict:
     """verify/comparison.json, written by the agents' board-to-build comparison:
     {"format": 1, "entries": {"<id>": {"sha256": <of the compared shot>, "verdict": "match" | "differs",
@@ -599,6 +626,41 @@ def read_comparison(change: Path) -> dict:
 def end(line: str, code: int) -> int:
     print(line)
     return code
+
+
+def verdict_main(args: list[str]) -> int:
+    """capture.py verdict <change> <id> --verdict match|differs --report <file in the change> [--differences TEXT]:
+    the one writer of verify/comparison.json (the hooks refuse an edit of it). It computes the shot's sha256 and the
+    mapped boards' sha256s itself, refuses a `match` that proves nothing and keeps the compared shot beside the file."""
+    opts = {a: args[k + 1] for k, a in enumerate(args) if a in ("--verdict", "--report", "--differences") and k + 1 < len(args)}
+    pos = [a for k, a in enumerate(args) if not a.startswith("--") and (k == 0 or args[k - 1] not in opts)]
+    if len(pos) != 2 or opts.get("--verdict") not in ("match", "differs"):
+        print(__doc__)
+        return 2
+    change, entry_id = Path(pos[0]).resolve(), pos[1]
+    entries, problems = load_screens(change)
+    entry = next((e for e in entries if e["id"] == entry_id), None)
+    shot = change / "verify" / "shots" / f"{entry_id}.png"
+    if problems or entry is None or not shot.is_file():
+        print(f"CAPTURE FAIL verdict: {entry_id} is not an entry of screens.json with a capture in verify/shots")
+        return 1
+    v = {"sha256": sha(shot), "verdict": opts["--verdict"], "report": opts.get("--report", ""), "differences": opts.get("--differences", ""),
+         "boards": {b: board_digest(change, load_design(change), b) for b in mapped(entry)}}  # fmt: skip
+    if v["verdict"] == "match" and (why := match_problem(change, entry, entry_id, v["sha256"], v)):
+        print(f"CAPTURE FAIL verdict: not recorded: {why}")
+        return 1
+    rows = read_comparison(change)
+    rows[entry_id] = v
+    out = change / COMPARISON
+    out.parent.mkdir(parents=True, exist_ok=True)
+    tmp = out.with_name(f".comparison.{os.getpid()}.tmp")
+    tmp.write_text(json.dumps({"format": 2, "entries": rows}, indent=2, sort_keys=True) + "\n", encoding="utf-8")
+    os.replace(tmp, out)
+    kept = change / "verify" / "compared"
+    kept.mkdir(parents=True, exist_ok=True)
+    shutil.copyfile(shot, kept / f"{entry_id}.png")  # the shot the verdict judged
+    print(f"verdict recorded: {entry_id} {v['verdict']}")
+    return 0
 
 
 def main(argv: list[str]) -> int:
@@ -614,6 +676,8 @@ def main(argv: list[str]) -> int:
             print(__doc__)
             return 2
         del args[k : k + 2]
+    if args[:1] == ["verdict"]:
+        return verdict_main(args[1:])
     if len(args) != 2 or args[0] not in ("check", "run"):
         print(__doc__)
         return 2

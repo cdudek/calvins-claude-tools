@@ -1407,35 +1407,83 @@ def test_repo_records_checks_every_criterion_including_routing_and_checks(tmp_pa
     assert "no intact lock.json" in _records(start, other).stdout
 
 
+def _break_target_approve(other: Path) -> None:
+    """A real refusal from the target's own gate: the repo has an E2E suite and no full E2E check."""
+    (other / "e2e").mkdir(exist_ok=True)
+    (other / "sdlc.json").write_text(json.dumps({"checks": {"milestone": ["true"]}}))
+    (other / "e2e" / "a.spec.ts").write_text("x")
+    import test_verify_gate as tvg
+
+    tvg._git(other, "add", ".")
+    tvg._git(other, "commit", "-qm", "e2e without a full e2e check")
+
+
 def test_a_refused_replace_puts_the_old_folder_and_lock_back_byte_for_byte(tmp_path: Path) -> None:
     import test_verify_gate as tvg
 
     start, other = _two_repos(tmp_path)
+    _break_target_approve(other)
     folder = other / "changes" / tvg.ID
     folder.mkdir(parents=True)
     (folder / "facts.md").write_text("mine\n")
     (folder / "lock.json").write_text('{"mine": 1}\n')
     (folder / "notes.md").write_text("keep\n")
-    (other / "scripts" / "verify_gate.py").write_text("import sys\nsys.exit(1)\n")  # the target gate refuses
     r = _records(start, other, "--replace")
-    assert r.returncode == 1 and "nothing was left behind" in r.stdout
+    assert r.returncode == 1 and "nothing was left behind" in r.stdout, r.stdout
     assert (folder / "facts.md").read_text() == "mine\n" and (folder / "lock.json").read_text() == '{"mine": 1}\n'
     assert (folder / "notes.md").read_text() == "keep\n" and not (folder / "plan.md").exists()
     assert not [p for p in other.rglob(".*replaced-*")]
-    # a gate that exits 0 but writes no lock is a refusal too
-    (other / "scripts" / "verify_gate.py").write_text("import sys\nsys.exit(0)\n")
-    assert _records(start, other, "--replace").returncode == 1
-    assert (folder / "lock.json").read_text() == '{"mine": 1}\n'
 
 
-def test_a_refused_first_write_leaves_no_folder(tmp_path: Path) -> None:
+def test_a_refused_first_write_leaves_no_folder_and_no_empty_changes_dir(tmp_path: Path) -> None:
     import test_verify_gate as tvg
 
     start, other = _two_repos(tmp_path)
-    (other / "scripts" / "verify_gate.py").write_text("import sys\nsys.exit(1)\n")
+    _break_target_approve(other)
+    shutil.rmtree(other / "changes", ignore_errors=True)
     r = _records(start, other)
-    assert r.returncode == 1 and "nothing was left behind" in r.stdout
-    assert not (other / "changes" / tvg.ID).exists()
+    assert r.returncode == 1 and "nothing was left behind" in r.stdout, r.stdout
+    assert not (other / "changes").exists()
+
+
+def test_the_targets_gate_must_be_a_kit_version_tracked_and_unmodified(tmp_path: Path) -> None:
+    import test_verify_gate as tvg
+
+    start, other = _two_repos(tmp_path)
+    gate = other / "scripts" / "verify_gate.py"
+    original = gate.read_text()
+    gate.write_text(original + "\n# local edit\n")  # modified, not committed
+    r = _records(start, other)
+    assert r.returncode == 1 and "not a version the kit shipped" in r.stdout
+    tvg._git(other, "add", ".")
+    tvg._git(other, "commit", "-qm", "edited gate")
+    assert "not a version the kit shipped" in _records(start, other).stdout  # committed but not a kit version
+    gate.write_text(original)
+    tvg._git(other, "commit", "-qam", "kit gate again")
+    gate.write_text(original)
+    tvg._git(other, "rm", "-q", "--cached", "scripts/verify_gate.py")
+    assert "not tracked" in _records(start, other).stdout
+    tvg._git(other, "add", "scripts/verify_gate.py")
+    assert _records(start, other).returncode == 0
+
+
+def test_repo_records_refuses_a_lock_sha_that_is_not_a_commit_and_unapproved_facts(tmp_path: Path) -> None:
+    import test_verify_gate as tvg
+
+    start, other = _two_repos(tmp_path)
+    folder = start / "changes" / tvg.ID
+    lock = folder / "lock.json" if (folder / "lock.json").is_file() else folder / "state" / "lock.json"
+    data = json.loads(lock.read_text())
+    good = data["sha"]
+    data["sha"] = "0" * 40
+    lock.write_text(json.dumps(data))
+    assert "lock's sha is not a commit" in _records(start, other).stdout
+    data["sha"] = good
+    lock.write_text(json.dumps(data))
+    facts = folder / "facts.md"
+    facts.write_text(facts.read_text().replace("status: approved", "status: draft"))
+    r = _records(start, other)
+    assert r.returncode == 1 and ("not `status: approved`" in r.stdout or "no longer matches" in r.stdout)
 
 
 @pytest.mark.parametrize("bad", ["/tmp/elsewhere", "../outside", "a/../../b"])
@@ -1468,6 +1516,8 @@ def test_repo_records_refuses_an_unapproved_source_and_an_unadopted_target(tmp_p
     (other / "sdlc.json").write_text("{}")
     tvg._git(other, "init", "-q")
     (other / "scripts").mkdir()
-    (other / "scripts" / "verify_gate.py").write_text("")
+    shutil.copyfile(SCRIPT.parent.parent / "templates" / "scripts" / "verify_gate.py", other / "scripts" / "verify_gate.py")
+    tvg._git(other, "add", ".")
+    tvg._git(other, "commit", "-qm", "kit gate")
     r = _records(start, other)
     assert r.returncode == 1 and "no intact lock.json" in r.stdout

@@ -399,8 +399,20 @@ def table_rows(text: str) -> list[list[str]]:
 
 
 def section(text: str, heading: str) -> str:
-    m = re.search(rf"^#{{2,3}} {re.escape(heading)}\s*$(.*?)(?=^#{{1,3}} |\Z)", text, re.M | re.S)
-    return m.group(1) if m else ""
+    """The body of `## heading` up to the next heading of level 1 to 3; a `# comment` line inside a code fence is
+    not a heading."""
+    out, inside, fenced = [], False, False
+    for line in text.splitlines(keepends=True):
+        if line.lstrip().startswith("```"):
+            fenced = not fenced
+        elif not fenced and re.match(r"#{1,3} ", line):
+            if inside:
+                break
+            inside = bool(re.fullmatch(rf"#{{2,3}} {re.escape(heading)}\s*", line.rstrip("\n")))
+            continue
+        if inside:
+            out.append(line)
+    return "".join(out)
 
 
 def open_criticals(change: Path, name: str) -> list[str]:
@@ -1124,16 +1136,22 @@ DEP_ADD = re.compile(
 )
 
 
+ZERO = re.compile(r"(?:m(?:ilestone)?\s*)?0+(?!\d)", re.I)
+
+
 def zero_milestones(change: Path) -> list[str]:
-    """A milestone numbered 0 in the plan's table or a heading (the doctor runs the same predicate)."""
+    """A milestone numbered 0 in the plan's table or a heading, in any markdown (`**M0**`, `` `M0` ``, `Milestone 0`, a
+    bare `0`). The doctor runs the same predicate."""
+    plain = lambda cell: re.sub(r"[*_`\[\]()]", "", cell).strip()  # noqa: E731
     out = []
     for name in ("plan.md", "tasks.md"):
         text = read(change / name)
         for row in table_rows(section(text, "Milestones"))[1:]:
-            if row and re.match(r"M0\b", row[0]):
-                out.append(f"{name}: milestone {row[0][:40]!r} is numbered 0: runner milestones start at 1 (a product's M0 is runner milestone 1)")
-        if re.search(r"^#{2,4} Milestone 0\b", text, re.M):
-            out.append(f"{name}: a heading says Milestone 0: runner milestones start at 1")
+            if row and ZERO.match(plain(row[0])):
+                out.append(f"{name}: milestone {row[0][:40]!r} is numbered 0: runner milestones start at 1, label it M1, not M0 (a product's M0 is runner milestone 1)")
+        for heading in re.findall(r"^#{2,4}\s+(.+)$", text, re.M):
+            if re.match(r"milestone\s*0+(?!\d)", plain(heading), re.I):
+                out.append(f"{name}: a heading says Milestone 0: runner milestones start at 1, label it M1, not M0")
     return out
 
 
@@ -1144,8 +1162,13 @@ def plan_problems(change: Path) -> list[str]:
     or lockfile (`codex-build.sh` rejects it)."""
     out = zero_milestones(change)
     plan = read(change / "plan.md")
-    block = re.sub(r"<!--.*?-->", "", section(plan, DEP_HEADING), flags=re.S).strip()
-    if not block or block.lower().startswith("none"):
+    body = re.sub(r"<!--.*?-->", "", section(plan, DEP_HEADING), flags=re.S)
+    fences = re.findall(r"```[^\n]*\n(.*?)```", body, flags=re.S)
+    has_command = any(  # a real command line: not blank, not a `#` comment, not a `<placeholder>`
+        ln.strip() and not ln.lstrip().startswith("#") and not re.search(r"<[^>]*>", ln)
+        for fence in fences for ln in fence.splitlines()
+    )
+    if not has_command:
         for row in table_rows(section(plan, "Feature PRs"))[1:]:
             if DEP_ADD.search(" ".join(row)):
                 out.append(f"plan.md: feature row {row[0]!r} adds a package but there is no `## {DEP_HEADING}` section with the command to paste")

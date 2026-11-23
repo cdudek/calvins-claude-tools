@@ -450,6 +450,25 @@ def record_project(root: Path, change: Path, cfg: dict, sha: str, accepted: bool
     return 0, f"recorded project sha={sha} accepted={'yes' if accepted else 'no'}"
 
 
+def target_gate_problem(target: Path, gate: Path) -> str:
+    """Why another repo's scripts/verify_gate.py may not be run by repo-records, or "": it must be a kit version
+    (kit-hashes.json, or the one this plugin ships) and tracked and unmodified in the target's git."""
+    import hashlib
+
+    known = set(read_json(Path(__file__).with_name("kit-hashes.json")).get("scripts/verify_gate.py") or [])
+    shipped = Path(__file__).resolve().parents[1] / "templates" / "scripts" / "verify_gate.py"
+    if shipped.is_file():
+        known.add(hashlib.sha256(shipped.read_bytes()).hexdigest()[:16])
+    if hashlib.sha256(gate.read_bytes()).hexdigest()[:16] not in known:
+        return "is not a version the kit shipped"
+    git = lambda *a: subprocess.run(["git", "-C", str(target), *a], capture_output=True, text=True)  # noqa: E731
+    if git("ls-files", "--error-unmatch", "scripts/verify_gate.py").returncode:
+        return "is not tracked in git"
+    if git("diff", "--quiet", "HEAD", "--", "scripts/verify_gate.py").returncode:
+        return "has uncommitted changes"
+    return ""
+
+
 def repo_records(change: Path, other: Path, replace: bool = False) -> tuple[int, str]:
     """Write the per-repo records of an approved change into another adopted repo, then let that repo's own gate
     lock them. The source lock must be intact: an object with `criteria` and `sha`, and EVERY criterion recomputed
@@ -470,10 +489,22 @@ def repo_records(change: Path, other: Path, replace: bool = False) -> tuple[int,
         return 2, f"{target} has no scripts/verify_gate.py: run `sdlc-run adopt` there first"
     if not plain_id(change.name):
         return 1, f"{change.name!r} is not a plain change id"
+    if why := target_gate_problem(target, gate):
+        return 1, f"{target.name}: its scripts/verify_gate.py {why}: run `adopt --migrate` there first"
     lock = read_json(spec.state_path(change, "lock.json"))
     if not (isinstance(lock, dict) and isinstance(lock.get("criteria"), dict) and lock.get("sha")):
         return 1, f"{change.name} has no intact lock.json (an object with `criteria` and `sha`): approve the plan in the start repo first"
     source = repo_root(change)
+    sha = str(lock["sha"])
+    if not re.fullmatch(r"[0-9a-f]{40}", sha) or not source or subprocess.run(
+        ["git", "-C", str(source), "merge-base", "--is-ancestor", sha, "HEAD"], capture_output=True
+    ).returncode:
+        return 1, f"{change.name}: the lock's sha is not a commit of this repo's history: it was not written by `approve`"
+    for name, needed in (("facts.md", True), ("plan.md", False)):  # approve refuses a document that is not `status: approved`
+        head = (change / name).read_text(encoding="utf-8")[:800] if (change / name).is_file() else ""
+        if re.search(r"^status:", head, re.M) or needed:
+            if not re.search(r"^status:\s*approved\s*$", head, re.M):
+                return 1, f"{change.name}/{name} is not `status: approved`: the engineer has not approved it"
     try:
         now = criteria_hash(change, config(source).get("checks", {}) if source else {},
                             plan="plan.milestones" in lock["criteria"] or "decisions.routing" in lock["criteria"],
@@ -499,12 +530,16 @@ def repo_records(change: Path, other: Path, replace: bool = False) -> tuple[int,
     src_decisions = read_json(spec.state_path(change, "decisions.json"))
     old_decisions = read_json(spec.state_path(dest, "decisions.json"))
     decisions = {**old_decisions, **{k: src_decisions[k] for k in (*ROUTING, "layout", "project") if k in src_decisions}}
-    payload = {
-        "decisions.json": (json.dumps(decisions, indent=2) + "\n").encode(),
-        "done.json": spec.state_path(change, "done.json").read_bytes(),
-        "facts.md": (change / "facts.md").read_bytes(),
-        "plan.md": (change / "plan.md").read_bytes(),
-    }
+    try:
+        payload = {
+            "decisions.json": (json.dumps(decisions, indent=2) + "\n").encode(),
+            "done.json": spec.state_path(change, "done.json").read_bytes(),
+            "facts.md": (change / "facts.md").read_bytes(),
+            "plan.md": (change / "plan.md").read_bytes(),
+        }
+    except OSError as err:
+        return 1, f"{change.name}: cannot read {Path(str(err.filename)).name}: the approved plan is incomplete"
+    parent_made = not dest.parent.exists()
     aside = dest.with_name(f".{dest.name}.replaced-{os.getpid()}") if dest.exists() else None
     done = False
     try:
@@ -529,6 +564,11 @@ def repo_records(change: Path, other: Path, replace: bool = False) -> tuple[int,
                 shutil.rmtree(dest, ignore_errors=True)  # only a folder this call made or moved aside
             if aside and aside.exists():
                 os.rename(aside, dest)
+            if parent_made:
+                try:
+                    dest.parent.rmdir()  # the changes folder this call created, left empty
+                except OSError:
+                    pass
     if not done:
         return 1, f"{target.name}: approve refused ({last or run.stderr.strip()[-200:]}); nothing was left behind"
     return 0, f"REPO-RECORDS {change.name} {target.name} {last}"

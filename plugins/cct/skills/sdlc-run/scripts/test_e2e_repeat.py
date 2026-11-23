@@ -22,7 +22,7 @@ def _repo(tmp_path: Path, flaky: str | None = None) -> Path:
 
 
 def _run(repo: Path) -> subprocess.CompletedProcess:
-    env = {"PATH": "/usr/bin:/bin:/usr/local/bin:/opt/homebrew/bin", "E2E_REPEAT_RUNNER": "printf RAN:%s\\n"}
+    env = {"PATH": "/usr/bin:/bin:/usr/local/bin:/opt/homebrew/bin", "E2E_REPEAT_TEST": "1", "E2E_REPEAT_RUNNER": "printf RAN:%s\\n"}
     return subprocess.run(["bash", str(SCRIPT), "HEAD"], cwd=repo, capture_output=True, text=True, env=env)
 
 
@@ -62,3 +62,38 @@ def test_an_unknown_base_fails(tmp_path: Path) -> None:
     env = {"PATH": "/usr/bin:/bin:/usr/local/bin:/opt/homebrew/bin"}
     r = subprocess.run(["bash", str(SCRIPT), "origin/nope"], cwd=repo, capture_output=True, text=True, env=env)
     assert r.returncode != 0
+
+
+def test_a_leading_slash_dotdot_or_a_path_outside_e2e_fails(tmp_path: Path) -> None:
+    repo = _repo(tmp_path)
+    outside = tmp_path.parent / f"{tmp_path.name}-out.spec.ts"
+    outside.write_text("x")
+    (repo / "src").mkdir()
+    (repo / "src" / "a.spec.ts").write_text("x")
+    for bad in (str(outside), "e2e/../src/a.spec.ts", "src/a.spec.ts", "../x.spec.ts"):
+        (repo / "e2e" / "flaky-specs.txt").write_text(bad + "\n")
+        r = _run(repo)
+        assert r.returncode == 1 and "RAN" not in r.stdout, bad
+
+
+def test_a_symlink_that_leaves_the_repo_fails(tmp_path: Path) -> None:
+    repo = _repo(tmp_path)
+    target = tmp_path.parent / f"{tmp_path.name}-target"
+    target.mkdir()
+    (target / "x.spec.ts").write_text("x")
+    (repo / "e2e" / "link").symlink_to(target)
+    (repo / "e2e" / "flaky-specs.txt").write_text("e2e/link/x.spec.ts\n")
+    r = _run(repo)
+    assert r.returncode == 1 and "outside the repo" in r.stderr
+
+
+def test_the_runner_override_needs_the_test_flag_and_follows_the_package_manager(tmp_path: Path) -> None:
+    repo = _repo(tmp_path, "e2e/a.spec.ts\n")
+    (repo / "yarn.lock").write_text("")
+    bin_dir = tmp_path / "bin"
+    bin_dir.mkdir()
+    (bin_dir / "yarn").write_text("#!/bin/sh\necho YARN $@\n")
+    (bin_dir / "yarn").chmod(0o755)
+    env = {"PATH": f"{bin_dir}:/usr/bin:/bin", "E2E_REPEAT_RUNNER": "echo HIJACKED"}  # no test flag: the override is ignored
+    r = subprocess.run(["bash", str(SCRIPT), "HEAD"], cwd=repo, capture_output=True, text=True, env=env)
+    assert "HIJACKED" not in r.stdout and "YARN playwright test --repeat-each=3 -- e2e/a.spec.ts" in r.stdout

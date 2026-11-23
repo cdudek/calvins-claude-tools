@@ -30,8 +30,11 @@ that matches is accepted for that close only; nothing is stored as a baseline. N
    close takes all), light and dark (a theme is its own entry, set by the route or fixture), and agents compare
    every capture with the pinned design: the repo's UX validate build mode (`cct:ux-build-validate`) plus the
    UX review (`cct:ux-assessment-run`). Differences are fixed in the fix round. The comparison is written to
-   `verify/comparison.json` (`{"format": 1, "entries": {"<id>": {"sha256": "<of the compared shot>",
-   "verdict": "match" | "differs", "report": "<path>", "differences": "<text>"}}}`). The gate passes visual
+   `verify/comparison.json`, which only `python3 scripts/capture.py verdict <change> <id> --verdict match|differs
+   --report <file> [--differences TEXT]` writes (the hooks refuse a direct edit): it computes the shot's sha256
+   and the mapped boards' sha256s, keeps the compared shot in `verify/compared/`, and refuses a `match` whose
+   `report` is not a real file inside the change that names the sha256, or for a screen that maps no design board
+   and has no `deviates` text. The gate re-checks all of that. It passes visual
    work only when THIS run captured the due screens and each has a `match` carrying the sha256 the gate
    computed from that capture: a comparison of an earlier capture or a forged entry counts for nothing, and the
    gate blocks `VERIFY BLOCKED reason=needs-comparison` (an agent step: compare, write the file, rerun). A

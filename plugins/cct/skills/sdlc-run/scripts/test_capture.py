@@ -55,7 +55,8 @@ for j in job["jobs"]:
     capture.write_png(__import__("pathlib").Path(j["out"]), 16, 8, rgb)
 '''.replace("SCRIPTS_DIR", repr(str(SCRIPTS)))
 ENTRIES = [
-    {"id": f"{s}.list.{st}", "route": f"/preview/{s}?state={st}", "viewport": [1440, 900], "fixture": "seed-1"}
+    {"id": f"{s}.list.{st}", "route": f"/preview/{s}?state={st}", "viewport": [1440, 900], "fixture": "seed-1",
+     "deviates": "the fixture app has no design board"}  # fmt: skip
     for s in ("leads", "deals")
     for st in ("empty", "full")
 ]
@@ -105,16 +106,22 @@ def owner_answers(repo: Path, bid: str, label: str = "Approve screens", n: int =
         out.write("".join(json.dumps(e) + "\n" for e in entries))
 
 
-def _compare(repo: Path, verdict: str = "match", only: tuple[str, ...] = ()) -> None:
-    """What the agents' board-to-build comparison leaves behind: one verdict per captured shot, bound to its sha256."""
-    change = repo / "changes" / ID
-    entries = {}
+def compare_shots(repo: Path, verdict: str = "match", only: tuple[str, ...] = (), change_id: str = ID) -> None:
+    """What the comparison step does: a report file that names each shot's sha256, then `capture.py verdict` per shot."""
+    change = repo / "changes" / change_id
     for shot in sorted((change / "verify" / "shots").glob("*.png")):
         if only and shot.stem not in only:
             continue
-        entries[shot.stem] = {"sha256": hashlib.sha256(shot.read_bytes()).hexdigest(), "verdict": verdict,
-                              "report": "verify/ux/qa.md", "differences": "the header is missing"}  # fmt: skip
-    (change / "verify" / "comparison.json").write_text(json.dumps({"format": 1, "entries": entries}))
+        report = change / "verify" / "ux" / f"{shot.stem}.md"
+        report.parent.mkdir(parents=True, exist_ok=True)
+        report.write_text(f"compared {shot.stem} sha256 {hashlib.sha256(shot.read_bytes()).hexdigest()}: {verdict}\n")
+        r = subprocess.run([sys.executable, str(CAPTURE), "verdict", str(change), shot.stem, "--verdict", verdict, "--report",
+                            f"verify/ux/{shot.stem}.md", "--differences", "the header is missing"], cwd=repo, capture_output=True, text=True)
+        assert r.returncode == 0, r.stdout + r.stderr
+
+
+def _compare(repo: Path, verdict: str = "match", only: tuple[str, ...] = ()) -> None:
+    compare_shots(repo, verdict, only)
 
 
 # --- screens.json ---------------------------------------------------------------------------------
@@ -385,13 +392,8 @@ def test_a_matching_comparison_of_this_capture_passes_and_stores_nothing(tmp_pat
 def test_a_differing_comparison_is_a_blocking_finding_never_an_owner_question(tmp_path: Path) -> None:
     repo = _repo(tmp_path)
     _run(repo)
+    _compare(repo)
     _compare(repo, "differs", only=("leads.list.empty",))
-    path = repo / "changes" / ID / "verify/comparison.json"
-    data = json.loads(path.read_text())
-    for shot in (repo / "changes" / ID / "verify/shots").glob("*.png"):
-        if shot.stem != "leads.list.empty":
-            data["entries"][shot.stem] = {"sha256": hashlib.sha256(shot.read_bytes()).hexdigest(), "verdict": "match", "report": "r"}
-    path.write_text(json.dumps(data))
     r = _run(repo)
     assert _last(r) == "CAPTURE FAIL comparison" and r.returncode == 1
     assert "leads.list.empty: the header is missing" in r.stdout and "not an owner question" in r.stdout
@@ -436,3 +438,63 @@ def test_the_comparison_is_judged_only_for_the_entries_due(tmp_path: Path) -> No
     assert _last(run("--upto", "1")) == "CAPTURE PASS 2"
     final = run()
     assert _last(final) == "VERIFY BLOCKED reason=needs-comparison" and "deals.list.empty" in final.stdout
+
+
+def _verdict(repo: Path, entry: str, report: str, verdict: str = "match") -> subprocess.CompletedProcess[str]:
+    return subprocess.run([sys.executable, str(CAPTURE), "verdict", str(repo / "changes" / ID), entry, "--verdict", verdict, "--report", report],
+                          cwd=repo, capture_output=True, text=True)
+
+
+def test_a_match_needs_a_real_report_that_names_the_capture(tmp_path: Path) -> None:
+    repo = _repo(tmp_path)
+    _run(repo)
+    change = repo / "changes" / ID
+    (change / "verify/ux").mkdir()
+    (change / "verify/ux/bad.md").write_text("looks fine\n")  # no sha256 in it
+    assert "does not contain the sha256" in _verdict(repo, "leads.list.empty", "verify/ux/bad.md").stdout
+    assert "not a file inside the change" in _verdict(repo, "leads.list.empty", "verify/ux/missing.md").stdout
+    assert "not a file inside the change" in _verdict(repo, "leads.list.empty", "../outside.md").stdout
+    assert not (change / "verify/comparison.json").exists()
+    # a hand-written match with a report that names no sha, or no report at all, never passes the gate
+    shot = change / "verify/shots/leads.list.empty.png"
+    rows = {e["id"]: {"sha256": hashlib.sha256((change / f"verify/shots/{e['id']}.png").read_bytes()).hexdigest(), "verdict": "match",
+                      "report": "verify/ux/bad.md", "boards": {}} for e in ENTRIES}
+    (change / "verify/comparison.json").write_text(json.dumps({"format": 2, "entries": rows}))
+    r = _run(repo)
+    assert _last(r) == "VERIFY BLOCKED reason=needs-comparison" and "the match does not count" in r.stdout and shot.is_file()
+
+
+def test_a_match_needs_a_design_board_or_a_deviates_text(tmp_path: Path) -> None:
+    ents = [{k: v for k, v in e.items() if k != "deviates"} for e in ENTRIES]
+    repo = _repo(tmp_path, ents)
+    _run(repo)
+    change = repo / "changes" / ID
+    sha = hashlib.sha256((change / "verify/shots/leads.list.empty.png").read_bytes()).hexdigest()
+    (change / "verify/ux").mkdir()
+    (change / "verify/ux/r.md").write_text(sha)
+    r = _verdict(repo, "leads.list.empty", "verify/ux/r.md")
+    assert r.returncode == 1 and "nothing to compare it with" in r.stdout
+
+
+def test_a_changed_board_image_voids_the_match(tmp_path: Path) -> None:
+    ents = [{**e, "design": ["b1"]} for e in ENTRIES]
+    repo = _repo(tmp_path, ents)
+    change = repo / "changes" / ID
+    (change / "board.png").write_bytes(b"\x89PNG-one")
+    (change / "design.json").write_text(json.dumps({"source": "asks", "boards": [{"id": "b1", "name": "One", "image": "board.png"}]}))
+    _run(repo)
+    _compare(repo)
+    assert _last(_run(repo)) == "CAPTURE PASS 4"
+    (change / "board.png").write_bytes(b"\x89PNG-two")  # the design moved after the comparison
+    r = _run(repo)
+    assert _last(r) in ("VERIFY BLOCKED reason=needs-comparison", "CAPTURE FAIL design") and r.returncode in (1, 3)
+
+
+def test_the_comparison_file_is_written_by_the_verdict_command_and_the_shot_is_kept(tmp_path: Path) -> None:
+    repo = _repo(tmp_path)
+    _run(repo)
+    _compare(repo)
+    change = repo / "changes" / ID
+    data = json.loads((change / "verify/comparison.json").read_text())
+    assert set(data["entries"]) == {e["id"] for e in ENTRIES} and all(r["report"].startswith("verify/ux/") for r in data["entries"].values())
+    assert (change / "verify/compared/leads.list.empty.png").read_bytes() == (change / "verify/shots/leads.list.empty.png").read_bytes()
