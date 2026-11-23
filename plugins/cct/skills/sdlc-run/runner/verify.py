@@ -136,6 +136,11 @@ def count_tests(out: str, regex: str | None = None) -> int | None:
     return None
 
 
+def count_rx(chk: dict) -> str | None:
+    """A board row counts its rows: the check prints `Ran N checks`."""
+    return chk.get("count_regex") or (r"Ran (\d+) checks" if chk.get("kind") == "board" else None)
+
+
 def classify(chk: dict, job: Job) -> tuple[str, str, int | None]:
     """verdict, reason, tests for one run of a check's runner."""
     if job.killed == "stop":
@@ -144,7 +149,7 @@ def classify(chk: dict, job: Job) -> tuple[str, str, int | None]:
         return "BLOCKED", "job deadline reached (30 minutes)", None
     if job.exit in (126, 127):
         return "BLOCKED", f"env: the runner could not start ({job.out.strip()[:120] or 'exit ' + str(job.exit)})", None
-    tests = count_tests(job.out, chk.get("count_regex")) if chk.get("count", True) else None
+    tests = count_tests(job.out, count_rx(chk)) if chk.get("count", True) else None
     if chk.get("count", True):
         if tests is None:
             return "BLOCKED", "proves nothing: the output reports no test count (set count_regex or count:false)", None
@@ -276,10 +281,10 @@ def verify_check(rid: str, chk: dict, ref: str | None = None, base_sha: str | No
             if base_rec["verdict"] != "OK":
                 return done("BLOCKED", base_rec["reason"], base=base_rec)
         env = _artifact_env(rid, chk)  # one environment for the first run and the retry
-        argv = resolve_argv(rid, chk["runner"], head, base_sha or repo["base_sha"])
-        job = run_job(rid, f"{chk['repo']}-{chk['id']}", argv, wt, env=env, allow=chk.get("env"))
+        argv = resolve_argv(rid, contract.runner_of(chk), head, base_sha or repo["base_sha"])
+        job = run_checked(rid, chk, argv, wt, env)
         if job.exit != 0 and TRANSIENT.search(job.out) and _spend_retry(rid, f"{chk['repo']}:{chk['id']}"):
-            job = run_job(rid, f"{chk['repo']}-{chk['id']}", argv, wt, env=env, allow=chk.get("env"))
+            job = run_checked(rid, chk, argv, wt, env)
         verdict, reason, tests = classify(chk, job)
         ev = store.run_dir(rid) / "evidence" / f"{chk['repo']}--{chk['id'].replace('/', '_')}.log"
         store.atomic_write(ev, job.out[-20000:])
@@ -288,6 +293,42 @@ def verify_check(rid: str, chk: dict, ref: str | None = None, base_sha: str | No
         if wt:
             _drop(repo["path"], wt)
             _drop(repo["path"], contract.wt_path(repo["path"], rid, f"verify-b-{key}"))
+
+
+def wait_ready(url: str, seconds: int, proc: subprocess.Popen) -> bool:
+    import urllib.error
+    import urllib.request
+    end = time.time() + seconds
+    while time.time() < end and proc.poll() is None:
+        try:
+            urllib.request.urlopen(url, timeout=2).close()  # noqa: S310 - the contract allows only an http://127.0.0.1 or localhost URL
+            return True
+        except urllib.error.HTTPError:
+            return True  # the server answered; a 404 on the root is still an app that is up
+        except Exception:  # noqa: BLE001 - not up yet
+            pass
+        time.sleep(0.5)
+    return False
+
+
+def run_checked(rid: str, chk: dict, argv: list[str], wt: Path, env: dict | None) -> Job:
+    """run_job, and for a board row with `start`: bring the web app up in its own process group, wait for ready_url, run the check,
+    stop the app afterwards (also when the check fails or the owner stops the run)."""
+    b = chk.get("board") or {}
+    if not b.get("start"):
+        return run_job(rid, f"{chk['repo']}-{chk['id']}", argv, wt, env=env, allow=chk.get("env"))
+    try:
+        app = subprocess.Popen(b["start"], cwd=wt, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL, start_new_session=True,
+                               env=clean_env(env, chk.get("env")))
+    except (FileNotFoundError, PermissionError) as e:
+        return Job(127, f"cannot start the app {b['start'][0]}: {e}")
+    try:
+        if not wait_ready(b["ready_url"], b.get("ready_timeout", 120), app):
+            return Job(127, f"the app did not answer {b['ready_url']} within {b.get('ready_timeout', 120)}s")
+        return run_job(rid, f"{chk['repo']}-{chk['id']}", argv, wt, env=env, allow=chk.get("env"))
+    finally:
+        kill_group(app.pid)
+        app.wait()
 
 
 def install_dependencies(rid: str, chk: dict, wt: Path) -> str:
@@ -323,12 +364,12 @@ def _prove_failing(rid: str, meta: dict, chk: dict, base_sha: str, cand_wt: Path
         if not argv:
             return {"verdict": "NO", "reason": "negative_control check names no control command"}
     else:
-        argv, wt = resolve_argv(rid, chk["runner"], base_sha, base_sha), _checkout(rid, chk["repo"], repo["path"], base_sha, f"b-{key}")
+        argv, wt = resolve_argv(rid, contract.runner_of(chk), base_sha, base_sha), _checkout(rid, chk["repo"], repo["path"], base_sha, f"b-{key}")
         overlay(rid, chk["repo"], wt, {**chk.get("pins", {}), **pinned_inputs(rid, chk["repo"])})
     if bad := install_dependencies(rid, chk, wt):
         return {"verdict": "NO", "reason": bad}
     job = run_job(rid, f"{chk['repo']}-{chk['id']}-base", argv, wt, allow=chk.get("env"))
-    tests = count_tests(job.out, chk.get("count_regex")) if chk.get("count", True) else None
+    tests = count_tests(job.out, count_rx(chk)) if chk.get("count", True) else None
     rec = {"sha": base_sha, "exit": job.exit, "tests": tests}
     if job.exit in (126, 127) or job.killed:
         return {**rec, "verdict": "NO", "reason": "base proof could not run (missing executable, stop or deadline)"}
@@ -406,9 +447,10 @@ def guard_diff(rid: str, repo_name: str, base: str, cand: str, task: str | None 
     allowed = {m["path"] for m in c.get("migrations", [])} | set(c.get("deps", {}).get(repo_name, {}).get("files", {}))
     protected = DEFAULT_PROTECTED + c.get("protected", [])
     for k in mine:  # the runner entry and the config the contract names are protected too
-        if k["runner"][0] == "make":
+        run = contract.runner_of(k)
+        if run[0] == "make":
             protected.append("Makefile")
-        for tok in k["runner"][1:]:
+        for tok in run[1:]:
             if contract.safe_relpath(tok) and subprocess.run(["git", "cat-file", "-e", f"{base}:{tok}"], cwd=path, capture_output=True).returncode == 0:
                 protected.append(tok)
     bad = []

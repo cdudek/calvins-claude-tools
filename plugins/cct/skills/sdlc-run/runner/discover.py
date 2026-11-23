@@ -191,6 +191,28 @@ def plan(repos: list[str], slug: str, title: str | None = None) -> str:
     return rid
 
 
+def pin_bases(rid: str, c: dict, meta: dict) -> None:
+    """Resolve each `repos.<repo>.base` to a full SHA (fetched from origin), write it into the contract (so it is in the bundle digest)
+    and cut the run branch from it. Only before any work: a branch that already moved cannot change base."""
+    for name, spec in (c.get("repos") or {}).items():
+        if name not in meta["repos"]:
+            raise SdlcError(f"contract repos.{name} is not a repo of this run")
+        spec.pop("base_sha", None)
+        r = meta["repos"][name]
+        if not spec.get("base"):
+            if r.get("base_ref"):
+                raise SdlcError(f"{name}: the run branch was cut from {r['base_ref']}; start a new run to build on the default branch")
+            continue
+        sha = contract.resolve_base(r, spec["base"])
+        tip = git(r["path"], "rev-parse", r["branch"])
+        if tip not in (r["base_sha"], sha):
+            raise SdlcError(f"{name}: the run branch already has commits; start a new run for a new base")
+        if tip != sha:
+            git(r["path"], "branch", "-f", r["branch"], sha)
+        spec["base_sha"], r["base_sha"], r["base_ref"] = sha, sha, spec["base"]
+    store.save_meta(rid, meta)
+
+
 def draft(rid: str, plan_file: str | None, contract_file: str | None, tasks_file: str | None,
           inputs: list[str], deps: list[str]) -> list[str]:
     """Ingest the planner's files (written outside the run folder) before approval. Returns blockers still open."""
@@ -241,6 +263,7 @@ def draft(rid: str, plan_file: str | None, contract_file: str | None, tasks_file
             c.setdefault("deps", {}).setdefault(repo, {})["files"] = {
                 f.relative_to(d / "deps" / repo).as_posix(): store.sha256(f.read_bytes())
                 for f in (d / "deps" / repo).rglob("*") if f.is_file()}
+        pin_bases(rid, c, meta)
         store.write_json(d / "contract.json", c)
     engine.validate_plan(rid)  # a cycle is a planning error
     cdoc = store.read_json(d / "contract.json")
@@ -314,6 +337,33 @@ def _replaces_rows(tasks: dict, meta: dict) -> list[str]:
     return out
 
 
+def _base_lines(c: dict, meta: dict) -> list[str]:
+    """One line per repo that builds on an approved base ref instead of its default branch."""
+    out = []
+    for n, s in (c.get("repos") or {}).items():
+        if s.get("base") and n in meta["repos"]:
+            r = meta["repos"][n]
+            out.append(f"- **base:** {_code(n)}: {_code(s['base'])} @ `{s.get('base_sha', 'unresolved')}` "
+                       f"({contract.base_ahead(r, s['base_sha']) if s.get('base_sha') else '?'} commits not on {r['default_branch']}); "
+                       f"`sdlc pr` still targets {r['default_branch']}, so the PR also carries these base commits")
+    return ["", "## Base", ""] + out if out else []
+
+
+def _spec_lines(c: dict) -> list[str]:
+    """Spec id, its checks and task in one table, uncovered and waived items first, then the waivers with their reasons."""
+    rows = contract.spec_rows(c)
+    if not rows:
+        return []
+    cell = lambda x: _one(x, 90).replace("|", "\\|")  # noqa: E731
+    out = ["", "## Spec coverage", "", "| Spec | Text | Checks | Task | State |", "|---|---|---|---|---|"]
+    for r in rows:
+        state = "WAIVED" if r["waiver"] and not r["checks"] else "covered" if r["checks"] else "UNCOVERED"
+        out.append(f"| {cell(r['id'])} | {cell(r['text'])} | {cell(', '.join(r['checks']) or '-')} | {cell(', '.join(r['tasks']) or '-')} | {state} |")
+    waived = [r for r in rows if r["waiver"]]
+    return out + ["", "## Waived spec items", ""] + (
+        [f"- **{_code(r['id'])}:** {_one(r['waiver'])}" for r in waived] or ["- none"])
+
+
 def screen(rid: str) -> Path:
     """The single approval screen: plan, the actual checks with expected values, dependency diff, destinations, caps."""
     d = store.run_dir(rid)
@@ -324,7 +374,8 @@ def screen(rid: str) -> Path:
     rows = ["| Check | Repo | Command | Expect | Where | Pinned |", "|---|---|---|---|---|---|"]
     for k in c["checks"]:
         cell = lambda x: _one(x, 90).replace("|", "\\|")  # noqa: E731 - one table cell, no pipes, one line
-        rows.append(f"| {cell(k['id'])} | {cell(k['repo'])} | {cell(' '.join(k['runner']))} | {cell(k['expect']['kind'])}"
+        shown = f"board check {k['board']['spec']} ({k['board']['expected_rows']} rows)" if k.get("kind") == "board" else " ".join(k["runner"])
+        rows.append(f"| {cell(k['id'])} | {cell(k['repo'])} | {cell(shown)} | {cell(k['expect']['kind'])}"
                     f"{cell('; ' + json.dumps(k['expect'].get('value'))) if 'value' in k['expect'] else ''} | {cell(k.get('site', 'local'))} | {cell(', '.join(k.get('pins', {})) or '-')} |")
     import deps as deps_mod
     ui = [k for k in c["checks"] if k.get("design")]
@@ -337,13 +388,14 @@ def screen(rid: str) -> Path:
     lines = [f"# Approve run {rid}", "", f"**Bundle digest:** `{contract.bundle_digest(rid)[:16]}`", ""] + (hot + [""] if hot else []) + [
              store.read_json(d / 'run.json')['title'], "",
              "## Plan", "", (d / "plan.md").read_text(), "",
-             "## Repos", ""] + [f"- {_code(n)}: base `{r['base_sha'][:9]}`, branch {_code(r['branch'])}" for n, r in meta["repos"].items()] + [
+             "## Repos", ""] + [f"- {_code(n)}: base `{r['base_sha'][:9]}`, branch {_code(r['branch'])}" for n, r in meta["repos"].items()] + _base_lines(c, meta) + [
              "", "## Milestones", ""] + [f"- {_code(m['id'])} ({_one(m['repo'])}): {len(m.get('tasks', []))} tasks, needs {_one(m.get('needs') or 'nothing')}" for m in tasks.get("milestones", [])] + [
              "", "## Paths each task owns", ""] + [f"- {_code(t['id'])} ({_one(m['repo'])}): {', '.join(_code(p) for p in t.get('paths', [])) or 'everything (no paths declared)'}"
                                                    for m in tasks.get("milestones", []) for t in m.get("tasks", [])] + [
              "", "## Pinned inputs (written by the runner before any task)", ""] + (
         [f"- {'**PROTECTED — sensitive:** ' if x else ''}{_code(f'{r}:{p}')}\n\n{_fence(df, 'diff')}" for r, p, df, x in pinned] or ["- none"]) + [
              "", "## Tests a task may delete or rewrite", ""] + (repl or ["- none"]) + [
+             ] + _spec_lines(c) + [
              "", "## Checks that decide the result", ""] + rows + [
              "", "## Dependency and lockfile changes", ""] + (
         [f"- {_code(r)}: applied by the runner, then a frozen install with install scripts and source builds off; a manager with no such flag is not run\n\n{_fence(deps_mod.diff_text(rid, r), 'diff')}" for r in deps]

@@ -9,6 +9,7 @@ from __future__ import annotations
 
 import re
 import subprocess
+import sys
 from pathlib import Path
 
 import store
@@ -118,7 +119,7 @@ def validate_placeholders(c: dict) -> None:
     """{base}, {head} and {producer_sha:<repo>} are the only substitutions; a producer_sha must name a repo the contract knows."""
     repos = {k["repo"] for k in c.get("checks", [])} | {e["producer"] for e in c.get("edges", [])} | {e["consumer"] for e in c.get("edges", [])}
     for k in c.get("checks", []):
-        for a in [*k["runner"], *(k["expect"].get("control") or [])]:
+        for a in [*runner_of(k), *(k["expect"].get("control") or [])]:
             if not isinstance(a, str):
                 continue
             if BAD_PLACEHOLDER.search(a):
@@ -128,10 +129,43 @@ def validate_placeholders(c: dict) -> None:
                     raise SdlcError(f"check {k['id']}: {{producer_sha:{m[1]}}} names a repo the contract does not know")
 
 
+READY_URL = re.compile(r"^http://(127\.0\.0\.1|localhost)(:\d{2,5})?(/[A-Za-z0-9._~/%?&=-]*)?$")
+BOARD_KEYS = {"spec", "expected_rows", "start", "ready_url", "ready_timeout"}
+
+
+def runner_of(chk: dict) -> list[str]:
+    """The argv a check runs. A `"kind": "board"` row names no runner path: the runner's own board.py runs the pinned spec."""
+    if chk.get("kind") == "board":
+        b = chk["board"]
+        return [sys.executable, str(Path(__file__).with_name("board.py")), "check", b["spec"], "--expected-rows", str(b["expected_rows"])]
+    return chk["runner"]
+
+
+def validate_board_row(chk: dict) -> None:
+    """`{"kind": "board", "board": {"spec", "expected_rows", "start"?, "ready_url"?, "ready_timeout"?}, "pins": {<spec>: sha256}, ...}`:
+    the spec is a pinned input, the row count is the approved one, and `start` (an argv the contract approved) brings the web app up
+    for the check and is stopped afterwards."""
+    b, who = chk.get("board"), f"check {chk['id']}"
+    if not isinstance(b, dict) or set(b) - BOARD_KEYS:
+        raise SdlcError(f"{who}: board must be an object with only {sorted(BOARD_KEYS)}")
+    if not safe_relpath(b.get("spec")) or b["spec"] not in chk.get("pins", {}):
+        raise SdlcError(f"{who}: board.spec must be a relative path listed in pins, so a modified copy is refused")
+    n = b.get("expected_rows")
+    if not (isinstance(n, int) and not isinstance(n, bool) and n > 0):
+        raise SdlcError(f"{who}: board.expected_rows must be a whole number above 0")
+    start, url, wait = b.get("start"), b.get("ready_url"), b.get("ready_timeout", 120)
+    if start is not None and not (isinstance(start, list) and start and all(isinstance(a, str) for a in start) and isinstance(url, str)):
+        raise SdlcError(f"{who}: board.start is an argv list and needs board.ready_url")
+    if url is not None and not (isinstance(url, str) and READY_URL.match(url)):
+        raise SdlcError(f"{who}: board.ready_url must be an http://127.0.0.1 or http://localhost URL")
+    if not (isinstance(wait, int) and not isinstance(wait, bool) and 1 <= wait <= 600):
+        raise SdlcError(f"{who}: board.ready_timeout is whole seconds from 1 to 600")
+
+
 def validate_board_checks(c: dict) -> None:
     """A board check's spec is a pinned input and its row count comes from the approved row, never from the spec file."""
     for k in c.get("checks", []):
-        r = k["runner"]
+        r = k.get("runner") or []
         for i, a in enumerate(r):
             if isinstance(a, str) and a.rsplit("/", 1)[-1] == "board.py" and r[i + 1:i + 2] == ["check"]:
                 spec = r[i + 2] if len(r) > i + 2 else None
@@ -194,17 +228,153 @@ def validate_contract(c: dict) -> None:
     ids = set()
     for chk in c.get("checks", []):
         for f in CHECK_FIELDS:
-            if f not in chk:
+            if f not in chk and not (f == "runner" and chk.get("kind") == "board"):
                 raise SdlcError(f"contract check {chk.get('id', '?')} lacks {f}")
         if chk["id"] in ids:
             raise SdlcError(f"duplicate contract check {chk['id']}")
         ids.add(chk["id"])
-        if not isinstance(chk["runner"], list) or not chk["runner"]:
+        if chk.get("kind") == "board":
+            validate_board_row(chk)
+        elif not isinstance(chk.get("runner"), list) or not chk["runner"]:
             raise SdlcError(f"check {chk['id']}: runner must be an argv list")
         if chk["expect"].get("kind") not in ("pass", "fails_on_base", "negative_control"):
             raise SdlcError(f"check {chk['id']}: expect.kind must be pass, fails_on_base or negative_control")
     validate_placeholders(c)
     validate_board_checks(c)
+    validate_bases(c)
+    validate_spec(c)
+
+
+# ---- the spec the checks must cover (4.2) -------------------------------------------------------------------------------
+SPEC_ID = re.compile(r"^[A-Za-z0-9][A-Za-z0-9._-]{0,39}$")
+
+
+def validate_spec(c: dict) -> None:
+    """`spec`: [{"id", "text", "source"?}] is part of the contract and so of the approved bundle digest. A check's `covers` names spec ids
+    (unknown ids are an error). Every spec item needs a covering check or a named waiver `spec_waivers: [{"id", "reason"}]`.
+    A contract with no `spec` key has none of this."""
+    spec, waivers = c.get("spec"), c.get("spec_waivers", [])
+    known: set[str] = set()
+    if spec is not None:
+        if not isinstance(spec, list) or not spec:
+            raise SdlcError("spec must be a non-empty list of {id, text, source}")
+        for it in spec:
+            if not (isinstance(it, dict) and isinstance(it.get("id"), str) and SPEC_ID.match(it["id"]) and isinstance(it.get("text"), str)
+                    and it["text"].strip() and set(it) <= {"id", "text", "source"} and isinstance(it.get("source", ""), str)):
+                raise SdlcError(f"spec item {it.get('id', it) if isinstance(it, dict) else it!r} needs an id, a text and optionally a source")
+            if it["id"] in known:
+                raise SdlcError(f"duplicate spec id {it['id']}")
+            known.add(it["id"])
+    for chk in c.get("checks", []):
+        cov = chk.get("covers", [])
+        if not isinstance(cov, list) or not all(isinstance(i, str) for i in cov):
+            raise SdlcError(f"check {chk['id']}: covers must be a list of spec ids")
+        if unknown := [i for i in cov if i not in known]:
+            raise SdlcError(f"check {chk['id']} covers unknown spec id {', '.join(unknown)}")
+    if spec is None:
+        if waivers:
+            raise SdlcError("spec_waivers need a spec")
+        return
+    waived: set[str] = set()
+    for w in waivers if isinstance(waivers, list) else [None]:
+        if not (isinstance(w, dict) and w.get("id") in known and isinstance(w.get("reason"), str) and w["reason"].strip() and set(w) <= {"id", "reason"}):
+            raise SdlcError(f"a spec waiver needs the id of a spec item and a reason: {w!r}")
+        waived.add(w["id"])
+    covered = {i for chk in c.get("checks", []) for i in chk.get("covers", [])}
+    if missing := [i for i in sorted(known) if i not in covered and i not in waived]:
+        raise SdlcError(f"spec items with no covering check and no named waiver: {', '.join(missing)}")
+
+
+def spec_rows(c: dict) -> list[dict]:
+    """Per spec item: its text, covering checks, their tasks and the waiver, uncovered and waived items first."""
+    waivers = {w["id"]: w["reason"] for w in c.get("spec_waivers", [])}
+    out = []
+    for it in c.get("spec") or []:
+        cov = [k for k in c.get("checks", []) if it["id"] in k.get("covers", [])]
+        out.append({"id": it["id"], "text": it["text"], "source": it.get("source", ""), "checks": [k["id"] for k in cov],
+                    "tasks": sorted({k["task"] for k in cov if k.get("task")}), "waiver": waivers.get(it["id"])})
+    return sorted(out, key=lambda r: (bool(r["checks"]) and not r["waiver"], r["waiver"] is None, r["id"]))
+
+
+def spec_status(rid: str, sealed: bool) -> list[dict]:
+    """PASS, FAIL, WAIVED or PENDING per spec item, rolled up from the receipts of its covering checks. PASS needs every covering check to
+    have passed on the current head with a receipt of this bundle, and the final gate to have sealed those heads (`sealed`)."""
+    c = store.read_json(store.run_dir(rid) / "contract.json")
+    meta = store.load_meta(rid)
+    out = []
+    for r in spec_rows(c):
+        if not r["checks"]:
+            out.append({**r, "status": "WAIVED"})
+            continue
+        states = []
+        for k in (k for k in c["checks"] if k["id"] in r["checks"]):
+            rec = read_receipt(rid, k)
+            b = rec["body"] if rec else None
+            try:
+                fresh = b and b["bundle"] == bundle_digest(rid) and b["pins"] == pins_digest(k) and b["sha"] == current_head(meta, k["repo"])
+            except SdlcError:
+                fresh = False
+            states.append("PENDING" if not fresh else ("PASS" if b["verdict"] == "PASS" else "FAIL"))
+        status = "FAIL" if "FAIL" in states else "PENDING" if "PENDING" in states or not sealed else "PASS"
+        out.append({**r, "status": status})
+    return out
+
+
+def spec_report(rid: str, sealed: bool) -> list[str]:
+    return [f"SPEC {r['id']} {r['status']}: {', '.join(r['checks']) or ('waived: ' + r['waiver'])}" for r in spec_status(rid, sealed)]
+
+
+# ---- an approved base per repo (4.2) -----------------------------------------------------------------------------------
+BASE_REF = re.compile(r"^[A-Za-z0-9][A-Za-z0-9._/-]{0,99}$")
+
+
+def validate_bases(c: dict) -> None:
+    """`repos.<repo>.base` is a branch to build on instead of the default branch; `base_sha` is what the runner resolved it to."""
+    repos = c.get("repos")
+    if repos is None:
+        return
+    if not isinstance(repos, dict):
+        raise SdlcError("contract repos must map a repo name to {base}")
+    for name, r in repos.items():
+        ref, sha = (r.get("base"), r.get("base_sha")) if isinstance(r, dict) and set(r) <= {"base", "base_sha"} else (0, 0)
+        if ref == 0 or not (ref is None or (isinstance(ref, str) and BASE_REF.match(ref) and ".." not in ref and "//" not in ref
+                                            and not ref.endswith(("/", ".lock")))):
+            raise SdlcError(f"repos.{name}: base must be a branch name (letters, digits, . _ - /)")
+        if sha is not None and not (ref and isinstance(sha, str) and re.fullmatch(r"[0-9a-f]{40}", sha)):
+            raise SdlcError(f"repos.{name}: base_sha must be a full SHA of its base")
+
+
+def resolve_base(repo: dict, ref: str) -> str:
+    """The full SHA of `ref`, fetched from origin when the repo has one."""
+    p = repo["path"]
+    if repo.get("remote"):
+        r = subprocess.run(["git", "fetch", "-q", "origin", f"+refs/heads/{ref}:refs/remotes/origin/{ref}"], cwd=p, capture_output=True, text=True)
+        if r.returncode:
+            raise SdlcError(f"BLOCKED env cannot fetch origin/{ref}: {r.stderr.strip()[:120]}")
+        return git(p, "rev-parse", "--verify", f"refs/remotes/origin/{ref}^{{commit}}")
+    return git(p, "rev-parse", "--verify", f"refs/heads/{ref}^{{commit}}")
+
+
+def base_ahead(repo: dict, sha: str) -> int:
+    d = repo["default_branch"]
+    return int(git(repo["path"], "rev-list", "--count", f"{'refs/remotes/origin/' if repo.get('remote') else 'refs/heads/'}{d}..{sha}"))
+
+
+def base_problem(rid: str) -> str:
+    """Empty when every approved base ref still is the SHA the owner approved; otherwise which ref moved. The run never follows a ref."""
+    meta = store.load_meta(rid)
+    for name, r in (store.read_json(store.run_dir(rid) / "contract.json").get("repos") or {}).items():
+        if not r.get("base"):
+            continue
+        if not r.get("base_sha") or name not in meta["repos"]:
+            return f"base {r['base']} of {name} was never resolved (run `sdlc draft`)"
+        try:
+            now = resolve_base(meta["repos"][name], r["base"])
+        except SdlcError as e:
+            return str(e)
+        if now != r["base_sha"]:
+            return f"base ref {r['base']} of {name} moved from {r['base_sha'][:9]} to {now[:9]}; the run does not follow it (start a new run to build on the new tip)"
+    return ""
 
 
 def bundle_digest(rid: str) -> str:
@@ -254,6 +424,8 @@ def approve(rid: str, by: str) -> dict:
     validate_contract(c)
     if problems := coverage(rid):
         raise SdlcError("not approvable: " + "; ".join(problems))
+    if problem := base_problem(rid):
+        raise SdlcError("not approvable: " + problem)
     cap = c.get("limits", {}).get("max_dispatches")
     if not isinstance(cap, int) or cap < 1:
         raise SdlcError("not approvable: limits.max_dispatches must be set (a finite dispatch cap)")
