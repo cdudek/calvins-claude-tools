@@ -323,7 +323,8 @@ def test_frame_and_container_shapes_are_validated():
 def test_surface_shapes_and_the_paths_and_env_they_may_name(tmp_path):
     good_ext = {"kind": "chrome-extension", "dist": "dist/ext", "page": "popup.html?tab=1"}
     good_app = {"kind": "electron", "app": "out/main.js", "env": {"APP_THEME": "dark"}, "args": ["--lang=en"]}
-    assert board.validate_surface(good_ext) and board.validate_surface(good_app)
+    allow = {"args": ["--lang"], "env": ["APP_THEME"]}
+    assert board.validate_surface(good_ext) and board.validate_surface(good_app, allow)
     for bad in ({**good_ext, "dist": "../x"}, {**good_ext, "dist": "/abs"}, {**good_ext, "page": "https://evil/x"}, {**good_ext, "page": "../a.html"},
                 {**good_ext, "page": "a b.html"}, {**good_app, "app": "../main.js"}, {**good_app, "app": "/usr/bin/x"},
                 *({**good_app, "env": {k: "x"}} for k in ("PATH", "HOME", "NODE_OPTIONS", "NODE_PATH", "ELECTRON_RUN_AS_NODE", "ELECTRON_ENABLE_LOGGING",
@@ -395,13 +396,14 @@ def test_electron_reuses_the_hidden_launch_waits_for_the_first_window_and_its_lo
     (tmp_path / "out").mkdir()
     (tmp_path / "out" / "main.js").write_text("")
     p = _Playwright()
-    page, close, nav = board._launch(p, {"kind": "electron", "app": "out/main.js", "env": {"APP_X": "1"}, "args": ["--lang=en"]}, None, tmp_path)
+    page, close, nav = board._launch(p, {"kind": "electron", "app": "out/main.js", "env": {"APP_X": "1"}, "args": ["--lang=en"]}, None, tmp_path,
+                                     {"args": ["--lang"], "env": ["APP_X"]})
     kw = p.calls[0]
     assert page is p.win and p.win.waited == ["load"] and nav is None
     assert kw["args"][0] == "--require" and "--disable-renderer-backgrounding" in kw["args"] and kw["args"][-2] == str((tmp_path / "out" / "main.js").resolve())
     assert kw["args"][-1] == "--lang=en" and kw["env"]["SDLC_HIDDEN"] == "1" and kw["env"]["APP_X"] == "1" and kw["cwd"] == str(tmp_path)
     with pytest.raises(ValueError, match="inside the repo"):
-        board._launch(p, {"kind": "electron", "app": "../../x.js"}, None, tmp_path)
+        board._launch(p, {"kind": "electron", "app": "../../x.js"}, None, tmp_path, None)
 
 
 # ---- 4 contract rows: kind board, no hard-coded runner path -----------------------------------------------------------
@@ -767,3 +769,32 @@ def test_a_check_id_is_one_safe_name_and_the_job_label_is_one_file_name(tmp_path
     row["id"] = "../../../escape"  # a hand-edited contract that skipped validation still cannot write outside jobs/
     verify.run_checked(rid, row, [sys.executable, "-c", "x"], repo, None)
     assert not (tmp_path / "escape-app.pid").exists() and not any(p.name.startswith("escape") for p in tmp_path.rglob("*escape*") if p.is_file())
+
+
+def test_every_path_that_can_launch_a_surface_enforces_the_contract_allowlist(tmp_path, capsys):
+    unlisted = electron(args=["--theme=dark"], env={"APP_THEME": "dark"})
+    with pytest.raises(ValueError, match="surface_allow"):
+        board.validate_surface(unlisted)  # enforcement is the default: a new caller cannot forget it
+    assert board.validate_surface(unlisted, ALLOW)
+    # _launch (used by measure and by the aggregate path), with no allowlist or one that does not list the arg
+    for allow in (None, {"args": ["--page"], "env": ["APP_THEME"]}, {"args": ["--theme"], "env": []}):
+        with pytest.raises(ValueError, match="surface_allow"):
+            board._launch(_Playwright(), unlisted, None, tmp_path, allow)
+    # the mapping: `boards rows` and `boards index --mapping` refuse an entry whose surface the contract row does not allow
+    m = {"boards": [{"board": "a.dc.html", "entry": "E", "surface": unlisted, "theme": "light"}]}
+    with pytest.raises(ValueError, match="entry E: surface.* not in the contract row's surface_allow"):
+        board.validate_mapping(m)
+    board.validate_mapping(m, ALLOW)
+    with pytest.raises(ValueError, match="entry E"):
+        board.canvas_rows({"boards": {}, "viewport": {"width": 1, "height": 1}, "themes": ["light"]}, m)
+    mf = tmp_path / "m.json"
+    mf.write_text(json.dumps(m))
+    assert sdlc.main(["boards", "rows", str(mf), "--index", str(mf), "--out", str(tmp_path / "s.json")]) == 2
+    assert "surface_allow" in capsys.readouterr().out
+    # a non-aggregate (per-node) row: the check refuses the unlisted arg and env before any launch
+    spec = {"target": unlisted, "rows": [{"id": "r", "locator": {"css": "body"}, "prop": "width", "expected": "1px", "tolerance_px": 1}]}
+    f = tmp_path / "spec.json"
+    f.write_text(json.dumps(spec))
+    assert board.main(["check", str(f)]) == 2 and "not in the contract row's surface_allow" in capsys.readouterr().out
+    assert board.main(["check", str(f), "--surface-allow", json.dumps({"args": ["--theme"], "env": ["OTHER"]})]) == 2
+    assert "surface.env APP_THEME is not in the contract row's surface_allow.env" in capsys.readouterr().out

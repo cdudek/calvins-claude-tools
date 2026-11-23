@@ -118,7 +118,7 @@ def extract(board: dict, tokens: dict | None = None) -> dict:
             mapping = {"boards": [entry], **{k: board[k] for k in ("themes", "tolerances", "position") if k in board}}
             idx = index_export(board["root"], board.get("themes", THEMES), board.get("viewport"), board.get("attr"),
                                board.get("executable"), [board["file"]], _containers(mapping))
-            out = canvas_rows(idx, mapping)
+            out = canvas_rows(idx, mapping, None, board.get("surface_allow"))
             rows += out["rows"]
             unsupported += out["unsupported"]
     else:
@@ -219,9 +219,9 @@ def validate_allow(allow, who: str = "surface_allow") -> dict:
     return {"args": list(allow.get("args", [])), "env": list(allow.get("env", []))}
 
 
-def validate_surface(s, allow: dict | None = None, enforce: bool = False) -> dict:
+def validate_surface(s, allow: dict | None = None, enforce: bool = True) -> dict:
     """The surface of one entry, or ValueError. Paths are checked lexically here and against the real tree (symlinks) at check time.
-    With `enforce` an Electron surface may only carry the args and env keys the approved contract row lists (`allow`): the mapping and
+    By default (`enforce`) an Electron surface may only carry the args and env keys the approved contract row lists (`allow`): the mapping and
     spec files cannot widen it. The shape rules and the denylist stay as a second layer."""
     if not isinstance(s, dict) or s.get("kind") not in ("chrome-extension", "electron"):
         raise ValueError('surface.kind must be "chrome-extension" or "electron" (a web route needs no surface)')
@@ -279,7 +279,7 @@ def _ext_id(ctx) -> str:
     return sw.url.split("/")[2]
 
 
-def _launch(p, target: dict, executable: str | None, root: Path | None = None):
+def _launch(p, target: dict, executable: str | None, root: Path | None = None, allow: dict | None = None):
     """(page, closer, base) for a target: base is the URL prefix rows navigate under (None for Electron, which has one window)."""
     import tempfile
     root = root or Path.cwd()
@@ -293,7 +293,7 @@ def _launch(p, target: dict, executable: str | None, root: Path | None = None):
                 page.goto(url)
             return page, browser.close, (target.get("url") or "").rstrip("/")
         if kind == "chrome-extension":
-            ext = str(_inside(root, validate_surface(target)["dist"]))
+            ext = str(_inside(root, validate_surface(target, allow)["dist"]))
             ctx = p.chromium.launch_persistent_context(
                 tempfile.mkdtemp(prefix="sdlc-ext-"),
                 executable_path=executable,
@@ -302,7 +302,7 @@ def _launch(p, target: dict, executable: str | None, root: Path | None = None):
             )
             return ctx.new_page(), ctx.close, f"chrome-extension://{_ext_id(ctx)}"
         if kind == "electron":
-            s = validate_surface(target)
+            s = validate_surface(target, allow)
             args, env = electron_hidden(str(_inside(root, s["app"])))
             app = p._electron.launch(args=[*args, *s.get("args", [])], env={**env, **s.get("env", {})}, cwd=str(root))  # noqa: SLF001
             page = app.first_window()
@@ -340,13 +340,13 @@ _CSS = "(el, p) => getComputedStyle(el).getPropertyValue(p)"
 
 
 
-def _read(target: dict, rows: list[dict], executable: str | None = None, evidence_dir: str | None = None) -> list[dict]:
+def _read(target: dict, rows: list[dict], executable: str | None = None, evidence_dir: str | None = None, allow: dict | None = None) -> list[dict]:
     """Per row: {"value": measured string/number or None, "why": ...} (the per-node rows of structured and html boards)."""
     from playwright.sync_api import sync_playwright
 
     out: list[dict] = []
     with sync_playwright() as p:
-        page, close, _ = _launch(p, target, executable)
+        page, close, _ = _launch(p, target, executable, None, allow)
         cache: dict = {}
         try:
             for row in rows:
@@ -413,10 +413,10 @@ def compare(measured: float | str, expected: str, tol_px: float) -> bool:
     return abs(got - want) <= tol_px
 
 
-def measure(target: dict, rows: list[dict], executable: str | None = None, evidence_dir: str | None = None) -> list[dict]:
+def measure(target: dict, rows: list[dict], executable: str | None = None, evidence_dir: str | None = None, allow: dict | None = None) -> list[dict]:
     """One result per row: {id, status PASS|FAIL, why, expected, got, tolerance_px}."""
     results = []
-    for row, got in zip(rows, _read(target, rows, executable, evidence_dir), strict=True):
+    for row, got in zip(rows, _read(target, rows, executable, evidence_dir, allow), strict=True):
         res = {"id": row["id"], "expected": row["expected"], "tolerance_px": row.get("tolerance_px", TOL)}
         if got.get("value") is None:
             results.append({**res, "status": "FAIL", "why": got["why"], "got": None})
@@ -775,9 +775,9 @@ def select_frame(entry: dict, m: dict, who: str) -> int:
     return hit[0]
 
 
-def check_frames(index: dict | list[dict], mapping: dict) -> None:
+def check_frames(index: dict | list[dict], mapping: dict, allow: dict | None = None) -> None:
     """Every framed entry names exactly one frame of its board (boards missing from the index are rows' business)."""
-    validate_mapping(mapping)
+    validate_mapping(mapping, allow)
     for ix in index if isinstance(index, list) else [index]:
         for m in mapping["boards"]:
             f = m.get("board_file") or m["board"]
@@ -796,7 +796,7 @@ def _want_container(ix: dict, m: dict) -> None:
         raise ValueError(f"entry {m.get('entry') or m['board']}: the index was built without container {sel!r}: run `boards index --mapping` again")
 
 
-def validate_mapping(mapping: dict) -> None:
+def validate_mapping(mapping: dict, allow: dict | None = None) -> None:
     """The mapping file's shape: entries of board (or board_file), route (a path, or null), surface (an extension or Electron app),
     frame (one frame of a multi-frame board), state, theme ("light", "dark" or "light, dark"), viewport ([w, h] or null),
     min_match and tolerances (overrides). Other keys (entry, series, capture, note ...) are bookkeeping."""
@@ -821,7 +821,7 @@ def validate_mapping(mapping: dict) -> None:
             if rt:
                 raise ValueError(f"entry {who}: give a route or a surface, not both")
             try:
-                validate_surface(m["surface"])
+                validate_surface(m["surface"], allow)  # the contract row's allowlist, or none: a mapping cannot widen it
             except ValueError as e:
                 raise ValueError(f"entry {who}: {e}") from None
         if m.get("frame") is not None:
@@ -851,11 +851,11 @@ def _values(n: dict, props: list[str]) -> list[str]:
     return [n["style"].get(p, "") if p in CANVAS_STYLE else _fmt(n["box"][p], p) for p in props]
 
 
-def canvas_rows(index: dict | list[dict], mapping: dict, repo: str | None = None) -> dict:
+def canvas_rows(index: dict | list[dict], mapping: dict, repo: str | None = None, allow: dict | None = None) -> dict:
     """One aggregate row per mapping entry and theme: every node of the board (of the selected frame) whose locator is unique there,
     with the values of the token properties. Nodes that share a locator are listed on the row as unmeasurable, never dropped silently.
     What cannot be measured at all goes under unsupported. `index` is one index, or one per viewport; `repo` keeps one app's entries."""
-    validate_mapping(mapping)
+    validate_mapping(mapping, allow)
     indexes = index if isinstance(index, list) else [index]
     rows: list[dict] = []
     unsupported: list[dict] = []
@@ -974,7 +974,7 @@ def _app_nodes(page, nav: str | None, row: dict, cur: dict) -> list[dict]:
     return page.evaluate(_NODES, [CANVAS_STYLE, [], []])["nodes"]
 
 
-def measure_rows(spec: dict, rows: list[dict], executable: str | None, root: Path) -> list[dict]:
+def measure_rows(spec: dict, rows: list[dict], executable: str | None, root: Path, allow: dict | None = None) -> list[dict]:
     """Judge every row. All rows of one surface run in one browser session: one launch for the web rows, one per extension or app."""
     from playwright.sync_api import sync_playwright
 
@@ -986,7 +986,7 @@ def measure_rows(spec: dict, rows: list[dict], executable: str | None, root: Pat
         for idxs in groups.values():
             s = rows[idxs[0]].get("surface") or {"kind": "web", **spec.get("target", {})}
             page, close, nav = _launch(p, s if s.get("kind") != "web" else {"kind": "web", "url": spec.get("target", {}).get("url", "")},
-                                       executable, root)
+                                       executable, root, allow)
             cur: dict = {}
             try:
                 for i in idxs:
@@ -1020,7 +1020,7 @@ def _check_aggregate(spec: dict, rows: list[dict], exe: str | None, allow: dict 
             raise ValueError(why)
         s = r.get("surface")
         if s:
-            validate_surface(s, allow, enforce=True)
+            validate_surface(s, allow)
             _inside(root, s.get("dist") or s["app"])
         elif not str(r.get("route", "")).startswith("/"):
             raise ValueError(f"row {r.get('id')}: a web row needs a route")
@@ -1030,7 +1030,7 @@ def _check_aggregate(spec: dict, rows: list[dict], exe: str | None, allow: dict 
             print(f"env: browser unavailable ({why})")
             return 127
     try:
-        results = measure_rows(spec, rows, exe, root)
+        results = measure_rows(spec, rows, exe, root, allow)
     except EnvError as e:
         print(f"env: browser unavailable ({e})")
         return 127
@@ -1072,17 +1072,20 @@ def _check(spec_path: str, flags: list[str] | None = None) -> int:
     if len(rows) < expected:
         print(f"FAIL only {len(rows)} rows, the approved contract row expects {expected}")
         return 1
+    allow = json.loads(_arg(flags, "--surface-allow", "null"))
     if any("nodes" in r for r in rows):
         if not all("nodes" in r for r in rows):
             raise ValueError("a spec holds aggregate rows or per-node rows, not both")
-        return _check_aggregate(spec, rows, exe, json.loads(_arg(flags, "--surface-allow", "null")))
+        return _check_aggregate(spec, rows, exe, allow)
+    if target.get("kind") in ("electron", "chrome-extension"):
+        validate_surface(target, allow)  # per-node rows launch the surface too, with the same contract allowlist
     if target.get("kind") != "electron":
         ok, why = browser_available(exe)
         if not ok:
             print(f"env: browser unavailable ({why})")
             return 127
     try:
-        results = measure(target, rows, exe, spec.get("evidence_dir"))
+        results = measure(target, rows, exe, spec.get("evidence_dir"), allow)
     except EnvError as e:
         print(f"env: browser unavailable ({e})")
         return 127
@@ -1132,8 +1135,9 @@ def _index_cli(argv: list[str]) -> int:
     out = _out(argv, "index.json")  # refuse a records path before any work, whether or not a browser exists
     root = _safe(argv[0])
     mapping = json.loads(_safe(_arg(argv, "--mapping")).read_text()) if "--mapping" in argv else None
+    allow = json.loads(_arg(argv, "--surface-allow", "null"))
     if mapping:
-        validate_mapping(mapping)
+        validate_mapping(mapping, allow)
     ok, why = browser_available(_arg(argv, "--executable"))
     if not ok:
         print(f"env: browser unavailable ({why})")
@@ -1162,7 +1166,7 @@ def _index_cli(argv: list[str]) -> int:
     for f in bad:
         print(f"WARN {f}: " + "; ".join(v["error"] for v in idx["boards"][f].values() if v["error"]))
     if mapping:
-        check_frames(idx, mapping)
+        check_frames(idx, mapping, allow)
     return 0
 
 
@@ -1171,7 +1175,7 @@ def _rows_cli(argv: list[str]) -> int:
     files = [argv[i + 1] for i, a in enumerate(argv) if a == "--index"] or ["index.json"]  # one per viewport
     idx = [json.loads(_safe(f).read_text()) for f in files]
     try:
-        res = canvas_rows(idx, mapping, _arg(argv, "--repo"))
+        res = canvas_rows(idx, mapping, _arg(argv, "--repo"), json.loads(_arg(argv, "--surface-allow", "null")))
     except ValueError as e:
         print(f"mapping: {e}")
         return 2
@@ -1208,8 +1212,8 @@ def _main(argv: list[str]) -> int:
         return _extract_cli(argv[1:])
     print("usage: board.py check <spec.json> [--expected-rows N] | extract <board.json> [--tokens t.json] [--out rows.json]\n"
           "       board.py index <export-dir> [--out index.json] [--themes light,dark] [--viewport 1280x800] [--attr data-theme]\n"
-          "                      [--mapping mapping.json] [--container SELECTOR]...\n"
-          "       board.py rows <mapping.json> --index index.json [--index other.json] [--repo web] [--url http://app] [--out spec.json]")
+          "                      [--mapping mapping.json] [--container SELECTOR]... [--surface-allow JSON]\n"
+          "       board.py rows <mapping.json> --index index.json [--index other.json] [--repo web] [--url http://app] [--out spec.json] [--surface-allow JSON]")
     return 2
 
 
