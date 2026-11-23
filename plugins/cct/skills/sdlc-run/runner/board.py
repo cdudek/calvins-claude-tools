@@ -17,6 +17,8 @@ import http.server
 import json
 import os
 import re
+import shutil
+import subprocess
 import sys
 import threading
 import urllib.parse
@@ -279,6 +281,54 @@ def _ext_id(ctx) -> str:
     return sw.url.split("/")[2]
 
 
+def electron_exe(root: Path) -> tuple[str | None, str]:
+    """(path of the repo's own Electron binary, why not): resolved by Node from the repo, so nothing global is used."""
+    r = subprocess.run(["node", "-p", "require('electron')"], cwd=root, capture_output=True, text=True, timeout=30) if shutil.which("node") else None
+    exe = r.stdout.strip() if r and r.returncode == 0 else ""
+    return (exe, "") if exe and os.access(exe, os.X_OK) else (None, "electron is not installed in the repo (node cannot resolve it; install the repo's dependencies)")
+
+
+def _electron_cdp(p, root: Path, args: list[str], env: dict):
+    """The Python Playwright has no `_electron`: start the repo's Electron with a debugging port on 127.0.0.1 and attach over CDP."""
+    import socket
+    import time
+    exe, why = electron_exe(root)
+    if not exe:
+        raise EnvError(why)
+    with socket.socket() as s:
+        s.bind(("127.0.0.1", 0))
+        port = s.getsockname()[1]
+    proc = subprocess.Popen([exe, f"--remote-debugging-port={port}", *args], env=env, cwd=str(root), stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+
+    def close():
+        proc.terminate()
+        try:
+            proc.wait(5)
+        except subprocess.TimeoutExpired:
+            proc.kill()
+
+    browser = None
+    try:
+        for _ in range(120):
+            if proc.poll() is not None:
+                raise EnvError(f"electron exited with {proc.returncode} before a window opened")
+            try:
+                browser = p.chromium.connect_over_cdp(f"http://127.0.0.1:{port}")
+                break
+            except Exception:  # noqa: BLE001 - the debugging port is not listening yet
+                time.sleep(0.25)
+        if browser is None:
+            raise EnvError("electron did not open its debugging port in 30 s")
+        for _ in range(60):
+            if pages := [pg for c in browser.contexts for pg in c.pages]:
+                return pages[0], lambda: (browser.close(), close())
+            time.sleep(0.25)
+        raise EnvError("electron opened no window in 15 s")
+    except BaseException:
+        close()
+        raise
+
+
 def _launch(p, target: dict, executable: str | None, root: Path | None = None, allow: dict | None = None):
     """(page, closer, base) for a target: base is the URL prefix rows navigate under (None for Electron, which has one window)."""
     import tempfile
@@ -304,10 +354,9 @@ def _launch(p, target: dict, executable: str | None, root: Path | None = None, a
         if kind == "electron":
             s = validate_surface(target, allow)
             args, env = electron_hidden(str(_inside(root, s["app"])))
-            app = p._electron.launch(args=[*args, *s.get("args", [])], env={**env, **s.get("env", {})}, cwd=str(root))  # noqa: SLF001
-            page = app.first_window()
+            page, close = _electron_cdp(p, root, [*args, *s.get("args", [])], {**env, **s.get("env", {})})
             page.wait_for_load_state("load")
-            return page, app.close, None
+            return page, close, None
     except ValueError:
         raise
     except Exception as e:  # noqa: BLE001

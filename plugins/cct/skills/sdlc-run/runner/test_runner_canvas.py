@@ -3,6 +3,7 @@ import json
 import socket
 import subprocess
 import sys
+import time
 from pathlib import Path
 
 import board
@@ -387,29 +388,43 @@ class _Win:
 
 
 class _Playwright:
-    """Records the Electron launch without Electron: what it was given, and that it asked for the first window and its load."""
+    """Stands in for Python Playwright, which has no `_electron`: it attaches over CDP to the port the fake Electron was started with."""
     def __init__(self):
-        self.calls, self.win = [], _Win()
-        self._electron = self
-
-    def launch(self, **kw):
-        self.calls.append(kw)
-        win = self.win
-        return type("App", (), {"first_window": lambda s: win, "close": lambda s: None})()
+        self.urls, self.win = [], _Win()
+        ctx = type("Ctx", (), {"pages": [self.win]})()
+        self.chromium = type("Chromium", (), {"connect_over_cdp": lambda s, url: (self.urls.append(url), type("B", (), {"contexts": [ctx], "close": lambda s: None})())[1]})()
 
 
-def test_electron_reuses_the_hidden_launch_waits_for_the_first_window_and_its_load(tmp_path):
+def test_electron_starts_the_repos_binary_with_the_hidden_launch_and_attaches_over_cdp(tmp_path, monkeypatch):
     (tmp_path / "out").mkdir()
     (tmp_path / "out" / "main.js").write_text("")
+    exe = tmp_path / "electron"
+    exe.write_text('#!/bin/sh\nprintf \'%s\\n\' "$@" "$SDLC_HIDDEN $APP_X $PWD" > "$OUT"\nexec sleep 30\n')
+    exe.chmod(0o755)
+    monkeypatch.setattr(board, "electron_exe", lambda root: (str(exe), ""))
     p = _Playwright()
-    page, close, nav = board._launch(p, {"kind": "electron", "app": "out/main.js", "env": {"APP_X": "1"}, "args": ["--lang=en"]}, None, tmp_path,
-                                     {"args": ["--lang"], "env": ["APP_X"]})
-    kw = p.calls[0]
-    assert page is p.win and p.win.waited == ["load"] and nav is None
-    assert kw["args"][0] == "--require" and "--disable-renderer-backgrounding" in kw["args"] and kw["args"][-2] == str((tmp_path / "out" / "main.js").resolve())
-    assert kw["args"][-1] == "--lang=en" and kw["env"]["SDLC_HIDDEN"] == "1" and kw["env"]["APP_X"] == "1" and kw["cwd"] == str(tmp_path)
+    page, close, nav = board._launch(p, {"kind": "electron", "app": "out/main.js", "env": {"APP_X": "1", "OUT": str(tmp_path / "argv")}, "args": ["--lang=en"]},
+                                     None, tmp_path, {"args": ["--lang"], "env": ["APP_X", "OUT"]})
+    try:
+        assert page is p.win and p.win.waited == ["load"] and nav is None
+        for _ in range(40):
+            if (tmp_path / "argv").exists():
+                break
+            time.sleep(0.1)
+        argv = (tmp_path / "argv").read_text().splitlines()
+        port = argv[0].removeprefix("--remote-debugging-port=")
+        assert p.urls == [f"http://127.0.0.1:{port}"] and argv[1] == "--require" and "--disable-renderer-backgrounding" in argv
+        assert argv[-3] == str((tmp_path / "out" / "main.js").resolve()) and argv[-2] == "--lang=en" and argv[-1] == f"1 1 {tmp_path.resolve()}"
+    finally:
+        close()
     with pytest.raises(ValueError, match="inside the repo"):
         board._launch(p, {"kind": "electron", "app": "../../x.js"}, None, tmp_path, None)
+
+
+def test_electron_missing_from_the_repo_is_an_environment_problem_not_a_crash(tmp_path):
+    (tmp_path / "main.js").write_text("")
+    with pytest.raises(board.EnvError, match="electron is not installed in the repo"):
+        board._launch(_Playwright(), {"kind": "electron", "app": "main.js"}, None, tmp_path, None)
 
 
 # ---- 4 contract rows: kind board, no hard-coded runner path -----------------------------------------------------------
