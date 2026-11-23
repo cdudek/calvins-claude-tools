@@ -47,7 +47,7 @@ def test_only_one_plain_runner_call_may_touch_the_records(tmp_path):
     assert bash(f"{RUNNER} status", home, env=env) is None
     for cmd in (f"python3 {RUNNER} check r1; rm -rf ~/.sdlc/runs", f"python3 {RUNNER} check ~/.sdlc && rm -rf ~/.sdlc", f"python3 {RUNNER} status | tee ~/.sdlc/runs/x",
                 f"python3 {RUNNER} status `rm -rf ~/.sdlc`", f"python3 {RUNNER} status $(rm -rf ~/.sdlc)", f"python3 {RUNNER} check x\nrm -rf ~/.sdlc",
-                "./sdlc check ~/.sdlc/runs/r1", "sdlc check ~/.sdlc/runs/r1", f"python3 /tmp/fake/sdlc.py check ~/.sdlc/runs/r1",
+                "./sdlc check ~/.sdlc/runs/r1", "sdlc check ~/.sdlc/runs/r1", "python3 /tmp/fake/sdlc.py check ~/.sdlc/runs/r1",
                 f"X=1 python3 {RUNNER} check ~/.sdlc"):
         assert bash(cmd, home, env=env) == "deny", cmd
 
