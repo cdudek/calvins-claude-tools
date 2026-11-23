@@ -44,7 +44,7 @@ needs none.
 
 **Only the PR into the default branch is reviewed.** Feature PRs into `milestone/*` and
 milestone PRs into `project/*` are interior merges inside one change — no Claude review, no
-code owner, auto-merge on their checks alone.
+review step, auto-merge on their checks alone.
 
 There are no Ship/Show/Ask tiers here, so that PR auto-merges on green too.
 

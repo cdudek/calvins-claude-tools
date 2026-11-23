@@ -32,7 +32,7 @@ planning; a `project/<slug>` branch exists only when the engineer asked for one.
 
 **The code is reviewed once, locally, at the milestone close** (Claude and Codex). Nothing
 reviews in CI. Milestone PRs into `project/*` are interior
-merges inside one change: no code owner, auto-merge on their checks alone.
+merges inside one change: no review step, auto-merge on their checks alone.
 
 {{#TIERS}}That PR is labelled by blast radius: `ask` needs a human, `show` and `ship` auto-merge on green.{{/TIERS}}{{#NO_TIERS}}There are no Ship/Show/Ask tiers here, so that PR auto-merges on green too.{{/NO_TIERS}}
 

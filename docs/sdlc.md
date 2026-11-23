@@ -79,7 +79,6 @@ none.
 | `testGlobs`, `prototypeDirs`, `feedback` | locked tests, prototype paths, owner-words files |
 | `verifyDirty`, `lintOnEdit`, `blocked[]` | hook inputs |
 | `tiers`, `askGatesMerge`, `claude`, `keep` | generated workflow policy |
-| `codeowners` | legacy compatibility key; CODEOWNERS is never installer-managed |
 
 ## Where a change stands
 

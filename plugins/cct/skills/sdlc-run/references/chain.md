@@ -325,7 +325,6 @@ permalinks; local laptop paths are refused.
 | `blocked[]` | Bash hook, tests | blocked shell patterns with routes |
 | `toolsCommand` | SessionStart, docs | installs plannotator and plugin |
 | `tests`, `testFile` | adopt | rendered guardrail test type and path |
-| `codeowners` | compatibility only | ignored; the repository team owns CODEOWNERS |
 | `claude` | adopt, test | whether Claude workflows are generated |
 | `claudeAllow` | none | obsolete since 3.7.0, when `claude.yml` went; `adopt` leaves the key alone |
 | `showChannel` | adopt | Slack channel for show notices |

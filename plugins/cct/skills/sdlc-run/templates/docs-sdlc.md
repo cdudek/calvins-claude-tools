@@ -79,7 +79,6 @@ none.
 | `testGlobs`, `prototypeDirs`, `feedback` | locked tests, prototype paths, owner-words files |
 | `verifyDirty`, `lintOnEdit`, `blocked[]` | hook inputs |
 | `tiers`, `askGatesMerge`, `claude`, `keep` | generated workflow policy |
-| `codeowners` | legacy compatibility key; CODEOWNERS is never installer-managed |
 
 ## Where a change stands
 
@@ -179,13 +178,13 @@ Run `marks.py init <id>` for Snapmark/reference images; fill `marks.json` agains
 
 **Only the PR into the default branch is tiered or reviewed.** A milestone PR into
 `project/*` is an interior merge inside one change:
-they auto-merge on their checks alone, with no code owner. The workflow checks the PR's
+they auto-merge on their checks alone, with no review step. The workflow checks the PR's
 base ref itself, so this holds for a hand-opened PR too.
 
 | Tier | Paths | Who looks |
 | --- | --- | --- |
 {{#ASK_GATES_MERGE}}
-| **ask** | {{ASK_PATHS}} | a code owner before merge |
+| **ask** | {{ASK_PATHS}} | never auto-merged; the repo's own ruleset says who looks |
 {{/ASK_GATES_MERGE}}
 {{#ASK_MERGES_ON_GREEN}}
 | **ask** | {{ASK_PATHS}} | highest blast radius; read it, but it does not gate merge |

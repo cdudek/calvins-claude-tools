@@ -327,16 +327,7 @@ from test_goal_active import _project, _stop, _transcript  # noqa: E402
 from test_pr_gate import _run as pr_run  # noqa: E402
 
 
-def test_a_rule_with_no_message_refuses_and_names_the_config_owner(bash_repo: Path) -> None:
-    (bash_repo / ".github").mkdir()
-    (bash_repo / ".github" / "CODEOWNERS").write_text("* @everyone\nsdlc.json @config-owners\n")
-    (bash_repo / "sdlc.json").write_text(json.dumps({"blocked": [{"match": "uv[[:space:]]+add"}]}))
-    r = _bash(bash_repo, "uv add httpx")
-    assert r.returncode == 2 and "@config-owners" in r.stderr, r.stderr
-    assert "blocked[0]" in r.stderr and "message" in r.stderr
-
-
-def test_a_rule_with_no_message_and_no_codeowners_still_names_a_route(bash_repo: Path) -> None:
+def test_a_rule_with_no_message_still_names_a_route(bash_repo: Path) -> None:
     (bash_repo / "sdlc.json").write_text(json.dumps({"blocked": [{"match": "uv[[:space:]]+add", "message": "  "}]}))
     r = _bash(bash_repo, "uv add httpx")
     assert r.returncode == 2 and "owner of sdlc.json" in r.stderr and "blocked[0]" in r.stderr

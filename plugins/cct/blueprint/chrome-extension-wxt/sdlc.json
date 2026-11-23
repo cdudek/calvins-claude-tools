@@ -36,7 +36,6 @@
   ],
   "toolsCommand": "npm run sdlc:tools",
   "tests": "vitest",
-  "codeowners": [],
   "claude": false,
   "claudeAllow": [
     "Bash(npm *)",

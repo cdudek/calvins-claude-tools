@@ -1961,7 +1961,7 @@ def main() -> int:
                 + "\n",
             )
 
-    # --- tiers and classifier (CODEOWNERS is repository-owned)
+    # --- tiers and classifier (the kit has no CODEOWNERS step)
     # sdlc.json `tiers` (default TIERS_DEFAULT): Ship/Show/Ask. False is for a repo with one owner --
     # there is nobody to ask and nobody to show, so every PR auto-merges on green. adopt
     # writes none of the three tier files and removes any that exist.
@@ -2006,7 +2006,7 @@ def main() -> int:
     else:
         d = TIER_DEFAULTS[preset]
         tiers = {
-            "_comment": f"Ship/Show/Ask by blast radius. First tier whose glob matches a changed file wins, in this order. Read by scripts/ship_show_ask.py, .github/workflows/ship-show-ask.yml and the sdlc guardrail test; CODEOWNERS is maintained by the repository team, never by adopt. {docs} explains the tiers.",
+            "_comment": f"Ship/Show/Ask by blast radius. First tier whose glob matches a changed file wins, in this order. Read by scripts/ship_show_ask.py, .github/workflows/ship-show-ask.yml and the sdlc guardrail test. {docs} explains the tiers.",
             "order": ["ask", "show", "ship"],
             "ask": d["ask"],
             "show": d["show"],
@@ -2062,9 +2062,6 @@ def main() -> int:
             ROOT / "scripts" / "ship_show_ask.py",
             (TPL / "scripts" / "ship_show_ask.py").read_text(encoding="utf-8"),
         )
-
-    # CODEOWNERS is a team-repo choice. Never create, edit or delete it, even
-    # when an older adopt generated it or tiers/codeowners settings change.
 
     # --- workflows
     adopt_ci(cfg, preset)
@@ -2146,7 +2143,7 @@ def main() -> int:
     ):
         manual.append(
             "ship-show-ask.yml no longer requests the Show reviewer (vars.SDLC_COOWNER, removed in "
-            "sdlc-run 3.18.0): add the reviewer to CODEOWNERS, or a `gh pr edit --add-reviewer` step by hand."
+            "sdlc-run 3.18.0): add the reviewer with a `gh pr edit --add-reviewer` step by hand."
         )
     for src in sorted((TPL / "workflows").glob("*.yml")):
         dest = ROOT / ".github" / "workflows" / src.name
