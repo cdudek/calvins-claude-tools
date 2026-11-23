@@ -32,12 +32,12 @@ The owner approves what will change and how to prove it. The runner builds acros
 
 - Enable the plugin once at user scope. It ships the skill, role definitions and runner. `sdlc` below means the plugin’s bundled executable. Product repos receive no SDLC config, scripts, hooks, workflow, records folder or package dependency for the harness.
 - Discover commands from the repo’s existing instructions, manifests and CI at the starting commit. Put overrides in the approved run. Keep product tests and durable product decisions in the repo’s usual locations.
-- **4.0 needs no new global hook.** Plugin hooks in `hooks/hooks.json` load wherever the plugin is enabled. Plugin subagents cannot set their own `hooks` or `permissionMode`. An existing hook that would execute project code must run inside the job sandbox or be excluded from that job. No hook may grant permission, sign an approval or record a pass. [Plugin reference](https://code.claude.com/docs/en/plugins-reference) · [Hooks](https://code.claude.com/docs/en/hooks) · [Subagents](https://code.claude.com/docs/en/sub-agents)
-- **Plan approval and tool permission are separate.** Preflight the runner’s filesystem access, sandbox, registry access, private records store and PR credentials. Use bounded, noninteractive permissions for jobs. A denied operation yields `BLOCKED permission`. Never disable the sandbox or turn on blanket permission bypass to finish a run. [Permissions](https://code.claude.com/docs/en/permissions) · [Sandboxing](https://code.claude.com/docs/en/sandboxing)
+- **4.0 needs no new global hook.** Plugin hooks in `hooks/hooks.json` load wherever the plugin is enabled. Plugin subagents cannot set their own `hooks` or `permissionMode`. No hook may grant permission, sign an approval or record a pass. [Plugin reference](https://code.claude.com/docs/en/plugins-reference) · [Hooks](https://code.claude.com/docs/en/hooks) · [Subagents](https://code.claude.com/docs/en/sub-agents)
+- **Plan approval and tool permission are separate.** Preflight the runner’s filesystem access, registry access and PR credentials. Use bounded, noninteractive permissions for jobs. A denied operation yields `BLOCKED permission`. Never turn on blanket permission bypass to finish a run. [Permissions](https://code.claude.com/docs/en/permissions) · [Sandboxing](https://code.claude.com/docs/en/sandboxing)
 
 ### 3.2 A run
 
-One run has one ID, one approval and one records branch in an approved private Git store. The branch survives product PR merges, squashes and branch deletion. Its readers must be authorized for every repo and design input it contains.
+One run has one ID and one approval. Its records live **outside every repo**, in `~/.sdlc/runs/<id>/` on the machine that runs it (owner to confirm, section 6). Nothing is committed and no repo needs a `.gitignore` entry. The PR body carries the plan summary, the contract result and the evidence links, so the record of what was approved and proven lives with the PR.
 
 | Record | Contents |
 |---|---|
@@ -46,11 +46,11 @@ One run has one ID, one approval and one records branch in an approved private G
 | Approved inputs | Pinned acceptance specs, fixtures, board extracts, token mappings and runner version. The approval identifies the digest of the whole bundle. |
 | Checkpoints | Attempt counts, decisions, candidate SHAs, artifact hashes, verifier receipts, PR links and the next unfinished task. Progress is derived from these records. |
 
-The owner-facing approval action records the reviewed digest on a ref writable only by the approval identity. The runner and agents cannot replace it. A digest stored beside an editable contract would prove nothing. Only the approved bundle can start or resume a run.
+The approval records the digest of the reviewed bundle. Plugin hooks block every agent from writing to `~/.sdlc/runs/`; only the runner's own scripts do. This stops a careless agent, not a hostile process on the same machine, which is an accepted risk for a one-owner setup.
 
-The runner checkpoints after approval, each accepted integration and each external action. Before advancing the checkpoint, it uploads the Git objects needed to restore each candidate, for example as incremental Git bundles relative to the recorded base. Keep required inputs and sanitized evidence retrievable by digest. Exclude credentials, `.env*`, personal browser profiles and raw session transcripts.
+The runner checkpoints after approval, each milestone merge and each external action: attempt counts, decisions, candidate SHAs, verifier receipts, PR links and the next unfinished task. Work itself lives in git on the run's branches.
 
-**After a crash**, `sdlc resume <id>` fetches the approval and latest checkpoint, verifies their digests and restores the recorded heads in fresh worktrees. It checks remotes for an already-pushed head, PR or published artifact before retrying an action. An interrupted check has no receipt and runs again. An interrupted worker may lose its uncommitted edits. Completed work and spent attempts survive. Only one runner may advance a run. Use a single-writer lease and compare-and-swap checkpoint updates. A runner that loses the lease stops dispatch and remote writes.
+**After a crash**, `sdlc resume <id>` reads the checkpoint, checks the recorded heads and remotes (an already-pushed branch or open PR is not redone), and continues with the next unfinished task in fresh worktrees. An interrupted check runs again. Resume works on the same machine; moving a run to another machine is out of scope.
 
 ### 3.3 Touchpoints: one approval, then the end
 
@@ -61,17 +61,16 @@ The runner checkpoints after approval, each accepted integration and each extern
 
 ### 3.4 The loop
 
-**Build.** The plugin runner owns scheduling, integration and remote writes. It starts each builder with the plugin’s worker role in a fresh Claude Code process in its assigned worktree. This lets the runner apply a separate OS sandbox and deadline to each parallel job. It creates the worktree itself at the recorded integration SHA and checks `HEAD` before dispatch. Native `isolation: worktree` can start from the default branch. A worktree also shares Git metadata with its siblings. Neither property gives a worker a security boundary. [Claude Code worktrees](https://code.claude.com/docs/en/worktrees) · [Claude Code CLI](https://code.claude.com/docs/en/cli-reference)
+**Build.** The orchestrating session owns scheduling, integration and remote writes. Each builder is a Claude Code subagent in its own worktree, which the runner creates at the recorded integration SHA and checks before dispatch. A builder gets the feature, the shared decisions and the paths it owns, and returns a commit. The runner integrates disjoint work in dependency order; overlapping work runs one after the other and is checked again on the integrated head. Plugin hooks keep builders out of the records, the contract and the pinned tests. [Claude Code worktrees](https://code.claude.com/docs/en/worktrees) · [Subagents](https://code.claude.com/docs/en/sub-agents)
 
-A builder gets the feature, shared decisions and owned paths. Its sandbox exposes its source tree and scratch space. The runner owns Git metadata, credentials, other worktrees, approved inputs and receipts. The builder returns edits and touched-test results. The runner inspects the diff, commits it and integrates disjoint work in dependency order. Conflicting work is serialized and checked again on the integrated head.
-
-**Verify.** A fresh verifier receives the approved checks and a clean checkout of the integrated SHA. It gets no builder transcript or writable product checkout. A trusted driver runs the frozen specs against the candidate in disposable storage. The app, build scripts and package scripts run without access to the driver, approval, receipts or signing credentials. The driver evaluates the assertions and the runner records the result. Agent prose and files emitted by the candidate cannot set `passes`.
+**Verify.** A fresh verifier subagent gets the approved checks and a clean checkout of the integrated SHA, and no builder transcript. The plugin's driver script runs the frozen specs and records the result; agent prose or files the candidate writes cannot set `passes`.
 
 - **Protect the test path.** Pin the acceptance assertions, fixtures, command entry points and test-discovery settings at approval. Compare the candidate against the base for removed assertions, skips, changed CI or substituted runners. A planned test migration names the exact change and independent replacement proof. An unexpected change blocks integration.
 - **Prove the check works.** For changed behavior, record the expected assertion failure on the base, then its pass on the candidate. For an invariant that already passes, use a known-bad fixture or negative control. A missing executable, zero collected tests or an app that never started cannot supply this proof.
 - **Handle unavailable checks.** A real mismatch is `FAIL`. A missing browser, service, credential or supported runtime is `BLOCKED env`, with the prerequisite named. Retry a transient setup failure once. An existing CI job may supply the evidence only if the contract names it, it exercises the same assertion and it reports on the right revision. A CI-only item remains pending until then.
-- **Close a milestone.** Run its due contract items and the repo’s full local gate on the integrated head. On failure, rerun the failing check, fix it and run the full gate on the new head. A later integration invalidates receipts for the superseded candidate. Run the full contract on the final heads and dependency artifacts before declaring the PRs ready.
-- **Bound the work.** Default to the builder count set in the kickoff (up to 10), one initial build plus two fix attempts per feature, one transient retry per job, and a 30-minute job deadline. Kickoff sets a finite run deadline and total dispatch cap large enough for the plan. Count a dispatch durably *before* launch. CI polling consumes wall time. Exhaustion records `BLOCKED cap` with the failing item. Resume preserves the counters and deadline.
+- **Close a milestone.** Run its due contract items and the repo’s full local gate on the integrated head. When they pass, the runner merges the milestone into the project branch automatically (locally, no PR); the only PR per repo is the project branch into the default branch at the end. On failure, rerun the failing check, fix it and run the full gate on the new head. A later integration invalidates receipts for the superseded candidate. Run the full contract on the final heads and dependency artifacts before declaring the PRs ready.
+- **Bound the work.** Run up to 8 builders by default, fewer when the dependency graph allows less parallel work (the kickoff can change the cap), one initial build plus two fix attempts per feature, one transient retry per job, and a 30-minute job deadline. Kickoff sets a finite run deadline and total dispatch cap large enough for the plan. Count a dispatch durably *before* launch. CI polling consumes wall time. Exhaustion records `BLOCKED cap` with the failing item. Resume preserves the counters and deadline.
+- **Check the graph before building.** At planning, and again before each dispatch, the runner builds the dependency graph of milestones and tasks across repos. A cycle is a planning error the planner must resolve before approval (split the task or move the shared piece earlier). At run time a task that waits on another waiting task, or a milestone whose tasks can never all become ready, is a deadlock: the runner records `BLOCKED deadlock` with the cycle, rather than idling.
 - **Stop the work.** `sdlc stop <id>` durably marks the run stopped. The runner checks before dispatch, integration and remote writes, and polls while jobs are live. It cancels its job process groups, then kills survivors after a short grace period. A request already accepted by a remote is reconciled and recorded. Stopping preserves branches, records and evidence. Only an explicit owner restart can clear the stop within the original limits.
 
 **`sdlc check <id>` is the completion test.** It is read-only. It verifies the approved digest, candidate and artifact identities, every required receipt, the full-suite result and current PR checks. It prints one status line with the run ID, heads and first unmet item. It never builds, reruns a suite, edits progress, pushes or merges.
@@ -123,7 +122,7 @@ A one-line fix gets one plan paragraph, one executable acceptance check and the 
 
 ## 6. Questions for the owner
 
-1. **Where may private run records live, and for how long?** Recommended answer: use one existing private Git store per access boundary. Keep approval and verification summaries with the PR history. Retain source bundles and diagnostic artifacts for 90 days after the final merge. Cross-boundary runs need an explicitly authorized destination before kickoff.
+1. **Where run records live.** Recommended: `~/.sdlc/runs/<id>/` on the running machine, never committed, with the plan summary and evidence in each PR body. Alternatives: committed on the run branch and dropped before merge, or a gitignored `.sdlc/` in the start repo (needs a `.gitignore` line in every repo, which breaks "nothing installed").
 
 ## Sources
 
@@ -137,9 +136,9 @@ A one-line fix gets one plan paragraph, one executable acceptance check and the 
 
 1. Define the contract, approval digest, receipt format and `sdlc check` exit codes. Test a stale pass and a missing receipt.
 2. Ship discovery, capability probes and one approval screen. Run them against a repo with no SDLC files.
-3. Implement private checkpoints, single-writer ownership and resume. Restore a candidate on a second machine after deleting the first checkout.
-4. Deliver one feature through an isolated builder and independent verifier. Prove that changing an assertion or forging a result cannot pass.
-5. Add parallel worktrees, integration, deadlines, attempt caps and `sdlc stop`. Test cancellation during a job and recovery after a push.
+3. Implement local checkpoints in `~/.sdlc/runs/` and `sdlc resume`. Kill a run mid-milestone and resume it on the same machine.
+4. Deliver one feature through a builder subagent and an independent verifier. Prove that changing an assertion or forging a result cannot pass.
+5. Add the dependency graph with cycle and deadlock detection, parallel worktrees (up to 8), automatic milestone merges into the project branch, deadlines, attempt caps and `sdlc stop`. Test cancellation during a job and recovery after a push.
 6. Add board extraction and real-surface checks. Demonstrate a spacing failure, an image-only input and an unavailable browser.
 7. Open one product PR and read its existing CI. Test pending, stale, skipped and failed checks.
 8. Run a producer–consumer pilot through the final merge sequence. Verify the published consumer install and both final revisions.
