@@ -580,7 +580,7 @@ def _local_profile(preset: str) -> set[str]:
     """What the milestone gate runs besides the browser suites: lint, types and unit tests."""
     checks = json.loads((SCRIPTS.parent / "presets" / f"{preset}.json").read_text())["checks"]["milestone"]
     runs = [c if isinstance(c, str) else c["run"] for c in checks]
-    browser = re.compile(r"test:e2e|playwright|pytest e2e|-d e2e|^changed=")  # `--ignore=e2e` is a unit run
+    browser = re.compile(r"test:e2e|playwright|pytest e2e|-d e2e|^changed=|e2e-repeat\.sh")  # `--ignore=e2e` is a unit run
     return {r for r in runs if not browser.search(r)}
 
 

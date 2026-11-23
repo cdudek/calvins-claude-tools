@@ -548,7 +548,7 @@ merged into the project branch, and reviews them again.
 Capture rules (headless, never the owner's browser) and the visual rules: [visual work](visual-work.md).
 For a change with `screens.json` the close takes **one capture batch** of the entries due, light and dark,
 then agents compare each capture with the pinned design (`cct:ux-build-validate` build mode and
-`cct:ux-assessment-run`) into `verify/comparison.json`, fix differences in the fix round, and the gate
+the UX review) into `verify/comparison.json`, fix differences in the fix round, and the gate
 passes a screen only on a `match` bound to the sha256 of this run's own capture. No baseline is stored and no
 owner approves a screen; a screen still differing after the fix round is a blocking finding.
 
