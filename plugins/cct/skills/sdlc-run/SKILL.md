@@ -10,7 +10,7 @@ description: >-
 allowed-tools: "Read Grep Glob Edit Write Agent Skill AskUserQuestion Bash(python3 */sdlc-run/runner/sdlc.py *) Bash(git *) Bash(gh *) Bash(plannotator *) Bash(wt *) EnterWorktree"
 user_invocable: true
 metadata:
-  version: 4.2.0
+  version: 4.2.1
   author: calvindudek
 effort: high
 ---

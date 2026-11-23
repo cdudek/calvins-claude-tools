@@ -5,6 +5,11 @@ version warning, the **Mechanical** lines are what `adopt` does for you (it adds
 with the stack's defaults and never overwrites a value), the **Manual** lines are printed for
 the engineer. A version with no migration lines needs nothing but a re-run of `adopt`.
 
+## 4.2.1 — fix
+
+- **`sdlc clean --apply` report.** The report is rendered from the inventory taken before the removal; it used to crash with FileNotFoundError on a file the apply had just deleted (the commit was already made).
+- **Mechanical:** none. **Manual:** none.
+
 ## 4.2.0 — canvas boards at scale: aggregate rows, surfaces, frames, board rows in the contract
 
 - **Aggregate rows.** One row per mapping entry and theme replaces the per-node row (a real 493-board export gave 188,928 rows, 102 MB). The row measures every node whose locator is unique in the board, token properties only (colours, font, line height, letter spacing, padding, margin, gap, radius, shadow, width, height; x and y opt-in). Colours compare exactly after rgba normalisation, font and spacing within 1px, width and height within 2px or 1%, with per-entry `tolerances`. Pass: matched/measurable at least `min_match` (0.95) and no token mismatch among matched nodes. Each mismatch is reported as locator, property, board value, app value. A series runs all rows of a surface in one browser session; `--expected-rows` and spec pinning are unchanged.

@@ -231,3 +231,14 @@ def test_sdlc_json_of_only_kit_key_names_but_no_marker_is_kept(repo: Path) -> No
     inv = clean.inventory(repo)
     assert not any(f["path"] == "sdlc.json" for f in inv["fragments"])
     assert any(u["path"] == "sdlc.json" and "no kit marker" in u["reason"] for u in inv["unknown"])
+
+
+def test_apply_renders_its_report_from_before_the_removal_and_exits_zero(
+    repo: Path, capsys: pytest.CaptureFixture[str]
+) -> None:
+    install_kit(repo)
+    assert clean.main([str(repo), "--apply"]) == 0  # used to crash: FileNotFoundError on the hook it had just deleted
+    out = capsys.readouterr().out
+    assert f"{HOOK}  [" in out and "would remove the file (3 lines)" in out
+    assert "committed on sdlc-clean" in out
+    assert not (repo / HOOK).exists() and git(repo, "rev-parse", "--abbrev-ref", "HEAD").strip() == "sdlc-clean"
