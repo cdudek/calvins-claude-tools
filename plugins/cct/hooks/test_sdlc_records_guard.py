@@ -115,3 +115,63 @@ def test_boards_calls_that_name_the_records_folder_are_denied(tmp_path):
     for cmd in (f"python3 {RUNNER} boards rows m.json --index i.json --out {home}/runs/r1/contract.json",
                 f"python3 {RUNNER} boards index /tmp/export --out ~/.sdlc/runs/r1/x.json", f"python3 {RUNNER} boards index {home}/runs"):
         assert bash(cmd, home, env=env) == "deny", cmd
+
+
+def install_kit(cfg, name="fakekit", version="1.0", listed=True):
+    """A sibling kit installed in the plugin cache of a throw-away Claude config dir, and named in its sibling list."""
+    runner = Path(cfg) / "plugins" / "cache" / "market" / name / version / "skills" / "sdlc-run" / "runner" / "sdlc.py"
+    runner.parent.mkdir(parents=True)
+    runner.write_text("# runner\n")
+    if listed:
+        (Path(cfg) / "sdlc-sibling-kits.json").write_text(json.dumps({"plugins": [name]}))
+    return str(runner)
+
+
+def test_a_named_sibling_kits_runner_in_the_plugin_cache_is_one_more_plain_call(tmp_path):
+    home, cfg = tmp_path / ".sdlc", tmp_path / "cfg"
+    env = {"SDLC_HOME": str(home), "CLAUDE_CONFIG_DIR": str(cfg)}
+    sibling = install_kit(cfg)
+    assert bash(f"python3 {sibling} check r1 --note ~/.sdlc/runs/r1", home, env=env) is None
+    assert bash(f"{sibling} status", home, env=env) is None
+    assert bash(f"python3 {RUNNER} status", home, env=env) is None  # this plugin's own runner still passes
+    for cmd in (f"python3 {sibling} check r1; rm -rf ~/.sdlc/runs", f"X=1 python3 {sibling} check ~/.sdlc", f"python3 {sibling} status | tee ~/.sdlc/runs/x",
+                f"PATH=/tmp/fake python3 {sibling} gate r1 --by x", f"cd {Path(sibling).parent} && python3 sdlc.py check ~/.sdlc"):
+        assert bash(cmd, home, env=env) == "deny", cmd
+
+
+def test_a_lookalike_runner_outside_the_plugin_cache_or_not_named_is_denied(tmp_path):
+    home, cfg = tmp_path / ".sdlc", tmp_path / "cfg"
+    env = {"SDLC_HOME": str(home), "CLAUDE_CONFIG_DIR": str(cfg)}
+    install_kit(cfg)
+    outside = tmp_path / "elsewhere" / "plugins" / "cache" / "market" / "fakekit" / "1.0" / "skills" / "sdlc-run" / "runner" / "sdlc.py"
+    outside.parent.mkdir(parents=True)
+    outside.write_text("# not installed here\n")
+    assert bash(f"python3 {outside} check ~/.sdlc/runs/r1", home, env=env) == "deny"  # same layout, but not under this config's cache
+    other = install_kit(tmp_path / "cfg2", name="otherkit", listed=False)  # installed, but never named
+    env2 = {"SDLC_HOME": str(home), "CLAUDE_CONFIG_DIR": str(tmp_path / "cfg2")}
+    assert bash(f"python3 {other} check ~/.sdlc/runs/r1", home, env=env2) == "deny"
+    other2 = Path(cfg) / "plugins" / "cache" / "market" / "unlisted" / "1.0" / "skills" / "sdlc-run" / "runner" / "sdlc.py"
+    other2.parent.mkdir(parents=True)
+    other2.write_text("#")
+    assert bash(f"python3 {other2} check ~/.sdlc/runs/r1", home, env=env) == "deny"  # a plugin in the cache the owner did not name
+    stray = Path(cfg) / "plugins" / "cache" / "market" / "fakekit" / "1.0" / "skills" / "sdlc-run" / "runner" / "other.py"
+    stray.write_text("#")
+    assert bash(f"python3 {stray} check ~/.sdlc/runs/r1", home, env=env) == "deny"  # only the runner file itself
+    link = Path(cfg) / "plugins" / "cache" / "market" / "fakekit" / "2.0"
+    (link / "skills" / "sdlc-run").mkdir(parents=True)
+    (link / "skills" / "sdlc-run" / "runner").symlink_to(outside.parent)  # a symlink leading out of the installed plugin
+    assert bash(f"python3 {link / 'skills' / 'sdlc-run' / 'runner' / 'sdlc.py'} check ~/.sdlc/runs/r1", home, env=env) == "deny"
+    assert bash(f"python3 {install_kit(tmp_path / 'cfg3', listed=False)} check ~/.sdlc", home, env={**env, "CLAUDE_CONFIG_DIR": str(tmp_path / "cfg3")}) == "deny"
+
+
+def test_an_install_path_from_the_installed_plugins_registry_counts_too(tmp_path):
+    home, cfg = tmp_path / ".sdlc", tmp_path / "cfg"
+    env = {"SDLC_HOME": str(home), "CLAUDE_CONFIG_DIR": str(cfg)}
+    runner = tmp_path / "somewhere" / "fakekit" / "skills" / "sdlc-run" / "runner" / "sdlc.py"
+    runner.parent.mkdir(parents=True)
+    runner.write_text("#")
+    (cfg / "plugins").mkdir(parents=True)
+    (cfg / "sdlc-sibling-kits.json").write_text(json.dumps({"plugins": ["fakekit"]}))
+    assert bash(f"python3 {runner} check ~/.sdlc/runs/r1", home, env=env) == "deny"  # not registered yet
+    (cfg / "plugins" / "installed_plugins.json").write_text(json.dumps({"plugins": {"fakekit@market": [{"installPath": str(runner.parents[3])}]}}))
+    assert bash(f"python3 {runner} check ~/.sdlc/runs/r1", home, env=env) is None

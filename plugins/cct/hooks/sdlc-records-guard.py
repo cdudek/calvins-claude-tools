@@ -5,7 +5,11 @@ This hook is the barrier: receipts and checkpoints carry no signature, so nothin
 writing a pass. It stops a careless or confused agent, not a hostile process of the same user (design 3.2).
 
 Rule for Bash: a command that mentions the sdlc folder in any form is denied unless the WHOLE command is exactly one
-invocation of this plugin's own runner. Deny on a match, stay silent otherwise.
+invocation of this plugin's own runner, or of the same runner shipped by a sibling kit the owner named in
+`<claude config dir>/sdlc-sibling-kits.json` ({"plugins": ["<plugin name>"]}, default: none). A sibling runner counts only at the exact
+path `<plugin>/skills/sdlc-run/runner/sdlc.py` of an installed copy: a directory under the plugin cache
+(`<config dir>/plugins/cache/<marketplace>/<plugin>/<version>`) or an install path listed in
+`<config dir>/plugins/installed_plugins.json`, with symlinks resolved. Deny on a match, stay silent otherwise.
 """
 import fnmatch
 import json
@@ -18,6 +22,52 @@ RUNNER = os.path.realpath(os.path.join(os.path.dirname(os.path.abspath(__file__)
 RUNNER_DIR = os.path.dirname(RUNNER)
 OPERATORS = set(";&|<>()")
 MODULES = ("contract", "store", "engine", "verify", "discover", "release", "clean", "deps", "board", "graph", "sdlc", "ci")
+
+
+SUFFIX = os.path.join("skills", "sdlc-run", "runner", "sdlc.py")
+
+
+def claude_home() -> str:
+    return os.path.realpath(os.environ.get("CLAUDE_CONFIG_DIR") or os.path.expanduser("~/.claude"))
+
+
+def sibling_runners() -> set[str]:
+    """Real paths of the runner of each named sibling plugin, taken from where Claude Code installed it, never from a pattern the
+    command could match."""
+    base = claude_home()
+    try:
+        with open(os.path.join(base, "sdlc-sibling-kits.json"), encoding="utf-8") as f:
+            names = {n for n in (json.load(f).get("plugins") or []) if isinstance(n, str) and re.fullmatch(r"[A-Za-z0-9][A-Za-z0-9._-]*", n)}
+    except (OSError, ValueError, AttributeError):
+        return set()
+    roots: list[tuple[str, str]] = []  # (plugin name, installed plugin directory)
+    cache = os.path.join(base, "plugins", "cache")
+    for n in names:
+        for mkt in glob_dirs(cache):
+            for ver in glob_dirs(os.path.join(mkt, n)):
+                roots.append((n, ver))
+    try:
+        with open(os.path.join(base, "plugins", "installed_plugins.json"), encoding="utf-8") as f:
+            for key, installs in (json.load(f).get("plugins") or {}).items():
+                for i in installs if isinstance(installs, list) else []:
+                    if key.split("@")[0] in names and isinstance(i, dict) and isinstance(i.get("installPath"), str):
+                        roots.append((key.split("@")[0], i["installPath"]))
+    except (OSError, ValueError, AttributeError):
+        pass
+    out = set()
+    for n, root in roots:
+        real = os.path.realpath(os.path.join(root, SUFFIX))
+        # the file must really live in that plugin's own installed directory: a symlink leading elsewhere is not the plugin
+        if real == os.path.join(os.path.realpath(root), SUFFIX) and os.path.isfile(real):
+            out.add(real)
+    return out
+
+
+def glob_dirs(path: str) -> list[str]:
+    try:
+        return [os.path.join(path, d) for d in sorted(os.listdir(path)) if os.path.isdir(os.path.join(path, d))]
+    except OSError:
+        return []
 
 
 def roots() -> tuple[str, str, str]:
@@ -90,7 +140,7 @@ def touches_runner(cmd: str, words: list[str]) -> bool:
 
 
 def is_exact_runner(cmd: str, words: list[str]) -> bool:
-    """One simple command, no chaining, no expansion, and argv resolves to this plugin's own runner."""
+    """One simple command, no chaining, no expansion, and argv resolves to this plugin's own runner or an installed sibling kit's."""
     if "\n" in cmd or "\r" in cmd or "`" in cmd or "$" in cmd:
         return False
     if any(set(w) <= OPERATORS for w in words) or not words:
@@ -99,7 +149,8 @@ def is_exact_runner(cmd: str, words: list[str]) -> bool:
     if os.path.basename(argv[0]).startswith("python") and len(argv) > 1:
         argv = argv[1:]
     first = os.path.expanduser(argv[0])
-    return os.path.isabs(first) and os.path.realpath(first) == RUNNER  # a relative `./sdlc.py` is not the plugin's runner
+    # a relative `./sdlc.py` is not the plugin's runner; a sibling kit's runner counts at its installed path only
+    return os.path.isabs(first) and (os.path.realpath(first) == RUNNER or os.path.realpath(first) in sibling_runners())
 
 
 def main() -> None:
