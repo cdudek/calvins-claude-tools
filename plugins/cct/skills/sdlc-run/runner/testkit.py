@@ -50,9 +50,9 @@ def new_run(home: Path, repo: Path, checks: list[dict], tasks: dict | None = Non
     git(repo, "branch", f"sdlc/{rid}", "main")
     base = git(repo, "rev-parse", "main")
     d = store.init_run(rid, {"title": slug, "repos": {repo.name: {"path": str(repo), "base_sha": base, "branch": f"sdlc/{rid}",
-                                                                   "default_branch": "main"}}, "limits": limits or {}})
+                                                                   "default_branch": "main"}}})
     (d / "plan.md").write_text("# plan\n")
-    store.write_json(d / "contract.json", {"version": 1, "checks": checks})
+    store.write_json(d / "contract.json", {"version": 1, "checks": checks, "limits": limits or {}})
     store.write_json(d / "tasks.json", tasks or {"milestones": []})
     for rel, text in (inputs or {}).items():
         p = d / "inputs" / repo.name / rel
@@ -63,3 +63,45 @@ def new_run(home: Path, repo: Path, checks: list[dict], tasks: dict | None = Non
 
 def chk(id: str, repo: str, runner: list[str] | None = None, milestone: str | None = None, **kw) -> dict:
     return {"id": id, "repo": repo, "milestone": milestone, "runner": runner or ["true"], "expect": {"kind": "pass"}, **kw}
+
+
+def pin(rid: str, repo: str, rel: str) -> str:
+    return store.sha256((store.run_dir(rid) / "inputs" / repo / rel).read_bytes())
+
+
+SPEC = (
+    "import sys, unittest\nfrom pathlib import Path\nsys.path.insert(0, str(Path(__file__).resolve().parents[1]))\n"
+    "import feature\n\n\nclass T(unittest.TestCase):\n    def test_greet(self):\n        self.assertEqual(feature.greet(), 'hello')\n\n\n"
+    "if __name__ == '__main__':\n    unittest.main()\n"
+)
+RUN = ["python3", "-m", "unittest", "discover", "-s", "tests", "-p", "test_*.py"]
+
+
+def feature_run(tmp_path: Path, tasks: dict | None = None, limits: dict | None = None, extra_files: dict | None = None):
+    """A repo whose acceptance spec (pinned, approved) wants greet() == 'hello'; base returns 'hi'."""
+    files = {"feature.py": "def greet():\n    return 'hi'\n", **(extra_files or {})}
+    repo = make_repo(tmp_path, "app", files)
+    tasks = tasks or {"milestones": [{"id": "m1", "repo": "app", "needs": [],
+                                      "tasks": [{"id": "t1", "needs": [], "paths": ["feature.py"], "title": "greet says hello"}]}]}
+    rid = new_run(tmp_path / "home", repo, [], tasks, limits=limits, inputs={"tests/test_feature.py": SPEC})
+    p = pin(rid, "app", "tests/test_feature.py")
+    checks = [chk("spec", "app", RUN, "m1", task="t1", pins={"tests/test_feature.py": p}, expect={"kind": "fails_on_base"}),
+              chk("full", "app", RUN, None, due="each", pins={"tests/test_feature.py": p})]
+    d = store.run_dir(rid)
+    c = store.read_json(d / "contract.json")
+    c["checks"] = checks
+    store.write_json(d / "contract.json", c)
+    return repo, rid
+
+
+def build(rid: str, tid: str, files: dict, msg: str = "work") -> str:
+    """What a builder subagent does: edit its worktree, commit."""
+    import engine
+    info = engine.dispatch(rid, tid)
+    wt = Path(info["worktree"])
+    for rel, text in files.items():
+        (wt / rel).parent.mkdir(parents=True, exist_ok=True)
+        (wt / rel).write_text(text)
+    git(wt, "add", "-A")
+    git(wt, "commit", "-qm", msg)
+    return git(wt, "rev-parse", "HEAD")

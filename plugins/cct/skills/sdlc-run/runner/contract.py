@@ -25,6 +25,17 @@ def git(repo: str | Path, *args: str) -> str:
     return r.stdout.strip()
 
 
+def wt_path(repo_path: str, rid: str, name: str) -> Path:
+    """Worktrees live at <repo>/.worktrees/<name>, kept out of the tracked tree through .git/info/exclude."""
+    common = Path(git(repo_path, "rev-parse", "--path-format=absolute", "--git-common-dir"))
+    ex = common / "info" / "exclude"
+    ex.parent.mkdir(parents=True, exist_ok=True)
+    if ".worktrees/" not in (ex.read_text() if ex.exists() else "").splitlines():
+        with open(ex, "a") as f:
+            f.write(".worktrees/\n")
+    return Path(repo_path) / ".worktrees" / f"sdlc-{rid}-{name}"
+
+
 def validate_contract(c: dict) -> None:
     ids = set()
     for chk in c.get("checks", []):
@@ -55,7 +66,8 @@ def approve(rid: str, by: str) -> dict:
     """Record the owner's one approval of the frozen bundle. Called only after the approval gate returned approved."""
     c = store.read_json(store.run_dir(rid) / "contract.json")
     validate_contract(c)
-    rec = {"digest": bundle_digest(rid), "by": by, "at": store.iso()}
+    hours = c.get("limits", {}).get("deadline_hours", 24)
+    rec = {"digest": bundle_digest(rid), "by": by, "at": store.iso(), "deadline": store.now() + hours * 3600}
     store.write_json(store.run_dir(rid) / "approval.json", rec)
     store.set_status(rid, "approved", f"by {by}")
     return rec
