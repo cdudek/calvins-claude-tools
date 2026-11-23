@@ -170,9 +170,25 @@ def task_info(rid: str, tid: str) -> dict:
     raise SdlcError(f"unknown task {tid}")
 
 
+def pin_wait(rid: str, doc: dict, mid: str) -> str:
+    """Why a milestone of a vendored-tarball consumer cannot open yet: it needs a producer milestone whose release is not pinned into it."""
+    import release
+    ms = {m["id"]: m for m in doc["milestones"]}
+    repo = ms[mid]["repo"]
+    if not any(release.vendored(e) and e["consumer"] == repo and any(ms[n]["repo"] == e["producer"] for n in ms[mid].get("needs", []))
+               for e in release.edges(rid)):
+        return ""
+    code, why = release.gate(rid, store.load_meta(rid), consumer=repo)
+    return "" if code == contract.READY else why
+
+
+def openable(rid: str, doc: dict, cp: dict) -> list[str]:
+    return [mid for mid in graph.openable(doc, cp) if not pin_wait(rid, doc, mid)]
+
+
 def next_batch(rid: str) -> list[dict]:
     doc, cp, L = tasks_doc(rid), store.load_cp(rid), lim(rid)
-    for mid in graph.openable(doc, cp):
+    for mid in openable(rid, doc, cp):
         open_milestone(rid, mid)
         cp = store.load_cp(rid)
     running = [t for t in cp["tasks"].values() if t["status"] in ("running", "submitted")]
@@ -186,8 +202,8 @@ def ready_for_dispatch(rid: str, t: dict, cp: dict) -> None:
     st = cp["tasks"].get(tid, {}).get("status", "pending")
     if st != "pending":
         raise SdlcError(f"task {tid} is {st}, not ready for a dispatch")
-    if cp["milestones"].get(t["milestone"], {}).get("status", "waiting") == "waiting" and t["milestone"] not in graph.openable(doc, cp):
-        raise SdlcError(f"milestone {t['milestone']} cannot open yet: the milestones it needs are not merged")
+    if cp["milestones"].get(t["milestone"], {}).get("status", "waiting") == "waiting" and t["milestone"] not in openable(rid, doc, cp):
+        raise SdlcError(f"milestone {t['milestone']} cannot open yet: " + (pin_wait(rid, doc, t["milestone"]) or "the milestones it needs are not merged"))
     waiting = [n for n in t.get("needs", []) if cp["tasks"].get(n, {}).get("status") != "done"]
     if waiting:
         raise SdlcError(f"task {tid} waits on {', '.join(waiting)}")

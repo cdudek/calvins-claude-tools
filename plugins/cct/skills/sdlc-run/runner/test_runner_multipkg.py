@@ -115,14 +115,16 @@ def test_two_package_workspace_publish_pin_verify_ready(tmp_path):
     assert engine.close_milestone(rid, "m1")["status"] == "merged"
     ident = release.pack(rid, "kit")
     assert (store.run_dir(rid) / "artifacts" / "kit" / "kit-ui-1.0.0.tgz").is_file()
-    land(rid, "b0", {"src.js": "2\n"})
-    assert engine.close_milestone(rid, "m2")["status"] == "merged"
-    engine.final_verify(rid)
-    code, first, _ = contract.evaluate(rid)
-    assert code == PENDING and "awaits publication of kit" in first
+    assert engine.next_batch(rid) == []  # the consumer milestone waits for the pinned release
+    assert store.load_cp(rid)["milestones"].get("m2", {}).get("status", "waiting") == "waiting"
+    with pytest.raises(SdlcError, match="awaits publication of kit"):
+        engine.dispatch(rid, "b0")
     publish_ready(kit, rid)
     rec = release.publish(rid, "kit")
     assert rec["digest"] == ident["digest"]
+    assert [t["id"] for t in engine.next_batch(rid)] == ["b0"]  # pinned: the consumer milestone opens on the vendored files
+    land(rid, "b0", {"src.js": "2\n"})
+    assert engine.close_milestone(rid, "m2")["status"] == "merged"
     branch = store.load_meta(rid)["repos"]["app"]["branch"]
     man = json.loads(tk.git(app, "show", f"{branch}:package.json"))
     assert man["dependencies"] == {"@kit/annotations": "file:vendor/kit/kit-annotations-1.0.0.tgz", "@kit/ui": "file:vendor/kit/kit-ui-1.0.0.tgz"}
@@ -238,15 +240,13 @@ def test_one_producer_with_three_consumers_is_packed_once_and_pinned_in_each(tmp
     land(rid, "a", {"packages/ui/i.js": "z\n"})
     engine.close_milestone(rid, "m1")
     ident = release.pack(rid, "kit")
-    for i, name in enumerate(("app", "ext", "mac")):
-        land(rid, f"b{i}", {"src.js": "2\n"})
-        assert engine.close_milestone(rid, f"m{i + 2}")["status"] == "merged"
-    engine.final_verify(rid)
-    code, first, _ = contract.evaluate(rid)
-    assert code == PENDING and "awaits publication of kit" in first
+    assert engine.next_batch(rid) == []  # no consumer opens before the release is pinned
     publish_ready(kit, rid)
     rec = release.publish(rid, "kit")
     assert set(rec["consumers"]) == {"app", "ext", "mac"} and rec["digest"] == ident["digest"]
+    for i, name in enumerate(("app", "ext", "mac")):
+        land(rid, f"b{i}", {"src.js": "2\n"})
+        assert engine.close_milestone(rid, f"m{i + 2}")["status"] == "merged"
     for name in ("app", "ext", "mac"):
         branch = store.load_meta(rid)["repos"][name]["branch"]
         path = tk_repo(store.load_meta(rid), name)
