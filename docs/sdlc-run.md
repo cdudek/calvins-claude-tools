@@ -1,6 +1,6 @@
 # sdlc-run, end to end
 
-Describes sdlc-run 4.2.2.
+Describes sdlc-run 4.2.3.
 
 `/cct:sdlc-run` plans, builds and proves a change across one or more repos. You approve once. The next thing you do is merge. Nothing is installed in the repos: the plugin ships the skill, the agents and the runner.
 

@@ -5,6 +5,12 @@ version warning, the **Mechanical** lines are what `adopt` does for you (it adds
 with the stack's defaults and never overwrites a value), the **Manual** lines are printed for
 the engineer. A version with no migration lines needs nothing but a re-run of `adopt`.
 
+## 4.2.3 — fix
+
+- **Records guard, sibling kit hardening.** The sibling-kit list, the installed-plugins registry and the plugin cache decide which runner may touch the records, so an agent may not write them (Write, Edit, NotebookEdit) or name them in a command (paths, names, globs, a shell inside the cache). A sibling runner counts only at the literal path `<config dir>/plugins/cache/<marketplace>/<name>/<version>/skills/sdlc-run/runner/sdlc.py` with no symlink on it; a registry entry or an install path elsewhere adds nothing. A command that cannot be parsed and names `sdlc.py`, the runner folder or one of its modules is denied. A command that names `.claude`, `CLAUDE_CONFIG_DIR` or the config dir together with a glob character, `$`, `{`, a backtick, `cd` or `pushd` is denied, and so is any word that, expanded like the shell would (`~`, `$VAR`, then the glob against the file system, relative words against the command's directory), lands on a protected path.
+- **Accepted risk.** The guard is string-based: a same-user agent that deliberately writes bypass code (an obfuscated path, an interpreter that builds it at run time) can still get through. The follow-up is owner-only file permissions on those paths or a signed hash list of the allowed runners.
+- **Mechanical:** none. **Manual:** none.
+
 ## 4.2.2 — fix
 
 - **Two kits, one runner.** When a sibling kit ships the same runner, the records guard accepts exactly one plain call of either kit's runner. The sibling is named by the owner in `<claude config dir>/sdlc-sibling-kits.json` (`{"plugins": ["<plugin name>"]}`, default none) and counts only at `skills/sdlc-run/runner/sdlc.py` of its installed copy (the plugin cache, or an install path in `installed_plugins.json`, symlinks resolved). Every other deny is unchanged.

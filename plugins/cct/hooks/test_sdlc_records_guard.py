@@ -164,7 +164,7 @@ def test_a_lookalike_runner_outside_the_plugin_cache_or_not_named_is_denied(tmp_
     assert bash(f"python3 {install_kit(tmp_path / 'cfg3', listed=False)} check ~/.sdlc", home, env={**env, "CLAUDE_CONFIG_DIR": str(tmp_path / "cfg3")}) == "deny"
 
 
-def test_an_install_path_from_the_installed_plugins_registry_counts_too(tmp_path):
+def test_a_registry_entry_or_an_install_path_outside_the_plugin_cache_adds_nothing(tmp_path):
     home, cfg = tmp_path / ".sdlc", tmp_path / "cfg"
     env = {"SDLC_HOME": str(home), "CLAUDE_CONFIG_DIR": str(cfg)}
     runner = tmp_path / "somewhere" / "fakekit" / "skills" / "sdlc-run" / "runner" / "sdlc.py"
@@ -172,6 +172,79 @@ def test_an_install_path_from_the_installed_plugins_registry_counts_too(tmp_path
     runner.write_text("#")
     (cfg / "plugins").mkdir(parents=True)
     (cfg / "sdlc-sibling-kits.json").write_text(json.dumps({"plugins": ["fakekit"]}))
-    assert bash(f"python3 {runner} check ~/.sdlc/runs/r1", home, env=env) == "deny"  # not registered yet
     (cfg / "plugins" / "installed_plugins.json").write_text(json.dumps({"plugins": {"fakekit@market": [{"installPath": str(runner.parents[3])}]}}))
-    assert bash(f"python3 {runner} check ~/.sdlc/runs/r1", home, env=env) is None
+    assert bash(f"python3 {runner} check ~/.sdlc/runs/r1", home, env=env) == "deny"  # registered, but not in the plugin cache
+
+
+def test_a_version_directory_that_is_a_symlink_is_not_an_installed_plugin(tmp_path):
+    home, cfg = tmp_path / ".sdlc", tmp_path / "cfg"
+    env = {"SDLC_HOME": str(home), "CLAUDE_CONFIG_DIR": str(cfg)}
+    real = tmp_path / "elsewhere" / "skills" / "sdlc-run" / "runner" / "sdlc.py"
+    real.parent.mkdir(parents=True)
+    real.write_text("#")
+    ver = cfg / "plugins" / "cache" / "market" / "fakekit" / "1.0"
+    ver.parent.mkdir(parents=True)
+    ver.symlink_to(tmp_path / "elsewhere")
+    (cfg / "sdlc-sibling-kits.json").write_text(json.dumps({"plugins": ["fakekit"]}))
+    assert bash(f"python3 {ver / 'skills' / 'sdlc-run' / 'runner' / 'sdlc.py'} check ~/.sdlc/runs/r1", home, env=env) == "deny"
+
+
+def test_agents_may_not_write_the_sibling_list_the_registry_or_the_plugin_cache(tmp_path):
+    home, cfg = tmp_path / ".sdlc", tmp_path / "cfg"
+    env = {"SDLC_HOME": str(home), "CLAUDE_CONFIG_DIR": str(cfg)}
+    for tool in ("Write", "Edit", "MultiEdit"):
+        for p in (cfg / "sdlc-sibling-kits.json", cfg / "plugins" / "installed_plugins.json", cfg / "plugins" / "cache" / "market" / "x" / "1" / "skills" / "a.py"):
+            assert run(tool, {"file_path": str(p)}, home, env=env) == "deny", (tool, p)
+    assert run("NotebookEdit", {"notebook_path": str(cfg / "plugins" / "cache" / "n.ipynb")}, home, env=env) == "deny"
+    assert run("Write", {"file_path": str(cfg / "settings.json")}, home, env=env) is None  # the rest of the config dir is not covered
+    assert run("Write", {"file_path": str(tmp_path / "work" / "a.py")}, home, env=env) is None
+    assert run("Read", {"file_path": str(cfg / "plugins" / "installed_plugins.json")}, home, env=env) is None  # reading is not writing
+
+
+def test_commands_that_name_the_sibling_list_the_registry_or_the_cache_are_denied(tmp_path):
+    home, cfg = tmp_path / "deep" / ".sdlc", tmp_path / "cfg"
+    env = {"SDLC_HOME": str(home), "CLAUDE_CONFIG_DIR": str(cfg)}
+    sibling = install_kit(cfg)
+    for cmd in (f"echo '{{\"plugins\": [\"evil\"]}}' > {cfg}/sdlc-sibling-kits.json", f"tee {cfg}/plugins/installed_plugins.json",
+                f"mkdir -p {cfg}/plugins/cache/m/evil/1 && cp x {cfg}/plugins/cache/m/evil/1/f", f"rm -rf {cfg}/plugins/cache", f"cat {cfg}/plugins/cache/m/fakekit/1.0/x",
+                f"touch {cfg}/plug*/cache/m/evil", f"touch {cfg}/plugins/c?che/x", "sed -i s/a/b/ ~/.claude/sdlc-sibling-kits.json",
+                "echo x > ~/.claude/plugins/installed_plugins.json", "python3 -c \"open('sdlc-sibling-kits.json','w')\""):
+        assert bash(cmd, home, env=env) == "deny", cmd
+    assert bash("touch f", home, cwd=cfg / "plugins" / "cache" / "m", env=env) == "deny"  # a shell inside the cache
+    assert bash(f"ls {cfg.parent}/*", home, env=env) is None and bash(f"ls {cfg}", home, env=env) is None  # an ancestor glob is not the cache
+    assert bash(f"rm {cfg}/*", home, env=env) == "deny"  # a glob that can name the sibling list is
+    assert bash(f"python3 {sibling} status", home, env=env) is None  # a named sibling's plain runner call still passes from inside the cache path
+
+
+def test_an_unparsable_command_that_names_the_runner_or_its_modules_is_denied(tmp_path):
+    home = tmp_path / ".sdlc"
+    env = {"SDLC_HOME": str(home)}
+    runner_dir = str(Path(RUNNER).parent)
+    for cmd in ("./sdlc.py gate r1 --by x 'unbalanced", "sdlc.py check 'x", f"cat {runner_dir}/store.py 'unbalanced", "cat skills/sdlc-run/runner/store.py 'unbalanced",
+                "echo 'unbalanced; from store import write_json", "echo \"x; import contract"):
+        assert bash(cmd, home, env=env) == "deny", cmd
+    assert bash("echo 'unbalanced", home, env=env) is None  # prose without those names still passes
+
+
+def test_a_command_that_names_the_claude_dir_with_a_glob_expansion_brace_backtick_or_cd_is_denied(tmp_path):
+    home, cfg = tmp_path / "deep" / ".sdlc", tmp_path / "cfg"
+    env = {"SDLC_HOME": str(home), "CLAUDE_CONFIG_DIR": str(cfg)}
+    for cmd in ("ls ~/.claude/*", "ls ~/.claude/plug?ns", "ls ~/.claude/plugins/[c]ache", "cat $HOME/.claude/x", "echo ~/.claude/{plugins,x}", "echo `id` > .claude/x",
+                "cd ~/.claude && touch f", "pushd .claude", "(cd .claude; touch f)", "ls $CLAUDE_CONFIG_DIR", "CLAUDE_CONFIG_DIR=/x ls /x/*", f"ls {cfg}/pl*",
+                f"cd {cfg} && ls"):
+        assert bash(cmd, home, env=env) == "deny", cmd
+    for cmd in ("git add .claude/settings.json", "ls src", "echo $HOME", "ls ~/*.md", "cat .claude/CLAUDE.md"):
+        assert bash(cmd, home, env=env) is None, cmd  # a literal command on the repo's own .claude folder, or no .claude at all
+
+
+def test_a_word_that_expands_onto_a_protected_path_is_denied_whatever_it_looks_like(tmp_path):
+    home, cfg = tmp_path / "deep" / ".sdlc", tmp_path / "cfg"
+    env = {"SDLC_HOME": str(home), "CLAUDE_CONFIG_DIR": str(cfg)}
+    install_kit(cfg)
+    (cfg / "settings.json").write_text("{}")
+    (cfg / "plugins" / "installed_plugins.json").write_text("{}")
+    for cmd in ("ls plugins/c*", "cat sdlc-sib*", "cat sdlc-sibling-k?ts.js?n", "touch plugins/cache/m*/new", "cat plugins/installed_p*"):
+        assert bash(cmd, home, cwd=cfg, env=env) == "deny", cmd  # relative words, resolved against the command's cwd
+    assert bash(f"cat {cfg}/sdlc-sibling-k?ts.json", home, cwd=tmp_path, env=env) == "deny"  # absolute, from another directory
+    for cmd in ("cat settings.json", "ls plugins/zzz*", "ls set*"):
+        assert bash(cmd, home, cwd=cfg, env=env) is None, cmd  # nothing protected comes out of these

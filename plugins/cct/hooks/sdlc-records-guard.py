@@ -7,11 +7,12 @@ writing a pass. It stops a careless or confused agent, not a hostile process of 
 Rule for Bash: a command that mentions the sdlc folder in any form is denied unless the WHOLE command is exactly one
 invocation of this plugin's own runner, or of the same runner shipped by a sibling kit the owner named in
 `<claude config dir>/sdlc-sibling-kits.json` ({"plugins": ["<plugin name>"]}, default: none). A sibling runner counts only at the exact
-path `<plugin>/skills/sdlc-run/runner/sdlc.py` of an installed copy: a directory under the plugin cache
-(`<config dir>/plugins/cache/<marketplace>/<plugin>/<version>`) or an install path listed in
-`<config dir>/plugins/installed_plugins.json`, with symlinks resolved. Deny on a match, stay silent otherwise.
+path `<config dir>/plugins/cache/<marketplace>/<plugin>/<version>/skills/sdlc-run/runner/sdlc.py`, with no symlink anywhere on it. The
+sibling list, the installed-plugins registry and the plugin cache are what that decision rests on, so agents may not write them (Write,
+Edit, NotebookEdit) nor name them in a command. Deny on a match, stay silent otherwise.
 """
 import fnmatch
+import glob
 import json
 import os
 import re
@@ -31,35 +32,33 @@ def claude_home() -> str:
     return os.path.realpath(os.environ.get("CLAUDE_CONFIG_DIR") or os.path.expanduser("~/.claude"))
 
 
+def protected_paths() -> list[str]:
+    """What the sibling-runner decision rests on: the owner's list, the registry and the whole plugin cache."""
+    out = []
+    for base in {claude_home(), os.path.expanduser(os.environ.get("CLAUDE_CONFIG_DIR") or "~/.claude"), os.path.expanduser("~/.claude")}:
+        out += [os.path.join(base, "sdlc-sibling-kits.json"), os.path.join(base, "plugins", "installed_plugins.json"),
+                os.path.join(base, "plugins", "cache")]
+    return list(dict.fromkeys(out + [os.path.realpath(p) for p in out]))
+
+
 def sibling_runners() -> set[str]:
-    """Real paths of the runner of each named sibling plugin, taken from where Claude Code installed it, never from a pattern the
-    command could match."""
+    """Paths of the runner of each named sibling plugin, only where the plugin cache holds it: the literal path
+    <config>/plugins/cache/<marketplace>/<name>/<version>/skills/sdlc-run/runner/sdlc.py with no symlink on it. A registry entry or an
+    install path elsewhere adds nothing."""
     base = claude_home()
     try:
         with open(os.path.join(base, "sdlc-sibling-kits.json"), encoding="utf-8") as f:
             names = {n for n in (json.load(f).get("plugins") or []) if isinstance(n, str) and re.fullmatch(r"[A-Za-z0-9][A-Za-z0-9._-]*", n)}
     except (OSError, ValueError, AttributeError):
         return set()
-    roots: list[tuple[str, str]] = []  # (plugin name, installed plugin directory)
     cache = os.path.join(base, "plugins", "cache")
+    out = set()
     for n in names:
         for mkt in glob_dirs(cache):
             for ver in glob_dirs(os.path.join(mkt, n)):
-                roots.append((n, ver))
-    try:
-        with open(os.path.join(base, "plugins", "installed_plugins.json"), encoding="utf-8") as f:
-            for key, installs in (json.load(f).get("plugins") or {}).items():
-                for i in installs if isinstance(installs, list) else []:
-                    if key.split("@")[0] in names and isinstance(i, dict) and isinstance(i.get("installPath"), str):
-                        roots.append((key.split("@")[0], i["installPath"]))
-    except (OSError, ValueError, AttributeError):
-        pass
-    out = set()
-    for n, root in roots:
-        real = os.path.realpath(os.path.join(root, SUFFIX))
-        # the file must really live in that plugin's own installed directory: a symlink leading elsewhere is not the plugin
-        if real == os.path.join(os.path.realpath(root), SUFFIX) and os.path.isfile(real):
-            out.add(real)
+                runner = os.path.join(ver, SUFFIX)
+                if os.path.realpath(runner) == runner and os.path.isfile(runner):  # nothing on the path is a link
+                    out.add(runner)
     return out
 
 
@@ -97,7 +96,62 @@ def glob_reaches(pattern: str, home: str) -> bool:
     return False
 
 
+def names_protected(cmd: str, words: list[str]) -> bool:
+    """The command names the sibling list, the plugin registry or the plugin cache (by path, name or a glob that reaches them)."""
+    if "sdlc-sibling-kits" in cmd or "installed_plugins" in cmd or any(p in cmd for p in protected_paths()):
+        return True
+    for w in words:
+        g = os.path.expanduser(os.path.expandvars(w))
+        if re.search(r"[*?\[]", g) and any(glob_matches(g, p) for p in protected_paths()):
+            return True
+    return False
+
+
+def names_claude_dir(cmd: str) -> bool:
+    return ".claude" in cmd or "CLAUDE_CONFIG_DIR" in cmd or claude_home() in cmd
+
+
+def indirect_claude_dir(cmd: str, words: list[str]) -> bool:
+    """A command that names the Claude config dir AND could build or reach a protected path by other means: a glob, an expansion, brace
+    or backtick, or a change of directory. Plain, literal commands on the dir (other than the protected paths) are left alone."""
+    return names_claude_dir(cmd) and bool(re.search(r"[*?\[${`]", cmd) or any(w in ("cd", "pushd") for w in words) or re.search(r"\b(cd|pushd)\b", cmd))
+
+
+def expands_into_protected(words: list[str], cwd: str) -> bool:
+    """Every word, expanded the way the shell would (~, $VAR, then the glob against the file system), may not land on a protected path."""
+    allowed = {RUNNER} | sibling_runners()  # the runner being called (this plugin's or a named sibling's) is the one allowed hit
+    for w in words:
+        e = os.path.expanduser(os.path.expandvars(w))
+        if not e or set(e) <= OPERATORS or os.path.realpath(e) in allowed:
+            continue
+        if not os.path.isabs(e):
+            e = os.path.join(cwd, e)
+        paths = [e]
+        while re.search(r"[*?\[]", paths[-1]) and os.path.dirname(paths[-1]) not in ("", paths[-1]):  # a new file in a directory the glob names
+            paths.append(os.path.dirname(paths[-1]))
+        try:
+            hits = [x for p in paths for x in glob.glob(p)] + ([] if re.search(r"[*?\[]", e) else [e])
+        except (OSError, ValueError):
+            continue
+        if any(inside_protected(x) for x in hits):
+            return True
+    return False
+
+
+def glob_matches(pattern: str, target: str) -> bool:
+    """Each component of the pattern against the same component of the target; a pattern at or below the target reaches it, one that stops above it (`/Users/*`) does not."""
+    pat, tgt = pattern.split("/"), target.split("/")
+    return len(pat) >= len(tgt) and all(k >= len(tgt) or fnmatch.fnmatchcase(tgt[k], comp) for k, comp in enumerate(pat))  # not an ancestor glob
+
+
+def inside_protected(path: str) -> bool:
+    p = os.path.realpath(os.path.expanduser(os.path.expandvars(path))) if path else ""
+    return bool(p) and any(p == q or p.startswith(q + os.sep) for q in protected_paths())
+
+
 def mentions(cmd: str, words: list[str], home: str, runs: str, real: str) -> bool:
+    if names_protected(cmd, words):
+        return True
     if ".sdlc" in cmd or "SDLC_HOME" in cmd or home in cmd or runs in cmd or real in cmd:
         return True
     for w in words:
@@ -139,6 +193,12 @@ def touches_runner(cmd: str, words: list[str]) -> bool:
                 or (re.search(r"\b(sys\.path|__import__|importlib|runpy)\b", cmd) and re.search(rf"\b({mods})\b", cmd)))
 
 
+def names_runner(cmd: str) -> bool:
+    """A command that could not be parsed still may not name the runner, its folder or one of its modules."""
+    mods = "|".join(MODULES)
+    return bool(re.search(r"\bsdlc\.py\b", cmd) or RUNNER_DIR in cmd or "skills/sdlc-run/runner" in cmd or re.search(rf"\b(import|from)\s+({mods})\b", cmd))
+
+
 def is_exact_runner(cmd: str, words: list[str]) -> bool:
     """One simple command, no chaining, no expansion, and argv resolves to this plugin's own runner or an installed sibling kit's."""
     if "\n" in cmd or "\r" in cmd or "`" in cmd or "$" in cmd:
@@ -162,7 +222,10 @@ def main() -> None:
     ti, tool = ev.get("tool_input") or {}, ev.get("tool_name")
     cwd = ev.get("cwd") or os.getcwd()
     msg = f"The run records under {runs} belong to the sdlc runner; use `sdlc.py` instead of reading or editing them."
-    if tool in ("Write", "Edit", "MultiEdit", "NotebookEdit", "Read"):
+    if tool in ("Write", "Edit", "MultiEdit", "NotebookEdit") and inside_protected(ti.get("file_path") or ti.get("notebook_path") or ""):
+        deny("The sibling-kit list, the installed-plugins registry and the plugin cache decide which runner may touch the run records: "
+             "they belong to the owner, not to an agent.")
+    elif tool in ("Write", "Edit", "MultiEdit", "NotebookEdit", "Read"):
         if under(ti.get("file_path") or ti.get("notebook_path") or "", real):
             deny(msg)
     elif tool in ("Grep", "Glob"):
@@ -181,10 +244,13 @@ def main() -> None:
             parsed = True
         except ValueError:
             words, parsed = [], False
+        if indirect_claude_dir(cmd, words) or (parsed and expands_into_protected(words, cwd)):
+            return deny("The Claude config dir holds the sibling-kit list, the plugin registry and the plugin cache, which decide who may touch the "
+                        "run records: no globs, expansions, braces, backticks or cd on it, and no word that expands onto them.")
         if "SDLC_GATE_CMD" in cmd:  # the owner's approval program is not an agent's to set
             return deny("SDLC_GATE_CMD may not be set: the approval gate is a fixed command.")
-        inside = under(cwd, real)
-        runner = touches_runner(cmd, words) if parsed else bool(re.search(r"\bpython", cmd) and ("sdlc.py" in cmd or RUNNER_DIR in cmd))
+        inside = under(cwd, real) or inside_protected(cwd)
+        runner = touches_runner(cmd, words) if parsed else names_runner(cmd)
         if not (mentions(cmd, words, home, runs, real) or inside or runner):
             return
         if parsed and is_exact_runner(cmd, words):
