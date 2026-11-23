@@ -138,7 +138,7 @@ tests are light. A heavy job takes a slot in a per-machine queue (`scripts/heavy
 one slot by default), and the milestone gate runs every check through it. A helper's heavy command
 that skips the queue is refused by `helper-guard.sh`. `scripts/db.py test` gives each job a private
 copy of a migrated local Postgres; `db.py dev` connects the engineer to their own cloud database;
-`scripts/preflight.py` checks tools, sign-in and Docker once. All optional (`heavy`, `db`,
+`scripts/preflight.py` checks tools, sign-in and Docker once, and `preflight.py doctor` (read-only; run by `adopt`, at Stage 1.0 and before the plan gate) names every gate-config gap with its fix. All optional (`heavy`, `db`,
 `preflight` in `sdlc.json`); `references/heavy-work.md`.
 
 ## Agents and models
@@ -212,12 +212,12 @@ Only a project that asks for a branch (`project.branch: true`) adds one level ab
 - The build works in the supervisor's worktree on `milestone/<slug>-<n>`
   itself, a commit per feature. Parallel builders, when used, start from the milestone head and
   merge back locally, one at a time, through the shared policy’s `wt merge` flow (Git fallback).
-- Builders are `cct:sdlc-feature-builder` agents, at most 4 at once (inside about 6 helpers), each dispatched with
+- Builders are `cct:sdlc-feature-builder` agents, at most `sdlc.json` `maxBuilders` at once (default 4; the engineer may raise it in the kickoff), plus about 2 helpers, each dispatched with
   `isolation: "worktree"` and `Repo`, `Worktree`, `Change` and `Base: <milestone head sha>` lines, checked and reset to before any
   edit: a worktree hook cuts from the trunk. The supervisor commits its records first, edits no
-  code, runs no test suite, and is the one integrator. Every builder dispatch carries `sdlc.json` `builderModel` and `builderEffort`
-  (default `sonnet`, `high`; set `opus` for a hard change, or let one plan's Approach override
-  them for that change). With `sdlc.json` `builders: "codex"`, every feature row and fix part runs
+  code, runs no test suite, and is the one integrator. Every builder dispatch carries a model and effort the orchestrator chooses
+  (`references/stages.md`, "Models are an orchestrator choice"): `sdlc.json` `builderModel` and `builderEffort` are only the
+  defaults (`sonnet`, `high`), and the engineer's "Orchestrator instructions for this run" in the kickoff win. With `sdlc.json` `builders: "codex"`, every feature row and fix part runs
   instead through `scripts/codex-build.sh` (the Codex CLI in the same worktree, network off,
   `.git` read-only; the wrapper checks the result and makes the commit; `references/stages.md`
   → Wall clock); the supervisor, the milestone close and the gates stay Claude.
@@ -255,7 +255,7 @@ E2E at the close, while the supervisor dispatches the reviews and the validation
 `builders: "codex"` the close builder implements nothing: the fix parts go to `codex-build.sh`,
 then the close builder runs the gate once. Only its
 `VERIFY PASS` head is pushed, once, with one PR; auto-merge is armed only after the owner and visual dispositions are recorded (never arm an `ask`-labelled or a closed PR), while the supervisor builds
-the next independent milestone (at most 4 builders). CI is the last check, never the test loop:
+the next independent milestone (up to `maxBuilders` builders). CI is the last check, never the test loop:
 a red check uses the exact-test local failure loop in `references/local-first.md`, then the full suite once and one batched push. Another repository follows
 the same rule on its own milestone branch; an exception needs the engineer's words in
 `decisions.json` `prExceptions`. Agents run only the tests they touched.

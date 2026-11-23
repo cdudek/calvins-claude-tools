@@ -2890,3 +2890,16 @@ def test_adopt_widens_an_older_chain_gate_matcher_and_the_dogfood_settings_regis
     assert gate == ["Edit|MultiEdit|Write"]
     own = json.loads((Path(__file__).resolve().parents[5] / ".claude" / "settings.json").read_text(encoding="utf-8"))
     assert [g["matcher"] for g in own["hooks"]["PreToolUse"] if any("chain-gate.sh" in h["command"] for h in g["hooks"])] == ["Edit|MultiEdit|Write"]
+
+
+def test_adopt_rejects_a_max_builders_that_is_not_a_positive_whole_number(tmp_path: Path) -> None:
+    repo = _repo(tmp_path, "python")
+    assert _adopt(repo).returncode == 0
+    cfg = json.loads((repo / "sdlc.json").read_text())
+    cfg["maxBuilders"] = 6
+    (repo / "sdlc.json").write_text(json.dumps(cfg))
+    assert _adopt(repo).returncode == 0
+    cfg["maxBuilders"] = 0
+    (repo / "sdlc.json").write_text(json.dumps(cfg))
+    res = _adopt(repo)
+    assert res.returncode != 0 and "maxBuilders" in (res.stderr + res.stdout)

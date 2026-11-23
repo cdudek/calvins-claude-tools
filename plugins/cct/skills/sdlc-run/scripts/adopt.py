@@ -854,6 +854,9 @@ def add_builders(cfg: dict) -> None:
         wrote.append("sdlc.json: builderEffort added (high)")
     elif e not in EFFORTS:
         sys.exit(f"sdlc.json builderEffort must be one of {', '.join(EFFORTS)}, not {e!r}")
+    mb = cfg.get("maxBuilders")  # 3.27.0, optional (default 4, never written): how many builders run at once
+    if mb is not None and not (isinstance(mb, int) and not isinstance(mb, bool) and mb >= 1):
+        sys.exit(f"sdlc.json maxBuilders must be a whole number of at least 1, not {mb!r}")
 
 
 def check_rules(cfg: dict) -> None:
@@ -2028,6 +2031,10 @@ def main() -> int:
         "e2e-repeat.sh",
     ):
         _write(ROOT / "scripts" / script, (TPL / "scripts" / script).read_text(encoding="utf-8"))
+    # The gate-config doctor (read-only): what the gates would refuse later. The missing full E2E is already a
+    # MANUAL line above (e2e_gap_note, the same predicate), so it is not repeated.
+    doctor = subprocess.run([sys.executable, str(TPL / "scripts" / "preflight.py"), "doctor"], cwd=ROOT, capture_output=True, text=True)
+    manual.extend(x for x in doctor.stdout.splitlines() if x.startswith("GAP") and not x.startswith("GAP full-e2e"))
     # sdlc_status.py runs from the plugin now and is never copied into a repo.
     remove(ROOT / "scripts" / "sdlc_status.py", "now runs from the plugin")
     for name in ("Makefile", "package.json"):  # named, never edited: they are the repo's own

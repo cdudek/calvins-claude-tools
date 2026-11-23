@@ -98,6 +98,9 @@ Worktree lifecycle commands follow the [shared worktree policy](../../../referen
 - **Steps:** Run `status.sh`; `templates=stale` → run `adopt` first. No `tracker` in `sdlc.json`:
   run `scripts/tracker.py detect`, ask, set it up (`references/trackers.md`). Check plannotator, the tracker
   MCP and `gh`; say once what is missing and continue where the chain allows.
+- **Gate-config doctor:** `python3 scripts/preflight.py doctor` (read-only) prints one `GAP <name>: <what>. Fix: <fix>`
+  line per gap the gates would refuse later: no full E2E command or x3 repeat, no `visual.start` for app
+  captures, a project without `milestones.merge: local`, a milestone numbered 0. Fix each before drafting.
 - **Failure modes:** stale templates, no `sdlc.json`, missing `scripts/verify_gate.py`.
 
 ### 1.1 The dialog
@@ -280,7 +283,8 @@ package), `tracking-apply` (the success-measure events). Each result lands in th
 
 ### 4.3 The gate
 
-0. **Lint first.** `python3 scripts/verify_gate.py lint <id>` on the drafts, before either reviewer
+0. **Doctor and lint first.** `python3 scripts/preflight.py doctor` (every `GAP` line is a refusal waiting at `approve`
+   or the close; fix it now), then `python3 scripts/verify_gate.py lint <id>` on the drafts, before either reviewer
    is dispatched; fix every line it names. Run it again right before the owner gate (step 1).
 0a. **Analyze pass** (not on size S), read-only (`references/quality-passes.md`): six passes over intent, facts,
    plan and `spec/`, findings into `analyze.md`. Fix every CRITICAL in its source file and mark it
@@ -425,7 +429,7 @@ while a dependency PR's CI ran. Four rules, for every stack.
   the PR in the background (`gh pr checks <n> --watch` as a background command, or `Monitor`),
   and start the next independent row at once. The supervisor watches, not the builder; a
   builder returns when it has pushed. A red check interrupts: dispatch a builder to the PR's
-  branch, then go back. Independent rows build in parallel builders, at most 4, inside about 6 helpers (Wall clock).
+  branch, then go back. Independent rows build in parallel builders, at most `maxBuilders` (default 4), plus about 2 helpers (Wall clock).
 - **Agents run what they touched.** A builder runs only the tests or specs its change touched
   (the command per stack: `../../test-e2e-policy/references/suite-speed-and-reliability.md`
   section K, column "Touched tests"). The full suite runs once on the final head before each push; the required GitHub checks are the merge gate, see [local-first](local-first.md).
@@ -447,14 +451,20 @@ disappear.
   command (Git fallback), and never while a close runs. Independent features
   build at the same time. Features that edit the same files run one after another, the second
   cut after the first has merged.
+- **Models are an orchestrator choice.** The plan, the facts, tracker issues and `sdlc.json` never
+  name a model for a specific run. The engineer may add an optional "Orchestrator instructions for
+  this run" block to the goal kickoff (`templates/goal/run.txt`, the plan's Goal handover) that
+  names the builder model and effort, the reviewer model and the builders at once; the orchestrator
+  passes them on every dispatch (agent `model` and `effort`, or `codex-build.sh --model --reasoning`).
+  `sdlc.json` `builderModel` and `builderEffort` are only the defaults when the kickoff says nothing.
 - **The supervisor plans, dispatches, judges and merges.** The session that runs this skill edits
   no code and runs no test suite; the builders and the gate do. Every feature and fix part goes to
   an `cct:sdlc-feature-builder`, never to `general-purpose`, dispatched with `model` and `effort` set to
-  `sdlc.json` `builderModel` and `builderEffort` (default `sonnet`, `high`; the agent's own
-  frontmatter says the same, so the default changes nothing), or to the pair the plan's
-  Approach names for this change. A subagent's result comes back as a file path
-  plus a summary of at most about 2k tokens. At most 4 builders run at once, inside about 6 helpers
-  in all (builders plus the reviewers, validators and fix parts out at the same moment); heavy
+  the model and effort the orchestrator chose for this run (see **Models are an orchestrator choice**
+  below); with none chosen, `sdlc.json` `builderModel` and `builderEffort` (default `sonnet`, `high`; the agent's own
+  frontmatter says the same, so the default changes nothing). A subagent's result comes back as a file path
+  plus a summary of at most about 2k tokens. At most `sdlc.json` `maxBuilders` builders run at once (default 4; the engineer may raise it in the
+  kickoff), plus about 2 helpers in all (builders plus the reviewers, validators and fix parts out at the same moment); heavy
   slots are counted separately ([heavy work](heavy-work.md)).
 - **Dispatch names the workspace.** Every builder prompt (and every Codex brief) starts with four
   lines: `Repo: <git remote url, no credentials>`, `Worktree: <absolute path>`,
@@ -470,8 +480,7 @@ disappear.
   worktree once (`ciCommands.install`; the sandbox has no network, so nothing installs later),
   write the brief to a file (the feature row, its facts, the worker branch), start
   `codex-build.sh --worktree <wt> --change <id> --brief <file> --model <M> --reasoning <R>` as a
-  **background Bash** with `sdlc.json` `builderModel` and `builderEffort` (or the pair the plan's
-  Approach names for this change), and watch it with
+  **background Bash** with the model and reasoning the orchestrator chose (the defaults are `sdlc.json` `builderModel` and `builderEffort`), and watch it with
   `Monitor`. The script waits on Codex, writes `<out>/run.json` (model, reasoning, branch, base,
   pid = process group) and `<out>/result.json`, checks a `done` (the tree changed; no protected
   path, lockfile, manifest or locked test among the changes, else exit 3 `rejected`, left
