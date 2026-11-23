@@ -10,12 +10,14 @@ the engineer. A version with no migration lines needs nothing but a re-run of `a
 - **Breaking:** the skill no longer installs or upgrades anything in a product repo. `adopt`, change folders, tier files, copied hooks and scripts, intent and UX approvals and screenshot galleries are gone from the flow. The plugin ships the skill, the agents and `runner/sdlc.py`.
 - **Records** live in `~/.sdlc/runs/<run-id>/` (never committed); run ID `<date>-<start repo>-<slug>`; branch `sdlc/<run-id>` in every repo; `~/.sdlc/active/` links live runs. A plugin hook blocks agents from writing under `~/.sdlc/runs/`.
 - **One approval** of a bundle digest (plan, contract, task graph, pinned inputs, approved lockfiles). A changed bundle blocks the run.
-- **Contract and receipts.** Each check is verified in a clean checkout by the runner; a receipt binds the commit, the bundle, the pinned inputs, the exit code and the test count and is signed. `sdlc check` exits 0 READY, 1 FAIL, 2 BLOCKED or STOPPED, 3 PENDING. Zero tests, a missing tool or a check that passes on the base are BLOCKED, never a pass.
+- **Contract and receipts.** Each check is verified in a clean checkout by the runner; a receipt binds the commit, the bundle, the pinned inputs, the exit code and the test count. Receipts are unsigned: the plugin hook that denies agent reads and writes under the runs folder is the barrier. `sdlc check` exits 0 READY, 1 FAIL, 2 BLOCKED or STOPPED, 3 PENDING. Zero tests, a missing tool or a check that passes on the base are BLOCKED, never a pass.
 - **Build.** Up to 8 builder subagents in worktrees at the integration SHA; tamper checks on pinned specs, test and CI config, skips and removed assertions; cycle detection at planning and before each dispatch, `BLOCKED deadlock` at run time; dispatch, attempt and deadline caps; `sdlc stop`; `sdlc resume`.
 - **Milestones** merge into the project branch locally once their gate passes; the only PR per repo is the project branch into the default branch.
 - **UI** rows are measured from a pinned board (computed style, geometry) on web, extension or Electron. No baselines, no image approval.
 - **Multi-repo:** producer artifacts with identity, final merge order, published-artifact check, approved pin.
 - **Models** are named only in the kickoff.
+- **Owner gate:** approval and restart need a marker only the Plannotator step writes; a second approval is refused; milestones and tasks must be covered by a check or a named waiver; an empty result set is BLOCKED; a PR and auto-merge need local READY and the producer's release first.
+- **Removed:** the 3.x scripts, change-folder references and copied hooks. Kept as evidence for `sdlc clean`: the shipped-hash list and the template text.
 - Mechanical: none. Nothing is written to a product repo.
 - Manual: 3.x runs finish on 3.x and keep their installed copies. Remove the copies afterwards with `sdlc clean <repo>` (dry run), then `sdlc clean <repo> --apply` and review the cleanup branch. The 3.x kit files stay in the plugin only so `clean` can recognise them.
 

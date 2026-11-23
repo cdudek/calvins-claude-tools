@@ -1,18 +1,33 @@
 """The whole loop through the CLI, as the orchestrating session drives it (builder work done by hand in the worktree)."""
 import json
 import os
-import subprocess
-import sys
 from pathlib import Path
 
 import testkit as tk
 
-CLI = str(Path(__file__).resolve().parent / "sdlc.py")
 
+def sdlc(home, *args, cwd=None, gate="approved"):
+    """The CLI in-process (so the gate runner can be replaced the way a test may, not through the environment)."""
+    import io
+    from contextlib import redirect_stderr, redirect_stdout
 
-def sdlc(home, *args, cwd=None):
-    r = subprocess.run([sys.executable, CLI, *args], capture_output=True, text=True, cwd=cwd, env={**os.environ, "SDLC_HOME": str(home)})
-    return r.returncode, r.stdout.strip(), r.stderr.strip()
+    import discover
+    import sdlc as cli
+
+    out, err = io.StringIO(), io.StringIO()
+    old, discover.GATE_RUN = os.environ.get("SDLC_HOME"), (lambda cmd: (0 if gate != "false" else 1, f"decision: {gate}"))
+    os.environ["SDLC_HOME"] = str(home)
+    old_cwd = os.getcwd()
+    try:
+        if cwd:
+            os.chdir(cwd)
+        with redirect_stdout(out), redirect_stderr(err):
+            rc = cli.main(list(args))
+    finally:
+        os.chdir(old_cwd)
+        os.environ["SDLC_HOME"] = old or ""
+        discover.GATE_RUN = discover._plannotator
+    return rc, out.getvalue().strip(), err.getvalue().strip()
 
 
 def test_plan_to_ready_through_the_cli(tmp_path):
@@ -34,7 +49,11 @@ def test_plan_to_ready_through_the_cli(tmp_path):
     assert sdlc(home, "check", rid)[0] == 2  # not approved yet
     rc, screen, _ = sdlc(home, "screen", rid)
     assert "plannotator annotate" in screen
+    assert sdlc(home, "approve", rid, "--by", "owner")[0] == 2  # no gate approval yet: an agent cannot approve alone
+    assert sdlc(home, "gate", rid, gate="false")[0] == 2 and sdlc(home, "approve", rid, "--by", "owner")[0] == 2
+    assert sdlc(home, "gate", rid)[0] == 0
     assert sdlc(home, "approve", rid, "--by", "owner")[0] == 0
+    assert sdlc(home, "approve", rid, "--by", "owner")[0] == 2  # a second approval would reset caps and deadline
     assert json.loads(sdlc(home, "next", rid)[1]) == ["t1"]
     rc, out, err = sdlc(home, "dispatch", rid, "t1")
     wt = Path(json.loads(out)[0]["worktree"])
@@ -51,4 +70,7 @@ def test_plan_to_ready_through_the_cli(tmp_path):
     assert rc == 0 and line.startswith("READY run=" + rid), line
     assert tk.git(repo, "status", "--porcelain", "--untracked-files=all") == ""  # nothing was left in the repo
     assert sdlc(home, "list")[1].startswith(rid)
+    assert sdlc(home, "done", rid)[0] == 0 and not (home / "active" / rid).exists()  # a finished run leaves the active folder
     assert sdlc(home, "stop", rid)[0] == 0 and sdlc(home, "check", rid)[0] == 2
+    assert sdlc(home, "restart", rid)[0] == 2  # restart needs the owner's gate too
+    assert sdlc(home, "gate", rid, "restart")[0] == 0 and sdlc(home, "restart", rid)[0] == 0

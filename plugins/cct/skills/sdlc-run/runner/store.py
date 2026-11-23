@@ -8,11 +8,9 @@ from __future__ import annotations
 import contextlib
 import fcntl
 import hashlib
-import hmac
 import json
 import os
 import re
-import secrets
 import time
 from datetime import date
 from pathlib import Path
@@ -97,26 +95,25 @@ def log(rid: str, line: str) -> None:
         f.write(f"- {iso()} {line}\n")
 
 
-# ---- key and signatures: the runner's own scripts are the only writers of receipts -----------------
+# ---- who may write what ---------------------------------------------------------------------------
+# Receipts and checkpoints are written only by the runner's own scripts. The barrier is the plugin hook that denies agent
+# reads and writes under runs/ (hooks/sdlc-records-guard.py); there is no signature, because a key an agent can read adds
+# nothing. A hostile same-user process can still forge a record: the accepted risk for a one-owner setup.
 
-def _key(rid: str, create: bool = False) -> bytes:
-    p = run_dir(rid) / ".key"
-    if not p.exists():
-        if not create:
-            raise SdlcError(f"run {rid} has no key")
-        p.parent.mkdir(parents=True, exist_ok=True)
-        fd = os.open(p, os.O_WRONLY | os.O_CREAT | os.O_EXCL, 0o600)
-        with os.fdopen(fd, "wb") as f:
-            f.write(secrets.token_bytes(32))
-    return p.read_bytes()
+def briefs_dir(rid: str) -> Path:
+    """Task briefs live outside runs/ so a builder may read its own brief."""
+    return home() / "briefs" / rid
 
 
-def sign(rid: str, obj: dict) -> str:
-    return hmac.new(_key(rid), canon(obj), "sha256").hexdigest()
+def proc_ident(pid: int) -> str:
+    """Start time and command of a live process, so a recycled PID is never mistaken for our job."""
+    import subprocess
+    r = subprocess.run(["ps", "-o", "lstart=,command=", "-p", str(pid)], capture_output=True, text=True)
+    return r.stdout.strip() if r.returncode == 0 else ""
 
 
-def verify_sig(rid: str, obj: dict, sig: str) -> bool:
-    return hmac.compare_digest(sign(rid, obj), sig or "")
+def gate_marker(rid: str, purpose: str) -> Path:
+    return run_dir(rid) / f"gate-{purpose}.json"
 
 
 # ---- records --------------------------------------------------------------------------------------
@@ -126,7 +123,6 @@ def init_run(rid: str, meta: dict) -> Path:
     d.mkdir(parents=True, exist_ok=False)
     for sub in ("receipts", "inputs", "evidence", "jobs"):
         (d / sub).mkdir()
-    _key(rid, create=True)
     meta = {"id": rid, "status": "planning", "created": iso(), "prs": {}, **meta}
     write_json(d / "run.json", meta)
     write_json(d / "checkpoint.json", new_checkpoint())
@@ -157,7 +153,7 @@ def set_status(rid: str, status: str, reason: str = "") -> None:
     m = load_meta(rid)
     m["status"], m["reason"] = status, reason
     save_meta(rid, m)
-    set_active(rid, status not in ("done", "stopped_final"))
+    set_active(rid, status not in ("done", "stopped"))  # a finished or stopped run leaves ~/.sdlc/active/
     log(rid, f"status {status} {reason}".strip())
 
 

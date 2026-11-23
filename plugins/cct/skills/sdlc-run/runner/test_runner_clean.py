@@ -11,6 +11,17 @@ import clean
 import pytest
 
 TPL = Path(clean.__file__).resolve().parents[1] / "templates"
+# The 3.x hooks and scripts are gone from the plugin; these stand in for shipped files, with their hashes listed as shipped.
+KIT_HOOK = b"#!/usr/bin/env bash\n# a shipped 3.x hook\nexit 0\n"
+KIT_SCRIPT = b"# a shipped 3.x script\nprint('kit')\n"
+
+
+@pytest.fixture(autouse=True)
+def shipped_hashes(monkeypatch):
+    real = clean.kit_hashes()
+    real[".claude/hooks/turn-start.sh"] = {clean._h16(KIT_HOOK)}
+    real["scripts/verify_gate.py"] = {clean._h16(KIT_SCRIPT)}
+    monkeypatch.setattr(clean, "kit_hashes", lambda: real)
 HOOK = ".claude/hooks/turn-start.sh"
 HOOK_CMD = '"$CLAUDE_PROJECT_DIR"/.claude/hooks/turn-start.sh'
 
@@ -49,7 +60,7 @@ def section_text() -> str:
 
 
 def install_kit(repo: Path) -> None:
-    put(repo, HOOK, (TPL / "hooks" / "turn-start.sh").read_bytes())
+    put(repo, HOOK, KIT_HOOK)
     put(
         repo,
         ".claude/settings.json",
@@ -86,7 +97,7 @@ def test_edited_script_kept(repo: Path) -> None:
     put(
         repo,
         "scripts/verify_gate.py",
-        (TPL / "scripts" / "verify_gate.py").read_bytes() + b"# mine\n",
+        KIT_SCRIPT + b"# mine\n",
     )
     commit(repo)
     inv = clean.inventory(repo)
@@ -160,7 +171,7 @@ def test_gitignore_and_sdlc_json(repo: Path) -> None:
         ".gitignore",
         "node_modules/\n# verify_gate.py output; lock.json is committed\n/changes/*/verify/\n",
     )
-    put(repo, "sdlc.json", json.dumps({"verify": "make test", "tiers": False}))
+    put(repo, "sdlc.json", json.dumps({"_comment": "Read by the sdlc-run skill, the hooks in .claude/hooks/", "verify": "make test", "tiers": False}))
     commit(repo)
     clean.apply(repo)
     assert (repo / ".gitignore").read_text() == "node_modules/\n"
@@ -168,7 +179,7 @@ def test_gitignore_and_sdlc_json(repo: Path) -> None:
 
 
 def test_sdlc_json_with_own_keys_left(repo: Path) -> None:
-    put(repo, "sdlc.json", json.dumps({"verify": "make test", "myKey": 1}))
+    put(repo, "sdlc.json", json.dumps({"_comment": "Read by the sdlc-run skill", "verify": "make test", "myKey": 1}))
     commit(repo)
     inv = clean.inventory(repo)
     assert not inv["fragments"] and "myKey" in inv["unknown"][0]["reason"]
@@ -211,3 +222,12 @@ def test_dirty_tree_refused(repo: Path) -> None:
         clean.apply(repo)
     assert clean.main([str(repo), "--apply"]) == 0
     assert git(repo, "branch", "--list").split() == ["*", "main"]
+
+
+def test_sdlc_json_of_only_kit_key_names_but_no_marker_is_kept(repo: Path) -> None:
+    put(repo, "sdlc.json", json.dumps({"verify": "make test", "tiers": False}))  # the repo's own file that reuses the names
+    git(repo, "add", "-A")
+    git(repo, "commit", "-qm", "own sdlc.json")
+    inv = clean.inventory(repo)
+    assert not any(f["path"] == "sdlc.json" for f in inv["fragments"])
+    assert any(u["path"] == "sdlc.json" and "no kit marker" in u["reason"] for u in inv["unknown"])

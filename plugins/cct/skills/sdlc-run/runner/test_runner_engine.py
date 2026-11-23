@@ -1,4 +1,5 @@
 """Steps 3-5: checkpoints and resume, builder + verifier, graph, caps, stop, pushes."""
+import json
 import os
 import signal
 import subprocess
@@ -23,8 +24,16 @@ GOOD = {"feature.py": "def greet():\n    return 'hello'\n"}
 def approved(tmp_path, **kw):
     repo, rid = tk.feature_run(tmp_path, **kw)
     engine.validate_plan(rid)
-    contract.approve(rid, "owner")
+    tk.approve(rid)
     return repo, rid
+
+
+def _retry(rid, tid):
+    store.update_cp(rid, lambda cp: cp["tasks"][tid].update(status="pending"))  # as a rejected or failed verification does
+
+
+def _owning(*paths):
+    return {"milestones": [{"id": "m1", "repo": "app", "needs": [], "tasks": [{"id": "t1", "needs": [], "paths": list(paths)}]}]}
 
 
 def deliver(rid, tid="t1", files=GOOD):
@@ -54,7 +63,8 @@ def test_a_builder_cannot_change_the_pinned_assertion(tmp_path):
     tk.build(rid, "t1", {**GOOD, "tests/test_feature.py": tk.SPEC.replace("'hello'", "'hi'")})
     with pytest.raises(SdlcError, match="pinned input"):
         engine.submit(rid, "t1")
-    assert store.load_cp(rid)["tasks"]["t1"]["status"] == "rejected"
+    cp = store.load_cp(rid)["tasks"]["t1"]
+    assert cp["status"] == "pending" and "pinned input" in cp["reason"] and cp["attempts"] == 1  # back in the queue, attempt counted
 
 
 def test_the_verifier_ignores_a_tampered_spec_even_without_the_guard(tmp_path):
@@ -66,15 +76,15 @@ def test_the_verifier_ignores_a_tampered_spec_even_without_the_guard(tmp_path):
 
 
 def test_removed_assertion_and_added_skip_are_rejected(tmp_path):
-    other = "import unittest\nclass O(unittest.TestCase):\n    def test_a(self):\n        self.assertEqual(1, 1)\n        self.assertTrue(True)\n"
-    _, rid = approved(tmp_path, extra_files={"tests/test_other.py": other})
-    tk.build(rid, "t1", {**GOOD, "tests/test_other.py": other.replace("        self.assertTrue(True)\n", "")})
+    other = "import unittest\nclass O(unittest.TestCase):\n    def test_a(self):\n        self.assertEqual(len('ab'), 2)\n        self.assertIn('a', 'abc')\n"
+    _, rid = approved(tmp_path, extra_files={"tests/test_other.py": other}, tasks=_owning("feature.py", "tests/test_other.py"))
+    tk.build(rid, "t1", {**GOOD, "tests/test_other.py": other.replace("        self.assertIn('a', 'abc')\n", "")})
     with pytest.raises(SdlcError, match="removed an assertion"):
         engine.submit(rid, "t1")
 
 
 def test_wrong_code_is_FAIL_not_pass_and_a_results_file_is_ignored(tmp_path):
-    _, rid = approved(tmp_path)
+    _, rid = approved(tmp_path, tasks=_owning("feature.py", "results.json"))
     tk.build(rid, "t1", {"feature.py": "def greet():\n    return 'nope'\n", "results.json": '{"passed": true}'})
     engine.submit(rid, "t1")
     res = engine.verify_task(rid, "t1")
@@ -83,14 +93,31 @@ def test_wrong_code_is_FAIL_not_pass_and_a_results_file_is_ignored(tmp_path):
         engine.integrate(rid, "t1")
 
 
-def test_forged_receipt_in_the_run_folder_cannot_reach_ready(tmp_path):
+def test_a_hand_written_receipt_for_another_head_or_bundle_does_not_count(tmp_path):
     repo, rid = approved(tmp_path)
-    for c in store.read_json(store.run_dir(rid) / "contract.json")["checks"]:  # an agent writes passes by hand
-        p = contract.receipt_path(rid, c["id"], "app")
-        store.write_json(p, {"body": {"run": rid, "check": c["id"], "repo": "app", "verdict": "PASS", "sha": contract.current_head(store.load_meta(rid), "app"),
-                                      "bundle": contract.bundle_digest(rid), "pins": contract.pins_digest(c), "deps": {}}, "sig": "0" * 64})
+    for c in store.read_json(store.run_dir(rid) / "contract.json")["checks"]:
+        store.write_json(contract.receipt_path(rid, c["id"], "app"), {"body": {
+            "run": rid, "check": c["id"], "repo": "app", "verdict": "PASS", "sha": "0" * 40,
+            "bundle": contract.bundle_digest(rid), "pins": contract.pins_digest(c), "deps": {}}})
     code, first, _ = contract.evaluate(rid)
-    assert code == PENDING and "forged" in first
+    assert code == PENDING and "head is" in first  # the receipt must name the head it ran on
+
+
+def test_rejected_task_goes_back_to_pending_and_a_fix_passes(tmp_path):
+    _, rid = approved(tmp_path)
+    tk.build(rid, "t1", {**GOOD, "tests/test_feature.py": tk.SPEC.replace("'hello'", "'hi'")})
+    with pytest.raises(SdlcError, match="pinned input"):
+        engine.submit(rid, "t1")
+    assert [t["id"] for t in engine.next_batch(rid)] == ["t1"]  # a fix attempt is schedulable again
+    assert graph.deadlock(engine.tasks_doc(rid), store.load_cp(rid)) == ""
+    info = engine.dispatch(rid, "t1")
+    wt = Path(info["worktree"])
+    tk.git(wt, "rm", "-q", "-f", "tests/test_feature.py")
+    tk.git(wt, "commit", "-qm", "drop the edited spec")
+    engine.submit(rid, "t1")
+    assert engine.verify_task(rid, "t1")[0]["verdict"] == "PASS"
+    engine.integrate(rid, "t1")
+    assert store.load_cp(rid)["tasks"]["t1"]["status"] == "done" and store.load_cp(rid)["tasks"]["t1"]["attempts"] == 2
 
 
 def test_check_that_passes_on_base_proves_nothing(tmp_path):
@@ -180,6 +207,9 @@ def test_run_id_branch_and_active_link(tmp_path):
 # ---- step 5: graph, parallel builders, caps, stop, pushes ----------------------------------------
 
 def _tasks(*ms):
+    for m in ms:
+        for t in m["tasks"]:
+            t.setdefault("waiver", "fixture: no behaviour to prove")
     return {"milestones": list(ms)}
 
 
@@ -215,15 +245,15 @@ def test_parallel_batches_respect_disjoint_paths_and_the_cap(tmp_path):
     ts = [{"id": f"t{i}", "needs": [], "paths": [f"src/p{i}/"]} for i in range(10)]
     doc = _tasks({"id": "m1", "repo": "app", "needs": [], "tasks": ts + [{"id": "clash", "needs": [], "paths": ["src/p0/x.py"]}]})
     repo, rid = tk.feature_run(tmp_path, tasks=doc)
-    contract.approve(rid, "o")
+    tk.approve(rid)
     ids = [t["id"] for t in engine.next_batch(rid)]
     assert len(ids) == 8 and "clash" not in ids  # default cap 8; the overlapping task waits
     repo2, rid2 = tk.feature_run(tmp_path / "b", tasks=doc, limits={"builders": 3})
-    contract.approve(rid2, "o")
+    tk.approve(rid2)
     assert len(engine.next_batch(rid2)) == 3
     fewer = _tasks({"id": "m1", "repo": "app", "needs": [], "tasks": [{"id": "a", "needs": [], "paths": ["a"]}, {"id": "b", "needs": ["a"], "paths": ["b"]}]})
     repo3, rid3 = tk.feature_run(tmp_path / "c", tasks=fewer)
-    contract.approve(rid3, "o")
+    tk.approve(rid3)
     assert [t["id"] for t in engine.next_batch(rid3)] == ["a"]  # the graph allows only one
 
 
@@ -234,7 +264,7 @@ def test_two_builders_in_parallel_worktrees_integrate_in_order(tmp_path):
     c = store.read_json(d / "contract.json")
     c["checks"] = [tk.chk("full", "app", ["python3", "-c", "print('Ran 1 tests')"], due="each")]
     store.write_json(d / "contract.json", c)
-    contract.approve(rid, "o")
+    tk.approve(rid)
     batch = [t["id"] for t in engine.next_batch(rid)]
     assert batch == ["a", "b"]
     for t in batch:
@@ -253,6 +283,7 @@ def test_two_builders_in_parallel_worktrees_integrate_in_order(tmp_path):
 def test_caps_are_counted_before_launch_and_block(tmp_path):
     _, rid = approved(tmp_path, limits={"max_dispatches": 2})
     tk.build(rid, "t1", GOOD)
+    _retry(rid, "t1")
     tk.build(rid, "t1", {"feature.py": "def greet():\n    return 'hello'\n# fix\n"}, "fix1")
     with pytest.raises(SdlcError, match="BLOCKED cap dispatch cap 2"):
         engine.dispatch(rid, "t1")
@@ -260,6 +291,7 @@ def test_caps_are_counted_before_launch_and_block(tmp_path):
     repo2, rid2 = approved(tmp_path / "x")
     for _ in range(3):
         engine.dispatch(rid2, "t1")
+        _retry(rid2, "t1")
     with pytest.raises(SdlcError, match="used its 3 attempts"):
         engine.dispatch(rid2, "t1")
 
@@ -286,7 +318,7 @@ def test_stop_cancels_a_live_job_and_blocks_further_work(tmp_path):
             break
         time.sleep(0.1)
     assert pids, "the job never started"
-    pid = int(pids[0].read_text())
+    pid = json.loads(pids[0].read_text())["pid"]
     t0 = time.time()
     killed = engine.stop(rid)
     th.join(15)
@@ -298,14 +330,15 @@ def test_stop_cancels_a_live_job_and_blocks_further_work(tmp_path):
         engine.dispatch(rid, "t1")
     assert contract.evaluate(rid)[0] == contract.BLOCKED and "STOPPED" in contract.evaluate(rid)[1]
     assert not (store.home() / "active" / rid).exists() or store.load_meta(rid)["status"] == "stopped"
+    tk.owner_restart(rid)
     engine.restart(rid)
     assert not store.is_stopped(rid)
 
 
 def test_push_is_not_redone_after_a_crash(tmp_path):
     repo = tk.make_repo(tmp_path, "app", {"feature.py": "x\n"}, remote=True)
-    rid = tk.new_run(tmp_path / "home", repo, [])
-    contract.approve(rid, "o")
+    rid = tk.new_run(tmp_path / "home", repo, [tk.chk("a", "app", ["true"], count=False)])
+    tk.approve(rid)
     meta = store.load_meta(rid)
     assert engine.push(rid, "app") == "done"
     assert engine.push(rid, "app") == "already-done"

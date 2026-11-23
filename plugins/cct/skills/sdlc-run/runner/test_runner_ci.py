@@ -166,10 +166,16 @@ class Gh:
 def approved(tmp_path, extra=None, checks=None):
     repo = tk.make_repo(tmp_path, "app")
     rid = tk.new_run(tmp_path / "home", repo, checks or [tk.chk("local", "app")])
+    extra = dict(extra or {})
+    if "local_only_ok" in extra:  # approved the real way: it is part of the contract the owner approves
+        d = store.run_dir(rid)
+        c = store.read_json(d / "contract.json")
+        c["local_only_ok"] = extra.pop("local_only_ok")
+        store.write_json(d / "contract.json", c)
+    tk.approve(rid)
     meta = store.load_meta(rid)
-    meta.update(extra or {})
+    meta.update({k: v for k, v in extra.items() if k != "extra_gates"})  # a PR is recorded by open_pr, not a flag
     store.save_meta(rid, meta)
-    contract.approve(rid, "owner")
     return repo, rid
 
 
@@ -267,3 +273,12 @@ def test_open_pr_reconciles_after_a_crash(tmp_path):
     assert ci.open_pr(rid, "app", run=gh) == "reconciled"
     assert not [c for c in gh.calls if c[:3] == ["gh", "pr", "create"]]
     assert store.load_meta(rid)["prs"]["app"] == "https://x/pr/9"
+
+
+def test_same_named_jobs_use_the_worst_result():
+    checks = [{"name": "unit", "status": "COMPLETED", "conclusion": "SUCCESS"}, {"name": "unit", "status": "COMPLETED", "conclusion": "FAILURE"},
+              {"name": "unit", "status": "COMPLETED", "conclusion": "SUCCESS"}]
+    code, line = ci.classify("a" * 40, "a" * 40, ["unit"], checks, [])
+    assert code == ci.FAIL and "unit" in line
+    pend = [{"name": "unit", "status": "COMPLETED", "conclusion": "SUCCESS"}, {"name": "unit", "status": "IN_PROGRESS", "conclusion": None}]
+    assert ci.classify("a" * 40, "a" * 40, ["unit"], pend, [])[0] == ci.PENDING

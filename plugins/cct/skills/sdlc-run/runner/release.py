@@ -24,14 +24,25 @@ def merge_order(rid: str) -> list[str]:
     return order
 
 
-def _run(rid: str, repo: str, argv: list[str], ref: str, label: str):
+def _run(rid: str, repo: str, argv: list[str], ref: str, label: str) -> str | bytes:
+    """Run an allowlisted pack or fetch command in a detached worktree at `ref`, never in the owner's checkout."""
     if not argv_allowed(argv):
         raise SdlcError(f"BLOCKED integrity {label}: command is not on the allowlist")
     r = store.load_meta(rid)["repos"][repo]
-    job = verify.run_job(rid, label, [a.replace("{ref}", ref) for a in argv], __import__("pathlib").Path(r["path"]))
-    if job.exit != 0:
-        raise SdlcError(f"BLOCKED env {label} failed: {job.out.strip()[:200]}")
-    return job.out
+    sha = git(r["path"], "rev-parse", ref)
+    wt = verify._checkout(rid, repo, r["path"], sha, f"pack-{label}")
+    try:
+        job = verify.run_job(rid, label, [a.replace("{ref}", sha) for a in argv], wt)
+        if job.exit != 0:
+            raise SdlcError(f"BLOCKED env {label} failed: {job.out.strip()[:200]}")
+        if argv[0] == "npm":  # npm prints the tarball's name: the artifact is that file's bytes
+            tar = wt / job.out.strip().splitlines()[-1]
+            if not tar.resolve().is_relative_to(wt.resolve()) or not tar.is_file():
+                raise SdlcError(f"BLOCKED env {label} produced no tarball")
+            return tar.read_bytes()
+        return job.out
+    finally:
+        verify._drop(r["path"], wt)
 
 
 def identity(rid: str, edge: dict, ref: str) -> dict:
@@ -67,28 +78,37 @@ def publish(rid: str, producer: str) -> dict:
     target = (pwt / pin["file"]).resolve()
     if not safe_relpath(pin["file"]) or not target.is_relative_to(pwt.resolve()):
         raise SdlcError(f"BLOCKED integrity pin file {pin['file']} resolves outside the consumer worktree")
-    target.write_text(pin["line"].replace("{digest}", published) + "\n")
-    git(pwt, "add", "-A")
-    git(pwt, "commit", "-qm", f"sdlc: pin {producer} {published[:12]}")
+    new = pin["line"].replace("{digest}", published)
+    prefix = pin["line"].split("{digest}")[0]  # the part that names what is pinned, e.g. "lib="
+    lines = target.read_text().splitlines() if target.exists() else []
+    hit = [i for i, ln in enumerate(lines) if prefix and ln.startswith(prefix)]
+    if hit:
+        lines[hit[0]] = new  # replace only the matching pin line
+        lines = [ln for i, ln in enumerate(lines) if i not in hit[1:]]
+    else:
+        lines.append(new)
+    target.write_text("\n".join(lines) + "\n")
+    git(pwt, "add", "--", pin["file"])  # only the pin file, never the rest of the worktree
+    git(pwt, "commit", "-qm", f"sdlc: pin {producer} {published[:12]}", "--", pin["file"])
     rec = {"digest": published, "pin_sha": git(pwt, "rev-parse", "HEAD")}
     store.update_cp(rid, lambda cp: cp.setdefault("release", {}).__setitem__(producer, rec))
     return rec
 
 
-def gate(rid: str, meta: dict) -> tuple[int, str]:
-    """Consumers stay PENDING until the producer's release is recorded, matches the packed artifact and is pinned."""
+def gate(rid: str, meta: dict, consumer: str | None = None) -> tuple[int, str]:
+    """Read-only: consumers stay PENDING until the producer's release is recorded, matches the packed artifact and is pinned.
+    It reads the digests `pack` recorded and compares source SHAs; it never packs or runs a command."""
     cp = store.load_cp(rid)
     for e in edges(rid):
-        if e.get("release", {}).get("kind", "none") == "none":
+        if e.get("release", {}).get("kind", "none") == "none" or (consumer and e["consumer"] != consumer):
             continue
         p = e["producer"]
-        rel = cp.get("release", {}).get(p)
-        if not rel:
+        rel, packed = cp.get("release", {}).get(p), cp.get("artifacts", {}).get(p)
+        if not rel or not packed:
             return PENDING, f"{e['consumer']} awaits publication of {p}"
-        now = identity(rid, e, meta["repos"][p]["branch"]) if not (store.is_stopped(rid)) else None
-        if now and now["digest"] != rel["digest"]:
+        if packed["source"] != git(meta["repos"][p]["path"], "rev-parse", meta["repos"][p]["branch"]):
             return PENDING, f"{p} changed after its release was recorded"
         pinned = git(meta["repos"][e["consumer"]]["path"], "show", f"{meta['repos'][e['consumer']]['branch']}:{e['pin']['file']}")
-        if e["pin"]["line"].replace("{digest}", rel["digest"]) not in pinned:
+        if e["pin"]["line"].replace("{digest}", rel["digest"]) not in pinned.splitlines():
             return PENDING, f"{e['consumer']} does not carry the pin for {p}"
     return READY, ""

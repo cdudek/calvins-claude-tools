@@ -22,7 +22,9 @@ from functools import cache
 from pathlib import Path
 
 SKILL = Path(__file__).resolve().parents[1]
-TPL = SKILL / "templates"
+KIT = Path(__file__).resolve().parent / "kit"  # the shipped 3.x hashes and template text, kept only as evidence for `clean`
+TPL = SKILL / "templates"  # rendered 3.x template text, evidence for `clean` and the shared Decision4 and CI assets
+SDLC_JSON_MARKER = "Read by the sdlc-run skill"  # the first words of the _comment adopt writes
 SUBJECT = "chore: remove sdlc 3.x copies (sdlc clean)"
 
 # Every top-level sdlc.json key 3.x adopt or its presets wrote.
@@ -123,7 +125,7 @@ def _git(repo: Path, *args: str, check: bool = False) -> subprocess.CompletedPro
 
 
 def kit_hashes() -> dict[str, set[str]]:
-    data = json.loads((SKILL / "scripts" / "kit-hashes.json").read_text(encoding="utf-8"))
+    data = json.loads((KIT / "kit-hashes.json").read_text(encoding="utf-8"))
     return {rel: set(hs) for rel, hs in data.items()}
 
 
@@ -425,6 +427,8 @@ def _sdlc_json(repo: Path) -> tuple[list[dict], list[dict]]:
         data = None
     if not isinstance(data, dict):
         return [], [{"path": "sdlc.json", "reason": "not a JSON object, left as is"}]
+    if not str(data.get("_comment", "")).startswith(SDLC_JSON_MARKER):
+        return [], [{"path": "sdlc.json", "reason": "has no kit marker (the _comment line adopt writes); left as is"}]
     extra = sorted(set(data) - KIT_KEYS)
     if extra:
         return [], [

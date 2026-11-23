@@ -61,9 +61,26 @@ def open_milestone(rid: str, mid: str) -> Path:
     m = next(m for m in doc["milestones"] if m["id"] == mid)
     r = store.load_meta(rid)["repos"][m["repo"]]
     project_wt(rid, m["repo"])
-    wt = _worktree(r["path"], wt_path(r["path"], rid, f"m-{mid}"), milestone_branch(rid, mid), r["branch"])
+    path = wt_path(r["path"], rid, f"m-{mid}")
+    fresh = not path.exists()
+    wt = _worktree(r["path"], path, milestone_branch(rid, mid), r["branch"])
+    if fresh:
+        _approved_dependencies(rid, m["repo"], wt)
     store.update_cp(rid, lambda cp: cp["milestones"].setdefault(mid, {}).update(status="open", base=git(wt, "rev-parse", "HEAD")))
     return wt
+
+
+def _approved_dependencies(rid: str, repo: str, wt: Path) -> None:
+    """The runner, not a builder, puts the approved manifest and lockfile in and runs the frozen install."""
+    import deps
+    if not deps.approved(rid, repo):
+        return
+    deps.apply(rid, repo, wt)
+    argv = deps.frozen_install(wt)
+    if argv:
+        job = verify.run_job(rid, f"{repo}-install", argv, wt)
+        if job.exit != 0:
+            raise block(rid, "BLOCKED env", f"the frozen install for {repo} failed: {job.out.strip()[-160:]}")
 
 
 def preflight(rid: str, tid: str | None = None) -> None:
@@ -122,11 +139,30 @@ def next_batch(rid: str) -> list[dict]:
     return graph.pick_batch(graph.ready_tasks(doc, cp), paths, L["builders"], len(running))
 
 
+def ready_for_dispatch(rid: str, t: dict, cp: dict) -> None:
+    """Readiness is decided here, at the moment of dispatch, not trusted from an earlier `next`."""
+    tid, doc = t["id"], tasks_doc(rid)
+    st = cp["tasks"].get(tid, {}).get("status", "pending")
+    if st != "pending":
+        raise SdlcError(f"task {tid} is {st}, not ready for a dispatch")
+    if cp["milestones"].get(t["milestone"], {}).get("status", "waiting") == "waiting" and t["milestone"] not in graph.openable(doc, cp):
+        raise SdlcError(f"milestone {t['milestone']} cannot open yet: the milestones it needs are not merged")
+    waiting = [n for n in t.get("needs", []) if cp["tasks"].get(n, {}).get("status") != "done"]
+    if waiting:
+        raise SdlcError(f"task {tid} waits on {', '.join(waiting)}")
+    running = [x for x in cp["tasks"].values() if x["status"] in ("running", "submitted")]
+    if len(running) >= lim(rid)["builders"]:
+        raise SdlcError(f"builders are at their cap of {lim(rid)['builders']}")
+    if graph.pick_batch([t], [x.get("paths", []) for x in running], 10**6, 0) == []:
+        raise SdlcError(f"task {tid} owns paths a running task owns; it runs after that one")
+
+
 def dispatch(rid: str, tid: str) -> dict:
     """Count the dispatch durably, then cut the worktree at the milestone's integration SHA and write the brief."""
     preflight(rid, tid)
     t = task_info(rid, tid)
     cp = store.load_cp(rid)
+    ready_for_dispatch(rid, t, cp)
     if cp["milestones"].get(t["milestone"], {}).get("status") not in ("open", "failing"):
         open_milestone(rid, t["milestone"])
     r = store.load_meta(rid)["repos"][t["repo"]]
@@ -145,12 +181,12 @@ def dispatch(rid: str, tid: str) -> dict:
     if not fresh:  # a fix attempt continues the same work on top of the current milestone head
         if subprocess.run(["git", "merge", "--no-edit", base], cwd=path, capture_output=True).returncode:
             subprocess.run(["git", "merge", "--abort"], cwd=path, capture_output=True)
-            store.update_cp(rid, lambda cp: cp["tasks"][tid].update(status="overlap"))
+            store.update_cp(rid, lambda cp: cp["tasks"][tid].update(status="pending"))
             raise SdlcError(f"overlap: task {tid} conflicts with the milestone head; redo it on the new head")
     if git(path, "rev-parse", "HEAD") != base and fresh:
         raise block(rid, "BLOCKED integrity", f"worktree of {tid} is not at the integration SHA")
     items = [c for c in store.read_json(store.run_dir(rid) / "contract.json")["checks"] if c.get("task") == tid]
-    d = store.run_dir(rid) / "tasks" / tid
+    d = store.briefs_dir(rid) / tid
     d.mkdir(parents=True, exist_ok=True)
     brief = (f"# Task {tid}: {t.get('title', '')}\n\n{t.get('desc', '')}\n\n"
              f"- Worktree (work only here, absolute path): {path}\n- Base: {base}\n- Branch: {branch}\n"
@@ -177,8 +213,13 @@ def submit(rid: str, tid: str) -> dict:
     if cand == e["base"]:
         raise SdlcError(f"task {tid}: no commit was made")
     bad = verify.guard_diff(rid, e["repo"], e["base"], cand)
-    if bad:
-        store.update_cp(rid, lambda cp: cp["tasks"][tid].update(status="rejected", reason="; ".join(bad)))
+    owned = e.get("paths") or []
+    if owned:
+        for rel in git(path, "diff", "--name-only", f"{e['base']}..{cand}").splitlines():
+            if not any(rel == p or rel.startswith(p.rstrip("/") + "/") for p in owned):
+                bad.append(f"changed {rel}, outside the paths this task owns")
+    if bad:  # back to pending: the attempt stays counted and the next dispatch is a fix
+        store.update_cp(rid, lambda cp: cp["tasks"][tid].update(status="pending", reason="; ".join(bad)))
         store.log(rid, f"reject {tid}: {'; '.join(bad)}")
         raise SdlcError(f"BLOCKED test-path {tid}: " + "; ".join(bad))
     store.update_cp(rid, lambda cp: cp["tasks"][tid].update(status="submitted", sha=cand))
@@ -194,7 +235,7 @@ def verify_task(rid: str, tid: str) -> list[dict]:
         if c.get("task") == tid:
             out.append(verify.verify_check(rid, c, ref=cand, base_sha=e["base"]))
     ok = all(b["verdict"] == "PASS" for b in out)
-    store.update_cp(rid, lambda cp: cp["tasks"][tid].update(verified=cand if ok else None))
+    store.update_cp(rid, lambda cp: cp["tasks"][tid].update(verified=cand if ok else None, **({} if ok else {"status": "pending"})))
     return out
 
 
@@ -210,7 +251,7 @@ def integrate(rid: str, tid: str) -> str:
     p = subprocess.run(["git", "merge", "--no-ff", "-m", f"sdlc: task {tid}", e["sha"]], cwd=mwt, capture_output=True, text=True)
     if p.returncode:
         subprocess.run(["git", "merge", "--abort"], cwd=mwt, capture_output=True)
-        store.update_cp(rid, lambda cp: cp["tasks"][tid].update(status="overlap"))
+        store.update_cp(rid, lambda cp: cp["tasks"][tid].update(status="pending", verified=None))
         raise SdlcError(f"overlap: task {tid} conflicts with the integrated head; it reruns on the new head")
     head = git(mwt, "rev-parse", "HEAD")
     store.update_cp(rid, lambda cp: cp["tasks"][tid].update(status="done", merged=head))
@@ -270,17 +311,17 @@ def stop(rid: str) -> list[int]:
     store.set_status(rid, "stopped", "owner stop")
     killed = []
     for pf in (store.run_dir(rid) / "jobs").glob("*.pid"):
-        try:
-            pid = int(pf.read_text())
-        except ValueError:
-            continue
-        verify.kill_group(pid)
-        killed.append(pid)
+        if (pid := verify.kill_recorded(pf)) is not None:
+            killed.append(pid)
     return killed
 
 
 def restart(rid: str) -> None:
     """Only an explicit owner restart clears a stop; the original caps and deadline stay."""
+    mk = store.gate_marker(rid, "restart")
+    if not mk.exists():
+        raise SdlcError("only the owner restarts a stopped run (run `sdlc gate <id> restart`)")
+    mk.unlink()
     store.stop_marker(rid).unlink(missing_ok=True)
     store.update_cp(rid, lambda cp: cp.pop("blocked", None))
     store.set_status(rid, "approved", "restarted by the owner")
@@ -331,10 +372,7 @@ def resume(rid: str) -> dict:
         except SdlcError as e:
             raise SdlcError(f"BLOCKED integrity branch of {repo} is gone: {e}") from None
     for pf in (store.run_dir(rid) / "jobs").glob("*.pid"):  # a job that survived the crash is cancelled, then runs again
-        try:
-            verify.kill_group(int(pf.read_text()))
-        except ValueError:
-            pass
+        verify.kill_recorded(pf)  # only if the PID still is the job we started
         pf.unlink(missing_ok=True)
 
     def requeue(cp):
@@ -349,3 +387,19 @@ def resume(rid: str) -> dict:
             "merged": [m for m, e in cp["milestones"].items() if e["status"] == "merged"],
             "external": {k: v["state"] for k, v in cp["external"].items()},
             "dispatches": cp["dispatches"], "next": [t["id"] for t in next_batch(rid)]}
+
+
+def finish(rid: str) -> str:
+    """The run ends: every proof is current and (when PRs exist) their checks are green; the active link is removed."""
+    code, first, _ = contract.evaluate(rid)
+    if code != contract.READY:
+        raise SdlcError(f"not finished: {first}")
+    store.set_status(rid, "done", "all proof present")
+    return "done"
+
+
+def pr_guard(rid: str, repo: str) -> None:
+    """A PR (and its auto-merge) only for a repo whose own proof is READY; a consumer waits for its producer's release."""
+    code, first, _ = contract.evaluate(rid, skip_ci=True, repo=repo)
+    if code != contract.READY:
+        raise SdlcError(f"not ready for a PR of {repo}: {first}")

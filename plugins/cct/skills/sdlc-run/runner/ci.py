@@ -58,7 +58,10 @@ def _check_one(name: str, checks: list[dict], local_head: str) -> tuple[int, str
     mine = [c for c in map(_norm, checks) if c["name"] == name]
     if not mine:
         return PENDING, f"check {name} has not reported"
-    c = mine[-1]
+    return worst([_one_run(name, c, local_head) for c in mine])  # a rerun or a matrix reports under one name: the worst counts
+
+
+def _one_run(name: str, c: dict, local_head: str) -> tuple[int, str]:
     if c["sha"] and c["sha"] != local_head:
         return PENDING, f"check {name} is stale: ran on {c['sha'][:9]}, head is {local_head[:9]}"
     if not c["done"]:

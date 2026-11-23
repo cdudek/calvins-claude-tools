@@ -6,7 +6,6 @@ import unittest
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[1]
-TEMPLATES = "plugins/cct/skills/sdlc-run/templates/hooks"
 
 
 def modes() -> dict[str, str]:
@@ -29,11 +28,10 @@ class HookModes(unittest.TestCase):
         self.assertTrue(registered)
         for rel in sorted(registered):
             self.assertEqual(tracked.get(rel), "100755", rel)
-            self.assertEqual(tracked.get(f"{TEMPLATES}/{Path(rel).name}"), "100755", rel)
 
     def test_every_hook_script_the_kit_installs_is_100755_in_git(self):
         for rel, mode in modes().items():
-            if rel.startswith((".claude/hooks/", TEMPLATES + "/")) and rel.endswith(".sh"):
+            if rel.startswith(".claude/hooks/") and rel.endswith(".sh"):
                 self.assertEqual(mode, "100755", rel)
 
 

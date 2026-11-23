@@ -18,7 +18,7 @@ ONE = ["python3", "-c", "print('Ran 1 tests')"]
 
 def pilot(tmp_path):
     lib = tk.make_repo(tmp_path, "lib", {"lib.py": "V = 1\n"}, remote=True)
-    app = tk.make_repo(tmp_path, "app", {"pin.txt": "\n"}, remote=True)
+    app = tk.make_repo(tmp_path, "app", {"deps/lib.pin": "other=1\nlib=old\nkeep=2\n", "notes.txt": "x\n"}, remote=True)
     rid = tk.new_run(tmp_path / "home", lib, [])
     meta = store.load_meta(rid)
     tk.git(app, "branch", f"sdlc/{rid}", "main")
@@ -26,15 +26,15 @@ def pilot(tmp_path):
     store.save_meta(rid, meta)
     d = store.run_dir(rid)
     store.write_json(d / "tasks.json", {"milestones": [
-        {"id": "m1", "repo": "lib", "needs": [], "tasks": [{"id": "a", "needs": [], "paths": ["lib.py"]}]},
-        {"id": "m2", "repo": "app", "needs": ["m1"], "tasks": [{"id": "b", "needs": [], "paths": ["app.py"]}]}]})
+        {"id": "m1", "repo": "lib", "needs": [], "tasks": [{"id": "a", "needs": [], "paths": ["lib.py"], "waiver": "covered by the milestone gate"}]},
+        {"id": "m2", "repo": "app", "needs": ["m1"], "tasks": [{"id": "b", "needs": [], "paths": ["app.py"], "waiver": "covered by the milestone gate"}]}]})
     store.write_json(d / "contract.json", {"checks": [
         tk.chk("lib-gate", "lib", ONE, "m1", count=True, expect={"kind": "pass"}),
         tk.chk("app-gate", "app", CONSUME, "m2", consumes=["lib"])],
-        "edges": [{"producer": "lib", "consumer": "app", "pack": ["git", "ls-tree", "-r", "{ref}"],
-                   "release": {"kind": "git-tag", "fetch": ["git", "ls-tree", "-r", "{ref}"]}, "pin": {"file": "pin.txt", "line": "lib={digest}"}}]})
+        "edges": [{"producer": "lib", "consumer": "app", "pack": ["git", "archive", "--format=tar", "{ref}"],
+                   "release": {"kind": "git-tag", "fetch": ["git", "archive", "--format=tar", "{ref}"]}, "pin": {"file": "deps/lib.pin", "line": "lib={digest}"}}], "limits": {"max_dispatches": 20}})
     engine.validate_plan(rid)
-    contract.approve(rid, "owner")
+    tk.approve(rid)
     return lib, app, rid
 
 
@@ -68,8 +68,8 @@ def test_producer_consumer_pilot_through_the_final_merge_sequence(tmp_path):
     engine.final_verify(rid)
     code, first, _ = contract.evaluate(rid)
     assert code == READY, first
-    pin = tk.git(app, "show", f"{store.load_meta(rid)['repos']['app']['branch']}:pin.txt")
-    assert pin == f"lib={rec['digest']}"
+    pin = tk.git(app, "show", f"{store.load_meta(rid)['repos']['app']['branch']}:deps/lib.pin")
+    assert pin.splitlines() == ["other=1", f"lib={rec['digest']}", "keep=2"]  # only the matching line changed
     # a changed producer invalidates the consumer's proof
     tk.commit_file(engine.project_wt(rid, "lib"), "lib.py", "V = 3\n")
     assert contract.evaluate(rid)[0] == PENDING
@@ -87,7 +87,7 @@ def test_published_artifact_that_differs_is_blocked(tmp_path):
 def test_cyclic_repos_are_a_planning_error(tmp_path):
     lib, app, rid = pilot(tmp_path)
     c = store.read_json(store.run_dir(rid) / "contract.json")
-    c["edges"].append({"producer": "app", "consumer": "lib", "pack": ["true"]})
+    c["edges"].append({"producer": "app", "consumer": "lib", "pack": ["git", "rev-parse", "{ref}"]})
     store.write_json(store.run_dir(rid) / "contract.json", c)
     with pytest.raises(SdlcError, match="depend on each other"):
         release.merge_order(rid)
@@ -142,7 +142,7 @@ def test_publish_refuses_a_pin_path_that_escapes_and_a_disallowed_command(tmp_pa
     with pytest.raises(SdlcError, match="outside the consumer worktree"):
         release.publish(rid, "lib")
     assert not (Path(store.load_meta(rid)["repos"]["app"]["path"]).parent / "outside.txt").exists()
-    c["edges"][0]["pin"]["file"] = "pin.txt"
+    c["edges"][0]["pin"]["file"] = "deps/lib.pin"
     c["edges"][0]["release"]["fetch"] = ["bash", "-c", "id"]
     store.write_json(d / "contract.json", c)
     with pytest.raises(SdlcError, match="allowlist"):

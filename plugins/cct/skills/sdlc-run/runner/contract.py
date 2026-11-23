@@ -3,7 +3,7 @@
 A receipt is written only by verify.py, from the exit status and output of the process it ran. It binds the run,
 the contract item, the repo head it ran on, the approved-bundle digest, the digest of the pinned inputs, the exit
 code and the collected-test count. `check` recomputes every one of those; a pass for another head, another
-contract or another set of pinned files is stale, and a file nobody signed is forged.
+contract or another set of pinned files is stale. Receipts are unsigned: the plugin hook that keeps agents out of the runs folder is the barrier.
 """
 from __future__ import annotations
 
@@ -36,7 +36,9 @@ def wt_path(repo_path: str, rid: str, name: str) -> Path:
     return Path(repo_path) / ".worktrees" / f"sdlc-{rid}-{name}"
 
 
-PACK_ALLOWED = (("git", "ls-tree"), ("git", "archive"), ("git", "rev-parse"), ("npm", "pack"), ("uv", "build"), ("python3", "-m", "build"))
+# Exact shapes only: {ref} is the one placeholder. npm packs with scripts off; no source-building python packer.
+PACK_ALLOWED = (("git", "ls-tree", "-r", "{ref}"), ("git", "archive", "--format=tar", "{ref}"), ("git", "rev-parse", "{ref}"),
+                ("npm", "pack", "--ignore-scripts"))
 
 
 def safe_relpath(p) -> bool:
@@ -45,8 +47,7 @@ def safe_relpath(p) -> bool:
 
 
 def argv_allowed(argv) -> bool:
-    return (isinstance(argv, list) and all(isinstance(a, str) for a in argv)
-            and any(argv[:len(a)] == list(a) for a in PACK_ALLOWED))
+    return isinstance(argv, list) and tuple(argv) in PACK_ALLOWED
 
 
 def validate_edges(c: dict) -> None:
@@ -92,13 +93,44 @@ def bundle_digest(rid: str) -> str:
     return store.sha256(store.canon(parts))
 
 
+def coverage(rid: str) -> list[str]:
+    """What the contract leaves unproven: a milestone with no check, a task with neither a check nor a named waiver."""
+    d = store.run_dir(rid)
+    checks = store.read_json(d / "contract.json").get("checks", [])
+    out = [] if checks else ["the contract has no checks"]
+    for m in store.read_json(d / "tasks.json").get("milestones", []):
+        if not any(k.get("milestone") == m["id"] or k.get("task") in {t["id"] for t in m.get("tasks", [])}
+                   or (k.get("due") == "each" and k["repo"] == m["repo"]) for k in checks):  # the full gate runs at every close
+            out.append(f"milestone {m['id']} has no contract check")
+        for t in m.get("tasks", []):
+            if not (any(k.get("task") == t["id"] for k in checks) or str(t.get("waiver", "")).strip()):
+                out.append(f"task {t['id']} has no check and no named waiver")
+    return out
+
+
 def approve(rid: str, by: str) -> dict:
-    """Record the owner's one approval of the frozen bundle. Called only after the approval gate returned approved."""
-    c = store.read_json(store.run_dir(rid) / "contract.json")
+    """Record the owner's one approval of the frozen bundle, only after the approval gate wrote its marker for this digest."""
+    d = store.run_dir(rid)
+    if (d / "approval.json").exists():
+        raise SdlcError("this run is already approved; re-approving would reset its deadline and caps")
+    c = store.read_json(d / "contract.json")
     validate_contract(c)
+    if problems := coverage(rid):
+        raise SdlcError("not approvable: " + "; ".join(problems))
+    cap = c.get("limits", {}).get("max_dispatches")
+    if not isinstance(cap, int) or cap < 1:
+        raise SdlcError("not approvable: limits.max_dispatches must be set (a finite dispatch cap)")
+    digest = bundle_digest(rid)
+    mk = store.gate_marker(rid, "approve")
+    if not mk.exists() or store.read_json(mk).get("digest") != digest:
+        raise SdlcError("not approvable: the approval gate has not approved this exact bundle (run `sdlc gate`)")
     hours = c.get("limits", {}).get("deadline_hours", 24)
-    rec = {"digest": bundle_digest(rid), "by": by, "at": store.iso(), "deadline": store.now() + hours * 3600}
-    store.write_json(store.run_dir(rid) / "approval.json", rec)
+    rec = {"digest": digest, "by": by, "at": store.iso(), "deadline": store.now() + hours * 3600}
+    store.write_json(d / "approval.json", rec)
+    mk.unlink()
+    meta = store.load_meta(rid)
+    meta["local_only_ok"] = c.get("local_only_ok", [])  # approved local-only repos: the CI reader honours exactly these
+    store.save_meta(rid, meta)
     store.set_status(rid, "approved", f"by {by}")
     return rec
 
@@ -126,7 +158,7 @@ def write_receipt(rid: str, chk: dict, *, sha: str, verdict: str, exit_code: int
         "bundle": bundle_digest(rid), "pins": pins_digest(chk), "exit": exit_code, "tests": tests,
         "base": base, "reason": reason, "deps": deps or {}, "at": store.iso(),
     }
-    rec = {"body": body, "sig": store.sign(rid, body)}
+    rec = {"body": body}
     store.write_json(receipt_path(rid, chk["id"], chk["repo"]), rec)
     return rec
 
@@ -141,7 +173,7 @@ def current_head(meta: dict, repo: str) -> str:
     return git(r["path"], "rev-parse", r["branch"])
 
 
-def evaluate(rid: str, due: str | None = None) -> tuple[int, str, list[dict]]:
+def evaluate(rid: str, due: str | None = None, skip_ci: bool = False, repo: str | None = None) -> tuple[int, str, list[dict]]:
     """Recompute the verdict from records only. Read-only: never builds, reruns, pushes or edits."""
     meta = store.load_meta(rid)
     notes: list[dict] = []
@@ -155,17 +187,22 @@ def evaluate(rid: str, due: str | None = None) -> tuple[int, str, list[dict]]:
     if not ok:
         return out(BLOCKED, f"integrity: {why}")
     contract = store.read_json(store.run_dir(rid) / "contract.json")
+    if problems := coverage(rid):
+        return out(BLOCKED, "contract: " + problems[0])
     heads = {}
-    for repo in meta["repos"]:
+    for name in meta["repos"]:
         try:
-            heads[repo] = current_head(meta, repo)
+            heads[name] = current_head(meta, name)
         except SdlcError as e:
             return out(BLOCKED, f"integrity: {e}")
     cp = store.load_cp(rid)
     if cp.get("blocked"):
         return out(BLOCKED, cp["blocked"])
     fail = blocked = pending = None
+    ran = 0
     for chk in contract["checks"]:
+        if repo and chk["repo"] != repo:
+            continue
         if due and chk.get("milestone") not in (due, None) and chk.get("due") != "final":
             continue
         rec = read_receipt(rid, chk)
@@ -174,9 +211,6 @@ def evaluate(rid: str, due: str | None = None) -> tuple[int, str, list[dict]]:
             pending = pending or f"{key} has no receipt"
             continue
         b = rec["body"]
-        if not store.verify_sig(rid, b, rec["sig"]):
-            pending = pending or f"{key} receipt is not signed by the runner (forged or edited)"
-            continue
         if b["bundle"] != bundle_digest(rid) or b["pins"] != pins_digest(chk) or b["run"] != rid:
             pending = pending or f"{key} receipt is for another contract"
             continue
@@ -194,6 +228,9 @@ def evaluate(rid: str, due: str | None = None) -> tuple[int, str, list[dict]]:
         elif b["verdict"] != "PASS":
             blocked = blocked or f"{key} has an unknown verdict"
         notes.append({"check": key, "verdict": b["verdict"], "sha": b["sha"]})
+        ran += 1
+    if not ran and not (fail or blocked or pending):
+        return out(BLOCKED, "no contract check produced a result: an empty result set proves nothing")
     if fail:
         return out(FAIL, fail)
     if blocked:
@@ -202,10 +239,10 @@ def evaluate(rid: str, due: str | None = None) -> tuple[int, str, list[dict]]:
         return out(PENDING, pending)
     if contract.get("edges"):
         import release
-        code, first = release.gate(rid, meta)
+        code, first = release.gate(rid, meta, consumer=repo)
         if code != READY:
             return out(code, first)
-    if meta.get("extra_gates"):  # CI proof once PRs exist
+    if meta.get("prs") and not skip_ci:  # once a PR exists its current checks count
         import ci
         code, first = ci.gate(rid, meta, heads)
         if code != READY:

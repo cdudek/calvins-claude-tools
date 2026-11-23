@@ -148,6 +148,17 @@ def blockers(probe_doc: dict, contract_doc: dict) -> list[str]:
 
 # ---- plan: one run, one branch per repo -----------------------------------------------------------
 
+def fresh_base(p: Path, d: dict) -> str:
+    """Branch from a fresh origin/<default>, never from a stale local branch; no remote means the local default."""
+    br = d["default_branch"]
+    if d["remote"]:
+        r = subprocess.run(["git", "fetch", "-q", "origin", br], cwd=p, capture_output=True, text=True)
+        if r.returncode:
+            raise SdlcError(f"BLOCKED env cannot fetch origin/{br} for {p.name}: {r.stderr.strip()[:120]}")
+        return git(p, "rev-parse", f"origin/{br}")
+    return git(p, "rev-parse", br if _run(p, "git", "rev-parse", "--verify", "-q", br) else "HEAD")
+
+
 def plan(repos: list[str], slug: str, title: str | None = None) -> str:
     paths = [Path(r).resolve() for r in repos]
     discs = [discover(p) for p in paths]
@@ -155,7 +166,7 @@ def plan(repos: list[str], slug: str, title: str | None = None) -> str:
     meta_repos = {}
     for p, d in zip(paths, discs, strict=True):
         branch = f"sdlc/{rid}"
-        base = git(p, "rev-parse", d["default_branch"] if _run(p, "git", "rev-parse", "--verify", "-q", d["default_branch"]) else "HEAD")
+        base = fresh_base(p, d)
         meta_repos[p.name] = {"path": str(p), "base_sha": base, "branch": branch, "default_branch": d["default_branch"], "remote": d["remote"]}
     d0 = store.init_run(rid, {"title": title or slug, "slug": slug, "repos": {}})
     for p in paths:
@@ -186,18 +197,20 @@ def draft(rid: str, plan_file: str | None, contract_file: str | None, tasks_file
     d = store.run_dir(rid)
     if (d / "approval.json").exists():
         raise SdlcError("the bundle is approved and frozen; start a new run for a changed plan")
-    for spec in inputs:  # repo:relative/path=local/file
-        key, _, src = spec.partition("=")
-        repo, _, rel = key.partition(":")
-        dst = d / "inputs" / repo / rel
-        dst.parent.mkdir(parents=True, exist_ok=True)
-        shutil.copyfile(src, dst)
-    for spec in deps:
-        key, _, src = spec.partition("=")
-        repo, _, rel = key.partition(":")
-        dst = d / "deps" / repo / rel
-        dst.parent.mkdir(parents=True, exist_ok=True)
-        shutil.copyfile(src, dst)
+    meta = store.load_meta(rid)
+    for kind, specs in (("inputs", inputs), ("deps", deps)):
+        for spec in specs:  # repo:relative/path=local/file
+            key, _, src = spec.partition("=")
+            repo, _, rel = key.partition(":")
+            if repo not in meta["repos"] or not contract.safe_relpath(rel):
+                raise SdlcError(f"--{'input' if kind == 'inputs' else 'dep'} {key}: needs a repo of this run and a relative path inside it")
+            if not Path(src).is_file():
+                raise SdlcError(f"--{'input' if kind == 'inputs' else 'dep'} {key}: {src} is not a file")
+            dst = d / kind / repo / rel
+            if not dst.resolve().is_relative_to((d / kind / repo).resolve()):
+                raise SdlcError(f"{key} resolves outside its folder")
+            dst.parent.mkdir(parents=True, exist_ok=True)
+            shutil.copyfile(src, dst)
     if plan_file:
         shutil.copyfile(plan_file, d / "plan.md")
     if tasks_file:
@@ -213,8 +226,13 @@ def draft(rid: str, plan_file: str | None, contract_file: str | None, tasks_file
                     if not f.is_file():
                         raise SdlcError(f"check {chk['id']} pins {rel}, but no --input {chk['repo']}:{rel}=<file> was given")
                     chk["pins"][rel] = store.sha256(f.read_bytes())
+        have = {k["id"] for k in c.get("checks", [])}
+        for disc in store.read_json(d / "discovery.json"):  # the discovered full gate stays unless the plan waives it by name
+            g = full_gate(disc)
+            if g and f"full:{disc['repo']}" not in have and disc["repo"] not in c.get("waive_full", []):
+                c.setdefault("checks", []).append({"id": f"full:{disc['repo']}", "repo": disc["repo"], "milestone": None, "due": "each",
+                                                   "runner": g, "expect": {"kind": "pass"}, "count": False, "source": "discovered"})
         contract.validate_contract(c)
-        meta = store.load_meta(rid)
         for chk in c["checks"]:
             if chk["repo"] not in meta["repos"]:
                 raise SdlcError(f"check {chk['id']} names unknown repo {chk['repo']}")
@@ -237,12 +255,13 @@ def screen(rid: str) -> Path:
     d = store.run_dir(rid)
     c = store.read_json(d / "contract.json")
     meta = store.load_meta(rid)
-    pr = store.read_json(d / "probe.json")
+    pr = store.read_json(d / "probe.json", [{"missing_tools": [], "browser": {"available": True, "why": ""}, "credentials": {"github": False}}])
     miss = sorted({t for p in pr for t in p["missing_tools"]})
     rows = ["| Check | Repo | Command | Expect | Where | Pinned |", "|---|---|---|---|---|---|"]
     for k in c["checks"]:
         rows.append(f"| {k['id']} | {k['repo']} | `{' '.join(k['runner'])[:90]}` | {k['expect']['kind']}"
                     f"{'; ' + json.dumps(k['expect'].get('value')) if 'value' in k['expect'] else ''} | {k.get('site', 'local')} | {', '.join(k.get('pins', {})) or '-'} |")
+    import deps as deps_mod
     ui = [k for k in c["checks"] if k.get("design")]
     deps = c.get("deps", {})
     lim = c.get("limits", {})
@@ -253,7 +272,7 @@ def screen(rid: str) -> Path:
              "", "## Milestones", ""] + [f"- **{m['id']}** ({m['repo']}): {len(m.get('tasks', []))} tasks, needs {m.get('needs') or 'nothing'}" for m in tasks.get("milestones", [])] + [
              "", "## Checks that decide the result", ""] + rows + [
              "", "## Dependency and lockfile changes", ""] + (
-        [f"- **{r}:** " + ", ".join(f"`{p}` ({h[:10]})" for p, h in v["files"].items()) + " (applied by the runner; frozen install with install scripts and source builds disabled; a manager with no such flag is not run)" for r, v in deps.items()]
+        [f"- **{r}:** applied by the runner, then a frozen install with install scripts and source builds off; a manager with no such flag is not run\n\n```diff\n{deps_mod.diff_text(rid, r)}```" for r in deps]
         or ["- none"]) + [
              "", "## Limits", "",
              f"- **Builders:** up to {lim.get('builders', 8)}, fewer when the graph allows less",
@@ -269,3 +288,29 @@ def screen(rid: str) -> Path:
     p = d / "approval.md"
     store.atomic_write(p, "\n".join(lines) + "\n")
     return p
+
+
+def _plannotator(cmd: list[str]) -> tuple[int, str]:
+    r = subprocess.run(cmd, capture_output=True, text=True)
+    return r.returncode, r.stdout + r.stderr
+
+
+GATE_RUN = _plannotator  # tests replace this function; nothing in the environment can
+
+
+def gate(rid: str, purpose: str = "approve") -> bool:
+    """The owner's gate: show the screen in Plannotator and, only if it comes back approved, write the marker `approve` or
+    `restart` needs. Nothing an agent writes can stand in for it: the hook keeps agents out of the run folder."""
+    d = store.run_dir(rid)
+    if purpose == "approve":
+        doc = screen(rid)
+    else:
+        doc = d / f"gate-{purpose}.md"
+        store.atomic_write(doc, f"# Restart run {rid}\n\nThe run was stopped or blocked. Approve to continue within the original caps and deadline.\n")
+    rc, said = GATE_RUN(["plannotator", "annotate", str(doc), "--gate"])  # a fixed command: no environment variable swaps it
+    said = said.lower()
+    ok = rc == 0 and bool(re.search(r"\bapproved?\b", said)) and not re.search(r"reject|denied|changes requested|request.?changes|not approved", said)
+    if ok:
+        store.write_json(store.gate_marker(rid, purpose), {"digest": contract.bundle_digest(rid), "at": store.iso()})
+    store.log(rid, f"gate {purpose}: {'approved' if ok else 'not approved'}")
+    return ok

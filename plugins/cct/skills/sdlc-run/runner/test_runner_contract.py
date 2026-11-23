@@ -25,7 +25,7 @@ def test_unapproved_run_is_blocked(tmp_path):
 
 def test_missing_receipt_is_pending_then_ready(tmp_path):
     repo, rid = setup(tmp_path)
-    contract.approve(rid, "owner")
+    tk.approve(rid)
     code, first, _ = contract.evaluate(rid)
     assert code == PENDING and "no receipt" in first
     receipt(rid, repo, "a")
@@ -36,7 +36,7 @@ def test_missing_receipt_is_pending_then_ready(tmp_path):
 
 def test_stale_pass_after_a_new_commit(tmp_path):
     repo, rid = setup(tmp_path)
-    contract.approve(rid, "owner")
+    tk.approve(rid)
     receipt(rid, repo, "a")
     receipt(rid, repo, "b")
     meta = store.load_meta(rid)
@@ -46,20 +46,20 @@ def test_stale_pass_after_a_new_commit(tmp_path):
     assert code == PENDING and "head is" in first
 
 
-def test_forged_receipt_does_not_count(tmp_path):
+def test_receipt_for_another_bundle_does_not_count(tmp_path):
     repo, rid = setup(tmp_path)
-    contract.approve(rid, "owner")
+    tk.approve(rid)
     receipt(rid, repo, "a")
-    rec = receipt(rid, repo, "b", verdict="FAIL")
-    rec["body"]["verdict"] = "PASS"  # an agent edits the file by hand
+    rec = receipt(rid, repo, "b")
+    rec["body"]["bundle"] = "0" * 64
     store.write_json(contract.receipt_path(rid, "b", "app"), rec)
     code, first, _ = contract.evaluate(rid)
-    assert code == PENDING and "forged" in first
+    assert code == PENDING and "another contract" in first
 
 
 def test_fail_and_blocked_codes(tmp_path):
     repo, rid = setup(tmp_path)
-    contract.approve(rid, "owner")
+    tk.approve(rid)
     receipt(rid, repo, "a", "FAIL")
     receipt(rid, repo, "b")
     assert contract.evaluate(rid)[0] == FAIL
@@ -69,7 +69,7 @@ def test_fail_and_blocked_codes(tmp_path):
 
 def test_changed_contract_after_approval_is_blocked(tmp_path):
     repo, rid = setup(tmp_path)
-    contract.approve(rid, "owner")
+    tk.approve(rid)
     receipt(rid, repo, "a")
     receipt(rid, repo, "b")
     d = store.run_dir(rid)
@@ -82,14 +82,14 @@ def test_changed_contract_after_approval_is_blocked(tmp_path):
 
 def test_stop_marker_blocks(tmp_path):
     repo, rid = setup(tmp_path)
-    contract.approve(rid, "owner")
+    tk.approve(rid)
     store.stop_marker(rid).write_text("1")
     assert "STOPPED" in contract.evaluate(rid)[1]
 
 
 def test_status_line_carries_run_heads_and_first_unmet(tmp_path):
     repo, rid = setup(tmp_path)
-    contract.approve(rid, "owner")
+    tk.approve(rid)
     code, first, _ = contract.evaluate(rid)
     line = contract.status_line(rid, code, first)
     assert line.startswith("PENDING run=") and rid in line and "app@" in line and "first=" in line

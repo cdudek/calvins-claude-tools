@@ -80,6 +80,19 @@ def cmd_screen(a) -> int:
     return 0
 
 
+def cmd_gate(a) -> int:
+    import discover
+    ok = discover.gate(a.run, a.purpose)
+    print("GATE approved" if ok else "GATE not approved")
+    return 0 if ok else 2
+
+
+def cmd_done(a) -> int:
+    import engine
+    print(engine.finish(a.run))
+    return 0
+
+
 def cmd_resume(a) -> int:
     import engine
     _j(engine.resume(a.run))
@@ -160,8 +173,11 @@ def cmd_push(a) -> int:
 
 def cmd_pr(a) -> int:
     import ci
+    import engine
+    engine.pr_guard(a.run, a.repo)  # local proof of this repo is READY, and a consumer waits for its producer's release
     print(ci.open_pr(a.run, a.repo))
     if a.auto_merge:
+        engine.pr_guard(a.run, a.repo)
         print("auto-merge armed" if ci.arm_auto_merge(a.run, a.repo) else "owner merges")
     return 0
 
@@ -199,6 +215,8 @@ def build_parser() -> argparse.ArgumentParser:
     add("draft", cmd_draft, RUN, ("--plan", {}), ("--contract", {}), ("--tasks", {}), ("--input", {"action": "append", "default": []}),
             ("--dep", {"action": "append", "default": []}), ("--strict", {"action": "store_true"}))
     add("screen", cmd_screen, RUN)
+    add("gate", cmd_gate, RUN, ("purpose", {"nargs": "?", "default": "approve", "choices": ["approve", "restart"]}))
+    add("done", cmd_done, RUN)
     add("approve", cmd_approve, RUN, ("--by", {"required": True}))
     add("check", cmd_check, ("run", {"nargs": "?"}), ("--due", {}))
     add("list", cmd_list)
