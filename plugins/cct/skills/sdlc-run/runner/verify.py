@@ -191,6 +191,36 @@ def overlay(rid: str, repo: str, dest: Path, pins: dict) -> None:
         shutil.copyfile(f, dest / rel)
 
 
+PLACEHOLDER = re.compile(r"\{(base|head|producer_sha:([A-Za-z0-9._-]+))\}")
+
+
+def resolve_argv(rid: str, argv: list[str], head: str, base: str) -> list[str]:
+    """The only templating a check argv gets: {base}, {head} and {producer_sha:<repo>}, each replaced by a full SHA the runner
+    knows. No shell and nothing else is expanded; a placeholder naming a repo outside the run is an error, not a literal."""
+    meta = store.load_meta(rid)
+
+    def sub(m: re.Match) -> str:
+        if m[1] == "base":
+            return base
+        if m[1] == "head":
+            return head
+        if m[2] not in meta["repos"]:
+            raise SdlcError(f"BLOCKED plan placeholder {m[0]} names a repo that is not in this run")
+        return contract.current_head(meta, m[2])
+
+    return [PLACEHOLDER.sub(sub, a) for a in argv]
+
+
+def pinned_inputs(rid: str, repo: str) -> dict:
+    """{path: sha256} of the config files the approved contract pins for a repo (playwright.config.*, tsconfig*.json, .npmrc ...)."""
+    src = store.run_dir(rid) / "inputs" / repo
+    out = {}
+    for rel in store.read_json(store.run_dir(rid) / "contract.json").get("pinned_inputs", {}).get(repo, []):
+        f = src / rel
+        out[rel] = store.sha256(f.read_bytes()) if f.is_file() else ""
+    return out
+
+
 def prereq_missing(chk: dict) -> str:
     for p in chk.get("prereqs", []):
         if "tool" in p and not shutil.which(p["tool"]):
@@ -234,7 +264,10 @@ def verify_check(rid: str, chk: dict, ref: str | None = None, base_sha: str | No
             return done("BLOCKED", str(e))
         if tamper:
             return done("BLOCKED", tamper)
-        overlay(rid, chk["repo"], wt, chk.get("pins", {}))
+        try:
+            overlay(rid, chk["repo"], wt, {**chk.get("pins", {}), **pinned_inputs(rid, chk["repo"])})
+        except SdlcError as e:
+            return done("BLOCKED", str(e))
         if bad := install_dependencies(rid, chk, wt):
             return done("BLOCKED", bad)
         kind = chk["expect"]["kind"]
@@ -243,9 +276,10 @@ def verify_check(rid: str, chk: dict, ref: str | None = None, base_sha: str | No
             if base_rec["verdict"] != "OK":
                 return done("BLOCKED", base_rec["reason"], base=base_rec)
         env = _artifact_env(rid, chk)  # one environment for the first run and the retry
-        job = run_job(rid, f"{chk['repo']}-{chk['id']}", chk["runner"], wt, env=env, allow=chk.get("env"))
+        argv = resolve_argv(rid, chk["runner"], head, base_sha or repo["base_sha"])
+        job = run_job(rid, f"{chk['repo']}-{chk['id']}", argv, wt, env=env, allow=chk.get("env"))
         if job.exit != 0 and TRANSIENT.search(job.out) and _spend_retry(rid, f"{chk['repo']}:{chk['id']}"):
-            job = run_job(rid, f"{chk['repo']}-{chk['id']}", chk["runner"], wt, env=env, allow=chk.get("env"))
+            job = run_job(rid, f"{chk['repo']}-{chk['id']}", argv, wt, env=env, allow=chk.get("env"))
         verdict, reason, tests = classify(chk, job)
         ev = store.run_dir(rid) / "evidence" / f"{chk['repo']}--{chk['id'].replace('/', '_')}.log"
         store.atomic_write(ev, job.out[-20000:])
@@ -259,7 +293,8 @@ def verify_check(rid: str, chk: dict, ref: str | None = None, base_sha: str | No
 def install_dependencies(rid: str, chk: dict, wt: Path) -> str:
     """A fresh checkout gets its approved dependencies through the frozen install (scripts and source builds off)."""
     import deps
-    if not (chk.get("install") or store.read_json(store.run_dir(rid) / "contract.json").get("deps", {}).get(chk["repo"])):
+    if not (chk.get("install") or store.read_json(store.run_dir(rid) / "contract.json").get("deps", {}).get(chk["repo"])
+            or deps.pin_record(rid, chk["repo"])):  # a consumer with runner-pinned tarballs installs from those vendored files
         return ""
     argv = deps.frozen_install(wt)
     if not argv:
@@ -283,11 +318,13 @@ def _prove_failing(rid: str, meta: dict, chk: dict, base_sha: str, cand_wt: Path
     repo = meta["repos"][chk["repo"]]
     if chk["expect"]["kind"] == "negative_control":
         argv, wt = chk["expect"].get("control"), cand_wt
+        if argv:
+            argv = resolve_argv(rid, argv, contract.current_head(meta, chk["repo"]), base_sha)
         if not argv:
             return {"verdict": "NO", "reason": "negative_control check names no control command"}
     else:
-        argv, wt = chk["runner"], _checkout(rid, chk["repo"], repo["path"], base_sha, f"b-{key}")
-        overlay(rid, chk["repo"], wt, chk.get("pins", {}))
+        argv, wt = resolve_argv(rid, chk["runner"], base_sha, base_sha), _checkout(rid, chk["repo"], repo["path"], base_sha, f"b-{key}")
+        overlay(rid, chk["repo"], wt, {**chk.get("pins", {}), **pinned_inputs(rid, chk["repo"])})
     if bad := install_dependencies(rid, chk, wt):
         return {"verdict": "NO", "reason": bad}
     job = run_job(rid, f"{chk['repo']}-{chk['id']}-base", argv, wt, allow=chk.get("env"))
@@ -341,14 +378,31 @@ def _show(path: str, ref: str, rel: str) -> str | None:
     return r.stdout if r.returncode == 0 else None
 
 
-def guard_diff(rid: str, repo_name: str, base: str, cand: str) -> list[str]:
-    """Compare a candidate against its base for tampering (called before integration). Empty list means clean."""
+def replaces(rid: str, task: str | None) -> list[str]:
+    """The test paths or globs a task declared in the approved task graph as replaced by its work (a greenfield rewrite)."""
+    if not task:
+        return []
+    for m in store.read_json(store.run_dir(rid) / "tasks.json").get("milestones", []):
+        for t in m.get("tasks", []):
+            if t["id"] == task:
+                return t.get("replaces_tests", [])
+    return []
+
+
+def replaceable(rel: str, globs: list[str]) -> bool:
+    return any(fnmatch.fnmatch(rel, g) for g in globs)
+
+
+def guard_diff(rid: str, repo_name: str, base: str, cand: str, task: str | None = None) -> list[str]:
+    """Compare a candidate against its base for tampering (called before integration). Empty list means clean.
+    A task's declared `replaces_tests` may be deleted or rewritten; nothing else may, and the contract's own checks still run."""
     import deps
     meta = store.load_meta(rid)
     path = meta["repos"][repo_name]["path"]
     c = store.read_json(store.run_dir(rid) / "contract.json")
     mine = [k for k in c["checks"] if k["repo"] == repo_name]
-    pins = {rel for k in mine for rel in k.get("pins", {})}
+    pins = {rel for k in mine for rel in k.get("pins", {})} | set(pinned_inputs(rid, repo_name))
+    swap = replaces(rid, task)
     allowed = {m["path"] for m in c.get("migrations", [])} | set(c.get("deps", {}).get(repo_name, {}).get("files", {}))
     protected = DEFAULT_PROTECTED + c.get("protected", [])
     for k in mine:  # the runner entry and the config the contract names are protected too
@@ -365,6 +419,8 @@ def guard_diff(rid: str, repo_name: str, base: str, cand: str) -> list[str]:
             continue
         if rel in pins:
             bad.append(f"changed pinned input {rel}")
+        elif swap and TEST_PATH.search(rel) and replaceable(rel, swap):
+            continue  # a declared replacement: its removed tests and assertions are expected (skips are still refused below)
         elif _protected(rel, protected):
             bad.append(f"changed protected path {rel} (test discovery, runner config or CI)")
         elif TEST_PATH.search(rel) and status.startswith("D"):

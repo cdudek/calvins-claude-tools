@@ -7,6 +7,7 @@ contract or another set of pinned files is stale. Receipts are unsigned: the plu
 """
 from __future__ import annotations
 
+import re
 import subprocess
 from pathlib import Path
 
@@ -49,27 +50,65 @@ def safe_relpath(p) -> bool:
             and "." not in p.split("/")[:1] and "" not in p.split("/"))
 
 
+# A workspace package name: optional @scope/, no leading dot or dash, so it can never read as an option or a path.
+PKG_NAME = re.compile(r"^(@[a-z0-9][a-z0-9._-]*/)?[a-z0-9][a-z0-9._-]*$")
+VENDORED = "vendored-tarball"
+
+
+def workspace_pack(name: str) -> list[str]:
+    return ["npm", "pack", "--ignore-scripts", "--workspace", name]
+
+
 def argv_allowed(argv) -> bool:
-    return isinstance(argv, list) and tuple(argv) in PACK_ALLOWED
+    if not isinstance(argv, list):
+        return False
+    ws = len(argv) == 5 and isinstance(argv[4], str) and PKG_NAME.fullmatch(argv[4]) is not None and argv == workspace_pack(argv[4])
+    return tuple(argv) in PACK_ALLOWED or ws  # shortcut: npm only; pnpm and yarn packs are not run, 4.1 has no source-building packer
+
+
+def edge_packs(e: dict) -> dict[str | None, list[str]]:
+    """The pack argv per package of an edge; a plain single-artifact edge is {None: argv}."""
+    return {n: workspace_pack(n) for n in e["packages"]} if e.get("packages") else {None: e["pack"]}
 
 
 def validate_edges(c: dict) -> None:
     for e in c.get("edges", []):
-        for k in ("producer", "consumer", "pack"):
+        for k in ("producer", "consumer"):
             if k not in e:
                 raise SdlcError(f"edge lacks {k}")
-        if not argv_allowed(e["pack"]):
+        pk = e.get("packages")
+        if pk is not None:
+            if not (isinstance(pk, list) and pk and len(set(pk)) == len(pk)
+                    and all(isinstance(n, str) and PKG_NAME.fullmatch(n) for n in pk)):
+                raise SdlcError(f"edge {e['producer']}: packages must be a non-empty list of distinct workspace package names")
+        elif "pack" not in e:
+            raise SdlcError("edge lacks pack or packages")
+        elif not argv_allowed(e["pack"]):
             raise SdlcError(f"edge {e['producer']}: pack command is not on the allowlist {[' '.join(a) for a in PACK_ALLOWED]}")
         rel = e.get("release", {})
-        if rel.get("kind", "none") != "none":
+        kind = rel.get("kind", "none")
+        pin = e.get("pin", {})
+        if kind == VENDORED:
+            if not pk:
+                raise SdlcError(f"edge {e['producer']}: {VENDORED} needs packages")
+            if not safe_relpath(pin.get("dir")) or not safe_relpath(pin.get("manifest", "package.json")) \
+                    or not pin.get("manifest", "package.json").endswith("package.json"):
+                raise SdlcError(f"edge {e['producer']}: pin.dir and pin.manifest must be relative paths inside the repo (no .. or absolute path)")
+        elif kind != "none":
             if not argv_allowed(rel.get("fetch")):
                 raise SdlcError(f"edge {e['producer']}: fetch command is not on the allowlist")
-            if not safe_relpath(e.get("pin", {}).get("file")) or not isinstance(e["pin"].get("line"), str):
+            if not safe_relpath(pin.get("file")) or not isinstance(pin.get("line"), str):
                 raise SdlcError(f"edge {e['producer']}: pin.file must be a relative path inside the repo (no .. or absolute path)")
+
+
+MAX_BUILDERS = 10  # the default is 8; the contract may raise it to this
 
 
 def validate_contract(c: dict) -> None:
     validate_edges(c)
+    b = c.get("limits", {}).get("builders", 8)
+    if not (isinstance(b, int) and not isinstance(b, bool) and 1 <= b <= MAX_BUILDERS):
+        raise SdlcError(f"limits.builders must be a whole number from 1 to {MAX_BUILDERS} (default 8)")
     ids = set()
     for chk in c.get("checks", []):
         for f in CHECK_FIELDS:
@@ -134,6 +173,10 @@ def approve(rid: str, by: str) -> dict:
     cap = c.get("limits", {}).get("max_dispatches")
     if not isinstance(cap, int) or cap < 1:
         raise SdlcError("not approvable: limits.max_dispatches must be set (a finite dispatch cap)")
+    for repo, rels in c.get("pinned_inputs", {}).items():  # exact bytes, hashed in the bundle through inputs/
+        for rel in rels:
+            if not safe_relpath(rel) or not (d / "inputs" / repo / rel).is_file():
+                raise SdlcError(f"not approvable: pinned_inputs {repo}:{rel} needs a relative path and an --input {repo}:{rel}=<file>")
     digest = bundle_digest(rid)
     if not granted("approve", rid):
         raise SdlcError("not approvable: the approval gate has not approved this exact bundle (run `sdlc gate <id> --by <name>`)")
@@ -271,7 +314,8 @@ def _final_state(rid: str, meta: dict) -> dict:
     for chk in store.read_json(d / "contract.json")["checks"]:
         p = receipt_path(rid, chk["id"], chk["repo"])
         receipts[p.name] = store.sha256(p.read_bytes()) if p.exists() else ""
-    return {"bundle": bundle_digest(rid), "heads": heads, "receipts": receipts}
+    pins = {p.stem: store.sha256(p.read_bytes()) for p in sorted((d / "pins").glob("*.json"))}  # what the runner pinned in consumers
+    return {"bundle": bundle_digest(rid), "heads": heads, "receipts": receipts, "pins": pins}
 
 
 def seal_final(rid: str) -> None:
