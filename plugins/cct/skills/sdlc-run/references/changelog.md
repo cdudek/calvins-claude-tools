@@ -10,7 +10,8 @@ the engineer. A version with no migration lines needs nothing but a re-run of `a
 - **Approval screen and builder brief.** The screen listed edge `packages` with a plain join and crashed on `{name, dir}` objects; the brief read `runner` directly and crashed on `kind: "board"` rows. Both use the contract accessors (`pkg_names`, `runner_of`).
 - **Electron board surfaces.** Python Playwright has no `_electron`, so every electron surface crashed. The runner now starts the repo's own Electron (resolved by node from the repo) with a loopback debugging port, the hidden shim and the same env, args and path guards, and attaches over CDP. A repo without Electron is a BLOCKED env at run time, and a blocker on the approval screen for a board row that lists `surface_allow`.
 - **Vendored consumers wait for the pin.** For `release.kind: "vendored-tarball"`, a consumer milestone that needs a producer milestone does not open (no dispatch) until `release.gate` for that consumer is READY, that is after `sdlc publish` pinned the tarballs into it. Other release kinds are unchanged.
-- **Receipts after a milestone merge** are unchanged by design: `sdlc final` runs the whole contract on the merged project head, and `sdlc pr` needs those receipts.
+- **Mid-run producer PR.** `sdlc verify <id> --repo <producer>` runs only that repo's rows on its run-branch head; `sdlc pr <producer>` then passes its guard from those receipts (per-repo, bound to the head) without `sdlc final` or built consumers. A later commit on the head voids them.
+- **Receipts after a milestone merge** are unchanged by design: the whole-contract `sdlc final` (or `sdlc verify --repo` per repo) runs on the merged head, and `sdlc pr` needs those receipts.
 - **Mechanical:** none. **Manual:** a plan that built a vendored consumer before `sdlc publish` must publish first.
 
 ## 4.2.3 — fix
