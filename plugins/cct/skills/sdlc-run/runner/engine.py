@@ -113,6 +113,8 @@ def preflight(rid: str, tid: str | None = None) -> None:
     ok, why = contract.approved_digest_ok(rid)
     if not ok:
         raise block(rid, "BLOCKED integrity", why)
+    if why := contract.base_problem(rid):
+        raise block(rid, "BLOCKED integrity", why)
     L, cp, doc = lim(rid), store.load_cp(rid), tasks_doc(rid)
     if L["deadline"] and store.now() > L["deadline"]:
         raise block(rid, "BLOCKED cap", "the run deadline has passed")

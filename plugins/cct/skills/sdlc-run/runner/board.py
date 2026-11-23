@@ -478,7 +478,7 @@ def same(prop: str, board: str, app: str, override: dict | None = None) -> bool:
 # Candidate nodes of one rendered board: headings, buttons, inputs, landmarks (by role plus accessible name) and text blocks
 # (by their text). shortcut: a simplified accessible-name computation (aria-label, aria-labelledby, label, alt, content);
 # a name the app computes differently shows up as "locator matched 0 elements" in the check, never as a silent pass.
-_NODES = """([props, sels]) => {
+_NODES = """([props, sels, srcImports]) => {
   const norm = s => (s || '').replace(/\\s+/g, ' ').trim();
   const LAND = {NAV: 'navigation', MAIN: 'main', ASIDE: 'complementary', FORM: 'form'};
   const roleOf = el => {
@@ -542,21 +542,31 @@ _NODES = """([props, sels]) => {
     node.el = el;
     out.push(node);
   }
-  // frames: every <dc-import> and every element matching a container selector; a label (an element whose own text is short)
-  // belongs to its closest <dc-import>, otherwise to its closest container of each selector. shortcut: own text only, not text of children.
+  // frames. The design tool's runtime replaces every <dc-import> with `.sc-host[data-sc-name][data-dc-tpl]`, so the element's attributes
+  // are only in the board's source: the top-level hosts, ordered by their template id, are paired with the source tags in order (when
+  // the counts differ the pairing is unknown and attribute selection is refused for them). Container frames are elements matching a selector.
+  // A label (an element with short own text) belongs to its closest import host, otherwise to its closest container of each selector.
+  const IMP = '.sc-host[data-sc-name][data-dc-tpl]';
   const els = [], frames = [], at = new Map();
-  const add = (el, kind, selector) => {
+  const add = (el, kind, selector, attrs, known) => {
     at.set(el, els.length); els.push(el);
-    frames.push({kind, selector, captions: [], attrs: kind === 'import' ? Object.fromEntries([...el.attributes].map(a => [a.name, a.value])) : {}});
+    frames.push({kind, selector, captions: [], attrs, known});
   };
-  document.querySelectorAll('dc-import').forEach(e => add(e, 'import', null));
-  for (const s of sels) document.querySelectorAll(s).forEach(e => add(e, 'container', s));
+  const hosts = [...document.querySelectorAll(IMP)];
+  const top = hosts.filter(h => !h.parentElement.closest(IMP));
+  const ids = [...new Set(top.map(h => Number(h.getAttribute('data-dc-tpl'))))].sort((a, b) => a - b);
+  const paired = ids.length === srcImports.length;
+  for (const h of hosts) {
+    const isTop = top.includes(h), src = isTop && paired ? srcImports[ids.indexOf(Number(h.getAttribute('data-dc-tpl')))] : null;
+    add(h, 'import', null, src || {name: h.getAttribute('data-sc-name')}, !isTop || paired);
+  }
+  for (const s of sels) document.querySelectorAll(s).forEach(e => add(e, 'container', s, {}, true));
   const caption = (el, i) => { const c = frames[i].captions; if (c.length < 40 && !c.includes(el)) c.push(el); };
   for (const el of document.body.querySelectorAll('*')) {
     if (['SCRIPT', 'STYLE'].includes(el.tagName) || !shown(el)) continue;
     const own = norm([...el.childNodes].filter(n => n.nodeType === 3).map(n => n.textContent).join(' '));
     if (!own || own.length > 200) continue;
-    const imp = el.closest('dc-import');
+    const imp = el.closest(IMP);
     if (imp) caption(own, at.get(imp));
     else for (const s of sels) { const c = el.closest(s); if (c) caption(own, at.get(c)); }
   }
@@ -599,6 +609,16 @@ def serve(root: str | Path):
 
 
 
+_IMPORT = re.compile(r"<dc-import((?:[^>\"']|\"[^\"]*\"|'[^']*')*)/?>", re.I)
+_ATTR = re.compile(r"([^\s=/]+)(?:\s*=\s*(?:\"([^\"]*)\"|'([^']*)'|([^\s>]+)))?")
+
+
+def source_imports(path: Path) -> list[dict]:
+    """The attributes of every <dc-import> tag in a board's source, in document order (the rendered page no longer has them)."""
+    text = path.read_text(errors="replace")
+    return [{m[1]: next((g for g in m.groups()[1:] if g is not None), "") for m in _ATTR.finditer(tag[1])} for tag in _IMPORT.finditer(text)]
+
+
 def _containers(mapping: dict | None, extra: list[str] | None = None) -> list[str]:
     """The caption container selectors an index records frames for: the default plus every one a mapping entry names."""
     sels = [DEFAULT_CONTAINER, *(extra or [])]
@@ -622,7 +642,7 @@ def index_export(root: str | Path, themes=THEMES, viewport: dict | None = None, 
     root = Path(root)
     vp = viewport or {"width": 1280, "height": 800}
     sels = containers or [DEFAULT_CONTAINER]
-    files = only or sorted(p.relative_to(root).as_posix() for p in root.rglob("*.dc.html"))
+    files = only if only is not None else sorted(p.relative_to(root).as_posix() for p in root.rglob("*.dc.html"))
     boards: dict = {f: {} for f in files}
     with serve(root) as base, sync_playwright() as p:
         browser = p.chromium.launch(executable_path=executable) if executable else p.chromium.launch()
@@ -640,7 +660,7 @@ def index_export(root: str | Path, themes=THEMES, viewport: dict | None = None, 
                         if attr:
                             page.evaluate("([a, v]) => document.documentElement.setAttribute(a, v)", [attr, theme])
                         page.evaluate("document.fonts && document.fonts.ready")
-                        found = page.evaluate(_NODES, [CANVAS_STYLE, sels])
+                        found = page.evaluate(_NODES, [CANVAS_STYLE, sels, source_imports(root / f)])
                     except Exception as e:  # noqa: BLE001 - one broken board must not stop the walk
                         boards[f][theme] = {"error": str(e)[:160], "nodes": [], "frames": []}
                         continue
@@ -669,14 +689,17 @@ def select_frame(entry: dict, m: dict, who: str) -> int:
     <dc-import>, otherwise the closest ancestor matching the entry's `container` selector (default .cell). Zero or several is an error."""
     fr = m["frame"]
     if "attrs" in fr:
-        hit = [i for i, f in enumerate(entry["frames"]) if f["kind"] == "import" and all(
+        hit = [i for i, f in enumerate(entry["frames"]) if f["kind"] == "import" and f.get("known", True) and all(
             (k not in f["attrs"]) if v is None else f["attrs"].get(k) == v for k, v in fr["attrs"].items())]
     else:
         sel = fr.get("container", DEFAULT_CONTAINER)
         hit = [i for i, f in enumerate(entry["frames"]) if (f["kind"] == "import" or f["selector"] == sel)
                and " ".join(fr["caption"].split()) in f["captions"]]
     if len(hit) != 1:
-        raise ValueError(f"entry {who}: frame {json.dumps(fr, sort_keys=True)} matches {len(hit)} frames in the board, it must match exactly one")
+        unknown = sum(1 for f in entry["frames"] if f["kind"] == "import" and not f.get("known", True))
+        why = f" ({unknown} import frames cannot be paired with their source tags: the source and the render list different numbers of <dc-import>)" \
+            if unknown and "attrs" in fr else ""
+        raise ValueError(f"entry {who}: frame {json.dumps(fr, sort_keys=True)} matches {len(hit)} frames in the board, it must match exactly one{why}")
     return hit[0]
 
 
@@ -870,7 +893,7 @@ def _app_nodes(page, nav: str | None, row: dict, cur: dict) -> list[dict]:
             page.evaluate("([a, v]) => document.documentElement.setAttribute(a, v)", [row["theme_attr"], row["theme"]])
         cur["theme"] = row["theme"]
     page.evaluate("document.fonts && document.fonts.ready")
-    return page.evaluate(_NODES, [CANVAS_STYLE, []])["nodes"]
+    return page.evaluate(_NODES, [CANVAS_STYLE, [], []])["nodes"]
 
 
 def measure_rows(spec: dict, rows: list[dict], executable: str | None, root: Path) -> list[dict]:

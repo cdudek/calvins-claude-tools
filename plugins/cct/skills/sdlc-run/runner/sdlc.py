@@ -28,6 +28,8 @@ def cmd_check(a) -> int:
     rid = store.resolve_run(a.run)
     code, first, _ = contract.evaluate(rid, a.due)
     print(contract.status_line(rid, code, first))
+    if store.read_json(store.run_dir(rid) / "contract.json").get("spec"):
+        print("\n".join(contract.spec_report(rid, not contract.final_problem(rid, store.load_meta(rid)) if a.due is None else False)))
     return code
 
 
@@ -150,6 +152,8 @@ def cmd_final(a) -> int:
     bad = [b for b in res if b["verdict"] != "PASS"]
     for b in bad:
         print(f"{b['verdict']} {b['repo']}:{b['check']} {b['reason']}")
+    if store.read_json(store.run_dir(a.run) / "contract.json").get("spec"):
+        print("\n".join(contract.spec_report(a.run, not bad)))
     return 0 if not bad else 1
 
 

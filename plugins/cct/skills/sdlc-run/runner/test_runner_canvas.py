@@ -21,9 +21,14 @@ BLOB = """body{margin:0;font:16px/24px sans-serif;background:#fff;color:#111}
 .pay{padding:0 16px;width:358px;height:44px;background:rgb(0, 100, 200);color:#fff;border:0;border-radius:8px}
 .a{background:rgb(1, 2, 3)} .b{background:rgb(4, 5, 6)}
 @media (prefers-color-scheme: dark){body{background:#111;color:#eee}.pay{background:rgb(10, 20, 30)}}"""
-# a stand-in for the design tool's <dc-import> element: it fills itself with a button and a caption of its own
-SUPPORT = """customElements.define('dc-import', class extends HTMLElement { connectedCallback() {
-  const t = this.getAttribute('tone'); this.innerHTML = '<button class="pay ' + t + '">Save</button><span>Tone ' + t + '</span>'; } });"""
+# a stand-in for the design tool's runtime: it replaces every <dc-import> by a `.sc-host[data-sc-name][data-dc-tpl]` holding the rendered
+# component (the element and its attributes are gone from the page, as in a real export); an import marked `hidden` renders nothing
+SUPPORT = """document.addEventListener('DOMContentLoaded', () => { let id = 3;
+  document.querySelectorAll('dc-import').forEach(e => {
+    if (e.hasAttribute('hidden')) { e.remove(); return; }
+    const t = e.getAttribute('tone'), h = document.createElement('div');
+    h.className = 'sc-host'; h.setAttribute('data-sc-name', e.getAttribute('name')); h.setAttribute('data-dc-tpl', String(id)); id += 5;
+    h.innerHTML = '<button class="pay ' + t + '">Save</button><span>Tone ' + t + '</span>'; e.replaceWith(h); }); });"""
 BOARD = """<!doctype html><html><head><link rel="stylesheet" href="/_blob/theme.css"><script src="./support.js"></script></head><body>
 <header aria-label="Top"><h1>Checkout</h1></header><main><p>Review your order</p><button class="pay">Pay</button>
 <label>Email <input type="email"></label><p>Same</p><p>Same</p><p>Aa</p><p>Bb</p><p>Cc</p><p>Dd</p></main></body></html>"""
@@ -35,6 +40,8 @@ FRAMES = """<!doctype html><html><head><link rel="stylesheet" href="/_blob/theme
 CELLS = """<!doctype html><html><head><link rel="stylesheet" href="/_blob/theme.css"></head><body>
 <div class="cell"><span class="lbl">Empty</span><button class="pay">Pay</button></div>
 <div class="cell"><span class="lbl">Full</span><button class="pay" style="padding:0 20px">Pay</button><button>Other</button></div></body></html>"""
+MIXED = """<!doctype html><html><head><link rel="stylesheet" href="/_blob/theme.css"><script src="./support.js"></script></head><body>
+<dc-import name="Card" tone="a" hidden></dc-import><dc-import name="Card" tone="b"></dc-import></body></html>"""
 POPUP = """<!doctype html><html><head><link rel="stylesheet" href="/_blob/theme.css"></head><body><button class="pay">Pay</button></body></html>"""
 MAPPING = {"boards": [{"board": "checkout.dc.html", "route": "/checkout.html", "state": "default"}]}
 
@@ -45,7 +52,7 @@ def export(tmp_path, blob=True, **boards):
     if blob:
         (root / "_blob" / "theme.css").write_text(BLOB)
     (root / "support.js").write_text(SUPPORT)
-    for name, html in {"checkout": BOARD, "frames": FRAMES, "cells": CELLS, "popup": POPUP, **boards}.items():
+    for name, html in {"checkout": BOARD, "frames": FRAMES, "cells": CELLS, "popup": POPUP, "mixed": MIXED, **boards}.items():
         (root / f"{name}.dc.html").write_text(html)
     return root
 
@@ -203,6 +210,12 @@ def test_boards_rows_prints_the_count_and_the_cli_writes_index_then_spec(tmp_pat
     assert [r["id"] for r in out["rows"]] == ["checkout.dc.html/dark"]
 
 
+@needs_browser
+def test_a_mapping_that_names_no_board_at_this_viewport_indexes_nothing(tmp_path):
+    root = export(tmp_path)
+    assert board.index_export(root, only=[])["boards"] == {}
+
+
 def test_browser_unavailable_is_an_environment_problem_not_a_verdict(tmp_path, capsys):
     assert sdlc.main(["boards", "index", str(tmp_path), "--executable", "/nonexistent/chrome"]) == 127
     assert "env: browser unavailable" in capsys.readouterr().out
@@ -226,6 +239,7 @@ def test_the_index_records_frames_per_board_and_the_nodes_inside_each(idx):
     light = idx["boards"]["frames.dc.html"]["light"]
     imports = [f for f in light["frames"] if f["kind"] == "import"]
     assert [f["attrs"].get("tone") for f in imports] == ["a", "a", "b"] and imports[0]["attrs"]["dlg"] == "x" and "dlg" not in imports[1]["attrs"]
+    assert all(f["known"] and f["attrs"]["name"] == "Card" for f in imports)  # attributes come from the source tags, paired in order
     assert "Tone b" in imports[2]["captions"]
     assert sorted(len(n["frames"]) for n in light["nodes"]) == [1] * len(light["nodes"])  # every node sits in exactly one frame
     cells = [f for f in idx["boards"]["cells.dc.html"]["light"]["frames"] if f["kind"] == "container"]
@@ -283,6 +297,15 @@ def test_boards_index_with_a_mapping_names_the_entry_whose_frame_matches_nothing
     assert "entry F1: frame" in capsys.readouterr().out
     assert sdlc.main(["boards", "rows", str(m), "--index", str(tmp_path / "i.json"), "--out", str(tmp_path / "s.json")]) == 2
     assert "matches 2 frames" in capsys.readouterr().out
+
+
+@needs_browser
+def test_attrs_are_refused_where_the_source_and_the_render_list_different_imports(idx):
+    mixed = {"boards": [{"board": "mixed.dc.html", "route": "/checkout.html", "entry": "M1", "theme": "light", "frame": {"attrs": {"tone": "b"}}}]}
+    assert not any(f["known"] for f in idx["boards"]["mixed.dc.html"]["light"]["frames"] if f["kind"] == "import")
+    with pytest.raises(ValueError, match=r"entry M1: .* matches 0 frames .*cannot be paired"):
+        board.canvas_rows(idx, mixed)
+    assert board.canvas_rows(idx, {"boards": [{**mixed["boards"][0], "frame": {"caption": "Tone b"}}]})["rows"]  # a caption still selects it
 
 
 def test_frame_and_container_shapes_are_validated():
