@@ -9,7 +9,7 @@ prevent.
 
 ```bash
 codex exec \
-  -c model="gpt-5.5" \
+  -c model="gpt-6.2-sol" \
   -c model_reasoning_effort="high" \
   --sandbox workspace-write \
   --skip-git-repo-check \

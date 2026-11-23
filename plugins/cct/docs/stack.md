@@ -75,7 +75,7 @@ The versions are the ones in use on 2026-10-31. Take the latest stable version w
 
 ## Agents and their tools
 
-- Claude Code with this plugin; Codex CLI (`codex exec -m gpt-6.1-sol`) as the second reviewer and for image generation.
+- Claude Code with this plugin; Codex CLI (`codex exec -m gpt-6.2-sol`) as the second reviewer and for image generation.
 - plannotator for reviewing plans and annotating documents.
 - agent-browser for driving the running app.
 - Beads (`bd`) or Linear as the tracker, set in `sdlc.json`.
