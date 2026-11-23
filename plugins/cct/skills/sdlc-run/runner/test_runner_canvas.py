@@ -43,6 +43,9 @@ CELLS = """<!doctype html><html><head><link rel="stylesheet" href="/_blob/theme.
 <div class="cell"><span class="lbl">Full</span><button class="pay" style="padding:0 20px">Pay</button><button>Other</button></div></body></html>"""
 MIXED = """<!doctype html><html><head><link rel="stylesheet" href="/_blob/theme.css"><script src="./support.js"></script></head><body>
 <dc-import name="Card" tone="a" hidden></dc-import><dc-import name="Card" tone="b"></dc-import></body></html>"""
+LIST = """<!doctype html><html><head><link rel="stylesheet" href="/_blob/theme.css"></head><body><main><h2>Members</h2><ul>
+<li style="width:100px">Row</li><li style="width:110px">Row</li><li style="width:120px">Row</li><li style="width:130px">Row</li><li style="width:140px">Row</li>
+</ul></main></body></html>"""
 POPUP = """<!doctype html><html><head><link rel="stylesheet" href="/_blob/theme.css"></head><body><button class="pay">Pay</button></body></html>"""
 MAPPING = {"boards": [{"board": "checkout.dc.html", "route": "/checkout.html", "state": "default"}]}
 
@@ -53,7 +56,7 @@ def export(tmp_path, blob=True, **boards):
     if blob:
         (root / "_blob" / "theme.css").write_text(BLOB)
     (root / "support.js").write_text(SUPPORT)
-    for name, html in {"checkout": BOARD, "frames": FRAMES, "cells": CELLS, "popup": POPUP, "mixed": MIXED, **boards}.items():
+    for name, html in {"checkout": BOARD, "frames": FRAMES, "cells": CELLS, "popup": POPUP, "mixed": MIXED, "list": LIST, **boards}.items():
         (root / f"{name}.dc.html").write_text(html)
     return root
 
@@ -105,7 +108,10 @@ def test_one_row_per_entry_and_theme_with_token_properties_and_unmeasurable_node
     assert [r["id"] for r in out["rows"]] == ["checkout.dc.html/light", "checkout.dc.html/dark"] and out["unsupported"] == []
     row = out["rows"][0]
     assert labels(row) >= {"button:Pay", "heading:Checkout", "text:Review your order"} and "text:Same" not in labels(row)
-    assert row["unmeasurable"] == ["text:Same"] and row["unmeasurable_nodes"] == 2  # reported on the row, never silently dropped
+    # the two identical paragraphs are anchored to `main` and numbered: measurable, with the anchored locator in the report
+    assert labels(row) >= {"text:Same[0] in main", "text:Same[1] in main"} and row["unmeasurable"] == [] and row["unmeasurable_nodes"] == 0
+    same = [n for n in row["nodes"] if n["n"].startswith("text:Same")]
+    assert [(n["i"], n["g"], n["a"]) for n in same] == [(0, 2, {"role": "main"}), (1, 2, {"role": "main"})]
     assert row["props"][:3] == ["color", "background-color", "border-color"] and row["props"][-2:] == ["width", "height"]
     assert "x" not in row["props"] and board.canvas_rows(idx, {**MAPPING, "position": True})["rows"][0]["props"][-2:] == ["x", "y"]  # position is opt-in
     assert row["min_match"] == 0.95
@@ -119,7 +125,7 @@ def test_app_rows_pass_and_a_drift_lists_node_property_board_value_and_app_value
     with board.serve(app(tmp_path)) as url:
         code, out = check(web_spec(url, rows), tmp_path)
         assert code == 0, out
-        assert "PASS checkout.dc.html/dark: " in out and "0 mismatches, 2 unmeasurable" in out and "UNMEASURABLE checkout.dc.html/light" in out
+        assert "PASS checkout.dc.html/dark: " in out and "0 mismatches, 0 unmeasurable" in out
         assert "Ran 2 checks" in out
         # padding and height beyond their tolerances, and a dark-only colour: each is listed as locator, property, board value, app value
         drift = BLOB.replace("padding:0 16px", "padding:0 12px").replace("height:44px", "height:47px").replace("rgb(10, 20, 30)", "rgb(10, 20, 31)")
@@ -798,3 +804,82 @@ def test_every_path_that_can_launch_a_surface_enforces_the_contract_allowlist(tm
     assert board.main(["check", str(f)]) == 2 and "not in the contract row's surface_allow" in capsys.readouterr().out
     assert board.main(["check", str(f), "--surface-allow", json.dumps({"args": ["--theme"], "env": ["OTHER"]})]) == 2
     assert "surface.env APP_THEME is not in the contract row's surface_allow.env" in capsys.readouterr().out
+
+
+# ---- ordinal locators for repeated nodes -----------------------------------------------------------------------------------
+# (`position` is the x and y geometry option and does not do this: it measures where a node is, not which of several it is.)
+
+LIST_MAP = {"boards": [{"board": "list.dc.html", "route": "/list.html", "entry": "L1", "theme": "light"}]}
+
+
+def list_app(tmp_path, widths=(100, 110, 120, 130, 140)):
+    root = tmp_path / "listapp"
+    root.mkdir(parents=True)
+    rows = "".join(f'<li style="width:{w}px">Row</li>' for w in widths)
+    (root / "list.html").write_text(f'<!doctype html><html><head><style>{BLOB}</style></head><body><main><h2>Members</h2><ul>{rows}</ul></main></body></html>')
+    return root
+
+
+@needs_browser
+def test_a_list_of_five_identical_rows_matches_five_of_five_and_a_reorder_or_a_dropped_row_fails(idx, tmp_path):
+    row = board.canvas_rows(idx, LIST_MAP)["rows"][0]
+    rows_ = [n for n in row["nodes"] if n["n"].startswith("text:Row")]
+    assert [(n["i"], n["g"]) for n in rows_] == [(i, 5) for i in range(5)] and rows_[0]["a"] == {"role": "main"} and row["unmeasurable_nodes"] == 0
+    assert rows_[2]["n"] == "text:Row[2] in main"  # the report shows the anchored locator
+
+    def run(widths):
+        with board.serve(list_app(tmp_path / str(len(widths)) / "-".join(map(str, widths)), widths)) as url:
+            return check({"target": {"kind": "web", "url": url}, "rows": [{**row, "id": "L1/light", "route": "/list.html"}]}, tmp_path)
+    code, out = run((100, 110, 120, 130, 140))
+    assert code == 0 and "PASS L1/light: 7/7 measurable nodes matched (100.0%), 0 mismatches, 0 unmeasurable" in out, out  # same order: 5 of 5 rows
+    code, out = run((100, 120, 110, 130, 140))  # reordered: the 2nd and 3rd rows swap their widths
+    assert code == 1 and "MISMATCH L1/light text:Row[1] in main width: board 110px, app 120px" in out
+    code, out = run((100, 110, 120, 130))  # one row dropped
+    assert code == 1 and "MISMATCH L1/light text:Row[0] in main occurrences: board 5, app 4" in out and "not found once in the app: text:Row[4] in main" in out
+    code, out = run((100, 110, 120, 130, 140, 150))  # one row added
+    assert code == 1 and "occurrences: board 5, app 6" in out
+
+
+def idx_node(role, name, parent=-1, **loc):
+    return {"role": role, "name": name, "locator": loc or ({"role": role, "name": name} if name else {"role": role}), "parent": parent, "frames": [],
+            "tag": "x", "style": {}, "box": {"width": 10, "height": 5, "x": 0, "y": 0}}
+
+
+def test_anchors_are_the_nearest_unique_ancestor_else_the_root_and_a_long_rootless_group_stays_unmeasurable():
+    props = ["width", "height"]
+    nodes = [idx_node("main", ""), idx_node("heading", "Team", 0), idx_node("region", "Inner", 0),  # 0 main, 1 heading, 2 region
+             idx_node("text", "Item", 2, text="Item"), idx_node("text", "Item", 2, text="Item"),  # two items under the region
+             idx_node("region", "Dup", 0), idx_node("region", "Dup", 0),  # two same-named regions: not unique, so not anchors
+             idx_node("text", "Leaf", 5, text="Leaf"), idx_node("text", "Leaf", 6, text="Leaf")]  # each under a different "Dup"
+    out, bad = board.anchor_nodes(nodes, None, props)
+    by = {n["n"]: n for n in out}
+    assert by["text:Item[0] in region:Inner"]["a"] == {"role": "region", "name": "Inner"} and by["text:Item[1] in region:Inner"]["i"] == 1
+    assert by["text:Leaf[0] in main"]["a"] == {"role": "main"} and by["text:Leaf[1] in main"]["g"] == 2  # skipped the duplicate regions
+    assert bad == []
+    rootless = [idx_node("text", "Row", -1, text="Row") for _ in range(board.MAX_ROOT_GROUP + 1)] + [idx_node("text", "One", -1, text="One")]
+    out, bad = board.anchor_nodes(rootless, None, props)
+    assert [n["n"] for n in out] == ["text:One"] and len(bad) == board.MAX_ROOT_GROUP + 1  # order alone is no anchor for a long list
+    short, bad = board.anchor_nodes(rootless[:5], None, props)
+    assert bad == [] and [n["n"] for n in short][0] == "text:Row[0] in page" and short[0]["a"] is None
+    framed, _ = board.anchor_nodes(nodes, {id(n) for n in nodes[2:5]}, props)  # inside a frame: the anchor must be in the frame too
+    assert {n["n"] for n in framed} == {"region:Inner", "text:Item[0] in region:Inner", "text:Item[1] in region:Inner"}
+
+
+def app_node(role, name, parent=-1, **loc):
+    n = idx_node(role, name, parent, **loc)
+    n["style"] = {}
+    return n
+
+
+def test_an_anchor_or_index_the_app_cannot_resolve_is_unmatched_never_passed():
+    props = ["width"]
+    row = {"props": props, "nodes": [{"n": "text:Row[1] in main", "l": {"text": "Row"}, "v": ["10px"], "a": {"role": "main"}, "i": 1, "g": 2}]}
+    ok = [app_node("main", ""), app_node("text", "Row", 0, text="Row"), app_node("text", "Row", 0, text="Row")]
+    assert board.judge(row, ok)["matched"] == 1
+    assert board.judge(row, ok[:1] + [app_node("text", "Row", -1, text="Row")] * 2)["matched"] == 0  # the rows are outside the anchor
+    assert board.judge(row, [*ok, app_node("main", "")])["matched"] == 0  # the anchor is no longer unique in the app
+    assert board.judge(row, ok[1:])["matched"] == 0  # no anchor in the app at all
+    short = board.judge(row, ok[:2])  # the 2nd row is missing: unmatched, and the count differs
+    assert short["matched"] == 0 and short["unmatched"] == ["text:Row[1] in main"] and short["mismatches"][0]["prop"] == "occurrences"
+    passed, lines = board.verdict({**row, "id": "r", "min_match": 0.95}, short)
+    assert not passed and "occurrences: board 2, app 1" in "\n".join(lines)

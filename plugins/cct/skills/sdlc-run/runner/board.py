@@ -618,7 +618,11 @@ _NODES = """([props, sels, srcImports]) => {
     if (imp) caption(own, at.get(imp));
     else for (const s of sels) { const c = el.closest(s); if (c) caption(own, at.get(c)); }
   }
+  const idxOf = new Map(out.map((n, i) => [n.el, i]));
   for (const n of out) {
+    let a = n.el.parentElement;  // the nearest ancestor that is itself a candidate node: the tree an ordinal locator is anchored in
+    while (a && !idxOf.has(a)) a = a.parentElement;
+    n.parent = a ? idxOf.get(a) : -1;
     n.frames = [];
     for (let a = n.el; a; a = a.parentElement) if (at.has(a)) n.frames.push(at.get(a));
     delete n.el;
@@ -851,6 +855,55 @@ def _values(n: dict, props: list[str]) -> list[str]:
     return [n["style"].get(p, "") if p in CANVAS_STYLE else _fmt(n["box"][p], p) for p in props]
 
 
+MAX_ROOT_GROUP = 50  # repeated nodes with no unique ancestor: order alone is a stable locator only for a short list
+
+
+def _label(n: dict) -> str:
+    return f"{n['role']}:{n['name']}" if n["name"] else n["role"]
+
+
+def anchor_nodes(all_nodes: list[dict], scope: set[int] | None, props: list[str]) -> tuple[list[dict], list[str]]:
+    """Row nodes of one board (or frame): a node whose locator is unique in scope is matched by it. Nodes that share a locator are
+    anchored: each to its nearest ancestor (a candidate node, not text, with a locator unique in scope: a landmark, heading or named
+    region) and given its occurrence index among the same-locator nodes under that anchor, in document order; with no such ancestor the
+    anchor is the board or frame root. A root-anchored group longer than MAX_ROOT_GROUP has no stable anchored locator: unmeasurable.
+    `scope` holds ids of the nodes inside the selected frame (None: all)."""
+    pick = [i for i, n in enumerate(all_nodes) if scope is None or id(n) in scope]
+    inscope = set(pick)
+    count: dict[str, int] = {}
+    for i in pick:
+        k = _lkey(all_nodes[i]["locator"])
+        count[k] = count.get(k, 0) + 1
+
+    def anchor_of(i: int) -> int:
+        p = all_nodes[i].get("parent", -1)
+        while p >= 0:
+            if p in inscope and all_nodes[p]["role"] != "text" and count[_lkey(all_nodes[p]["locator"])] == 1:
+                return p
+            p = all_nodes[p].get("parent", -1)
+        return -1
+    groups: dict[tuple[str, int], list[int]] = {}
+    for i in pick:
+        k = _lkey(all_nodes[i]["locator"])
+        if count[k] > 1:
+            groups.setdefault((k, anchor_of(i)), []).append(i)
+    out, bad = [], []
+    for i in pick:
+        n = all_nodes[i]
+        k = _lkey(n["locator"])
+        rec = {"n": _label(n), "l": n["locator"], "v": _values(n, props)}
+        if count[k] > 1:
+            a = anchor_of(i)
+            grp = groups[(k, a)]
+            if a < 0 and len(grp) > MAX_ROOT_GROUP:
+                bad.append(_label(n))
+                continue
+            rec |= {"a": all_nodes[a]["locator"] if a >= 0 else None, "i": grp.index(i), "g": len(grp)}
+            rec["n"] += f"[{rec['i']}] in {_label(all_nodes[a]) if a >= 0 else 'page'}"
+        out.append(rec)
+    return out, bad
+
+
 def canvas_rows(index: dict | list[dict], mapping: dict, repo: str | None = None, allow: dict | None = None) -> dict:
     """One aggregate row per mapping entry and theme: every node of the board (of the selected frame) whose locator is unique there,
     with the values of the token properties. Nodes that share a locator are listed on the row as unmeasurable, never dropped silently.
@@ -892,38 +945,65 @@ def canvas_rows(index: dict | list[dict], mapping: dict, repo: str | None = None
             if not nodes:
                 unsupported.append({"id": who, "reason": "no candidate nodes" + (" in the frame" if m.get("frame") else "")})
                 continue
-            seen: dict[str, int] = {}
-            for n in nodes:
-                seen[_lkey(n["locator"])] = seen.get(_lkey(n["locator"]), 0) + 1
             if who in ids:
                 raise ValueError(f"two mapping entries produce the row {who}: give each entry its own entry id")
             ids.add(who)
-            label = lambda n: f"{n['role']}:{n['name']}" if n["name"] else n["role"]  # noqa: E731
+            members, unmeasurable = anchor_nodes(entry["nodes"], None if not m.get("frame") else {id(n) for n in nodes}, props)
             rows.append({"id": who, "entry": ident, "board": f, "route": m.get("route"), "surface": m.get("surface"),
                          "theme": theme, "theme_attr": ix.get("attr") or mapping.get("theme_attr"), "viewport": ix["viewport"],
                          "state": m.get("state", "default"), "frame": m.get("frame"), "ready": m.get("ready"), "props": props,
-                         "nodes": [{"n": label(n), "l": n["locator"], "v": _values(n, props)} for n in nodes if seen[_lkey(n["locator"])] == 1],
-                         "unmeasurable": sorted({label(n) for n in nodes if seen[_lkey(n["locator"])] > 1}),
-                         "unmeasurable_nodes": sum(1 for n in nodes if seen[_lkey(n["locator"])] > 1),
+                         "nodes": members, "unmeasurable": sorted(set(unmeasurable)), "unmeasurable_nodes": len(unmeasurable),
                          "min_match": m.get("min_match", mapping.get("min_match", MIN_MATCH)),
                          "tol": {**mapping.get("tolerances", {}), **m.get("tolerances", {})}})
     return {"rows": rows, "unsupported": unsupported}
 
 
+def _under(app_nodes: list[dict], j: int, anchor: int) -> bool:
+    p = app_nodes[j].get("parent", -1)
+    while p >= 0:
+        if p == anchor:
+            return True
+        p = app_nodes[p].get("parent", -1)
+    return False
+
+
 def judge(row: dict, app_nodes: list[dict]) -> dict:
-    """Compare a row with the nodes found in the app: a board node is matched when its locator is found exactly once in the app."""
-    found: dict[str, list[dict]] = {}
-    for n in app_nodes:
-        found.setdefault(_lkey(n["locator"]), []).append(n)
+    """Compare a row with the nodes found in the app. A board node with a unique locator is matched when the app has it exactly once.
+    A repeated node is matched by its anchored locator: the anchor must be found exactly once in the app, and the node is the i-th
+    same-locator node under it in document order. An anchor or index the app cannot resolve is unmatched, never a pass; a different
+    number of same-locator nodes under the anchor is a mismatch of its own (a dropped or added row)."""
+    found: dict[str, list[int]] = {}
+    for j, n in enumerate(app_nodes):
+        found.setdefault(_lkey(n["locator"]), []).append(j)
     props, ov = row["props"], row.get("tol") or {}
-    matched, unmatched, mismatches = 0, [], []
+    matched, unmatched, mismatches, counted = 0, [], [], set()
     for bn in row["nodes"]:
-        hit = found.get(_lkey(bn["l"]), [])
-        if len(hit) != 1:
-            unmatched.append(bn["n"])
-            continue
+        k = _lkey(bn["l"])
+        if "i" not in bn:
+            hit = found.get(k, [])
+            if len(hit) != 1:
+                unmatched.append(bn["n"])
+                continue
+            target = app_nodes[hit[0]]
+        else:
+            if bn.get("a") is None:
+                members = found.get(k, [])
+            else:
+                anchors = found.get(_lkey(bn["a"]), [])
+                if len(anchors) != 1:
+                    unmatched.append(bn["n"])
+                    continue
+                members = [j for j in found.get(k, []) if _under(app_nodes, j, anchors[0])]
+            gid = (k, _lkey(bn["a"]) if bn.get("a") is not None else "")
+            if len(members) != bn["g"] and gid not in counted:
+                counted.add(gid)
+                mismatches.append({"node": bn["n"], "prop": "occurrences", "board": str(bn["g"]), "app": str(len(members))})
+            if bn["i"] >= len(members):
+                unmatched.append(bn["n"])
+                continue
+            target = app_nodes[members[bn["i"]]]
         matched += 1
-        for p, want, have in zip(props, bn["v"], _values(hit[0], props), strict=True):
+        for p, want, have in zip(props, bn["v"], _values(target, props), strict=True):
             if not same(p, want, have, ov):
                 mismatches.append({"node": bn["n"], "prop": p, "board": want, "app": have})
     return {"matched": matched, "measurable": len(row["nodes"]), "unmatched": unmatched, "mismatches": mismatches}
@@ -1005,8 +1085,11 @@ def row_problem(r: dict) -> str:
     """An aggregate row that cannot be trusted to measure the token properties: wrong or empty props, nodes that do not carry them."""
     if r.get("props") not in ([*CANVAS_STYLE, *BOX], [*CANVAS_STYLE, *BOX, *POS]):
         return f"row {r.get('id')}: props must be exactly the token properties (and x, y when opted in), not {r.get('props')!r}"
-    if not isinstance(r.get("nodes"), list) or not all(isinstance(n, dict) and len(n.get("v", [])) == len(r["props"]) and "l" in n for n in r["nodes"]):
-        return f"row {r.get('id')}: every node needs a locator and one value per property"
+    if not isinstance(r.get("nodes"), list) or not all(
+            isinstance(n, dict) and len(n.get("v", [])) == len(r["props"]) and "l" in n and (
+                "i" not in n or (isinstance(n["i"], int) and isinstance(n.get("g"), int) and 0 <= n["i"] < n["g"]
+                                 and (n.get("a") is None or isinstance(n["a"], dict)))) for n in r["nodes"]):
+        return f"row {r.get('id')}: every node needs a locator, one value per property and, when repeated, an anchor, index and group size"
     t = r.get("tol") or {}
     if not (isinstance(t, dict) and all(k in TOL_PROPS and isinstance(x, (int, float)) and 0 <= x <= TOL_CAP for k, x in t.items())):
         return f"row {r.get('id')}: tolerance overrides are numeric properties up to {TOL_CAP:g}px"
