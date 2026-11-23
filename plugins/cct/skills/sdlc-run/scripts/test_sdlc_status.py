@@ -1328,13 +1328,17 @@ def _two_repos(tmp_path: Path) -> tuple[Path, Path]:
     return start, other
 
 
-def _records(start: Path, other: Path) -> subprocess.CompletedProcess[str]:
+def _records(start: Path, other: Path, *extra: str) -> subprocess.CompletedProcess[str]:
     import test_verify_gate as tvg
 
     return subprocess.run(
-        [sys.executable, str(SCRIPT), "repo-records", tvg.ID, "--repo", str(other)],
+        [sys.executable, str(SCRIPT), "repo-records", tvg.ID, "--repo", str(other), *extra],
         cwd=start, capture_output=True, text=True, env={**_env(), "HOME": str(start.parent / "home")},
     )  # fmt: skip
+
+
+def _locks(folder: Path) -> list[Path]:
+    return [p for p in (folder / "lock.json", folder / "state" / "lock.json") if p.is_file()]
 
 
 def test_repo_records_writes_every_record_and_the_other_repos_own_lock(tmp_path: Path) -> None:
@@ -1344,12 +1348,59 @@ def test_repo_records_writes_every_record_and_the_other_repos_own_lock(tmp_path:
     r = _records(start, other)
     assert r.returncode == 0 and r.stdout.startswith(f"REPO-RECORDS {tvg.ID} repo"), r.stdout + r.stderr
     folder = other / "changes" / tvg.ID
-    for name in ("decisions.json", "facts.md", "plan.md", "done.json"):
+    for name in ("facts.md", "plan.md"):
         assert (folder / name).read_bytes() == (start / "changes" / tvg.ID / name).read_bytes()
-    lock = folder / "state" / "lock.json"
-    assert (lock if lock.is_file() else folder / "lock.json").is_file()
+    assert (folder / "done.json").read_bytes() == (start / "changes" / tvg.ID / "done.json").read_bytes()
+    assert _locks(folder)
+
+
+def test_repo_records_refuses_to_overwrite_without_replace_and_keeps_local_skips(tmp_path: Path) -> None:
+    import test_verify_gate as tvg
+
+    start, other = _two_repos(tmp_path)
+    assert _records(start, other).returncode == 0
     again = _records(start, other)
-    assert again.returncode == 1 and "already locked" in again.stdout
+    assert again.returncode == 1 and "--replace" in again.stdout
+    folder = other / "changes" / tvg.ID
+    path = next(p for p in (folder / "state" / "intake.json", folder / "decisions.json") if p.is_file())
+    local = json.loads(path.read_text()) | {"skips": {"visual": "skip -- mine"}, "protectedEdit": ["x"]}
+    path.write_text(json.dumps(local))
+    assert _records(start, other, "--replace").returncode == 0
+    kept = json.loads(path.read_text())
+    assert kept["skips"] == {"visual": "skip -- mine"} and kept["protectedEdit"] == ["x"]
+
+
+def test_repo_records_refuses_a_source_that_changed_since_its_lock(tmp_path: Path) -> None:
+    import test_verify_gate as tvg
+
+    start, other = _two_repos(tmp_path)
+    facts = start / "changes" / tvg.ID / "facts.md"
+    facts.write_text(facts.read_text() + "- [ ] **F2** Sneaked in.\n")
+    r = _records(start, other)
+    assert r.returncode == 1 and "facts.md no longer matches" in r.stdout
+    assert not (other / "changes" / tvg.ID).exists()
+    lock = start / "changes" / tvg.ID / "lock.json"
+    lock = lock if lock.is_file() else start / "changes" / tvg.ID / "state" / "lock.json"
+    lock.write_text("[]")
+    assert "no intact lock.json" in _records(start, other).stdout
+
+
+def test_a_refused_approve_leaves_no_folder_and_no_lock_behind(tmp_path: Path) -> None:
+    import test_verify_gate as tvg
+
+    start, other = _two_repos(tmp_path)
+    (other / "scripts" / "verify_gate.py").write_text("import sys\nsys.exit(1)\n")  # the target gate refuses
+    r = _records(start, other)
+    assert r.returncode == 1 and "nothing was left behind" in r.stdout
+    assert not (other / "changes" / tvg.ID).exists()
+    # an existing folder is restored byte for byte, lock included
+    folder = other / "changes" / tvg.ID
+    folder.mkdir(parents=True)
+    (folder / "facts.md").write_text("mine\n")
+    (folder / "lock.json").write_text('{"mine": 1}\n')
+    assert _records(start, other, "--replace").returncode == 1
+    assert (folder / "facts.md").read_text() == "mine\n" and (folder / "lock.json").read_text() == '{"mine": 1}\n'
+    assert not (folder / "plan.md").exists()
 
 
 def test_repo_records_refuses_an_unapproved_source_and_an_unadopted_target(tmp_path: Path) -> None:
@@ -1364,4 +1415,4 @@ def test_repo_records_refuses_an_unapproved_source_and_an_unadopted_target(tmp_p
     (other / "scripts").mkdir()
     (other / "scripts" / "verify_gate.py").write_text("")
     r = _records(start, other)
-    assert r.returncode == 1 and "no lock.json" in r.stdout
+    assert r.returncode == 1 and "no intact lock.json" in r.stdout
