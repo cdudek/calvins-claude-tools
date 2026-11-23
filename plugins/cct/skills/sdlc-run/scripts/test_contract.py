@@ -74,23 +74,11 @@ def test_every_path_skill_md_names_exists() -> None:
     assert not missing, missing
 
 
-def test_every_reference_file_is_listed_in_skill_md() -> None:
-    unlisted = [
-        p.name for p in (SKILL / "references").glob("*.md") if f"references/{p.name}" not in BODY
-    ]
-    assert not unlisted, unlisted
-
-
 def test_skill_version_is_the_changelogs_newest() -> None:
     newest = re.search(
         r"^## (\d+\.\d+\.\d+)", (SKILL / "references/changelog.md").read_text(), re.M
     )
     assert newest and f"version: {newest[1]}" in BODY
-
-
-def test_every_blocked_reason_is_documented_in_skill_md() -> None:
-    undocumented = sorted(r for r in _gate().REASONS if f"`{r}`" not in BODY)
-    assert not undocumented, undocumented
 
 
 def test_every_hook_template_is_registered_by_adopt() -> None:
@@ -153,10 +141,6 @@ SHOULD_NOT_TRIGGER = [
 
 def _hits(request: str) -> list[str]:
     return [t for t in TRIGGER_TERMS if t in request.lower()]
-
-
-def test_the_description_still_carries_every_trigger_term() -> None:
-    assert not [t for t in TRIGGER_TERMS if t not in DESCRIPTION.lower()]
 
 
 @pytest.mark.parametrize("request_text", SHOULD_TRIGGER)

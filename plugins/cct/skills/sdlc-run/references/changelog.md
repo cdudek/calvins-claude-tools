@@ -5,6 +5,20 @@ version warning, the **Mechanical** lines are what `adopt` does for you (it adds
 with the stack's defaults and never overwrites a value), the **Manual** lines are printed for
 the engineer. A version with no migration lines needs nothing but a re-run of `adopt`.
 
+## 4.0.0 — greenfield: one approval, a checked contract, nothing installed
+
+- **Breaking:** the skill no longer installs or upgrades anything in a product repo. `adopt`, change folders, tier files, copied hooks and scripts, intent and UX approvals and screenshot galleries are gone from the flow. The plugin ships the skill, the agents and `runner/sdlc.py`.
+- **Records** live in `~/.sdlc/runs/<run-id>/` (never committed); run ID `<date>-<start repo>-<slug>`; branch `sdlc/<run-id>` in every repo; `~/.sdlc/active/` links live runs. A plugin hook blocks agents from writing under `~/.sdlc/runs/`.
+- **One approval** of a bundle digest (plan, contract, task graph, pinned inputs, approved lockfiles). A changed bundle blocks the run.
+- **Contract and receipts.** Each check is verified in a clean checkout by the runner; a receipt binds the commit, the bundle, the pinned inputs, the exit code and the test count and is signed. `sdlc check` exits 0 READY, 1 FAIL, 2 BLOCKED or STOPPED, 3 PENDING. Zero tests, a missing tool or a check that passes on the base are BLOCKED, never a pass.
+- **Build.** Up to 8 builder subagents in worktrees at the integration SHA; tamper checks on pinned specs, test and CI config, skips and removed assertions; cycle detection at planning and before each dispatch, `BLOCKED deadlock` at run time; dispatch, attempt and deadline caps; `sdlc stop`; `sdlc resume`.
+- **Milestones** merge into the project branch locally once their gate passes; the only PR per repo is the project branch into the default branch.
+- **UI** rows are measured from a pinned board (computed style, geometry) on web, extension or Electron. No baselines, no image approval.
+- **Multi-repo:** producer artifacts with identity, final merge order, published-artifact check, approved pin.
+- **Models** are named only in the kickoff.
+- Mechanical: none. Nothing is written to a product repo.
+- Manual: 3.x runs finish on 3.x and keep their installed copies. Remove the copies afterwards with `sdlc clean <repo>` (dry run), then `sdlc clean <repo> --apply` and review the cleanup branch. The 3.x kit files stay in the plugin only so `clean` can recognise them.
+
 ## 3.26.4 — a strict lock never reads the legacy batch id; board paths without dots; adopt spends fewer API calls
 
 - **The 3.25.1 batch id is read only for a pre-3.26 lock with an empty decision log.** Under a 3.26 lock it is never read, and approvals beside an empty or absent log are refused ("entries were removed"). On a pre-3.26 lock any logged decision, a send back included, ends it.

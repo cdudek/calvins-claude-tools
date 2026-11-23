@@ -425,14 +425,6 @@ def test_goal_templates_are_end_states_not_processes(name: str) -> None:
     assert not [w for w in ("milestone/", "builder", "push") if w in text]
 
 
-def test_skill_asks_through_dialogs_with_a_recommendation() -> None:
-    """The owner's rule (2026-10-09): dialogs, plain words, always a recommendation with a reason."""
-    text = (SKILL / "SKILL.md").read_text()
-    head = text.split("---", 2)[1]
-    assert "AskUserQuestion" in head, "allowed-tools must grant AskUserQuestion"
-    assert "## Talking to the engineer" in text and "(Recommended)" in text
-
-
 def test_the_plan_template_keeps_the_process_the_goal_dropped() -> None:
     """The process left the condition, not the run: How to run carries it, the handover starts it."""
     plan = (SKILL / "templates" / "change" / "plan.md").read_text()

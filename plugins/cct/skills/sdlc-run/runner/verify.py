@@ -126,6 +126,17 @@ def classify(chk: dict, job: Job) -> tuple[str, str, int | None]:
     return ("PASS", "", tests) if job.exit == 0 else ("FAIL", f"exit {job.exit}", tests)
 
 
+def _artifact_env(rid: str, chk: dict) -> dict:
+    """A scratch override only: consumers see the packed producer, and the path never reaches a PR."""
+    arts = store.load_cp(rid).get("artifacts", {})
+    return {f"SDLC_ARTIFACT_{p.upper()}": json_dumps(a) for p, a in arts.items() if p in chk.get("consumes", [])}
+
+
+def json_dumps(o) -> str:
+    import json
+    return json.dumps(o, sort_keys=True)
+
+
 def _checkout(rid: str, repo: str, path: str, sha: str, name: str) -> Path:
     dest = contract.wt_path(path, rid, f"verify-{name}")
     if dest.exists():
@@ -200,7 +211,7 @@ def verify_check(rid: str, chk: dict, ref: str | None = None, base_sha: str | No
             base_rec = _prove_failing(rid, meta, chk, base_sha or repo["base_sha"], wt, key)
             if base_rec["verdict"] != "OK":
                 return done("BLOCKED", base_rec["reason"], base=base_rec)
-        job = run_job(rid, f"{chk['repo']}-{chk['id']}", chk["runner"], wt)
+        job = run_job(rid, f"{chk['repo']}-{chk['id']}", chk["runner"], wt, env=_artifact_env(rid, chk))
         if job.exit != 0 and TRANSIENT.search(job.out) and _spend_retry(rid, f"{chk['repo']}:{chk['id']}"):
             job = run_job(rid, f"{chk['repo']}-{chk['id']}", chk["runner"], wt)
         verdict, reason, tests = classify(chk, job)
@@ -281,6 +292,9 @@ def guard_diff(rid: str, repo_name: str, base: str, cand: str) -> list[str]:
             bad.append(f"changed protected path {rel} (test discovery or CI)")
         elif TEST_PATH.search(rel) and status.startswith("D"):
             bad.append(f"deleted test file {rel}")
+    import deps
+    bad += deps.guard(rid, repo_name, base, cand)
+    allowed |= set(c.get("deps", {}).get(repo_name, {}).get("files", {}))
     diff = contract.git(path, "diff", "-U0", f"{base}..{cand}")
     cur, tally = "", {}
     for line in diff.splitlines():

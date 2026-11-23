@@ -53,21 +53,171 @@ def cmd_status(a) -> int:
     return 0
 
 
+def _j(o) -> None:
+    print(json.dumps(o, indent=1, sort_keys=True))
+
+
+def cmd_plan(a) -> int:
+    import discover
+    rid = discover.plan(a.repos, a.slug, a.title)
+    print(rid)
+    return 0
+
+
+def cmd_draft(a) -> int:
+    import discover
+    blockers = discover.draft(a.run, a.plan, a.contract, a.tasks, a.input, a.dep)
+    for b in blockers:
+        print(f"OPEN BLOCKER {b}")
+    return 2 if blockers and a.strict else 0
+
+
+def cmd_screen(a) -> int:
+    import discover
+    p = discover.screen(a.run)
+    print(p)
+    print(f"plannotator annotate {p} --gate")
+    return 0
+
+
+def cmd_resume(a) -> int:
+    import engine
+    _j(engine.resume(a.run))
+    return 0
+
+
+def cmd_stop(a) -> int:
+    import engine
+    print(f"STOPPED {a.run} jobs_cancelled={engine.stop(a.run)}")
+    return 0
+
+
+def cmd_restart(a) -> int:
+    import engine
+    engine.restart(a.run)
+    print(f"RESTARTED {a.run}")
+    return 0
+
+
+def cmd_next(a) -> int:
+    import engine
+    _j([t["id"] for t in engine.next_batch(a.run)])
+    return 0
+
+
+def cmd_dispatch(a) -> int:
+    import engine
+    _j([engine.dispatch(a.run, t) for t in a.tasks])
+    return 0
+
+
+def cmd_submit(a) -> int:
+    import engine
+    _j(engine.submit(a.run, a.task))
+    return 0
+
+
+def cmd_verify(a) -> int:
+    import engine
+    import verify
+    if a.task:
+        res = engine.verify_task(a.run, a.task)
+    else:
+        c = store.read_json(store.run_dir(a.run) / "contract.json")
+        res = [verify.verify_check(a.run, k) for k in c["checks"] if not a.check or k["id"] == a.check]
+    for b in res:
+        print(f"{b['verdict']} {b['repo']}:{b['check']} {b['reason']}".strip())
+    return 0 if all(b["verdict"] == "PASS" for b in res) else (1 if any(b["verdict"] == "FAIL" for b in res) else 2)
+
+
+def cmd_integrate(a) -> int:
+    import engine
+    print(f"INTEGRATED {a.task} {engine.integrate(a.run, a.task)[:9]}")
+    return 0
+
+
+def cmd_milestone(a) -> int:
+    import engine
+    out = engine.close_milestone(a.run, a.milestone)
+    _j(out)
+    return 0 if out["status"] == "merged" else 1
+
+
+def cmd_final(a) -> int:
+    import engine
+    res = engine.final_verify(a.run)
+    bad = [b for b in res if b["verdict"] != "PASS"]
+    for b in bad:
+        print(f"{b['verdict']} {b['repo']}:{b['check']} {b['reason']}")
+    return 0 if not bad else 1
+
+
+def cmd_push(a) -> int:
+    import engine
+    print(engine.push(a.run, a.repo))
+    return 0
+
+
+def cmd_pr(a) -> int:
+    import ci
+    print(ci.open_pr(a.run, a.repo))
+    if a.auto_merge:
+        print("auto-merge armed" if ci.arm_auto_merge(a.run, a.repo) else "owner merges")
+    return 0
+
+
+def cmd_pack(a) -> int:
+    import release
+    _j(release.pack(a.run, a.producer))
+    return 0
+
+
+def cmd_publish(a) -> int:
+    import release
+    _j(release.publish(a.run, a.producer))
+    return 0
+
+
+def cmd_clean(a) -> int:
+    import clean
+    return clean.main(a.rest)
+
+
 def build_parser() -> argparse.ArgumentParser:
     p = argparse.ArgumentParser(prog="sdlc")
     sub = p.add_subparsers(dest="cmd", required=True)
-    c = sub.add_parser("check")
-    c.add_argument("run", nargs="?")
-    c.add_argument("--due", help="only the items due at this milestone")
-    c.set_defaults(fn=cmd_check)
-    c = sub.add_parser("approve")
-    c.add_argument("run")
-    c.add_argument("--by", required=True)
-    c.set_defaults(fn=cmd_approve)
-    sub.add_parser("list").set_defaults(fn=cmd_list)
-    c = sub.add_parser("status")
-    c.add_argument("run", nargs="?")
-    c.set_defaults(fn=cmd_status)
+
+    def add(name, fn, *args, **kw):
+        c = sub.add_parser(name, **kw)
+        for arg, opts in args:
+            c.add_argument(arg, **opts)
+        c.set_defaults(fn=fn)
+        return c
+
+    RUN = ("run", {})
+    add("plan", cmd_plan, ("repos", {"nargs": "+"}), ("--slug", {"required": True}), ("--title", {}))
+    add("draft", cmd_draft, RUN, ("--plan", {}), ("--contract", {}), ("--tasks", {}), ("--input", {"action": "append", "default": []}),
+            ("--dep", {"action": "append", "default": []}), ("--strict", {"action": "store_true"}))
+    add("screen", cmd_screen, RUN)
+    add("approve", cmd_approve, RUN, ("--by", {"required": True}))
+    add("check", cmd_check, ("run", {"nargs": "?"}), ("--due", {}))
+    add("list", cmd_list)
+    add("status", cmd_status, ("run", {"nargs": "?"}))
+    add("resume", cmd_resume, RUN)
+    add("stop", cmd_stop, RUN)
+    add("restart", cmd_restart, RUN)
+    add("next", cmd_next, RUN)
+    add("dispatch", cmd_dispatch, RUN, ("tasks", {"nargs": "+"}))
+    add("submit", cmd_submit, RUN, ("task", {}))
+    add("verify", cmd_verify, RUN, ("--task", {}), ("--check", {}))
+    add("integrate", cmd_integrate, RUN, ("task", {}))
+    add("milestone", cmd_milestone, RUN, ("milestone", {}))
+    add("final", cmd_final, RUN)
+    add("push", cmd_push, RUN, ("repo", {}))
+    add("pr", cmd_pr, RUN, ("repo", {}), ("--auto-merge", {"action": "store_true"}))
+    add("pack", cmd_pack, RUN, ("producer", {}))
+    add("publish", cmd_publish, RUN, ("producer", {}))
+    add("clean", cmd_clean, ("rest", {"nargs": argparse.REMAINDER}))
     return p
 
 
@@ -76,7 +226,7 @@ def main(argv=None) -> int:
     try:
         return a.fn(a)
     except SdlcError as e:
-        print(f"BLOCKED {e}", file=sys.stderr)
+        print(f"BLOCKED {e}" if not str(e).startswith(("BLOCKED", "STOPPED")) else str(e), file=sys.stderr)
         return 2
 
 

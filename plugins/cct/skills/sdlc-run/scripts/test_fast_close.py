@@ -43,11 +43,6 @@ def test_stages_name_the_gate_as_the_one_full_suite_owner() -> None:
     assert "`verify_gate.py milestone` is the only runner of the full suite" in STAGES
 
 
-def test_plan_and_skill_close_text_name_the_gate_as_owner() -> None:
-    assert "only runner of the full suite" in PLAN
-    assert "only runner of the full suite" in SKILL_MD
-
-
 def test_the_codex_close_does_not_check_before_and_after_the_fix_parts() -> None:
     for text in (STAGES, SKILL_MD):
         assert "Claude checks, Codex fix parts, Claude checks and gate again" not in text
@@ -116,14 +111,6 @@ def test_no_text_still_says_three_fix_rounds() -> None:
 
 
 # 6. Auto-merge only after the owner or visual disposition
-def test_nothing_is_armed_before_the_required_disposition() -> None:
-    assert "Arm only after" in STAGES
-    assert "never arm an `ask`-labelled or a closed PR" in STAGES
-    assert "never arm an `ask`-labelled or a closed PR" in SKILL_MD
-    before_push = STAGES.split("**Never idle on CI.**", 1)[1].split("Agents run", 1)[0]
-    assert "after the owner and visual dispositions" in before_push
-
-
 # 2. UX assessment without a PR
 UX = flat(CCT / "skills/ux-assessment-run/SKILL.md")
 CHANGE_SCOPE = UX.split("## scope=change", 1)[1]

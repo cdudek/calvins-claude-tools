@@ -5,10 +5,7 @@ Branches: sdlc/<run> (project), sdlc-m/<run>/<m> (milestone), sdlc-t/<run>/<t> (
 """
 from __future__ import annotations
 
-import os
-import signal
 import subprocess
-import time
 from pathlib import Path
 
 import contract
@@ -341,7 +338,7 @@ def resume(rid: str) -> dict:
         pf.unlink(missing_ok=True)
 
     def requeue(cp):
-        for tid, e in cp["tasks"].items():
+        for e in cp["tasks"].values():
             if e["status"] == "running":
                 e["status"] = "pending"  # the attempt stays counted: it was durable before launch
     store.update_cp(rid, requeue)

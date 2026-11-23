@@ -3,12 +3,10 @@ import json
 
 import contract
 import discover
-import engine
+import pytest
 import store
 import testkit as tk
 from store import SdlcError
-
-import pytest
 
 FILES = {
     "package.json": json.dumps({"scripts": {"test": "vitest run", "lint": "eslint .", "typecheck": "tsc --noEmit", "build": "vite build"}}),
@@ -41,7 +39,7 @@ def test_plan_writes_nothing_into_the_repo_and_screen_shows_the_checks(tmp_path,
     p = discover.screen(rid)
     text = p.read_text()
     assert "Checks that decide the result" in text and "full:web" in text and "Dispatch cap" in text and "Missing tools" in text
-    assert not str(repo) in text.split("## Plan")[0]  # the screen is for the owner; nothing else was written
+    assert str(repo) not in text.split("## Plan")[0]  # the screen is for the owner; nothing else was written
     assert not (repo / ".sdlc").exists() and not (repo / "sdlc.json").exists()
 
 

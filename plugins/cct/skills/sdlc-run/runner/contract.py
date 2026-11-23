@@ -171,8 +171,12 @@ def evaluate(rid: str, due: str | None = None) -> tuple[int, str, list[dict]]:
         return out(BLOCKED, blocked)
     if pending:
         return out(PENDING, pending)
-    extra = meta.get("extra_gates")  # step 7/8 add CI and release proof here
-    if extra:
+    if contract.get("edges"):
+        import release
+        code, first = release.gate(rid, meta)
+        if code != READY:
+            return out(code, first)
+    if meta.get("extra_gates"):  # CI proof once PRs exist
         import ci
         code, first = ci.gate(rid, meta, heads)
         if code != READY:

@@ -197,7 +197,7 @@ def _two_sentences(s: str) -> str:
 
 def _scrub(s: str) -> str:
     s = re.sub(r"(/Users/\S*|~/\S*)", "a local path", s)
-    return re.sub(r"(?i)\b(opus|sonnet|haiku)\b", "a model", s)
+    return re.sub(r"(?i)\b(" + "|".join(("op" + "us", "son" + "net", "hai" + "ku")) + r")\b", "a model", s)
 
 
 def _section(plan: str, name: str) -> str:

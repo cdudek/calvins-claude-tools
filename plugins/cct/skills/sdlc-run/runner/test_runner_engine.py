@@ -7,11 +7,10 @@ import threading
 import time
 from pathlib import Path
 
-import pytest
-
 import contract
 import engine
 import graph
+import pytest
 import store
 import testkit as tk
 import verify
@@ -259,7 +258,7 @@ def test_caps_are_counted_before_launch_and_block(tmp_path):
         engine.dispatch(rid, "t1")
     assert contract.evaluate(rid)[0] == contract.BLOCKED
     repo2, rid2 = approved(tmp_path / "x")
-    for i in range(3):
+    for _ in range(3):
         engine.dispatch(rid2, "t1")
     with pytest.raises(SdlcError, match="used its 3 attempts"):
         engine.dispatch(rid2, "t1")

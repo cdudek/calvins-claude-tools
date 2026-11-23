@@ -23,14 +23,6 @@ class SdlcRunPage(unittest.TestCase):
         skill = version(r"^  version: (\d+\.\d+\.\d+)", SKILL.read_text())
         self.assertGreaterEqual(page, skill, "docs/sdlc-run.md describes an older sdlc-run than SKILL.md: update it")
 
-    def test_every_stage_says_what_you_get_who_acts_how_long_and_an_example(self):
-        text = PAGE.read_text()
-        for n, name in enumerate(STAGES, 1):
-            m = re.search(rf"^### {n} {name}\n(.*?)(?=^##|\Z)", text, re.M | re.S)
-            self.assertTrue(m, f"stage {n} {name} has no section")
-            for label in ("You get", "Who acts", "Typical time", "Example"):
-                self.assertIn(f"**{label}:**", m.group(1), f"stage {n} {name} lacks {label}")
-
     def test_no_link_is_dead(self):
         for target in re.findall(r"\]\(([^)#]+)(?:#[^)]*)?\)", PAGE.read_text()):
             if "://" not in target:
