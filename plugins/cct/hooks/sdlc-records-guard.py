@@ -15,7 +15,9 @@ import shlex
 import sys
 
 RUNNER = os.path.realpath(os.path.join(os.path.dirname(os.path.abspath(__file__)), "..", "skills", "sdlc-run", "runner", "sdlc.py"))
+RUNNER_DIR = os.path.dirname(RUNNER)
 OPERATORS = set(";&|<>()")
+MODULES = ("contract", "store", "engine", "verify", "discover", "release", "clean", "deps", "board", "graph", "sdlc", "ci")
 
 
 def roots() -> tuple[str, str, str]:
@@ -32,22 +34,59 @@ def under(path: str, root: str) -> bool:
     return bool(p) and (p == root or p.startswith(root + os.sep))
 
 
+def glob_reaches(pattern: str, home: str) -> bool:
+    """The glob can name the records folder, its runs folder or anything below them: each component of the pattern is
+    matched against the same component of <home>/runs (`~/.s?lc/runs/*/contract.json` included)."""
+    pat = pattern.split("/")
+    for h in {home, os.path.realpath(home), os.path.expanduser("~/.sdlc")}:
+        target = (h.rstrip("/") + "/runs").split("/")
+        if len(pat) < len(h.rstrip("/").split("/")):  # shorter than the folder itself: an ancestor glob such as `/Users/*`
+            continue
+        if all(k >= len(target) or fnmatch.fnmatchcase(target[k], comp) for k, comp in enumerate(pat)):
+            return True
+    return False
+
+
 def mentions(cmd: str, words: list[str], home: str, runs: str, real: str) -> bool:
     if ".sdlc" in cmd or "SDLC_HOME" in cmd or home in cmd or runs in cmd or real in cmd:
         return True
     for w in words:
         if ".sdlc" in w or home in w:
             return True
-        if re.search(r"[*?\[]", w):  # a glob that could name the folder
+        if re.search(r"[*?\[]", w):  # a glob that could name the folder: every path component is tested
             g = os.path.expanduser(os.path.expandvars(w))
-            cands = [p for h in (home, os.path.realpath(home), os.path.expanduser("~/.sdlc"))
-                     for p in (h, os.path.join(h, "runs"), os.path.join(h, "runs", "x"), os.path.join(h, "runs", "x", "y"))]
-            if any(fnmatch.fnmatchcase(c, g) for c in cands):
-                return True
             base = g.rsplit("/", 1)[-1]
             if base.startswith(".") and fnmatch.fnmatchcase(".sdlc", base):
                 return True
+            if glob_reaches(g, home):
+                return True
     return False
+
+
+def exec_target(words: list[str]) -> str:
+    """The program a simple command really runs, looking through VAR=value prefixes, `env` and `python [flags]`."""
+    ws = [w for w in words]
+    while ws and (re.match(r"[A-Za-z_]\w*=", ws[0]) or os.path.basename(ws[0]) == "env" or ws[0].startswith("-")):
+        ws.pop(0)
+    if ws and os.path.basename(ws[0]).startswith("python"):
+        ws.pop(0)
+        while ws and ws[0].startswith("-"):
+            ws.pop(0)
+    return ws[0] if ws else ""
+
+
+def touches_runner(cmd: str, words: list[str]) -> bool:
+    """The command runs the runner (sdlc.py, ./sdlc, any copy of it), or is a python program that names its folder or
+    imports one of its modules. Prose that merely contains these words is not a touch."""
+    if os.path.basename(exec_target(words)) in ("sdlc", "sdlc.py"):
+        return True
+    program = re.search(r"\bpython[0-9.]*\b|<<| -c\b", cmd)
+    if not program:
+        return False
+    mods = "|".join(MODULES)
+    return bool(RUNNER_DIR in cmd or "skills/sdlc-run/runner" in cmd or re.search(r"\bsdlc\.py\b", cmd)
+                or re.search(rf"\b(import|from)\s+({mods})\b", cmd)
+                or (re.search(r"\b(sys\.path|__import__|importlib|runpy)\b", cmd) and re.search(rf"\b({mods})\b", cmd)))
 
 
 def is_exact_runner(cmd: str, words: list[str]) -> bool:
@@ -59,7 +98,8 @@ def is_exact_runner(cmd: str, words: list[str]) -> bool:
     argv = words
     if os.path.basename(argv[0]).startswith("python") and len(argv) > 1:
         argv = argv[1:]
-    return os.path.realpath(os.path.expanduser(argv[0])) == RUNNER
+    first = os.path.expanduser(argv[0])
+    return os.path.isabs(first) and os.path.realpath(first) == RUNNER  # a relative `./sdlc.py` is not the plugin's runner
 
 
 def main() -> None:
@@ -93,10 +133,14 @@ def main() -> None:
         if "SDLC_GATE_CMD" in cmd:  # the owner's approval program is not an agent's to set
             return deny("SDLC_GATE_CMD may not be set: the approval gate is a fixed command.")
         inside = under(cwd, real)
-        if not (mentions(cmd, words, home, runs, real) or inside):
+        runner = touches_runner(cmd, words) if parsed else bool(re.search(r"\bpython", cmd) and ("sdlc.py" in cmd or RUNNER_DIR in cmd))
+        if not (mentions(cmd, words, home, runs, real) or inside or runner):
             return
         if parsed and is_exact_runner(cmd, words):
             return
+        if runner and not (mentions(cmd, words, home, runs, real) or inside):
+            return deny("The sdlc runner or its modules are only run as exactly one plain call of the plugin's own runner by its absolute path: "
+                        "no env prefix (HOME=, PATH=, PYTHONPATH=, env), no python -c or heredoc importing it, no relative ./sdlc.")
         deny(msg + (" (the command could not be parsed)" if not parsed else " (only one plain runner call may touch them)"))
 
 

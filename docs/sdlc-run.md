@@ -9,7 +9,7 @@ Verification and every push follow the [local-first contract](../plugins/cct/ski
 ## The flow
 
 - **Plan:** `sdlc plan` reads each repo's own instructions, manifests and CI, probes tools, credentials, browsers and CI jobs, and drafts a plan and a contract.
-- **Approve once:** one Plannotator screen shows the plan, the actual checks with expected values, dependency and lockfile changes, destinations and caps. `sdlc approve` records the digest of that bundle.
+- **Approve once:** one Plannotator screen shows the plan, the actual checks with expected values, dependency and lockfile changes, destinations and caps. `sdlc gate <id> --by <name>` records the digest of that bundle in the same process that Plannotator approved it.
 - **Build:** up to 8 builder subagents work in worktrees the runner cuts at the integration SHA. A fresh verifier subagent runs the approved checks on a clean checkout; only the runner writes results.
 - **Close:** a milestone that passes its due checks and the full local gate merges into `sdlc/<run-id>` locally. The only PR per repo is that branch into the default branch.
 - **Check:** `sdlc check` is read-only and ends in one line. Exit 0 READY, 1 FAIL, 2 BLOCKED or STOPPED, 3 PENDING.

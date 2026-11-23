@@ -6,6 +6,7 @@ added to the product repo (the one git ref, sdlc/<run-id>, is a branch name, not
 from __future__ import annotations
 
 import json
+import os
 import re
 import shutil
 import subprocess
@@ -303,26 +304,85 @@ def gate_decision(out: str) -> str | None:
     return None
 
 
+KNOWN_PLANNOTATOR = (".local/bin/plannotator", ".plannotator/bin/plannotator", ".bun/bin/plannotator",
+                     "/opt/homebrew/bin/plannotator", "/usr/local/bin/plannotator", "/usr/bin/plannotator")
+SAFE_PATH = "/usr/local/bin:/opt/homebrew/bin:/usr/bin:/bin"
+KEEP_ENV = ("USER", "LOGNAME", "TERM", "LANG", "DISPLAY", "WAYLAND_DISPLAY", "XDG_RUNTIME_DIR", "TMPDIR")
+
+
+def _passwd_home() -> str:
+    import pwd
+    return os.path.realpath(pwd.getpwuid(os.getuid()).pw_dir)
+
+
+def _temp_dirs() -> list[str]:
+    import tempfile
+    return [os.path.realpath(p) for p in ("/tmp", "/var/tmp", "/var/folders", tempfile.gettempdir(), os.environ.get("TMPDIR") or "/tmp")]
+
+
+def environment_problem(env=None) -> str:
+    """Why the gate refuses to run: HOME, PATH or PYTHON* changed from what a normal login has. Plannotator is found by
+    absolute path and runs in a scrubbed environment, so these cannot swap it; refusing makes an attempt visible."""
+    env = os.environ if env is None else env
+    if (h := env.get("HOME")) and os.path.realpath(h) != _passwd_home():
+        return "HOME is not the account's home folder"
+    if bad := sorted(k for k in env if k.startswith("PYTHON")):
+        return f"{bad[0]} is set"
+    temps = _temp_dirs()
+    for part in (env.get("PATH") or SAFE_PATH).split(":"):
+        if not part or not os.path.isabs(part):
+            return "PATH has an empty or relative entry"
+        real = os.path.realpath(part)
+        if any(real == t or real.startswith(t + os.sep) for t in temps):
+            return f"PATH has a temporary folder ({part})"
+    return ""
+
+
+def plannotator_path() -> str | None:
+    """The one plannotator program: an executable file at a known install location, never found through PATH."""
+    home = _passwd_home()
+    temps = _temp_dirs()
+    for cand in KNOWN_PLANNOTATOR:
+        p = cand if os.path.isabs(cand) else os.path.join(home, cand)
+        real = os.path.realpath(p)
+        if os.path.isfile(real) and os.access(real, os.X_OK) and not any(real.startswith(t + os.sep) for t in temps):
+            return real
+    return None
+
+
 def _plannotator(cmd: list[str]) -> tuple[int, str]:
-    r = subprocess.run(cmd, capture_output=True, text=True)
+    env = {"HOME": _passwd_home(), "PATH": SAFE_PATH, **{k: os.environ[k] for k in KEEP_ENV if k in os.environ}}
+    r = subprocess.run(cmd, capture_output=True, text=True, env=env)
     return r.returncode, r.stdout + r.stderr
 
 
 GATE_RUN = _plannotator  # tests replace this function; nothing in the environment can
 
 
-def gate(rid: str, purpose: str = "approve") -> bool:
-    """The owner's gate: show the screen in Plannotator and, only if it comes back approved, write the marker `approve` or
-    `restart` needs. Nothing an agent writes can stand in for it: the hook keeps agents out of the run folder."""
+def gate(rid: str, purpose: str = "approve", by: str = "") -> bool:
+    """The owner's gate and the decision in ONE process: show the screen in Plannotator and, only if it comes back approved,
+    approve (or restart) right here. No marker file is written, so nothing another process writes can stand in for it."""
+    if purpose == "approve" and not by.strip():
+        raise SdlcError("`sdlc gate` needs --by NAME: who approves")
+    if why := environment_problem():
+        raise SdlcError(f"BLOCKED gate refused: {why}; run it from a normal shell, not with HOME, PATH or PYTHON* changed")
+    exe = plannotator_path()
+    if not exe:
+        raise SdlcError("BLOCKED gate refused: plannotator is not installed at a known location")
     d = store.run_dir(rid)
     if purpose == "approve":
         doc = screen(rid)
     else:
         doc = d / f"gate-{purpose}.md"
         store.atomic_write(doc, f"# Restart run {rid}\n\nThe run was stopped or blocked. Approve to continue within the original caps and deadline.\n")
-    rc, said = GATE_RUN(["plannotator", "annotate", str(doc), "--gate", "--json"])  # a fixed command: no environment variable swaps it
+    rc, said = GATE_RUN([exe, "annotate", str(doc), "--gate", "--json"])  # a fixed command: no environment variable swaps it
     ok = rc == 0 and gate_decision(said) == "approved"
-    if ok:
-        store.write_json(store.gate_marker(rid, purpose), {"digest": contract.bundle_digest(rid), "at": store.iso()})
     store.log(rid, f"gate {purpose}: {'approved' if ok else 'not approved'}")
+    if ok:
+        contract.grant(purpose, rid)
+        if purpose == "approve":
+            contract.approve(rid, by)
+        else:
+            import engine
+            engine.restart(rid)
     return ok

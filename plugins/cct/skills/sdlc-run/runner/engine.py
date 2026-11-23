@@ -47,6 +47,17 @@ def _worktree(repo: str, path: Path, branch: str, start: str) -> Path:
     return path
 
 
+def _recut(repo: str, path: Path, branch: str, start: str) -> None:
+    """Throw the task's worktree and branch away and cut both again from `start`."""
+    subprocess.run(["git", "worktree", "remove", "--force", str(path)], cwd=repo, capture_output=True)
+    if path.exists():
+        import shutil
+        shutil.rmtree(path, ignore_errors=True)
+    subprocess.run(["git", "worktree", "prune"], cwd=repo, capture_output=True)
+    git(repo, "branch", "-D", branch)
+    _worktree(repo, path, branch, start)
+
+
 def project_wt(rid: str, repo_name: str) -> Path:
     r = store.load_meta(rid)["repos"][repo_name]
     return _worktree(r["path"], wt_path(r["path"], rid, "project"), r["branch"], r["branch"])
@@ -181,8 +192,9 @@ def dispatch(rid: str, tid: str) -> dict:
     if not fresh:  # a fix attempt continues the same work on top of the current milestone head
         if subprocess.run(["git", "merge", "--no-edit", base], cwd=path, capture_output=True).returncode:
             subprocess.run(["git", "merge", "--abort"], cwd=path, capture_output=True)
-            store.update_cp(rid, lambda cp: cp["tasks"][tid].update(status="pending"))
-            raise SdlcError(f"overlap: task {tid} conflicts with the milestone head; redo it on the new head")
+            _recut(r["path"], path, branch, base)  # the old work conflicts with the new head: redo it there, the attempt stays counted
+            store.log(rid, f"recut {tid} from {base[:9]}: its old work conflicted with the milestone head")
+            fresh = True
     if git(path, "rev-parse", "HEAD") != base and fresh:
         raise block(rid, "BLOCKED integrity", f"worktree of {tid} is not at the integration SHA")
     items = [c for c in store.read_json(store.run_dir(rid) / "contract.json")["checks"] if c.get("task") == tid]
@@ -300,7 +312,9 @@ def final_verify(rid: str) -> list[dict]:
     open_ms = [m["id"] for m in doc["milestones"] if cp["milestones"].get(m["id"], {}).get("status") != "merged"]
     if open_ms:
         raise SdlcError(f"milestones not merged yet: {', '.join(open_ms)}")
-    return [verify.verify_check(rid, c) for c in store.read_json(store.run_dir(rid) / "contract.json")["checks"]]
+    res = [verify.verify_check(rid, c) for c in store.read_json(store.run_dir(rid) / "contract.json")["checks"]]
+    contract.seal_final(rid)  # the whole contract just ran on the frozen heads: READY needs exactly these receipts
+    return res
 
 
 # ---- stop and resume ------------------------------------------------------------------------------
@@ -318,10 +332,8 @@ def stop(rid: str) -> list[int]:
 
 def restart(rid: str) -> None:
     """Only an explicit owner restart clears a stop; the original caps and deadline stay."""
-    mk = store.gate_marker(rid, "restart")
-    if not mk.exists():
+    if not contract.granted("restart", rid):
         raise SdlcError("only the owner restarts a stopped run (run `sdlc gate <id> restart`)")
-    mk.unlink()
     store.stop_marker(rid).unlink(missing_ok=True)
     store.update_cp(rid, lambda cp: cp.pop("blocked", None))
     store.set_status(rid, "approved", "restarted by the owner")
@@ -361,7 +373,7 @@ def push(rid: str, repo: str) -> str:
 def resume(rid: str) -> dict:
     """Continue on the same machine: keep counters, reconcile what ran, put interrupted work back, name the next step."""
     if store.is_stopped(rid):
-        raise SdlcError("STOPPED the run was stopped; `sdlc restart` clears it")
+        raise SdlcError("STOPPED the run was stopped; `sdlc gate <id> restart` clears it")
     ok, why = contract.approved_digest_ok(rid)
     if not ok:
         raise SdlcError(f"BLOCKED integrity {why}")
@@ -398,8 +410,13 @@ def finish(rid: str) -> str:
     return "done"
 
 
-def pr_guard(rid: str, repo: str) -> None:
-    """A PR (and its auto-merge) only for a repo whose own proof is READY; a consumer waits for its producer's release."""
+def pr_guard(rid: str, repo: str, arming: bool = False) -> None:
+    """A PR (and its auto-merge) only for a repo whose own proof is READY; a consumer waits for its producer's release.
+    Arming auto-merge also needs the PR head to be the proven head and required CI (or approved local-only proof)."""
     code, first, _ = contract.evaluate(rid, skip_ci=True, repo=repo)
     if code != contract.READY:
         raise SdlcError(f"not ready for a PR of {repo}: {first}")
+    if arming:
+        import ci
+        if why := ci.auto_merge_problem(rid, repo):
+            raise SdlcError(f"not arming auto-merge: {why}")

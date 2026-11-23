@@ -16,6 +16,7 @@ def sdlc(home, *args, cwd=None, gate="approved"):
 
     out, err = io.StringIO(), io.StringIO()
     old, discover.GATE_RUN = os.environ.get("SDLC_HOME"), (lambda cmd: (0, json.dumps({"decision": "approved" if gate == "approved" else "dismissed"})))
+    old_path, discover.plannotator_path = discover.plannotator_path, (lambda: "/opt/fake/plannotator")  # a test seam, not an environment one
     os.environ["SDLC_HOME"] = str(home)
     old_cwd = os.getcwd()
     try:
@@ -27,6 +28,7 @@ def sdlc(home, *args, cwd=None, gate="approved"):
         os.chdir(old_cwd)
         os.environ["SDLC_HOME"] = old or ""
         discover.GATE_RUN = discover._plannotator
+        discover.plannotator_path = old_path
     return rc, out.getvalue().strip(), err.getvalue().strip()
 
 
@@ -49,11 +51,11 @@ def test_plan_to_ready_through_the_cli(tmp_path):
     assert sdlc(home, "check", rid)[0] == 2  # not approved yet
     rc, screen, _ = sdlc(home, "screen", rid)
     assert "plannotator annotate" in screen
-    assert sdlc(home, "approve", rid, "--by", "owner")[0] == 2  # no gate approval yet: an agent cannot approve alone
-    assert sdlc(home, "gate", rid, gate="false")[0] == 2 and sdlc(home, "approve", rid, "--by", "owner")[0] == 2
-    assert sdlc(home, "gate", rid)[0] == 0
-    assert sdlc(home, "approve", rid, "--by", "owner")[0] == 0
-    assert sdlc(home, "approve", rid, "--by", "owner")[0] == 2  # a second approval would reset caps and deadline
+    assert sdlc(home, "check", rid)[0] == 2 and not (home / "runs" / rid / "approval.json").exists()
+    assert sdlc(home, "gate", rid, gate="false")[0] == 2 and not (home / "runs" / rid / "approval.json").exists()  # dismissed: nothing approved
+    assert sdlc(home, "gate", rid)[0] == 2  # approve needs --by
+    assert sdlc(home, "gate", rid, "--by", "owner")[0] == 0 and (home / "runs" / rid / "approval.json").exists()
+    assert sdlc(home, "gate", rid, "--by", "owner")[0] == 2  # a second approval would reset caps and deadline
     assert json.loads(sdlc(home, "next", rid)[1]) == ["t1"]
     rc, out, err = sdlc(home, "dispatch", rid, "t1")
     wt = Path(json.loads(out)[0]["worktree"])
@@ -72,5 +74,5 @@ def test_plan_to_ready_through_the_cli(tmp_path):
     assert sdlc(home, "list")[1].startswith(rid)
     assert sdlc(home, "done", rid)[0] == 0 and not (home / "active" / rid).exists()  # a finished run leaves the active folder
     assert sdlc(home, "stop", rid)[0] == 0 and sdlc(home, "check", rid)[0] == 2
-    assert sdlc(home, "restart", rid)[0] == 2  # restart needs the owner's gate too
-    assert sdlc(home, "gate", rid, "restart")[0] == 0 and sdlc(home, "restart", rid)[0] == 0
+    assert sdlc(home, "gate", rid, "restart", gate="false")[0] == 2 and sdlc(home, "check", rid)[0] == 2  # restart needs the owner's gate
+    assert sdlc(home, "gate", rid, "restart")[0] == 0

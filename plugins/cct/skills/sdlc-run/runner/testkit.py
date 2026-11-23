@@ -108,11 +108,12 @@ def build(rid: str, tid: str, files: dict, msg: str = "work") -> str:
 
 
 def approve(rid: str, by: str = "owner"):
-    """Stands in for the owner's gate: writes the marker the approval gate writes for this exact bundle, then approves."""
+    """Stands in for the owner's gate: grants this exact bundle in this process, as the gate does after "approved", then approves."""
     import contract
-    store.write_json(store.gate_marker(rid, "approve"), {"digest": contract.bundle_digest(rid)})
+    contract.grant("approve", rid)
     return contract.approve(rid, by)
 
 
 def owner_restart(rid: str) -> None:
-    store.write_json(store.gate_marker(rid, "restart"), {"nonce": "x"})
+    import contract
+    contract.grant("restart", rid)

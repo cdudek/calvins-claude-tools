@@ -14,6 +14,9 @@ import store
 from store import SdlcError
 
 READY, FAIL, BLOCKED, PENDING = 0, 1, 2, 3
+# The owner's decision lives only in the memory of the process that ran the gate: `discover.gate` grants it after Plannotator
+# returned "approved" and consumes it in the same process. No file stands in for it, so no other process can forge one.
+_GRANTS: dict[tuple[str, str], str] = {}
 NAMES = {READY: "READY", FAIL: "FAIL", BLOCKED: "BLOCKED", PENDING: "PENDING"}
 CHECK_FIELDS = ("id", "repo", "milestone", "runner", "expect")
 
@@ -108,8 +111,19 @@ def coverage(rid: str) -> list[str]:
     return out
 
 
+def grant(purpose: str, rid: str) -> None:
+    """Called by the gate in its own process after the owner approved this exact bundle (not by anything else)."""
+    _GRANTS[(purpose, rid)] = bundle_digest(rid)
+
+
+def granted(purpose: str, rid: str) -> bool:
+    """One use: the grant is for the bundle as it stood when the owner decided."""
+    digest = _GRANTS.pop((purpose, rid), None)
+    return digest is not None and digest == bundle_digest(rid)
+
+
 def approve(rid: str, by: str) -> dict:
-    """Record the owner's one approval of the frozen bundle, only after the approval gate wrote its marker for this digest."""
+    """Record the owner's one approval of the frozen bundle, only in the process whose gate the owner approved."""
     d = store.run_dir(rid)
     if (d / "approval.json").exists():
         raise SdlcError("this run is already approved; re-approving would reset its deadline and caps")
@@ -121,13 +135,11 @@ def approve(rid: str, by: str) -> dict:
     if not isinstance(cap, int) or cap < 1:
         raise SdlcError("not approvable: limits.max_dispatches must be set (a finite dispatch cap)")
     digest = bundle_digest(rid)
-    mk = store.gate_marker(rid, "approve")
-    if not mk.exists() or store.read_json(mk).get("digest") != digest:
-        raise SdlcError("not approvable: the approval gate has not approved this exact bundle (run `sdlc gate`)")
+    if not granted("approve", rid):
+        raise SdlcError("not approvable: the approval gate has not approved this exact bundle (run `sdlc gate <id> --by <name>`)")
     hours = c.get("limits", {}).get("deadline_hours", 24)
     rec = {"digest": digest, "by": by, "at": store.iso(), "deadline": store.now() + hours * 3600}
     store.write_json(d / "approval.json", rec)
-    mk.unlink()
     meta = store.load_meta(rid)
     meta["local_only_ok"] = c.get("local_only_ok", [])  # approved local-only repos: the CI reader honours exactly these
     store.save_meta(rid, meta)
@@ -237,6 +249,8 @@ def evaluate(rid: str, due: str | None = None, skip_ci: bool = False, repo: str 
         return out(BLOCKED, blocked)
     if pending:
         return out(PENDING, pending)
+    if due is None and repo is None and (why := final_problem(rid, meta)):  # the full completion test re-checked the receipts
+        return out(PENDING, why)
     if contract.get("edges"):
         import release
         code, first = release.gate(rid, meta, consumer=repo)
@@ -248,6 +262,32 @@ def evaluate(rid: str, due: str | None = None, skip_ci: bool = False, repo: str 
         if code != READY:
             return out(code, first)
     return out(READY, "all required proof is present; the next action is the owner's merge")
+
+
+def _final_state(rid: str, meta: dict) -> dict:
+    d = store.run_dir(rid)
+    heads = {n: current_head(meta, n) for n in meta["repos"]}
+    receipts = {}
+    for chk in store.read_json(d / "contract.json")["checks"]:
+        p = receipt_path(rid, chk["id"], chk["repo"])
+        receipts[p.name] = store.sha256(p.read_bytes()) if p.exists() else ""
+    return {"bundle": bundle_digest(rid), "heads": heads, "receipts": receipts}
+
+
+def seal_final(rid: str) -> None:
+    """Written by the final gate right after it re-ran every contract check on the frozen heads."""
+    store.write_json(store.run_dir(rid) / "final.json", _final_state(rid, store.load_meta(rid)))
+
+
+def final_problem(rid: str, meta: dict) -> str:
+    """READY needs the final gate to have re-run the checks on these heads: a receipt written, replaced or edited after it
+    (or without it) is not proof."""
+    p = store.run_dir(rid) / "final.json"
+    if not p.exists():
+        return "the final gate has not re-run the checks on the final heads (run `sdlc final`)"
+    if store.read_json(p) != _final_state(rid, meta):
+        return "a receipt, head or the bundle changed after the final gate ran (run `sdlc final` again)"
+    return ""
 
 
 def status_line(rid: str, code: int, first: str) -> str:

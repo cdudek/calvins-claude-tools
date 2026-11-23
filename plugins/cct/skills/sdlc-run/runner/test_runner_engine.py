@@ -359,3 +359,46 @@ def test_transient_retry_keeps_the_artifact_environment(tmp_path):
     c = tk.chk("net", "app", ["python3", "-c", code], consumes=["lib"])
     b = verify.verify_check(rid, c)
     assert b["verdict"] == "PASS" and store.load_cp(rid)["retries"]["app:net"] == 1
+
+
+def test_a_task_that_overlapped_is_recut_from_the_new_head_and_finishes(tmp_path):
+    repo, rid = approved(tmp_path)
+    tk.build(rid, "t1", GOOD)
+    engine.submit(rid, "t1")
+    assert engine.verify_task(rid, "t1")[0]["verdict"] == "PASS"
+    mwt = contract.wt_path(str(repo), rid, "m-m1")
+    tk.commit_file(mwt, "feature.py", "def greet():\n    return 'other'\n", "a conflicting edit on the milestone branch")
+    with pytest.raises(SdlcError, match="overlap"):
+        engine.integrate(rid, "t1")
+    assert store.load_cp(rid)["tasks"]["t1"]["status"] == "pending"
+    new_base = tk.git(mwt, "rev-parse", "HEAD")
+    info = engine.dispatch(rid, "t1")  # attempt 2: the stale worktree is recut, not merged again
+    e = store.load_cp(rid)["tasks"]["t1"]
+    assert e["attempts"] == 2 and e["base"] == new_base and tk.git(Path(info["worktree"]), "rev-parse", "HEAD") == new_base
+    wt = Path(info["worktree"])
+    (wt / "feature.py").write_text(GOOD["feature.py"])
+    tk.git(wt, "add", "-A")
+    tk.git(wt, "commit", "-qm", "redo on the new head")
+    engine.submit(rid, "t1")
+    assert engine.verify_task(rid, "t1")[0]["verdict"] == "PASS"
+    engine.integrate(rid, "t1")
+    assert engine.close_milestone(rid, "m1")["status"] == "merged"
+    assert engine.final_verify(rid) and contract.evaluate(rid)[0] == READY
+    assert store.load_cp(rid)["dispatches"] == 2  # the attempt was not refunded
+
+
+def test_a_forged_receipt_cannot_reach_ready_the_final_gate_reruns_the_checks(tmp_path):
+    repo, rid = approved(tmp_path)
+    meta = store.load_meta(rid)
+    head = contract.current_head(meta, "app")
+    for c in store.read_json(store.run_dir(rid) / "contract.json")["checks"]:  # a hand-written PASS for every check
+        contract.write_receipt(rid, c, sha=head, verdict="PASS", exit_code=0, tests=1, base=None)
+    code, first, _ = contract.evaluate(rid)
+    assert code == PENDING and "final gate" in first  # nothing ran: no re-run, no seal
+    deliver(rid)
+    assert engine.close_milestone(rid, "m1")["status"] == "merged"
+    res = engine.final_verify(rid)  # really re-runs every check on the final head and seals the result
+    assert all(b["verdict"] == "PASS" for b in res) and contract.evaluate(rid)[0] == READY
+    c = store.read_json(store.run_dir(rid) / "contract.json")["checks"][0]
+    contract.write_receipt(rid, c, sha=contract.current_head(store.load_meta(rid), "app"), verdict="PASS", exit_code=0, tests=99, base=None)
+    assert contract.evaluate(rid)[0] == PENDING  # a receipt replaced after the final run

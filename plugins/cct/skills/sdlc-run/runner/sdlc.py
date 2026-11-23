@@ -2,7 +2,7 @@
 """sdlc: the runner CLI (sdlc-run 4.x). Plain stdlib. Records live in ~/.sdlc/runs/<run-id>/, never in a repo.
 
   plan <repo>... --slug S [--title T]   discover, probe, write plan/contract drafts and the approval screen
-  approve <id> --by NAME                record the owner's one approval (after the approval gate returned approved)
+  gate <id> [approve|restart] --by NAME   the owner's gate: Plannotator, and only on "approved" the approval (or restart), in one process
   check [<id>]                          read-only completion test: exit 0 READY, 1 FAIL, 2 BLOCKED/STOPPED, 3 PENDING
   status [<id>] | list                  where a run stands; live runs
   resume <id>                           continue after a crash, on the same machine
@@ -28,12 +28,6 @@ def cmd_check(a) -> int:
     code, first, _ = contract.evaluate(rid, a.due)
     print(contract.status_line(rid, code, first))
     return code
-
-
-def cmd_approve(a) -> int:
-    rec = contract.approve(a.run, a.by)
-    print(f"APPROVED {a.run} digest={rec['digest'][:12]} by={a.by}")
-    return 0
 
 
 def cmd_list(a) -> int:
@@ -82,8 +76,8 @@ def cmd_screen(a) -> int:
 
 def cmd_gate(a) -> int:
     import discover
-    ok = discover.gate(a.run, a.purpose)
-    print("GATE approved" if ok else "GATE not approved")
+    ok = discover.gate(a.run, a.purpose, a.by or "")
+    print(f"GATE approved: {'RESTARTED' if a.purpose == 'restart' else 'APPROVED'} {a.run}" if ok else "GATE not approved")
     return 0 if ok else 2
 
 
@@ -102,13 +96,6 @@ def cmd_resume(a) -> int:
 def cmd_stop(a) -> int:
     import engine
     print(f"STOPPED {a.run} jobs_cancelled={engine.stop(a.run)}")
-    return 0
-
-
-def cmd_restart(a) -> int:
-    import engine
-    engine.restart(a.run)
-    print(f"RESTARTED {a.run}")
     return 0
 
 
@@ -177,7 +164,7 @@ def cmd_pr(a) -> int:
     engine.pr_guard(a.run, a.repo)  # local proof of this repo is READY, and a consumer waits for its producer's release
     print(ci.open_pr(a.run, a.repo))
     if a.auto_merge:
-        engine.pr_guard(a.run, a.repo)
+        engine.pr_guard(a.run, a.repo, arming=True)
         print("auto-merge armed" if ci.arm_auto_merge(a.run, a.repo) else "owner merges")
     return 0
 
@@ -215,15 +202,13 @@ def build_parser() -> argparse.ArgumentParser:
     add("draft", cmd_draft, RUN, ("--plan", {}), ("--contract", {}), ("--tasks", {}), ("--input", {"action": "append", "default": []}),
             ("--dep", {"action": "append", "default": []}), ("--strict", {"action": "store_true"}))
     add("screen", cmd_screen, RUN)
-    add("gate", cmd_gate, RUN, ("purpose", {"nargs": "?", "default": "approve", "choices": ["approve", "restart"]}))
+    add("gate", cmd_gate, RUN, ("purpose", {"nargs": "?", "default": "approve", "choices": ["approve", "restart"]}), ("--by", {}))
     add("done", cmd_done, RUN)
-    add("approve", cmd_approve, RUN, ("--by", {"required": True}))
     add("check", cmd_check, ("run", {"nargs": "?"}), ("--due", {}))
     add("list", cmd_list)
     add("status", cmd_status, ("run", {"nargs": "?"}))
     add("resume", cmd_resume, RUN)
     add("stop", cmd_stop, RUN)
-    add("restart", cmd_restart, RUN)
     add("next", cmd_next, RUN)
     add("dispatch", cmd_dispatch, RUN, ("tasks", {"nargs": "+"}))
     add("submit", cmd_submit, RUN, ("task", {}))

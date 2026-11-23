@@ -71,6 +71,7 @@ def test_ready_waits_for_the_pr_checks_once_a_pr_exists(tmp_path, monkeypatch):
     head = contract.current_head(meta, "app")
     for c in store.read_json(store.run_dir(rid) / "contract.json")["checks"]:
         contract.write_receipt(rid, c, sha=head, verdict="PASS", exit_code=0, tests=1, base=None)
+    contract.seal_final(rid)  # the final gate's re-run
     assert contract.evaluate(rid)[0] == READY
     meta["prs"] = {"app": "https://example.test/pr/1"}  # what ci.open_pr records
     store.save_meta(rid, meta)
@@ -123,13 +124,14 @@ def test_the_pr_command_never_opens_a_pr_when_the_guard_refuses(tmp_path, monkey
 # ---- 5 approval and restart need the owner's gate, once ---------------------------------------------
 
 
-def test_approve_needs_the_gate_marker_for_this_exact_bundle_and_a_finite_cap(tmp_path):
+def test_approve_needs_the_gate_grant_for_this_exact_bundle_and_a_finite_cap(tmp_path):
     _, rid = _run(tmp_path, [tk.chk("x", "app", ["true"], count=False)], {"milestones": []})
     with pytest.raises(SdlcError, match="approval gate"):
         contract.approve(rid, "agent")  # an agent cannot approve on its own
-    store.write_json(store.gate_marker(rid, "approve"), {"digest": "0" * 64})
+    contract.grant("approve", rid)
+    (store.run_dir(rid) / "plan.md").write_text("# plan changed after the owner decided\n")
     with pytest.raises(SdlcError, match="approval gate"):
-        contract.approve(rid, "agent")  # a marker for another bundle
+        contract.approve(rid, "agent")  # a grant for another bundle
     _, rid2 = _run(tmp_path / "b", [tk.chk("x", "app", ["true"], count=False)], {"milestones": []})
     c = store.read_json(store.run_dir(rid2) / "contract.json")
     c["limits"].pop("max_dispatches")
@@ -153,7 +155,10 @@ def test_restart_needs_the_owner_gate(tmp_path):
         engine.restart(rid)
     tk.owner_restart(rid)
     engine.restart(rid)
-    assert not store.is_stopped(rid) and not store.gate_marker(rid, "restart").exists()  # the marker is single use
+    assert not store.is_stopped(rid)
+    engine.stop(rid)
+    with pytest.raises(SdlcError, match="only the owner restarts"):
+        engine.restart(rid)  # the grant was single use
 
 
 # ---- 8 sdlc check is read-only; packing happens in a detached worktree ------------------------------
@@ -372,18 +377,76 @@ REAL_DISMISSED = 'Folder: /x/changes\n{"decision":"dismissed"}\n'
 REAL_ANNOTATED = 'Resolved: /x/plan.md\n{"decision":"annotated","feedback":"# File Feedback\\n\\nWhy S3?"}\n'
 
 
+def _gated(monkeypatch, run=None):
+    """A known plannotator location (a seam for the test) and a recorded answer."""
+    monkeypatch.setattr(discover, "plannotator_path", lambda: "/opt/fake/plannotator")
+    if run:
+        monkeypatch.setattr(discover, "GATE_RUN", run)
+
+
 def test_the_gate_command_is_fixed_and_needs_an_explicit_approval_field(tmp_path, monkeypatch):
     _, rid = _run(tmp_path, [tk.chk("x", "app", ["true"], count=False)], {"milestones": []})
     monkeypatch.setenv("SDLC_GATE_CMD", "true")  # the old override: it must change nothing
     seen = []
-    monkeypatch.setattr(discover, "GATE_RUN", lambda cmd: (seen.append(cmd), (0, "ok"))[1])
-    assert discover.gate(rid) is False  # exit 0 without a decision is not an approval
-    assert seen[0][:2] == ["plannotator", "annotate"] and seen[0][-2:] == ["--gate", "--json"] and "true" not in seen[0]
-    assert not store.gate_marker(rid, "approve").exists()
+    _gated(monkeypatch, lambda cmd: (seen.append(cmd), (0, "ok"))[1])
+    assert discover.gate(rid, "approve", "owner") is False  # exit 0 without a decision is not an approval
+    assert seen[0][0] == "/opt/fake/plannotator" and seen[0][1] == "annotate" and seen[0][-2:] == ["--gate", "--json"] and "true" not in seen[0]
+    assert not (store.run_dir(rid) / "approval.json").exists() and not list(store.run_dir(rid).glob("gate-*.json"))
     for said in (REAL_DISMISSED, REAL_ANNOTATED, 'The user approved. {"note": "approved"}', '{"decision": "not approved"}', "approved"):
         monkeypatch.setattr(discover, "GATE_RUN", lambda cmd, s=said: (0, s))
-        assert discover.gate(rid) is False, said
+        assert discover.gate(rid, "approve", "owner") is False, said
     monkeypatch.setattr(discover, "GATE_RUN", lambda cmd: (1, REAL_APPROVED))
-    assert discover.gate(rid) is False  # a failing exit never approves
+    assert discover.gate(rid, "approve", "owner") is False  # a failing exit never approves
     monkeypatch.setattr(discover, "GATE_RUN", lambda cmd: (0, REAL_APPROVED))
-    assert discover.gate(rid) is True and store.gate_marker(rid, "approve").exists()
+    assert discover.gate(rid, "approve", "owner") is True and (store.run_dir(rid) / "approval.json").exists()
+    assert not list(store.run_dir(rid).glob("gate-*.json"))  # no marker file ever exists
+
+
+# ---- N1: an agent cannot approve its own run -------------------------------------------------------
+
+
+def test_probe_a_a_forged_marker_file_and_a_direct_approve_call_do_nothing(tmp_path):
+    _, rid = _run(tmp_path, [tk.chk("x", "app", ["true"], count=False)], {"milestones": []})
+    assert not hasattr(store, "gate_marker")  # no file is an approval input any more
+    (store.run_dir(rid) / "gate-approve.json").write_text(json.dumps({"digest": contract.bundle_digest(rid)}))
+    with pytest.raises(SdlcError, match="approval gate"):
+        contract.approve(rid, "agent")
+
+
+def test_probe_b_a_fake_plannotator_on_path_is_never_run_and_a_changed_environment_is_refused(tmp_path, monkeypatch):
+    _, rid = _run(tmp_path, [tk.chk("x", "app", ["true"], count=False)], {"milestones": []})
+    fake = tmp_path / "fakebin"
+    fake.mkdir()
+    (fake / "plannotator").write_text('#!/bin/sh\necho \'{"decision":"approved"}\'\n')
+    (fake / "plannotator").chmod(0o755)
+    monkeypatch.setenv("PATH", f"{fake}:{os.environ['PATH']}")
+    with pytest.raises(SdlcError, match="temporary folder"):
+        discover.gate(rid, "approve", "agent")  # PATH points into a temp folder: refused
+    monkeypatch.setenv("PATH", "/usr/bin:/bin")
+    monkeypatch.setattr(discover, "KNOWN_PLANNOTATOR", ())  # not installed at a known place: the PATH copy is not used
+    with pytest.raises(SdlcError, match="not installed at a known location"):
+        discover.gate(rid, "approve", "agent")
+    assert not (store.run_dir(rid) / "approval.json").exists()
+    monkeypatch.setenv("PYTHONPATH", str(tmp_path))
+    assert "PYTHONPATH" in discover.environment_problem()
+    monkeypatch.delenv("PYTHONPATH")
+    monkeypatch.setenv("HOME", str(tmp_path))
+    assert "HOME" in discover.environment_problem()
+    assert discover.plannotator_path() is None or os.path.isabs(discover.plannotator_path())
+
+
+def test_the_gate_resolves_plannotator_by_absolute_path_and_runs_it_in_a_scrubbed_environment(tmp_path, monkeypatch):
+    exe = tmp_path.parent / f"{tmp_path.name}-bin" / "plannotator"
+    exe.parent.mkdir()
+    exe.write_text("#!/bin/sh\n")
+    exe.chmod(0o755)
+    monkeypatch.setattr(discover, "KNOWN_PLANNOTATOR", (str(exe),))
+    assert discover.plannotator_path() is None  # a program under a temporary folder is never trusted
+    seen = {}
+    monkeypatch.setattr(discover.subprocess, "run", lambda cmd, **kw: (seen.update(env=kw["env"]), type("R", (), {"returncode": 0, "stdout": "", "stderr": ""})())[1])
+    monkeypatch.setenv("PYTHONPATH", "x")
+    monkeypatch.setenv("SECRET_TOKEN", "y")
+    discover._plannotator(["/opt/x/plannotator"])
+    assert set(seen["env"]) <= {"HOME", "PATH", *discover.KEEP_ENV} and "PYTHONPATH" not in seen["env"] and "SECRET_TOKEN" not in seen["env"]
+
+

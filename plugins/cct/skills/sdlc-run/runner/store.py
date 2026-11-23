@@ -112,10 +112,6 @@ def proc_ident(pid: int) -> str:
     return r.stdout.strip() if r.returncode == 0 else ""
 
 
-def gate_marker(rid: str, purpose: str) -> Path:
-    return run_dir(rid) / f"gate-{purpose}.json"
-
-
 # ---- records --------------------------------------------------------------------------------------
 
 def init_run(rid: str, meta: dict) -> Path:

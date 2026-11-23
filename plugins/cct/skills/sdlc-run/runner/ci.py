@@ -308,15 +308,40 @@ def open_pr(rid: str, repo_name: str, run=None) -> str:
     return state
 
 
+def auto_merge_problem(rid: str, repo_name: str, run=None) -> str:
+    """Why auto-merge may not be armed for this PR, or "": the PR head must be the head this run proved locally, and
+    the base branch must require CI (or the plan approved local-only proof for the repo)."""
+    meta = store.load_meta(rid)
+    path, url = meta["repos"][repo_name]["path"], meta.get("prs", {}).get(repo_name)
+    if not url:
+        return f"no PR for {repo_name}"
+    proven = contract.current_head(meta, repo_name)
+    try:
+        pr = fetch_pr(path, url, run)
+        required = required_checks(path, pr["baseRefName"], run)
+    except (SdlcError, ValueError, KeyError) as e:
+        return f"{repo_name}: cannot read the PR: {e}"
+    if pr.get("headRefOid") != proven:
+        return f"{repo_name}: the PR head {str(pr.get('headRefOid'))[:9]} is not the proven head {proven[:9]}"
+    if required is None:
+        return f"{repo_name}: the required-check policy could not be read"
+    if not required and repo_name not in set(meta.get("local_only_ok", [])):
+        return f"{repo_name}: no required CI is configured and the plan did not approve local-only proof"
+    return ""
+
+
 def arm_auto_merge(rid: str, repo_name: str, run=None) -> bool:
     run = run or RUN
     meta = store.load_meta(rid)
     path, url = meta["repos"][repo_name]["path"], meta.get("prs", {}).get(repo_name)
     if not url:
         raise SdlcError(f"no PR for {repo_name}")
+    if why := auto_merge_problem(rid, repo_name, run):
+        raise SdlcError(f"not arming auto-merge: {why}")
     if not repo_allows_auto_merge(path, run):
         store.log(rid, f"{repo_name}: auto-merge is not allowed here, owner merges")
         return False
-    run(["gh", "pr", "merge", url, "--squash", "--auto"], path)
+    proven = contract.current_head(meta, repo_name)
+    run(["gh", "pr", "merge", url, "--squash", "--auto", "--match-head-commit", proven], path)
     store.log(rid, f"{repo_name}: auto-merge armed")
     return True

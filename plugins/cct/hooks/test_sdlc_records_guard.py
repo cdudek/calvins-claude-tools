@@ -65,3 +65,44 @@ def test_unrelated_commands_pass_including_unparsable_ones(tmp_path):
 def test_a_command_that_sets_the_gate_override_is_denied(tmp_path):
     assert bash("SDLC_GATE_CMD=true python3 -m pytest", tmp_path / "h") == "deny"
     assert bash("env SDLC_GATE_CMD=true sdlc gate x", tmp_path / "h") == "deny"
+
+
+def test_n1_hook_bypasses_are_denied(tmp_path):
+    home = tmp_path / ".sdlc"
+    env = {"SDLC_HOME": str(home)}
+    runner_dir = str(Path(RUNNER).parent)
+    for cmd in (
+        f"python3 -c \"import sys;sys.path.insert(0,'{runner_dir}');import contract,store;contract.approve('r','agent')\"",
+        "python3 - <<'EOF'\nimport sys\nsys.path.insert(0, 'plugins/cct/skills/sdlc-run/runner')\nimport contract\nEOF",
+        "python3 -c 'import store; store.write_json(1, 2)'",
+        "python3 -c 'from engine import restart'",
+        f"PATH=/tmp/fake:$PATH python3 {RUNNER} gate r1 --by x",
+        f"HOME=/tmp/h python3 {RUNNER} gate r1 --by x",
+        f"PYTHONPATH=/tmp/x python3 {RUNNER} gate r1 --by x",
+        f"env PATH=/tmp/fake python3 {RUNNER} gate r1 --by x",
+        f"env -i python3 {RUNNER} check r1",
+        "./sdlc gate r1 --by x",
+        "./sdlc.py gate r1 --by x",
+        "python3 sdlc.py gate r1 --by x",
+        "python3 ../runner/sdlc.py gate r1 --by x",
+        "python3 /tmp/fake/runner/sdlc.py gate r1 --by x",
+        f"python3 -I {RUNNER} gate r1 --by x",
+    ):
+        assert bash(cmd, home, env=env) == "deny", cmd
+    assert bash(f"python3 {RUNNER} gate r1 --by owner", home, env=env) is None  # exactly one plain call of the plugin's runner
+    assert bash(f"{RUNNER} check r1", home, env=env) is None
+    assert bash("python3 -c 'print(1)'", home, env=env) is None
+    assert bash("git commit -m 'import store'", home, env=env) is None  # prose is not an import
+    assert bash("git diff plugins/cct/skills/sdlc-run/runner/engine.py", home, env=env) is None  # reading the code is not running it
+    assert bash("git add sdlc.py", home, env=env) is None
+
+
+def test_the_glob_is_tested_on_every_path_component(tmp_path):
+    home = tmp_path / ".sdlc"
+    for cmd in ("cat ~/.s?lc/runs/*/contract.json", "cat ~/.s*/runs/*/receipts/*.json", "ls ~/.sdlc/r*/*/contract.json",
+                "cat ~/.[s]dlc/runs/r1/contract.json", "cat ~/.sd?c/*/run1/*.json"):
+        assert bash(cmd, home, env={"SDLC_HOME": str(home)}) == "deny", cmd
+    real_home = os.path.expanduser("~")
+    for cmd in (f"cat {real_home}/.s?lc/runs/*/contract.json",):
+        assert bash(cmd, Path(real_home) / ".sdlc") == "deny", cmd
+    assert bash("ls ~/projects/*/src/*.py", home) is None

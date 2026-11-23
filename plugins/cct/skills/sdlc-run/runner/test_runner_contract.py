@@ -31,7 +31,14 @@ def test_missing_receipt_is_pending_then_ready(tmp_path):
     receipt(rid, repo, "a")
     assert contract.evaluate(rid)[0] == PENDING
     receipt(rid, repo, "b")
+    code, first, _ = contract.evaluate(rid)
+    assert code == PENDING and "final gate has not re-run" in first  # hand-written receipts alone never reach READY
+    contract.seal_final(rid)  # what `sdlc final` does after it re-ran every check on the frozen heads
     assert contract.evaluate(rid)[0] == READY
+    c = {k["id"]: k for k in store.read_json(store.run_dir(rid) / "contract.json")["checks"]}["b"]
+    contract.write_receipt(rid, c, sha=contract.current_head(store.load_meta(rid), "app"), verdict="PASS", exit_code=0, tests=99, base=None)  # after the final gate
+    code, first, _ = contract.evaluate(rid)
+    assert code == PENDING and "changed after the final gate" in first
 
 
 def test_stale_pass_after_a_new_commit(tmp_path):

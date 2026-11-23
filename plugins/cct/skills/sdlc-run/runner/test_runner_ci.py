@@ -256,7 +256,7 @@ def test_open_pr_once_and_auto_merge(tmp_path):
     assert len(creates) == 1 and "--base" in creates[0] and "--head" in creates[0]
     assert store.load_meta(rid)["prs"]["app"] == "https://x/pr/1"
     assert ci.arm_auto_merge(rid, "app", run=gh) is True
-    assert ["gh", "pr", "merge", "https://x/pr/1", "--squash", "--auto"] in gh.calls
+    assert ["gh", "pr", "merge", "https://x/pr/1", "--squash", "--auto", "--match-head-commit", head(rid)] in gh.calls
     no = Gh(head(rid), [], auto=False)
     assert ci.arm_auto_merge(rid, "app", run=no) is False
     assert not [c for c in no.calls if c[:3] == ["gh", "pr", "merge"]]
@@ -282,3 +282,36 @@ def test_same_named_jobs_use_the_worst_result():
     assert code == ci.FAIL and "unit" in line
     pend = [{"name": "unit", "status": "COMPLETED", "conclusion": "SUCCESS"}, {"name": "unit", "status": "IN_PROGRESS", "conclusion": None}]
     assert ci.classify("a" * 40, "a" * 40, ["unit"], pend, [])[0] == ci.PENDING
+
+
+def test_auto_merge_is_refused_without_required_ci_or_for_a_stale_pr_head(tmp_path):
+    _, rid = approved(tmp_path)
+    ci.open_pr(rid, "app", run=Gh(head(rid), []))
+    none_required = Gh(head(rid), [], required=[])
+    with pytest.raises(SdlcError, match="no required CI is configured"):
+        ci.arm_auto_merge(rid, "app", run=none_required)
+    stale = Gh("0" * 40, [])
+    with pytest.raises(SdlcError, match="not the proven head"):
+        ci.arm_auto_merge(rid, "app", run=stale)
+    for g in (none_required, stale):
+        assert not [c for c in g.calls if c[:3] == ["gh", "pr", "merge"]]
+    ok = Gh(head(rid), [])
+    assert ci.arm_auto_merge(rid, "app", run=ok) is True
+    merge = next(c for c in ok.calls if c[:3] == ["gh", "pr", "merge"])
+    assert merge[-2:] == ["--match-head-commit", head(rid)]
+
+
+def test_auto_merge_is_allowed_with_no_required_ci_only_for_an_approved_local_only_repo(tmp_path):
+    _, rid = approved(tmp_path, {"local_only_ok": ["app"]})
+    ci.open_pr(rid, "app", run=Gh(head(rid), [], required=[]))
+    assert ci.arm_auto_merge(rid, "app", run=Gh(head(rid), [], required=[])) is True
+
+
+def test_the_pr_guard_refuses_arming_for_the_same_cases(tmp_path, monkeypatch):
+    _, rid = approved(tmp_path)
+    ci.open_pr(rid, "app", run=Gh(head(rid), []))
+    monkeypatch.setattr(ci, "RUN", Gh("0" * 40, []))
+    monkeypatch.setattr(contract, "evaluate", lambda *a, **k: (READY, "ok", []))  # the repo's own proof is ready
+    with pytest.raises(SdlcError, match="not arming auto-merge"):
+        engine.pr_guard(rid, "app", arming=True)
+    engine.pr_guard(rid, "app")  # opening the PR itself is not refused
