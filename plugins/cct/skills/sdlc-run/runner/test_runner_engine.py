@@ -402,3 +402,15 @@ def test_a_forged_receipt_cannot_reach_ready_the_final_gate_reruns_the_checks(tm
     c = store.read_json(store.run_dir(rid) / "contract.json")["checks"][0]
     contract.write_receipt(rid, c, sha=contract.current_head(store.load_meta(rid), "app"), verdict="PASS", exit_code=0, tests=99, base=None)
     assert contract.evaluate(rid)[0] == PENDING  # a receipt replaced after the final run
+
+
+def test_a_process_ident_does_not_change_when_the_child_execs(tmp_path):
+    import subprocess
+    p = subprocess.Popen(["sh", "-c", "sleep 0.4; exec sleep 5"])
+    try:
+        before = store.proc_ident(p.pid)  # taken between the fork and the exec, as run_job does
+        time.sleep(0.9)
+        assert before and store.proc_ident(p.pid) == before
+    finally:
+        p.kill()
+        p.wait()
