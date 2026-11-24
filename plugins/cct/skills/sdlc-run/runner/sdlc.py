@@ -127,7 +127,8 @@ def cmd_verify(a) -> int:
         res = engine.verify_task(a.run, a.task)
     else:
         c = store.read_json(store.run_dir(a.run) / "contract.json")
-        res = [verify.verify_check(a.run, k) for k in c["checks"] if not a.check or k["id"] == a.check]
+        res = [verify.verify_check(a.run, k) for k in c["checks"]
+               if (not a.check or k["id"] == a.check) and (not a.repo or k["repo"] == a.repo)]  # --repo: a producer mid-run, before its consumers exist
     for b in res:
         print(f"{b['verdict']} {b['repo']}:{b['check']} {b['reason']}".strip())
     return 0 if all(b["verdict"] == "PASS" for b in res) else (1 if any(b["verdict"] == "FAIL" for b in res) else 2)
@@ -222,7 +223,7 @@ def build_parser() -> argparse.ArgumentParser:
     add("next", cmd_next, RUN)
     add("dispatch", cmd_dispatch, RUN, ("tasks", {"nargs": "+"}))
     add("submit", cmd_submit, RUN, ("task", {}))
-    add("verify", cmd_verify, RUN, ("--task", {}), ("--check", {}))
+    add("verify", cmd_verify, RUN, ("--task", {}), ("--check", {}), ("--repo", {}))
     add("integrate", cmd_integrate, RUN, ("task", {}))
     add("milestone", cmd_milestone, RUN, ("milestone", {}))
     add("final", cmd_final, RUN)

@@ -115,14 +115,16 @@ def test_two_package_workspace_publish_pin_verify_ready(tmp_path):
     assert engine.close_milestone(rid, "m1")["status"] == "merged"
     ident = release.pack(rid, "kit")
     assert (store.run_dir(rid) / "artifacts" / "kit" / "kit-ui-1.0.0.tgz").is_file()
-    land(rid, "b0", {"src.js": "2\n"})
-    assert engine.close_milestone(rid, "m2")["status"] == "merged"
-    engine.final_verify(rid)
-    code, first, _ = contract.evaluate(rid)
-    assert code == PENDING and "awaits publication of kit" in first
+    assert engine.next_batch(rid) == []  # the consumer milestone waits for the pinned release
+    assert store.load_cp(rid)["milestones"].get("m2", {}).get("status", "waiting") == "waiting"
+    with pytest.raises(SdlcError, match="awaits publication of kit"):
+        engine.dispatch(rid, "b0")
     publish_ready(kit, rid)
     rec = release.publish(rid, "kit")
     assert rec["digest"] == ident["digest"]
+    assert [t["id"] for t in engine.next_batch(rid)] == ["b0"]  # pinned: the consumer milestone opens on the vendored files
+    land(rid, "b0", {"src.js": "2\n"})
+    assert engine.close_milestone(rid, "m2")["status"] == "merged"
     branch = store.load_meta(rid)["repos"]["app"]["branch"]
     man = json.loads(tk.git(app, "show", f"{branch}:package.json"))
     assert man["dependencies"] == {"@kit/annotations": "file:vendor/kit/kit-annotations-1.0.0.tgz", "@kit/ui": "file:vendor/kit/kit-ui-1.0.0.tgz"}
@@ -238,15 +240,13 @@ def test_one_producer_with_three_consumers_is_packed_once_and_pinned_in_each(tmp
     land(rid, "a", {"packages/ui/i.js": "z\n"})
     engine.close_milestone(rid, "m1")
     ident = release.pack(rid, "kit")
-    for i, name in enumerate(("app", "ext", "mac")):
-        land(rid, f"b{i}", {"src.js": "2\n"})
-        assert engine.close_milestone(rid, f"m{i + 2}")["status"] == "merged"
-    engine.final_verify(rid)
-    code, first, _ = contract.evaluate(rid)
-    assert code == PENDING and "awaits publication of kit" in first
+    assert engine.next_batch(rid) == []  # no consumer opens before the release is pinned
     publish_ready(kit, rid)
     rec = release.publish(rid, "kit")
     assert set(rec["consumers"]) == {"app", "ext", "mac"} and rec["digest"] == ident["digest"]
+    for i, name in enumerate(("app", "ext", "mac")):
+        land(rid, f"b{i}", {"src.js": "2\n"})
+        assert engine.close_milestone(rid, f"m{i + 2}")["status"] == "merged"
     for name in ("app", "ext", "mac"):
         branch = store.load_meta(rid)["repos"][name]["branch"]
         path = tk_repo(store.load_meta(rid), name)
@@ -272,6 +272,25 @@ def test_package_json_is_edited_structurally_and_keeps_its_indent_and_key_order(
     want = text.replace("^0.9.0", "@@").replace('"@kit/ui": "@@"', '"@kit/ui": "file:vendor/kit/kit-ui-1.0.0.tgz"').replace(
         '"@kit/annotations": "@@"', '"@kit/annotations": "file:vendor/kit/kit-annotations-1.0.0.tgz"')
     assert out.strip() == want.strip()
+
+
+def test_a_producer_pr_passes_its_guard_mid_run_from_per_repo_receipts(tmp_path):
+    """`sdlc verify --repo kit` proves only the producer's rows on its head; `sdlc pr kit` needs no final seal and no built consumer."""
+    from types import SimpleNamespace
+
+    import sdlc
+    kit, app, rid = vendored_pilot(tmp_path)
+    land(rid, "a", {"packages/ui/i.js": "z\n"})
+    assert engine.close_milestone(rid, "m1")["status"] == "merged"
+    with pytest.raises(SdlcError, match="head is"):  # the milestone receipt ran on the milestone branch, not on the merge
+        engine.pr_guard(rid, "kit")
+    assert sdlc.cmd_verify(SimpleNamespace(run=rid, task=None, check=None, repo="kit")) == 0
+    engine.pr_guard(rid, "kit")  # the consumer is unbuilt and `final` has not run
+    with pytest.raises(SdlcError, match="app:app-gate has no receipt"):
+        engine.pr_guard(rid, "app")
+    tk.commit_file(engine.project_wt(rid, "kit"), "packages/ui/late.js", "x\n")  # a head the receipt did not run on
+    with pytest.raises(SdlcError, match="head is"):
+        engine.pr_guard(rid, "kit")
 
 
 # ---- field shapes of a real draft: object packages, a structural pin object, approved dependency lines ---------------

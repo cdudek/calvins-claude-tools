@@ -5,6 +5,15 @@ version warning, the **Mechanical** lines are what `adopt` does for you (it adds
 with the stack's defaults and never overwrites a value), the **Manual** lines are printed for
 the engineer. A version with no migration lines needs nothing but a re-run of `adopt`.
 
+## 4.2.4 — fix
+
+- **Approval screen and builder brief.** The screen listed edge `packages` with a plain join and crashed on `{name, dir}` objects; the brief read `runner` directly and crashed on `kind: "board"` rows. Both use the contract accessors (`pkg_names`, `runner_of`).
+- **Electron board surfaces.** Python Playwright has no `_electron`, so every electron surface crashed. The runner now starts the repo's own Electron (resolved by node from the repo) with a loopback debugging port, the hidden shim and the same env, args and path guards, and attaches over CDP. A repo without Electron is a BLOCKED env at run time, and a blocker on the approval screen for a board row that lists `surface_allow`.
+- **Vendored consumers wait for the pin.** For `release.kind: "vendored-tarball"`, a consumer milestone that needs a producer milestone does not open (no dispatch) until `release.gate` for that consumer is READY, that is after `sdlc publish` pinned the tarballs into it. Other release kinds are unchanged.
+- **Mid-run producer PR.** `sdlc verify <id> --repo <producer>` runs only that repo's rows on its run-branch head; `sdlc pr <producer>` then passes its guard from those receipts (per-repo, bound to the head) without `sdlc final` or built consumers. A later commit on the head voids them.
+- **Receipts after a milestone merge** are unchanged by design: the whole-contract `sdlc final` (or `sdlc verify --repo` per repo) runs on the merged head, and `sdlc pr` needs those receipts.
+- **Mechanical:** none. **Manual:** a plan that built a vendored consumer before `sdlc publish` must publish first.
+
 ## 4.2.3 — fix
 
 - **Records guard, sibling kit hardening.** The sibling-kit list, the installed-plugins registry and the plugin cache decide which runner may touch the records, so an agent may not write them (Write, Edit, NotebookEdit) or name them in a command (paths, names, globs, a shell inside the cache). A sibling runner counts only at the literal path `<config dir>/plugins/cache/<marketplace>/<name>/<version>/skills/sdlc-run/runner/sdlc.py` with no symlink on it; a registry entry or an install path elsewhere adds nothing. A command that cannot be parsed and names `sdlc.py`, the runner folder or one of its modules is denied. A command that names `.claude`, `CLAUDE_CONFIG_DIR` or the config dir together with a glob character, `$`, `{`, a backtick, `cd` or `pushd` is denied, and so is any word that, expanded like the shell would (`~`, `$VAR`, then the glob against the file system, relative words against the command's directory), lands on a protected path.

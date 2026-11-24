@@ -280,7 +280,12 @@ def draft(rid: str, plan_file: str | None, contract_file: str | None, tasks_file
     store.write_json(d / "probe.json", fresh)
     merged = {"missing_tools": sorted({t for p in fresh for t in p["missing_tools"] if t not in {k for q in fresh for k, v in q["tools"].items() if v}}),
               "browser": fresh[0]["browser"]}
-    return blockers(merged, cdoc)
+    out = blockers(merged, cdoc)
+    from board import electron_exe
+    for c in cdoc.get("checks", []):  # a board row that lists a surface_allow drives an Electron app: the repo must have its own Electron
+        if "surface_allow" in c.get("board", {}) and (why := electron_exe(Path(store.load_meta(rid)["repos"][c["repo"]]["path"]))[1]):
+            out.append(f"{c['repo']}:{c['id']} needs electron: {why}")
+    return sorted(out)
 
 
 CAP_LINES, CAP_CHARS = 200, 160
@@ -445,7 +450,7 @@ def screen(rid: str) -> Path:
              f"- **Run deadline:** {lim.get('deadline_hours', 24)} hours; job deadline 30 minutes; one build plus two fixes per feature",
              "", "## Release and destinations", ""] + (
         [f"- **{e['producer']} then {e['consumer']}:** {e.get('release', {}).get('kind', 'none')}"
-         + (f"; packages {', '.join(e['packages'])}" if e.get("packages") else "")
+         + (f"; packages {', '.join(contract.pkg_names(e))}" if e.get("packages") else "")
          + (f"; tarballs vendored into `{e['pin']['dir']}`, package.json and lockfile rewritten by the runner (npm, scripts off, offline)"
             if e.get("release", {}).get("kind") == "vendored-tarball" else "") for e in c.get("edges", [])] or ["- one PR per repo: project branch into the default branch"]) + [
              "", "## Probes", "",
