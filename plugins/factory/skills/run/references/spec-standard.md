@@ -67,8 +67,8 @@ Table, one row per design board: `board | screen | components | states`, the boa
 - 3 to 10 end-to-end scenarios per feature (a bug or small feature: one), numbered `scenario-<n>`, stored in `~/.cfactory/scenarios/<repo>/<slug>/`.
 - Drafted by a separate agent from the intent's outcomes and the journeys; the person sees them once, at the approval.
 - Each scenario starts with `milestone: <id>`: the first milestone that can run it. A milestone's verifier runs its own scenarios and earlier ones. The last milestone, or the release candidate, runs all.
-- Only the verifier reads them. The plugin hook `hooks/guard-scenarios.py` denies every other subagent any tool call that names the scenarios folder; the coordinator drafts them in the main session.
-- Known limit: the guard reads tool-input text, so a path alias (symlink or relative path) can bypass it. The verifier fails when the approved scenario set is missing.
+- Only the verifier reads them. The plugin hook `hooks/guard-scenarios.py` denies every other subagent any tool call that names the scenarios folder; the coordinator drafts them in the main session (with `CFACTORY_EVAL=1`, the eval harness, even the main session is denied).
+- Known limit: the guard reads tool-input text, so a path assembled at runtime or reached through a symlink can bypass it. The verifier fails when the approved scenario set is missing.
 - A scenario is a user story with steps and an observable end state. No hints about implementation.
 - **Who can see what.** For anything that shows data to a role, the scenarios cover every place that role can see it: pages, lists, notifications, mail, queued jobs. They also cover role changes (member to guest) and mail already queued at the time of the change.
 - **Tests that assert the old rule.** The same sweep lists every existing unit test and E2E spec that asserts behaviour the delta changes or removes. Each goes into the owning task's `allowTestEdits` with a check that runs it, or the change is re-scoped. The verifier fails an edit that drops the negative case.

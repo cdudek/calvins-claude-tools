@@ -145,6 +145,11 @@ def commit(repo, edits, msg="c"):
     git(repo, "commit", "-qm", msg)
 
 
+def appr(repo):
+    """The approved revision in these tests: the base commit every branch descends from."""
+    return subprocess.run(["git", "-C", str(repo), "rev-parse", "main"], capture_output=True, text=True).stdout.strip()
+
+
 def head(repo):
     return subprocess.run(["git", "-C", str(repo), "rev-parse", "HEAD"], capture_output=True, text=True).stdout.strip()
 
@@ -235,27 +240,27 @@ def test_milestone_accepts_plan_progress_and_evidence_rejects_stray(tmp_path):
                   PLAN_PATH: plan_text(PLAN, "progress: M1 done\n"),
                   "changes/2026-11-24-x/evidence/M1/gallery.md": "g\n",
                   "changes/2026-11-24-x/kickoff-M1.md": "k\n"})
-    code, out = run(repo, "main", str(repo / PLAN_PATH), "--milestone", "M1")
+    code, out = run(repo, "main", str(repo / PLAN_PATH), "--milestone", "M1", "--approved", appr(repo))
     assert code == 0 and out.strip() == "INTEGRITY OK", out
     commit(repo, {"src/stray.ts": "s\n", "specs/2026-12/guest.md": "spec\n"})
-    code, out = run(repo, "main", str(repo / PLAN_PATH), "--milestone", "M1")
+    code, out = run(repo, "main", str(repo / PLAN_PATH), "--milestone", "M1", "--approved", appr(repo))
     assert code == 1 and "outside milestone M1: src/stray.ts" in out and "spec changed: specs/2026-12/guest.md" in out
 
 
 def test_milestone_scope_excludes_other_milestones(tmp_path):
     repo = plan_repo(tmp_path)
     commit(repo, {"src/c.ts": "c\n"})  # belongs to M2's T3
-    code, out = run(repo, "main", str(repo / PLAN_PATH), "--milestone", "M1")
+    code, out = run(repo, "main", str(repo / PLAN_PATH), "--milestone", "M1", "--approved", appr(repo))
     assert code == 1 and "outside milestone M1: src/c.ts" in out
 
 
 def test_specs_allowed_only_on_last_milestone_and_never_adr(tmp_path):
     repo = plan_repo(tmp_path)
     commit(repo, {"src/c.ts": "c\n", "specs/2026-12/guest.md": "spec\n"})
-    code, out = run(repo, "main", str(repo / PLAN_PATH), "--milestone", "M2")
+    code, out = run(repo, "main", str(repo / PLAN_PATH), "--milestone", "M2", "--approved", appr(repo))
     assert code == 0, out
     commit(repo, {"specs/adr/0001-x.md": "adr\n"})
-    code, out = run(repo, "main", str(repo / PLAN_PATH), "--milestone", "M2")
+    code, out = run(repo, "main", str(repo / PLAN_PATH), "--milestone", "M2", "--approved", appr(repo))
     assert code == 1 and "ADR changed: specs/adr/0001-x.md" in out
 
 
@@ -347,9 +352,9 @@ def test_milestone_diff_from_the_recorded_target_does_not_charge_earlier_milesto
     git(repo, "merge", "-q", "fresh")
     commit(repo, {"src/c.ts": "c\n"})  # M2's own task file
     plan = str(repo / PLAN_PATH)
-    code, out = run(repo, "main", plan, "--milestone", "M2")
+    code, out = run(repo, "main", plan, "--milestone", "M2", "--approved", appr(repo))
     assert code == 1 and "outside milestone M2: src/m1.ts" in out  # the stale base charges M1's file to M2
-    code, out = run(repo, fresh, plan, "--milestone", "M2", "--target", fresh)
+    code, out = run(repo, fresh, plan, "--milestone", "M2", "--target", fresh, "--approved", appr(repo))
     assert code == 0 and out.strip() == "INTEGRITY OK", out
 
 
@@ -366,20 +371,20 @@ def test_checked_commits_gate_who_built_the_milestone_files(tmp_path):
         git(repo, "merge", "-q", "--no-ff", "-m", f"merge {branch}", branch)
     both = ",".join(shas)
     commit(repo, {PLAN_PATH: plan_text(PLAN, "progress\n"), "changes/2026-11-24-x/evidence/M1/gallery.md": "g\n"})  # coordinator paths
-    code, out = run(repo, "main", plan, "--milestone", "M1", "--checked", both)
+    code, out = run(repo, "main", plan, "--milestone", "M1", "--checked", both, "--approved", appr(repo))
     assert code == 0 and out.strip() == "INTEGRITY OK", out
-    code, out = run(repo, "main", plan, "--milestone", "M1", "--checked", shas[1])  # T1's commit is not listed
+    code, out = run(repo, "main", plan, "--milestone", "M1", "--checked", shas[1], "--approved", appr(repo))  # T1's commit is not listed
     assert code == 1 and "INTEGRITY FAIL changed after the builder check: src/a.ts" in out
     assert "src/b.ts" not in out
     commit(repo, {"src/a.ts": "export const a = 3 // coordinator edit\n"})  # an in-scope file, changed outside a builder
-    code, out = run(repo, "main", plan, "--milestone", "M1", "--checked", both)
+    code, out = run(repo, "main", plan, "--milestone", "M1", "--checked", both, "--approved", appr(repo))
     assert code == 1 and "INTEGRITY FAIL changed after the builder check: src/a.ts" in out
-    code, out = run(repo, "main", plan, "--milestone", "M1")  # no --checked: scope is all it can say
+    code, out = run(repo, "main", plan, "--milestone", "M1", "--approved", appr(repo))  # no --checked: scope is all it can say
     assert code == 0, out
-    code, out = run(repo, "main", plan, "--milestone", "M1", "--checked", "nope")
+    code, out = run(repo, "main", plan, "--milestone", "M1", "--checked", "nope", "--approved", appr(repo))
     assert code == 1 and "cannot resolve checked commit nope" in out
     commit(repo, {".github/workflows/ci.yml": "on: push\n"})  # protected paths keep their own message
-    code, out = run(repo, "main", plan, "--milestone", "M1", "--checked", both)
+    code, out = run(repo, "main", plan, "--milestone", "M1", "--checked", both, "--approved", appr(repo))
     assert "INTEGRITY FAIL CI config changed: .github/workflows/ci.yml" in out
     assert "changed after the builder check: .github" not in out
 
@@ -407,3 +412,63 @@ def test_milestone_accepts_approved_content_and_rejects_later_edits(tmp_path):
     commit(repo, {"changes/2026-11-24-x/delta.md": "## ADDED\n- req-1: a, weakened [outcome-1]\n- req-2: b [outcome-1]\n"})
     code, out = run(repo, "main", str(repo / PLAN_PATH), "--milestone", "M1", "--approved", approved)
     assert code == 1 and "delta changed: changes/2026-11-24-x/delta.md" in out, out
+
+
+def test_milestone_without_approved_is_a_usage_error_not_a_skipped_plan_change(tmp_path):
+    repo = plan_repo(tmp_path)
+    commit(repo, {PLAN_PATH: plan_text(dict(PLAN, goalTurns=99))})  # a changed plan used to be skipped silently
+    code, out = run(repo, "main", str(repo / PLAN_PATH), "--milestone", "M1")
+    assert code == 2 and "INTEGRITY OK" not in out
+
+
+def test_milestone_scope_comes_from_the_approved_plan(tmp_path):
+    repo = plan_repo(tmp_path)
+    approved = head(repo)
+    commit(repo, {"src/other.ts": "o\n"})
+    widened = json.loads(json.dumps(PLAN))
+    widened["milestones"][0]["tasks"][0]["files"].append("src/other.ts")
+    (repo / PLAN_PATH).write_text(plan_text(widened))  # uncommitted widening is ignored
+    code, out = run(repo, "main", str(repo / PLAN_PATH), "--milestone", "M1", "--approved", approved)
+    assert code == 1 and "outside milestone M1: src/other.ts" in out
+
+
+def test_new_test_file_outside_task_scope_fails(tmp_path):
+    repo = plan_repo(tmp_path)
+    commit(repo, {"app/runtime/hidden.test.ts": "export const x = 1\n", "src/near.test.ts": "it('n', () => {})\n",
+                  "lib/deep/n.spec.ts": "it('n', () => {})\n", "src/zzz/not_a_test.ts": "z\n"})
+    code, out = run(repo, "main", str(repo / PLAN_PATH), "--task", "T1")
+    assert code == 1 and "outside task T1: app/runtime/hidden.test.ts" in out
+    assert "outside task T1: src/near.test.ts" not in out and "outside task T1: lib/deep/n.spec.ts" not in out
+
+
+def test_new_test_file_allowed_by_allow_test_edits_anywhere(tmp_path):
+    plan = json.loads(json.dumps(PLAN))
+    plan["milestones"][0]["tasks"][0]["allowTestEdits"].append("e2e/new.test.ts")
+    repo = plan_repo(tmp_path, plan)
+    commit(repo, {"e2e/new.test.ts": "it('n', () => {})\n"})
+    code, out = run(repo, "main", str(repo / PLAN_PATH), "--task", "T1")
+    assert code == 0 and out.strip() == "INTEGRITY OK", out
+
+
+@pytest.mark.parametrize("path,line,reason", [
+    ("src/new.test.ts", "// eslint-disable-next-line", "added lint suppression eslint-disable"),
+    ("src/new.test.ts", "it.skip('x', () => {})", "added line contains .skip("),
+    ("src/runner.sh", "false || true", "added line contains || true"),
+])
+def test_new_files_get_both_scans(tmp_path, path, line, reason):
+    repo = plan_repo(tmp_path)
+    commit(repo, {path: f"{line}\n"})
+    code, out = run(repo, "main", str(repo / PLAN_PATH), "--task", "T1")
+    assert code == 1 and f"INTEGRITY FAIL {reason}" in out, out
+
+
+def test_approved_must_be_an_ancestor_of_head(tmp_path):
+    repo = plan_repo(tmp_path)
+    git(repo, "switch", "-qc", "other", "main")
+    commit(repo, {"src/a.ts": "export const a = 9\n"}, "unrelated")
+    foreign = head(repo)
+    git(repo, "switch", "-q", "ms")
+    commit(repo, {"src/a.ts": "export const a = 9\n"}, "same content, other history")
+    for mode in ("--task", "--milestone"):
+        code, out = run(repo, "main", str(repo / PLAN_PATH), mode, "T1" if mode == "--task" else "M1", "--approved", foreign)
+        assert code == 1 and f"INTEGRITY FAIL approved {foreign} is not an ancestor of HEAD" in out, out
