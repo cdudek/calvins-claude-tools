@@ -405,7 +405,9 @@ def main(argv=None):
     results = Path(args.results).expanduser()
     if args.dry_run and args.results == str(EVAL_HOME / "results"):
         results = Path(tempfile.mkdtemp(prefix="eval-dry-"))
-    ver = subprocess.run(["claude", "--version"], capture_output=True, text=True).stdout.strip() or "unknown"
+    ver = "unknown"  # CI has no claude CLI; a real run fails later at launch with a clear error
+    if shutil.which("claude"):
+        ver = subprocess.run(["claude", "--version"], capture_output=True, text=True).stdout.strip() or "unknown"
     ctx = {"task": task, "task_dir": task_dir, "args": args, "results": results, "rng": rng, "lock": threading.Lock(),
            "free": list(range(args.parallel)), "active": 0, "claude_version": ver}
     jobs = plan_jobs(arms, args.repeats, args.stage, task["task_id"], rng)
