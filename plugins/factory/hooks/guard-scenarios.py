@@ -36,6 +36,9 @@ def decide(event):
         return None
     if agent in ALLOWED:
         return None
+    ti = event.get("tool_input")
+    if not agent and event.get("tool_name") in ("Agent", "Task") and isinstance(ti, dict) and str(ti.get("subagent_type") or "") in ALLOWED:
+        return None  # eval mode: the coordinator may dispatch the verifier with the scenarios path
     return DENY if mentions(json.dumps(event.get("tool_input", {}))) else None
 
 

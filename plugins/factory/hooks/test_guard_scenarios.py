@@ -83,3 +83,16 @@ def test_hook_matcher_covers_every_tool_that_can_name_the_folder():
     hooks = json.loads((Path(__file__).parent / "hooks.json").read_text())
     matcher = hooks["hooks"]["PreToolUse"][0]["matcher"].split("|")
     assert {"Read", "Grep", "Glob", "Bash", "Agent", "Task"} <= set(matcher)
+
+
+def test_eval_mode_main_session_may_dispatch_the_verifier_only():
+    env = {**os.environ, "CFACTORY_EVAL": "1"}
+
+    def go(event):
+        p = subprocess.run([sys.executable, str(SCRIPT)], input=json.dumps(event), capture_output=True, text=True, env=env)
+        return json.loads(p.stdout) if p.stdout.strip() else None
+    prompt = "read ~/.cfactory/scenarios/repo/s and verify"
+    for sub in ("factory:verifier", "verifier"):
+        assert go({"tool_name": "Agent", "tool_input": {"subagent_type": sub, "prompt": prompt}}) is None
+    assert denied(go({"tool_name": "Agent", "tool_input": {"subagent_type": "factory:builder", "prompt": prompt}}))
+    assert denied(go({"tool_name": "Bash", "tool_input": {"command": "cat ~/.cfactory/scenarios/x", "subagent_type": "verifier"}}))
