@@ -51,6 +51,8 @@ if [ -d "$fac" ]; then
   if command -v claude >/dev/null 2>&1; then run_mod validate claude plugin validate --strict "$fac"
   elif [ -n "${CI:-}" ]; then echo "skip factory validate: claude CLI not found"
   else echo "FAIL factory validate: claude CLI not found"; fail=1; fi
-  run_mod pytest python3 -m pytest -q -p no:cacheprovider "$fac"
+  run_mod pytest python3 -m pytest -q -p no:cacheprovider --ignore="$fac/eval" "$fac"
+  # The eval harness (stdlib plus matplotlib; its plot test skips when matplotlib is missing).
+  run_mod eval python3 -m pytest -q -p no:cacheprovider "$fac/eval"
 fi
 exit $fail
