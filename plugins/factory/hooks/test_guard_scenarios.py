@@ -92,7 +92,7 @@ def test_eval_mode_main_session_may_dispatch_the_verifier_only():
         p = subprocess.run([sys.executable, str(SCRIPT)], input=json.dumps(event), capture_output=True, text=True, env=env)
         return json.loads(p.stdout) if p.stdout.strip() else None
     prompt = "read ~/.cfactory/scenarios/repo/s and verify"
-    for sub in ("factory:verifier", "verifier"):
-        assert go({"tool_name": "Agent", "tool_input": {"subagent_type": sub, "prompt": prompt}}) is None
-    assert denied(go({"tool_name": "Agent", "tool_input": {"subagent_type": "factory:builder", "prompt": prompt}}))
+    assert go({"tool_name": "Agent", "tool_input": {"subagent_type": "factory:verifier", "prompt": prompt}}) is None
+    for sub in ("factory:builder", "verifier"):  # a bare alias could name another plugin's agent
+        assert denied(go({"tool_name": "Agent", "tool_input": {"subagent_type": sub, "prompt": prompt}})), sub
     assert denied(go({"tool_name": "Bash", "tool_input": {"command": "cat ~/.cfactory/scenarios/x", "subagent_type": "verifier"}}))
