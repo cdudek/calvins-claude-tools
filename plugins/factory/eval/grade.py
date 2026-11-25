@@ -30,18 +30,8 @@ AGENT_TOOLS = {"Agent", "Task"}
 TEST_CMD = re.compile(r"\b(pytest|vitest|jest|rspec|mocha|(npm|pnpm|yarn|bun)( run)? test|go test|cargo test|make test|playwright test|bin/rspec)\b")
 WEIGHT = {"in": 1.0, "out": 5.0, "cr": 0.1, "cc": 1.25}  # relative token prices, used only to split a model's cost between roles
 EXCLUDED = (".cfactory/", "changes/", "specs/")
-# The goal evaluator's verdict is shown in stream-json as "not yet met", "met" or "impossible" (the exact carrier is
-# checked in Stage 0): a synthetic message or a system event that mentions the goal and one of those words.
-GOAL_VERDICT = re.compile(r"\b(not yet met|not met|impossible|met)\b", re.I)
-GOAL_WORD = re.compile(r"\bgoal\b", re.I)
-
-
-def goal_verdict(text):
-    m = GOAL_VERDICT.search(text) if GOAL_WORD.search(text) else None
-    if not m:
-        return None
-    w = m.group(1).lower()
-    return "met" if w == "met" else "impossible" if w == "impossible" else "not_met"
+COMPONENTS = (("input_tokens", "inputTokens", "in"), ("output_tokens", "outputTokens", "out"),
+              ("cache_read_input_tokens", "cacheReadInputTokens", "cr"), ("cache_creation_input_tokens", "cacheCreationInputTokens", "cc"))
 
 
 def plan_json(text):
@@ -126,9 +116,11 @@ def parse_stream(events, suite_cmd=""):
 
     tokens = defaultdict(int)
     weights = defaultdict(lambda: defaultdict(float))  # model -> role -> weight
+    stream_tok = defaultdict(lambda: defaultdict(int))  # model -> component -> tokens the stream's messages show
     for rec in msgs.values():
         u = rec["usage"]
-        for key, name in (("input_tokens", "in"), ("output_tokens", "out"), ("cache_read_input_tokens", "cr"), ("cache_creation_input_tokens", "cc")):
+        for key, _, name in COMPONENTS:
+            stream_tok[rec["model"]][name] += u.get(key, 0)
             tokens[name] += u.get(key, 0)
             weights[rec["model"]][role_of(rec["parent"])] += u.get(key, 0) * WEIGHT[name]
     denom = tokens["cr"] + tokens["cc"] + tokens["in"]
@@ -136,16 +128,21 @@ def parse_stream(events, suite_cmd=""):
     mu = r.get("modelUsage") or {}
     cost_by_model = {k: v.get("costUSD", 0.0) for k, v in mu.items()}
     cost_by_role = defaultdict(float)
+    evaluator_w = 0.0
     for model, cost in cost_by_model.items():
         w = dict(weights.get(model) or {})
         if "haiku" in model.lower():
-            # the goal evaluator is the configured small fast model: Haiku usage the stream's messages do not account for
-            u = mu[model]
-            total = sum(u.get(k, 0) * WEIGHT[n] for k, n in (("inputTokens", "in"), ("outputTokens", "out"), ("cacheReadInputTokens", "cr"), ("cacheCreationInputTokens", "cc")))
-            if total - sum(w.values()) > 0:
-                w["goal_evaluator"] = total - sum(w.values())
+            # The goal evaluator is the configured small fast model. Its spend is in modelUsage but not in any message's usage:
+            # what modelUsage holds beyond the stream's own Haiku messages is the evaluator.
+            ev = sum(max(0, mu[model].get(mk, 0) - stream_tok[model][n]) * WEIGHT[n] for _, mk, n in COMPONENTS)
+            total = sum(mu[model].get(mk, 0) * WEIGHT[n] for _, mk, n in COMPONENTS)
+            evaluator_w += ev
+            if ev > 0 and total > 0:
+                cost_by_role["goal_evaluator"] += cost * ev / total
+                cost -= cost * ev / total
         if not w or sum(w.values()) == 0:
-            cost_by_role["unattributed"] += cost
+            if cost > 1e-9:
+                cost_by_role["unattributed"] += cost
             continue
         for role, x in w.items():
             cost_by_role[role] += cost * x / sum(w.values())
@@ -163,15 +160,14 @@ def parse_stream(events, suite_cmd=""):
             verdicts += re.findall(r"VERDICT:\s*(PASS|FAIL)", results[tid][1])
     state = state_in(r.get("result")) or None
     state = state or end_state_from(events)
-    # goal
+    # goal: the stream has no verdict events. It shows "Goal set: <condition>" as a synthetic message, and the evaluator's
+    # spend appears only as Haiku usage in modelUsage that no message accounts for.
     set_msgs = [s for s in synthetic if re.match(r"\s*Goal set\b", s)]
-    carriers = [s for s in synthetic if not re.match(r"\s*Goal set\b", s)]
-    carriers += [json.dumps(e) for e in events if e.get("type") == "system" and "goal" in str(e.get("subtype", "")).lower()]
-    verdicts_seen = [v for v in (goal_verdict(c) for c in carriers) if v]
-    evals = verdicts_seen
-    met_seen = bool(verdicts_seen) and verdicts_seen[-1] == "met"
-    completed = bool(result) and r.get("terminal_reason") == "completed" and not r.get("is_error")
-    evaluator_models = sorted(m for m in mu if "haiku" in m.lower())  # the evaluator is the small fast model; see README Stage 0
+    errored = result is None or bool(r.get("is_error")) or r.get("terminal_reason") not in (None, "completed")
+    completed = result is not None and r.get("terminal_reason") == "completed" and not r.get("is_error")
+    sa = r.get("subagent_stats") or {}
+    killed, refused = sum((sa.get("killed") or {}).values()), sum((sa.get("refused") or {}).values())
+    bg = sa.get("started_in_background", 0)
     return {
         "has_result": result is not None, "cost_total": r.get("total_cost_usd", 0.0), "cost_by_model": cost_by_model,
         "cost_by_role": dict(cost_by_role), "tokens": {"input": tokens["in"], "output": tokens["out"], "cache_read": tokens["cr"], "cache_creation": tokens["cc"]},
@@ -181,11 +177,15 @@ def parse_stream(events, suite_cmd=""):
         "permission_denials": len(r.get("permission_denials") or []), "end_state": state or "none",
         "edits": sum(1 for _, n, *_ in tool_uses if n in EDIT_TOOLS), "unverified_exit": not passing_after,
         "verifier_verdict": verdicts[-1] if verdicts else None, "models_seen": sorted(mu),
-        "goal_set": bool(set_msgs), "goal_set_text": set_msgs[0].strip()[:300] if set_msgs else None, "goal_evals": len(evals),
-        "goal_evaluated": bool(evals) or (bool(set_msgs) and completed),
-        "goal_verdicts": verdicts_seen, "goal_final": verdicts_seen[-1] if verdicts_seen else None,
-        "goal_met": met_seen if verdicts_seen else (completed if set_msgs else False), "goal_met_source": "stream" if verdicts_seen else "inferred",
-        "goal_evaluator_models": evaluator_models, "haiku_usage": {m: mu[m] for m in mu if "haiku" in m.lower()},
+        "terminal_reason": r.get("terminal_reason"), "errored": errored,
+        "subagents_spawned": sa.get("spawned", 0), "subagents_failed": sa.get("failed", 0), "subagents_killed": killed,
+        "subagents_refused": refused, "subagents_started_in_background": bg, "subagents_by_type": sa.get("by_type") or {},
+        "harness_violation": bool(killed or bg),  # a killed or backgrounded subagent breaks the foreground-only rule
+        "goal_set": bool(set_msgs), "goal_set_text": set_msgs[0].strip()[:300] if set_msgs else None,
+        "goal_evaluated": evaluator_w > 0, "goal_evaluator_weighted_tokens": evaluator_w,
+        "goal_met": bool(set_msgs) and completed and (state or "none") != "none",
+        "goal_met_source": "terminal_reason completed + end state line (the stream has no evaluator verdict)",
+        "goal_evaluator_models": sorted(m for m in mu if "haiku" in m.lower()), "haiku_usage": {m: mu[m] for m in mu if "haiku" in m.lower()},
         "goal_evaluator_cost": cost_by_role.get("goal_evaluator", 0.0),
     }
 
@@ -325,7 +325,11 @@ def grade_run(run_dir, grader=None, retries=3, task_dir=None):
     if not g["goal_set"]:
         reasons.append("the goal was never set")
     elif not g["goal_evaluated"]:
-        reasons.append("the goal was never evaluated")
+        if g["errored"]:
+            reasons.append("infrastructure: the run errored before its first turn ended")
+            g["infra_suspect"] = True
+        else:
+            reasons.append("the goal was never evaluated")
     g["valid"], g["invalid_reason"] = not reasons, "; ".join(reasons) or None
     if run.get("infra_failure"):
         g.update(hidden_frac=None, solved=False, skipped="infrastructure failure, rerun")

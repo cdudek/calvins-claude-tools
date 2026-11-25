@@ -47,16 +47,31 @@ class Metrics(unittest.TestCase):
     def test_goal_checks(self):
         m = parse()
         self.assertTrue(m["goal_set"] and m["goal_evaluated"] and m["goal_met"])
-        self.assertEqual((m["goal_evals"], m["goal_final"], m["goal_met_source"]), (1, "met", "stream"))
         self.assertEqual(m["goal_evaluator_models"], ["claude-haiku-5-5"])
-        self.assertEqual(parse(verdict="not yet met")["goal_final"], "not_met")
-        self.assertFalse(parse(verdict="not yet met")["goal_met"])
-        self.assertEqual(parse(verdict="impossible")["goal_final"], "impossible")
-        none = parse(goal_set=False, verdict=None)
-        self.assertFalse(none["goal_set"] or none["goal_evaluated"])
-        inferred = parse(verdict=None)
-        self.assertEqual((inferred["goal_evals"], inferred["goal_met_source"]), (0, "inferred"))
-        self.assertTrue(inferred["goal_evaluated"], "a completed goal-driven run was evaluated at least once")
+        self.assertGreater(m["goal_evaluator_cost"], 0)
+        self.assertEqual(m["terminal_reason"], "completed")
+        none = parse(goal_set=False)
+        self.assertFalse(none["goal_set"] or none["goal_met"])
+        self.assertFalse(parse(evaluator=False)["goal_evaluated"], "no unexplained Haiku usage: the goal was never evaluated")
+        self.assertFalse(parse(state="done")["goal_met"], "completed, but the last message is no end state")
+
+    def test_goal_probe_shape_evaluator_is_modelusage_minus_message_usage(self):
+        m = grade.parse_stream(fx.probe_stream())
+        self.assertTrue(m["goal_set"] and m["goal_evaluated"])
+        # the evaluator's tokens: 4 input, 89 output, 13874 cache creation (weighted 1 / 5 / 1.25)
+        ev = 4 * 1 + 89 * 5 + 13874 * 1.25
+        total = 6 * 1 + 256 * 5 + 11633 * 0.1 + 29972 * 1.25
+        self.assertAlmostEqual(m["goal_evaluator_weighted_tokens"], ev)
+        self.assertAlmostEqual(m["goal_evaluator_cost"], 0.00519878 * ev / total, places=7)
+        self.assertAlmostEqual(m["cost_by_role"]["coordinator"] + m["goal_evaluator_cost"], 0.00519878, places=7)
+
+    def test_subagent_stats(self):
+        ok = parse()
+        self.assertEqual((ok["subagents_spawned"], ok["harness_violation"]), (2, False))
+        self.assertTrue(parse(background=1)["harness_violation"])
+        k = parse(killed=1)
+        self.assertEqual(k["subagents_killed"], 1)
+        self.assertTrue(k["harness_violation"])
 
     def test_blocked_and_infra_result(self):
         m = parse(state="BLOCKED: need a credential")
@@ -114,9 +129,16 @@ class EndToEnd(unittest.TestCase):
         self.assertEqual(g["visible_hidden_gap"], 1 - 1 / 3)
 
     def test_run_without_a_goal_is_invalid(self):
-        g = grade.grade_run(self.make_run(True, "r3", goal_set=False, verdict=None), grader=None)
+        g = grade.grade_run(self.make_run(True, "r3", goal_set=False), grader=None)
         self.assertFalse(g["valid"])
         self.assertIn("goal was never set", g["invalid_reason"])
+
+    def test_error_before_the_first_turn_ends_is_infrastructure_not_a_missing_evaluation(self):
+        g = grade.grade_run(self.make_run(True, "r5", evaluator=False, error="boom"))
+        self.assertFalse(g["valid"])
+        self.assertTrue(g["infra_suspect"])
+        g2 = grade.grade_run(self.make_run(True, "r6", evaluator=False))
+        self.assertIn("never evaluated", g2["invalid_reason"])
 
     def test_infra_failure_is_skipped(self):
         run = self.make_run(True, "r4")

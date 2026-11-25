@@ -44,7 +44,7 @@ def load_rows(root):
             "wall_min": run.get("wall_s", 0.0) / 60, "end_state": g.get("end_state"), "timeout": run.get("timeout"),
             "regression": g.get("regression"), "integrity_violations": g.get("integrity_violations", 0), "unverified_exit": g.get("unverified_exit"),
             "verifier_verdict": g.get("verifier_verdict"), "verifier_false_pass": g.get("verifier_false_pass"),
-            "goal_evals": g.get("goal_evals"), "goal_met": g.get("goal_met"), "goal_met_not_solved": g.get("goal_met_not_solved"),
+            "terminal_reason": g.get("terminal_reason"), "harness_violation": g.get("harness_violation"), "goal_met": g.get("goal_met"), "goal_met_not_solved": g.get("goal_met_not_solved"),
             "claimed_done_not_solved": g.get("claimed_done_not_solved"), "visible_hidden_gap": g.get("visible_hidden_gap"),
             "cache_hit": g.get("cache_hit"), "diff_ratio": g.get("diff_ratio"), "permission_denials": g.get("permission_denials"),
             "cost_by_role": g.get("cost_by_role") or {}, "evaluator_models": g.get("goal_evaluator_models") or [],
@@ -302,7 +302,7 @@ def analyze(root, default="default", B=10000, seed=1):
     summary = summarize(use, default, rng, B)
     effects = {m: pb_effects(use, m, rng, B) for m in ("hidden_frac", "cost", "wall_min")}
     res = {"summary": summary, "effects": effects, "confusion": confusion(use), "taxonomy": taxonomy(use + [r for r in rows if r["infra"]]),
-           "routing": routing(use), "excluded": excluded, "load_slope_log_time_per_run": slope,
+           "routing": routing(use), "excluded": excluded, "harness_violations": [r["run_id"] for r in rows if r["harness_violation"]], "load_slope_log_time_per_run": slope,
            "evaluator_models": sorted({m for r in rows for m in r["evaluator_models"]}), "default": default, "boot": B}
     res["evaluator_varies"] = len(res["evaluator_models"]) > 1
     root = Path(root)

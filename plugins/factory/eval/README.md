@@ -44,8 +44,9 @@ python3 plot.py ~/.cfactory/eval/results/grid
 
 ## Stage 0 checks (before spending the rest)
 - The grader passes on the reference commit and fails on the start commit; measure the hidden-test flake rate (grading reruns failing hidden files 3 times).
-- The goal verdicts (not yet met, met, impossible) appear in `stream.jsonl`. The carrier is read from synthetic assistant messages and `goal` system events; if none show, `goal_met` is inferred from a completed run (`goal_met_source: inferred` in `grade.json`). Check one stream and adjust `GOAL_VERDICT` in `grade.py`.
-- Whether goal evaluator spend is in `total_cost_usd` and `modelUsage` is undocumented. `grade.json` keeps the Haiku line of `modelUsage` (`haiku_usage`) and attributes Haiku tokens that no stream message explains to `goal_evaluator`. Haiku builder arms make this ambiguous: compare a Haiku arm with a Sonnet arm.
+- The stream carries no goal verdict events, only the synthetic message `Goal set: <condition>`. So `grade.py` marks a run INVALID without it, and counts the goal as evaluated when Haiku usage in `modelUsage` exceeds what the stream's own Haiku messages show (the evaluator call, probed 2026-11). `goal_met` is `terminal_reason == completed`, no error, and a last-message end state (`goal_met_source` says so). A run that errored before its first turn ended is flagged `infra_suspect`, not judged on the goal.
+- The evaluator's spend is in `total_cost_usd` and `modelUsage`, not in per-message usage. `grade.json` records it as `goal_evaluator_cost` and `cost_by_role.goal_evaluator`, and keeps the Haiku line as `haiku_usage`. With Haiku builder arms it stays separable only because builder messages are in the stream; check it once.
+- `subagent_stats` from the result is recorded (`subagents_started_in_background`, `subagents_killed`, failed, refused). A killed or backgrounded subagent sets `harness_violation`; `analyze.py` lists those runs.
 - Advisor calls show up (`--advisor`), every subagent's model and effort match its arm, the planner splits the task into at least 2 builder tasks (otherwise factor E is inert), the raw-ticket arm runs.
 - `--max-turns` counts coordinator turns only; subagent turns are recorded separately.
 

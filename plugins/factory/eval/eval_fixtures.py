@@ -100,7 +100,7 @@ def mu(model, cost, i=10, o=100, cr=1000, cc=100):
     return {"inputTokens": i, "outputTokens": o, "cacheReadInputTokens": cr, "cacheCreationInputTokens": cc, "costUSD": cost}
 
 
-def stream(goal_set=True, verdict="met", last_edit_then_test=True, state="HOLD: pushed", verdict_pass=True, error=None):
+def stream(goal_set=True, evaluator=True, last_edit_then_test=True, state="HOLD: pushed", verdict_pass=True, error=None, background=0, killed=0):
     ev = [{"type": "system", "subtype": "init"}]
     if goal_set:
         ev.append({"type": "assistant", "message": {"id": "s1", "model": "<synthetic>", "content": [{"type": "text", "text": "Goal set: Met when any one of these is true."}]}})
@@ -117,12 +117,24 @@ def stream(goal_set=True, verdict="met", last_edit_then_test=True, state="HOLD: 
         asst("v1", "claude-opus-5-5", [tool("V1", "Bash", {"command": "ls"})], parent="A2"),
         result_of("A2", "all fine\nVERDICT: PASS" if verdict_pass else "bad\nVERDICT: FAIL"),
     ]
-    if verdict:
-        ev.append({"type": "assistant", "message": {"id": "s2", "model": "<synthetic>", "content": [{"type": "text", "text": f"Goal {verdict}: the condition is evaluated"}]}})
     ev.append({"type": "result", "subtype": "error_during_execution" if error else "success", "is_error": bool(error), "result": error or state,
                "terminal_reason": "completed", "num_turns": 7, "duration_ms": 120000, "total_cost_usd": 3.0, "permission_denials": [{"tool_name": "Bash"}],
-               "modelUsage": {"claude-sonnet-5-5": mu("s", 1.0), "claude-opus-5-5": mu("o", 1.5), "claude-haiku-5-5": mu("h", 0.5, i=5, o=50, cr=500, cc=50)}})
+               "subagent_stats": {"spawned": 2, "started_in_background": background, "failed": 0, "killed": {"parent": killed, "user": 0, "system": 0},
+               "refused": {"depth_limit": 0, "concurrency_limit": 0, "budget": 0}, "by_type": {"factory:builder": 1, "factory:verifier": 1}},
+               "modelUsage": {"claude-sonnet-5-5": mu("s", 1.0), "claude-opus-5-5": mu("o", 1.5), **({"claude-haiku-5-5": mu("h", 0.5, i=5, o=50, cr=500, cc=50)} if evaluator else {})}})
     return ev
+
+
+def probe_stream():
+    """Shaped like a real goal probe: a Haiku run of one turn; modelUsage holds 13874 more cache tokens than the message shows (the evaluator)."""
+    use = {"input_tokens": 2, "output_tokens": 167, "cache_read_input_tokens": 11633, "cache_creation_input_tokens": 16098}
+    return [{"type": "system", "subtype": "init"},
+            {"type": "assistant", "message": {"id": "s1", "model": "<synthetic>", "content": [{"type": "text", "text": "Goal set: Met when your last message is exactly the word DONE"}]}},
+            asst("h1", "claude-haiku-5-5", [{"type": "text", "text": "DONE"}], usage=use),
+            {"type": "result", "subtype": "success", "is_error": False, "result": "DONE", "terminal_reason": "completed", "num_turns": 1, "total_cost_usd": 0.005,
+             "subagent_stats": {"spawned": 0, "started_in_background": 0, "failed": 0, "killed": {"parent": 0, "user": 0, "system": 0},
+                                "refused": {"depth_limit": 0, "concurrency_limit": 0, "budget": 0}, "by_type": {}},
+             "modelUsage": {"claude-haiku-5-5": {"inputTokens": 6, "outputTokens": 256, "cacheReadInputTokens": 11633, "cacheCreationInputTokens": 29972, "costUSD": 0.00519878}}}]
 
 
 def write_stream(path, events):
