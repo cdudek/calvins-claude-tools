@@ -37,8 +37,10 @@ def decide(event):
     if agent in ALLOWED:
         return None
     ti = event.get("tool_input")
-    if not agent and event.get("tool_name") in ("Agent", "Task") and isinstance(ti, dict) and str(ti.get("subagent_type") or "") in ALLOWED:
-        return None  # eval mode: the coordinator may dispatch the verifier with the scenarios path
+    if not agent and event.get("tool_name") in ("Agent", "Task") and isinstance(ti, dict) and str(ti.get("subagent_type") or "") == "factory:verifier":
+        # eval mode: the coordinator may dispatch the verifier with the scenarios path; dispatch names are always namespaced,
+        # so the bare alias is not accepted here (it could be another plugin's agent)
+        return None
     return DENY if mentions(json.dumps(event.get("tool_input", {}))) else None
 
 
