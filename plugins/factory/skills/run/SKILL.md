@@ -113,7 +113,7 @@ Run in this order, paste the output into the transcript:
 - Optional weekly entropy run opening small cleanup PRs, only after three changes shipped.
 - After any change to the factory itself, replay one known-good and one known-bad task.
 
-Known limit: `hooks/guard-scenarios.py` (only `factory:verifier` may read the scenarios) reads tool-input text, so a path alias (a symlink or a relative path) to the scenarios folder can bypass it. The verifier fails when the approved scenario set is missing.
+Known limit: `hooks/guard-scenarios.py` (only `factory:verifier` may read the scenarios) matches tool-input text (with `~`, `$HOME`, `//` and `/./` expanded, and `cfactory` plus `scenarios` in one input), so a path assembled at runtime or reached through a symlink can bypass it. It fails closed on a crash or a non-object input that names the folder, and with `CFACTORY_EVAL=1` it denies the main session too. The verifier fails when the approved scenario set is missing.
 
 ## Models and effort
 | Role | Model | Effort |
@@ -156,7 +156,7 @@ Copied into `<repo>/.cfactory/` at intake and run from there:
 - `check-plan.py <plan.md> [--all] [--approved <sha>]`: dated slug, run caps, layers, needs, disjoint files, at least one requirement, requirement coverage, delta and intent, and that the approved files did not change: the whole plan text up to the json block, intent and delta; only appended progress entries may differ. `--all` also needs every milestone detailed with tasks.
 - `migrate-ids.py <repo> [--slug <slug>]`: one-shot rewrite of the old ids (`<spec>/R<n>`, `I<n>`, `C<n>`) in the git-tracked text files to `req-<n>`, `outcome-<n>`, `constraint-<n>`; refuses when two specs share a number; commits nothing.
 - `goal-brief.py <plan.md> <M> --approved <sha>` or `<plan.md> --all --approved <sha>`: kickoff file, `/goal` line, run command. The plan path is repo-relative, so it resolves inside any task worktree. At each milestone cut it records `--target <sha>`, the fetched integration or base head, which the integrity checks diff against.
-- `test-integrity.sh <worktree> <base-ref> [plan.md [--task <id> | --milestone <id>] [--approved <sha>] [--pin <sha>] [--checked <shas>] [--target <sha>]]`: touched tests, paths outside the task, CI, `.github/`, `.cfactory/`, plan, baselines, spec, skips, added lint suppressions. `--checked` lists the builder commits already checked; implementation changes outside them fail.
+- `test-integrity.sh <worktree> <base-ref> [plan.md [--task <id> | --milestone <id>] [--approved <sha>] [--pin <sha>] [--checked <shas>] [--target <sha>]]`: touched tests, paths outside the task, CI, `.github/`, `.cfactory/`, plan, baselines, spec, skips, added lint suppressions. `--checked` lists the builder commits already checked; implementation changes outside them fail. `--milestone` requires `--approved`, which must be an ancestor of HEAD; the plan scope is read from it. A new test counts as in scope only in a task file's folder or via `allowTestEdits`; every new file gets the skip and suppression scans.
 
 ## Not built
 Board, receipts and approval ledgers; local CI; self-policing hooks; one agent per stage; pixel diffs; E2E repeat logic; satisfaction scoring; digital twins; dark no-review mode; a foreman, queue or status page.

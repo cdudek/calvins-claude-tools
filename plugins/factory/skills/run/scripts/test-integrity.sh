@@ -5,7 +5,7 @@
 # (changes/<slug>/plan.md) or an absolute path in any worktree of it, read at --approved when given
 # (else from <repo-or-worktree>; without --approved a plan copy outside every worktree is read as is, for replays). With a plan a test is new when absent on --target <sha>, else on the
 # plan's integration (else base) branch; --task/--milestone limit changed paths to the task(s) files,
-# new tests and allowTestEdits; --pin <sha> keeps that commit's tests as is; --checked (with
+# new tests (inside a task file's directory) and allowTestEdits; --milestone requires --approved; --pin <sha> keeps that commit's tests as is; --checked (with
 # --milestone) lists the commits the per-task checks passed: every changed implementation path must
 # have its HEAD blob in one of them.
 set -euo pipefail
@@ -32,9 +32,16 @@ mode=""
 [ -n "$task" ] && mode=task
 [ -n "$ms" ] && mode=milestone
 if [ -n "$mode" ] && [ -z "$plan" ]; then echo "$U" >&2; exit 2; fi
+if [ "$mode" = milestone ] && [ -z "$approved" ]; then echo "--milestone requires --approved" >&2; echo "$U" >&2; exit 2; fi
 
 fail=0
 say() { echo "INTEGRITY FAIL $1"; fail=1; }
+
+# The approved-content exemption and the plan scope trust --approved, so it must be history of the checked tree.
+if [ -n "$approved" ]; then
+  git -C "$repo" rev-parse --verify --quiet "$approved^{commit}" >/dev/null || { say "cannot resolve approved $approved in $repo"; exit 1; }
+  git -C "$repo" merge-base --is-ancestor "$approved" HEAD 2>/dev/null || { say "approved $approved is not an ancestor of HEAD"; exit 1; }
+fi
 
 allow="" files="" integ="" pbase="" slug="" last=0 planfile=""
 if [ -n "$plan" ]; then
@@ -131,11 +138,23 @@ unbuilt() {  # $1 path, implementation paths in milestone mode with --checked: i
   say "changed after the builder check: $1"
 }
 
+in_file_dirs() {  # a directory of one of the task's files globs (its static prefix), so a new test sits beside the code it covers
+  local g d
+  while IFS= read -r g; do
+    [ -n "$g" ] || continue
+    case "$g" in */) d="${g%/}" ;; */*) d="${g%/*}" ;; *) d="" ;; esac
+    case "$d" in *[*?[]*) d="${d%%[*?[]*}"; case "$d" in */) d="${d%/}" ;; */*) d="${d%/*}" ;; *) d="" ;; esac ;; esac
+    if [ -z "$d" ]; then case "$1" in */*) ;; *) return 0 ;; esac
+    elif [[ "$1" == "$d"/* ]]; then return 0; fi
+  done <<< "$files"
+  return 1
+}
+
 outside() {  # $1 status, $2 path: task and milestone modes only
   [ -n "$mode" ] || return 0
   in_files "$2" && return 0
-  is_test "$2" && is_new "$1" "$2" && return 0
-  is_test "$2" && ! printf '%s\n' "$allow" | grep -qxF -- "$2" && return 0  # reported as an existing test change
+  is_test "$2" && is_new "$1" "$2" && in_file_dirs "$2" && return 0  # a new test elsewhere is not exempt by its name
+  is_test "$2" && ! is_new "$1" "$2" && ! printf '%s\n' "$allow" | grep -qxF -- "$2" && return 0  # reported as an existing test change
   printf '%s\n' "$allow" | grep -qxF -- "$2" && return 0
   if [ "$mode" = task ]; then say "outside task $task: $2"; else say "outside milestone $ms: $2"; fi
 }
@@ -172,6 +191,8 @@ while IFS=$'\t' read -r status path _; do
     *)
       unbuilt "$path" && continue
       outside "$status" "$path"
+      case "$status:$path" in D*|*:*.md) ;; *)  # every new file gets both scans, whatever is_test says
+        if is_new "$status" "$path"; then scan+=("$path"); code+=("$path"); fi ;; esac
       if ! is_test "$path"; then
         case "$status:$path" in D*|*:*.md) ;; *) code+=("$path") ;; esac
         continue
