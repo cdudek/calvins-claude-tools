@@ -2,7 +2,7 @@
 
 Calvin's AI-native software development lifecycle as a Claude Code plugin. It holds `sdlc-run` and every skill, agent and hook the SDLC runs, the UX suite included, plus the product skills, the engineering and data skills Calvin runs by hand. It is self-contained: it needs no other plugin.
 
-This repo (`cdudek/calvins-claude-tools`) is a Claude Code marketplace named `cct` with two plugins. `cct`, in `plugins/cct/`, holds the SDLC; `agent-tracker`, in `plugins/agent-tracker/`, is a mod that draws a band above every prompt and a `/tracker` pane (see [its README](plugins/agent-tracker/README.md)). Every `cct` skill is called as `/cct:<name>`, for example `/cct:sdlc-run` or `/cct:ux-assessment-run`.
+This repo (`cdudek/calvins-claude-tools`) is a Claude Code marketplace named `cct` with three plugins. `cct`, in `plugins/cct/`, holds the SDLC; `agent-tracker`, in `plugins/agent-tracker/`, is a mod that draws a band above every prompt and a `/tracker` pane (see [its README](plugins/agent-tracker/README.md)); `factory`, in `plugins/factory/`, runs a spec-anchored build for one owner (see [factory](#factory)). Every `cct` skill is called as `/cct:<name>`, for example `/cct:sdlc-run` or `/cct:ux-assessment-run`.
 
 ## Install
 
@@ -10,6 +10,7 @@ This repo (`cdudek/calvins-claude-tools`) is a Claude Code marketplace named `cc
 claude plugin marketplace add cdudek/calvins-claude-tools
 claude plugin install cct@cct
 claude plugin install agent-tracker@cct
+claude plugin install factory@cct
 ```
 
 Inside a session: `/plugin marketplace add cdudek/calvins-claude-tools`, then `/plugin install cct@cct`. Restart Claude Code afterwards so the hooks load.
@@ -63,13 +64,20 @@ Skills are named `<family>-<object>-<verb>` (see [`docs/adr/0001-skill-taxonomy.
 
 - [`docs/sdlc-run.md`](docs/sdlc-run.md): the stages and the two touchpoints, one `/goal` per milestone, branches, commits versus PRs, the verify contract, the CI blueprint with `ciPaths`, and how to adopt. It has diagrams that GitHub renders.
 
+## factory
+
+A lit software factory for one owner: spec-anchored specs and layered plans, builds run as a Claude Code `/goal`, independent verifiers, and platform-gated merges. Agents: `builder`, `verifier`, `ux-verifier`.
+
+- `/factory:run <slug> <intent>`: starts a change. It grills the intent, writes the spec and plan, and waits for your approval.
+- `/factory:run <slug>`: resumes that change at its next milestone.
+
 ## Renamed in 0.7.0
 
 Every skill and agent got a family-prefixed name and no forwarders exist. Look up an old name in the table in [`docs/adr/0001-skill-taxonomy.md`](docs/adr/0001-skill-taxonomy.md).
 
 ## Editing
 
-`plugins/cct/` and `plugins/agent-tracker/` are the source of truth; edit them directly. Naming rules are in [`docs/adr/0001-skill-taxonomy.md`](docs/adr/0001-skill-taxonomy.md) and enforced by `scripts/taxonomy.py`: name pattern, closed verb list, unique trigger phrases, and every reference resolves. A mirrored pair (the PRD template, the requirements grammar) must stay identical, and a description stays at or under 1024 characters.
+`plugins/cct/`, `plugins/agent-tracker/` and `plugins/factory/` are the source of truth; edit them directly. Naming rules are in [`docs/adr/0001-skill-taxonomy.md`](docs/adr/0001-skill-taxonomy.md) and enforced by `scripts/taxonomy.py`: name pattern, closed verb list, unique trigger phrases, and every reference resolves. A mirrored pair (the PRD template, the requirements grammar) must stay identical, and a description stays at or under 1024 characters.
 
 ```bash
 python3 -m unittest discover -s tests
