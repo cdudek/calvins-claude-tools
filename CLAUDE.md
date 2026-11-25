@@ -2,7 +2,7 @@
 
 Verification and every push follow the [local-first contract](plugins/cct/skills/sdlc-run/references/local-first.md); read it before running checks or preparing a push.
 
-Two Claude Code plugins: `cct` in `plugins/cct/` (skills, agents, hooks) and `agent-tracker` in `plugins/agent-tracker/` (a mod: a band above every prompt and a `/tracker` pane). They are the source of truth: edit them directly. Nothing in this repo reads from, builds from or needs access to any other repository.
+Three Claude Code plugins: `cct` in `plugins/cct/` (skills, agents, hooks), `agent-tracker` in `plugins/agent-tracker/` (a mod: a band above every prompt and a `/tracker` pane) and `factory` in `plugins/factory/` (`/factory:run`; the taxonomy below checks only `plugins/cct`, so its skill and agent names are exempt). They are the source of truth: edit them directly. Nothing in this repo reads from, builds from or needs access to any other repository.
 
 ## Naming a skill or agent (enforced by the tests)
 

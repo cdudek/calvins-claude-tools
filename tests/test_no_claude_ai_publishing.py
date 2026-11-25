@@ -42,6 +42,9 @@ class NoClaudeAiPublishing(unittest.TestCase):
         # The mod is scanned whole (hooks, tests, fixtures, README): F65.
         self.assertEqual(self.hits_in(MOD, (".",)), [])
 
+    def test_no_publishing_site_in_the_factory(self):
+        self.assertEqual(self.hits_in(MOD.parent / "factory", (".",)), [])
+
     def test_the_decision_page_is_a_local_file(self):
         text = (PLUGIN / "references/decision-page.md").read_text()
         self.assertIn("localStorage", text)

@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# Runs the tests that ship inside plugins/cct (skills and hooks), then the agent-tracker mod's checks.
+# Runs the tests that ship inside plugins/cct (skills and hooks), then the agent-tracker mod's and the factory plugin's checks.
 # Each cct test runs in its own folder.
 set -u
 repo="$(cd "$(dirname "$0")/.." && pwd)"
@@ -33,10 +33,10 @@ done <<<"$files"
 
 # The agent-tracker mod: validate the manifest and the marketplace, type-check the module, run its *.test.ts files.
 # GitHub's runner has no `claude` CLI, so CI skips this block; a local run has it.
-mod="$repo/plugins/agent-tracker"
+mod="$repo/plugins/agent-tracker"; modname=agent-tracker
 run_mod() { # <label> <command...>
   local label="$1"; shift
-  if "$@" >"$suite_log" 2>&1; then echo "ok   agent-tracker: $label"; else echo "FAIL agent-tracker: $label"; cat "$suite_log"; fail=1; fi
+  if "$@" >"$suite_log" 2>&1; then echo "ok   $modname: $label"; else echo "FAIL $modname: $label"; cat "$suite_log"; fail=1; fi
 }
 if [ -d "$mod" ]; then
   if command -v claude >/dev/null 2>&1; then
@@ -44,5 +44,13 @@ if [ -d "$mod" ]; then
     run_mod test claude plugin test "$mod"
   elif [ -n "${CI:-}" ]; then echo "skip agent-tracker: claude CLI not found"
   else echo "FAIL agent-tracker: claude CLI not found"; fail=1; fi
+fi
+# The factory plugin: validate the manifest, then its own pytest suite (hooks and the run skill's scripts).
+fac="$repo/plugins/factory"; modname=factory
+if [ -d "$fac" ]; then
+  if command -v claude >/dev/null 2>&1; then run_mod validate claude plugin validate --strict "$fac"
+  elif [ -n "${CI:-}" ]; then echo "skip factory validate: claude CLI not found"
+  else echo "FAIL factory validate: claude CLI not found"; fail=1; fi
+  run_mod pytest python3 -m pytest -q -p no:cacheprovider "$fac"
 fi
 exit $fail
