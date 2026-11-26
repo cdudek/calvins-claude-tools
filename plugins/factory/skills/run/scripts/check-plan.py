@@ -172,6 +172,7 @@ def validate(plan_path, approved=None, every=False):
     except (OSError, ValueError) as e:  # json errors are ValueError
         return [str(e)], 0, 0
     errs, nm, nt = check(plan)
+    errs += guards_errs(plan, plan_path)
     errs += prose_errs(text[:block_match(text).end()], os.path.basename(plan_path))  # the log after the block stays free text
     if every:
         errs += ready_errs(plan)
@@ -201,6 +202,42 @@ def is_strs(v):
 
 def filled(v):
     return isinstance(v, str) and bool(v.strip())
+
+
+def guards_errs(plan, plan_path):
+    """A milestone's `guards` (identifiers of guarded data) must not appear in a file nobody owns or names.
+    One `git grep -l -w -F` per identifier over the repo, minus the change folder and `.cfactory/`.
+    Covered: the file (or a folder prefix) is in `files` or `allowTestEdits` of this or an earlier milestone's task,
+    or its path appears in a surface entry or in a deferred entry (which carries a probe)."""
+    ms = [m for m in plan.get("milestones", []) if m.get("guards") is not None]
+    if not ms:
+        return []
+    errs = []
+    for m in ms:
+        if not (is_strs(m["guards"]) and m["guards"] and all(g.strip() for g in m["guards"])):
+            errs.append(f"{m.get('id', '?')} guards must be a non-empty list of identifiers")
+    if errs:
+        return errs
+    d = os.path.dirname(os.path.abspath(plan_path))
+    top = subprocess.run(["git", "-C", d, "rev-parse", "--show-toplevel"], capture_output=True, text=True)
+    if top.returncode:
+        return ["guards need the plan inside a git repo: the check runs git grep"]
+    root = top.stdout.strip()
+    skip = [":(exclude).cfactory", f":(exclude){os.path.relpath(os.path.realpath(d), os.path.realpath(root))}"]
+    owned, text = set(), ""
+    for m in plan["milestones"]:
+        for t in m.get("tasks", []):
+            owned |= set(t.get("files", [])) | set(t.get("allowTestEdits", []))
+        text += json.dumps(m.get("surface", [])) + json.dumps(m.get("deferred", []))
+        if m.get("guards") is None:
+            continue
+        for g in m["guards"]:
+            p = subprocess.run(["git", "-C", root, "grep", "-l", "-w", "-F", "-e", g, "--", ".", *skip], capture_output=True, text=True)
+            for f in p.stdout.split():
+                if f in owned or any(o.endswith("/") and f.startswith(o) for o in owned) or f in text:
+                    continue
+                errs.append(f"{m['id']} guard {g}: {f} references it but no task of {m['id']} or earlier owns it, no surface entry names it and no deferred entry with a probe lists it")
+    return errs
 
 
 def surface_errs(m, mid):

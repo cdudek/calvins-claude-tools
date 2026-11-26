@@ -494,3 +494,41 @@ def test_task_model_and_milestone_verifier(tmp_path):
     assert code == 1 and "M1 verifier must be" in out
     code, out = run(tmp_path / "d", mutated(lambda p: p["milestones"][0].update(verifier={"effort": "low"})))
     assert code == 1 and "M1 verifier must be" in out
+
+
+def guarded(tmp_path, **ms):
+    """A temp git repo where api/leak.py reads the guarded table `comments`; returns the check result."""
+    tmp_path.mkdir(parents=True, exist_ok=True)
+    git(tmp_path, "init", "-q")
+    (tmp_path / "api").mkdir()
+    (tmp_path / "api" / "leak.py").write_text("select * from comments\n")
+    (tmp_path / "changes").mkdir()
+    p = mutated(lambda p: p["milestones"][1].update(guards=["comments"], **ms))
+    f = write_plan(tmp_path / "changes" / "x", p)
+    git(tmp_path, "add", "-A")
+    r = subprocess.run([sys.executable, str(SCRIPT), str(f)], capture_output=True, text=True)
+    return r.returncode, r.stdout
+
+
+def test_guard_uncovered_file_fails(tmp_path):
+    code, out = guarded(tmp_path)
+    assert code == 1
+    assert "PLAN FAIL M2 guard comments: api/leak.py references it but no task of M2 or earlier owns it" in out
+
+
+def test_guard_covered_by_task_surface_or_probed_deferral(tmp_path):
+    tasks = [{"id": "T2", "covers": ["req-2"], "files": ["b.py", "api/leak.py"], "check": "pytest", "needs": ["T1"]}]
+    assert guarded(tmp_path / "a", tasks=tasks)[0] == 0
+    tasks = [{"id": "T2", "covers": ["req-2"], "files": ["b.py"], "check": "pytest", "needs": ["T1"], "allowTestEdits": ["api/"]}]
+    assert guarded(tmp_path / "a2", tasks=tasks)[0] == 0
+    s = [{"exposure": "api/leak.py list", "requirement": "req-2", "scenario": "scenario-1 guest sees own"}]
+    assert guarded(tmp_path / "b", risky=True, surface=s)[0] == 0
+    d = [{"item": "api/leak.py", "reason": "dead code", "probe": "rg -n leak shows no caller"}]
+    assert guarded(tmp_path / "c", deferred=d)[0] == 0
+
+
+def test_guard_shape_and_no_guards(tmp_path):
+    code, out = run(tmp_path / "n", VALID)
+    assert code == 0
+    code, out = run(tmp_path / "e", mutated(lambda p: p["milestones"][1].update(guards=[])))
+    assert code == 1 and "M2 guards must be a non-empty list" in out
