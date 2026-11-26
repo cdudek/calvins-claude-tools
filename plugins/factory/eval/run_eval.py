@@ -94,6 +94,19 @@ def export_plugin(factory_repo, commit, dest, arm):
         set_frontmatter(dest / "agents" / fname, model, effort)
 
 
+SKIP_LINE = "`VERDICT: PASS (verifier skipped in this eval arm)`"
+
+
+def skip_verifier_goal(goal):
+    """An arm without a verifier cannot meet a goal that asks for a verifier PASS: the goal checker rejects the arm's own line and the
+    run argues with it until it stops BLOCKED. Rewrite the verifier clause to accept the skip line, and fail loud if it is missing."""
+    out = goal.replace("a verifier PASS for that same SHA", f"the line {SKIP_LINE} for that same SHA (this eval arm runs no verifier)")
+    out = out.replace("verifier evidence for", f"the line {SKIP_LINE} (this eval arm runs no verifier) in place of verifier evidence for")
+    if out == goal:
+        raise SystemExit("skip_verifier_goal: the goal names no verifier clause to rewrite; goal-brief changed its wording")
+    return out
+
+
 def addendum(arm, task):
     """System-prompt text for what frontmatter cannot express. Empty for the default arm."""
     out = []
@@ -104,8 +117,8 @@ def addendum(arm, task):
     if arm["builder_kind"] == "codex-sol":
         out.append("Builders: instead of factory:builder, run each task through `codex exec -m gpt-6.2-sol -c model_reasoning_effort=high` in its worktree, then continue as usual.")
     if "verifier" in ab:
-        out.append("Skip the verifier step: do not dispatch factory:verifier and do not run holdout scenarios yourself. The goal still asks for a verifier PASS: "
-                   "once the pushed SHA is in the transcript, write `VERDICT: PASS (verifier skipped in this eval arm)` for that SHA yourself. Everything else stays.")
+        out.append("Skip the verifier step: do not dispatch factory:verifier and do not run holdout scenarios yourself. The goal accepts the skip line in place of "
+                   f"a verifier PASS: once the pushed SHA is in the transcript, write {SKIP_LINE} for that SHA yourself. Everything else stays.")
     if "security" in ab or arm["reviewer"] == "off":
         out.append("Skip the security review even for a risky milestone.")
     elif arm["reviewer"] == "codex-astra":
@@ -196,6 +209,8 @@ def prepare_run(task_dir, task, arm, run_dir, run_id, args, slot):
     if brief.returncode:
         raise SystemExit(f"goal-brief failed for {run_id}:\n{brief.stdout}{brief.stderr}")
     kickoff_file, goal, max_turns = parse_brief(brief.stdout)
+    if arm["harness"] == "factory" and "verifier" in arm["ablate"]:
+        goal = skip_verifier_goal(goal)
     if arm["context"] == "raw" and arm["harness"] != "factory":
         shutil.copy(ticket, plan.parent / "delta.md")
         git(repo, "commit", "-q", "-am", "eval: ticket context")

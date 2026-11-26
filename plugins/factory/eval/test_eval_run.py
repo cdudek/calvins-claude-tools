@@ -106,6 +106,17 @@ class Run(unittest.TestCase):
         (self.task / "ticket-delta.md").write_text("## ADDED\n- req-1: Doubling returns twice the number, as the ticket says. [outcome-1]\n")
         self.dry("--arms", "pb2", "--parallel", "1")
 
+    def test_arm_without_verifier_gets_a_goal_it_can_meet(self):
+        out = self.dry("--arms", "ablate_verifier,default", "--parallel", "1")
+        cmds = [l for l in out.splitlines() if l.startswith("  claude ")]
+        skip = [c for c in cmds if "verifier skipped in this eval arm" in c]
+        self.assertEqual(len(skip), 1, "only the arm without a verifier gets the rewritten goal")
+        self.assertNotIn("a verifier PASS for that same SHA", skip[0])
+
+    def test_skip_verifier_goal_fails_loud_on_unknown_wording(self):
+        with self.assertRaises(SystemExit):
+            run_eval.skip_verifier_goal("/goal Met when the tests pass")
+
     def test_plain_arm_has_no_plugin_and_same_goal_line(self):
         out = self.dry("--arms", "plain_sonnet,default", "--parallel", "1")
         cmds = [l for l in out.splitlines() if l.startswith("  claude ")]
