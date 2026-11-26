@@ -215,6 +215,8 @@ def prepare_run(task_dir, task, arm, run_dir, run_id, args, slot):
         argv += ["--plugin-dir", str(plugin)]
     if arm["advisor"]:
         argv += ["--advisor", arm["advisor"]]
+    if args.auth_mode == "user-login":  # the person's own login, but none of their user settings, hooks or plugins
+        argv += ["--setting-sources", "project,local"]
     argv.append(goal)  # the prompt: "/goal Met when ..."
 
     env = {k: os.environ[k] for k in KEEP_ENV if k in os.environ}
@@ -225,8 +227,10 @@ def prepare_run(task_dir, task, arm, run_dir, run_id, args, slot):
     if args.auth_mode == "token":
         env[TOKEN_VAR] = os.environ[TOKEN_VAR]
         env["CLAUDE_CONFIG_DIR"] = str(run_dir / "config")
-    else:
+    elif args.auth_mode == "config-dir":
         env["CLAUDE_CONFIG_DIR"] = str(args.claude_config)
+    # user-login: default config dir (its login), user settings excluded by --setting-sources; the user's
+    # CLAUDE.md memory may still load, identically for every arm
     port = db = None
     lo, hi = task.get("portRange") or [4100, 4999]
     if task.get("portEnv"):
@@ -386,7 +390,7 @@ def main(argv=None):
     ap.add_argument("--seed", type=int)
     ap.add_argument("--timeout-s", type=int)
     ap.add_argument("--permission-mode", default="auto")
-    ap.add_argument("--auth", dest="auth_mode", choices=["auto", "token", "config-dir"], default="auto")
+    ap.add_argument("--auth", dest="auth_mode", choices=["auto", "token", "config-dir", "user-login"], default="auto")
     ap.add_argument("--claude-config", default=str(EVAL_HOME / "claude-config"))
     ap.add_argument("--factory-repo", default=str(FACTORY_DIR.parent.parent))
     ap.add_argument("--factory-commit", default="HEAD")
