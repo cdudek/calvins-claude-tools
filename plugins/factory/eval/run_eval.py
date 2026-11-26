@@ -7,6 +7,7 @@ addendum appended to the kickoff, an external wall-clock timeout, stream-json sa
 <results>/<stage>/<run-id>/stream.jsonl and run.json beside it. Nothing is graded here (grade.py does that).
 Arm order is randomized inside each repeat block; up to --parallel runs go at once, each on a random free slot with its
 own directory, test database and port. Heavy steps (E2E, hidden tests, app servers) share one lock: runs call `heavy <cmd>`.
+task.json `env` (name -> template with {db} {port} {run}) is exported into every arm's environment and graded with the same values.
 Auth: CLAUDE_CODE_OAUTH_TOKEN from the environment if set (never printed or stored), else the logged-in config dir
 ~/.cfactory/eval/claude-config (shared by every run in that mode). Never set CLAUDE_CODE_EFFORT_LEVEL.
 --dry-run prepares the run directories, prints the exact command and environment (token redacted) and runs nothing.
@@ -69,7 +70,7 @@ def infra_from_stream(stream, stderr=""):
 # ---------------------------------------------------------------- run preparation
 
 def git(repo, *args, check=True):
-    return subprocess.run(["git", "-C", str(repo), "-c", "user.email=eval@eval", "-c", "user.name=eval", *args],
+    return subprocess.run([*grade.heavy.GIT, "-C", str(repo), "-c", "user.email=eval@eval", "-c", "user.name=eval", *args],
                           capture_output=True, text=True, check=check).stdout.strip()
 
 
@@ -83,7 +84,7 @@ def set_frontmatter(path, model, effort):
 
 def export_plugin(factory_repo, commit, dest, arm):
     """A private copy of plugins/factory at <commit>, agent frontmatter set from the arm."""
-    data = subprocess.run(["git", "-C", str(factory_repo), "archive", "--format=tar", commit, "plugins/factory"], capture_output=True, check=True).stdout
+    data = subprocess.run([*grade.heavy.GIT, "-C", str(factory_repo), "archive", "--format=tar", commit, "plugins/factory"], capture_output=True, check=True).stdout
     dest.mkdir(parents=True)
     with tempfile.TemporaryDirectory() as tmp, tarfile.open(fileobj=__import__("io").BytesIO(data)) as tf:
         tf.extractall(tmp, filter="data")
@@ -161,7 +162,7 @@ def prepare_run(task_dir, task, arm, run_dir, run_id, args, slot):
     plugin = run_dir / "plugin"
     export_plugin(args.factory_repo, args.factory_commit, plugin, arm)
     cf = repo / ".cfactory"
-    cf.mkdir()
+    cf.mkdir(exist_ok=True)  # the start tree may carry one; the pinned scripts below overwrite its copies
     for s in SCRIPTS:
         shutil.copy(plugin / "skills/run/scripts" / s, cf / s)
     plan = repo / task["plan"]
@@ -175,8 +176,9 @@ def prepare_run(task_dir, task, arm, run_dir, run_id, args, slot):
         (cf / "test-integrity.sh").write_text("#!/usr/bin/env bash\necho 'INTEGRITY OK (disabled by the eval arm)'\n")
     base = grade.plan_json(plan.read_text(encoding="utf-8"))["base"]
     origin = run_dir / "origin.git"
-    subprocess.run(["git", "init", "-q", "--bare", str(origin)], check=True)
+    subprocess.run([*grade.heavy.GIT, "init", "-q", "--bare", str(origin)], check=True)
     git(repo, "init", "-q", "-b", base)
+    git(repo, "config", "gc.auto", "0")  # builders' commits in this repo and its worktrees must not gc either
     git(repo, "add", "-A")
     git(repo, "commit", "-q", "-m", "start")
     start_sha = git(repo, "rev-parse", "HEAD")
@@ -234,8 +236,7 @@ def prepare_run(task_dir, task, arm, run_dir, run_id, args, slot):
         env[task["portEnv"]] = str(port)
     if task.get("dbName"):
         db = re.sub(r"[^a-z0-9_]", "_", task["dbName"].format(run=run_id.lower()))[:60]
-        if task.get("dbEnv"):
-            env[task["dbEnv"]] = db
+    env.update(grade.task_env(task, run_id, db, port))
     models = {arm["roles"][r][0] for r in ("coordinator", "builder", "verifier", "security", "ux_verifier")}
     return {"argv": argv, "env": env, "cwd": repo, "goal": goal, "max_turns": max_turns, "start_sha": start_sha, "repo": str(repo),
             "plugin": str(plugin), "port": port, "db": db, "scenario_dir": str(scen_dest) if scen.is_dir() else None,

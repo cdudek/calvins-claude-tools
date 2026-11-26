@@ -2,10 +2,12 @@
 """Usage: grade.py <run dir> [--grader codex|opus|none] [--grader-model M] [--retries 3]
 Grades one run the same way for every arm. The arm's own verifier never decides quality.
   1. hidden tests: the files the task's reference commit added or changed are copied from the private task dir into the
-     result tree and run (FAIL_TO_PASS); the repo's existing suite must still pass (PASS_TO_PASS). Failing hidden files are
-     retried (--retries) to strip E2E flakes.
+     result tree and run. FAIL_TO_PASS are the task's `fail_to_pass` files (every hidden file when task.json has no such list,
+     said in grade.json `hidden_basis`); `pass_to_pass_hidden` files and the repo's existing suite must still pass. Failing
+     hidden files are retried (--retries) to strip E2E flakes.
   2. prose scenarios graded by one fixed grader (default Codex gpt-6.2-astra, read-only, blind to the arm).
-  hidden_frac = passed units / total units (each hidden file, the suite, each scenario).
+  hidden_frac = passing fail_to_pass files / fail_to_pass files. scenario_frac = passing scenarios / scenarios (null without any),
+  never mixed into hidden_frac. regression = the suite or a pass_to_pass_hidden file fails. solved = hidden_frac 1 and no regression.
 Plus metrics read from stream.jsonl and the repo. Writes grade.json next to run.json. Heavy test steps hold the
 global heavy lock (see heavy.py), so parallel runs never run E2E at the same time.
 """
@@ -209,7 +211,7 @@ def sh(cmd, cwd, env=None, timeout=3600):
 
 
 def git(repo, *args):
-    return subprocess.run(["git", "-C", str(repo), *args], capture_output=True, text=True).stdout
+    return subprocess.run([*heavy.GIT, "-C", str(repo), *args], capture_output=True, text=True).stdout
 
 
 def in_scope(path, allowed):
@@ -236,14 +238,23 @@ def repo_metrics(repo, base, plan_rel, task, plugin):
             "integrity_violations": len(re.findall(r"INTEGRITY FAIL", integ.stdout)), "integrity_output": integ.stdout[-1500:]}
 
 
-def grade_tests(repo, task, task_dir, run, retries):
-    """Units: P2P suite, each hidden file. Runs under the heavy lock, in a fresh database and the run's port."""
-    env = {**os.environ, "CFACTORY_EVAL": "1"}
-    db = run.get("db")
+def task_env(task, run_id, db, port):
+    """The variables a run (and its grading) gets besides the port and database ones: task.json `env`, templates with {db} {port} {run}."""
+    out = {}
     if db and task.get("dbEnv"):
-        env[task["dbEnv"]] = db
-    if run.get("port") and task.get("portEnv"):
-        env[task["portEnv"]] = str(run["port"])
+        out[task["dbEnv"]] = db
+    if port and task.get("portEnv"):
+        out[task["portEnv"]] = str(port)
+    for name, tmpl in (task.get("env") or {}).items():
+        out[name] = str(tmpl).replace("{db}", db or "").replace("{port}", str(port or "")).replace("{run}", str(run_id))
+    return out
+
+
+def grade_tests(repo, task, task_dir, run, retries):
+    """Units: p2p:suite, p2p:hidden:<file> (passed at start), f2p:<file> (fail_to_pass; every hidden file when the task has no list).
+    Runs under the heavy lock, in a fresh database and the run's port."""
+    db = run.get("db")
+    env = {**os.environ, "CFACTORY_EVAL": "1", **task_env(task, run.get("run_id"), db, run.get("port"))}
     timeout = task.get("e2e_timeout_s", 1800) + 600
     units = {}
     hidden = task_dir / "hidden-tests"
@@ -256,9 +267,13 @@ def grade_tests(repo, task, task_dir, run, retries):
             if hidden.is_dir():
                 shutil.copytree(hidden, repo, dirs_exist_ok=True)
             tmpl = task.get("hidden_cmd") or (task.get("suite_cmd", "") + " {files}")
-            for f in task.get("hidden_tests", []):
+            hidden_files = task.get("hidden_tests", [])
+            p2p = set(task.get("pass_to_pass_hidden") or [])
+            f2p = set(task["fail_to_pass"]) if "fail_to_pass" in task else set(hidden_files) - p2p
+            for f in hidden_files:
                 cmd = tmpl.format(files=shlex.quote(f))
-                units[f"f2p:{f}"] = any(sh(cmd, repo, env, timeout)[0] == 0 for _ in range(max(1, retries)))
+                key = f"f2p:{f}" if f in f2p else f"p2p:hidden:{f}"
+                units[key] = any(sh(cmd, repo, env, timeout)[0] == 0 for _ in range(max(1, retries)))
         finally:
             if db and task.get("dbDrop"):
                 sh(task["dbDrop"].format(db=db), repo, env)
@@ -343,12 +358,14 @@ def grade_run(run_dir, grader=None, retries=3, task_dir=None):
         g["scenarios"] = sc
         units.update({k: v["pass"] for k, v in sc.items()})
     g["units"] = units
-    passed = sum(units.values())
-    g["hidden_frac"] = passed / len(units) if units else None
     f2p = [v for k, v in units.items() if k.startswith("f2p:")]
+    g["hidden_frac"] = sum(f2p) / len(f2p) if f2p else None
+    g["hidden_basis"] = "fail_to_pass" if "fail_to_pass" in task else "all hidden files (task.json has no fail_to_pass list)"
+    sc = [v["pass"] for v in g.get("scenarios", {}).values()]
+    g["scenario_frac"] = sum(sc) / len(sc) if sc else None
     g["visible_pass"] = units.get("p2p:suite")
-    g["regression"] = units.get("p2p:suite") is False
-    g["solved"] = g["hidden_frac"] == 1
+    g["regression"] = units.get("p2p:suite") is False or any(v is False for k, v in units.items() if k.startswith("p2p:hidden:"))
+    g["solved"] = g["hidden_frac"] == 1 and not g["regression"]
     hf = g["hidden_frac"]
     g["visible_hidden_gap"] = (1.0 if g["visible_pass"] else 0.0) - hf if hf is not None and g["visible_pass"] is not None else None
     g["verifier_false_pass"] = g["verifier_verdict"] == "PASS" and hf is not None and hf < 1

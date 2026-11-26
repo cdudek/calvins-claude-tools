@@ -1,6 +1,7 @@
 import json
 import os
 import subprocess
+import sys
 import tarfile
 import tempfile
 import unittest
@@ -113,6 +114,7 @@ class EndToEnd(unittest.TestCase):
         self.assertEqual(g["hidden_frac"], 1.0)
         self.assertEqual(set(g["units"]), {"p2p:suite", "f2p:tests/test_double.py", "scenario:doubles"})
         self.assertTrue(g["solved"] and g["valid"])
+        self.assertEqual(g["scenario_frac"], 1.0)
         self.assertFalse(g["verifier_false_pass"])
         self.assertEqual(g["unexpected_models"], [])
         self.assertTrue((Path(self.tmp.name) / "results/0/r1/grade.json").exists())
@@ -121,12 +123,60 @@ class EndToEnd(unittest.TestCase):
 
     def test_unsolved_run_flags_false_pass_and_goal_met_not_solved(self):
         g = grade.grade_run(self.make_run(False, "r2"), grader=lambda text, repo: (False, "not delivered"))
-        self.assertAlmostEqual(g["hidden_frac"], 1 / 3)  # the old suite passes, the hidden file and the scenario fail
+        self.assertEqual(g["hidden_frac"], 0.0)  # the hidden file fails; the suite passes and the failing scenario is scored apart
+        self.assertEqual(g["scenario_frac"], 0.0)
+        self.assertIn("no fail_to_pass list", g["hidden_basis"])
         self.assertFalse(g["solved"])
         self.assertTrue(g["verifier_false_pass"])
         self.assertTrue(g["goal_met_not_solved"])
         self.assertTrue(g["claimed_done_not_solved"])
-        self.assertEqual(g["visible_hidden_gap"], 1 - 1 / 3)
+        self.assertEqual(g["visible_hidden_gap"], 1.0)
+
+    def edit_task(self, **kw):
+        p = self.task / "task.json"
+        t = json.loads(p.read_text())
+        t.update(kw)
+        p.write_text(json.dumps(t))
+
+    def test_fail_to_pass_list_denies_free_credit_and_pass_to_pass_hidden_is_a_regression_check(self):
+        fx.write(self.task / "hidden-tests", "tests/test_free.py", "def test_free():\n    assert True\n")
+        self.edit_task(hidden_cmd=f"{sys.executable} -m pytest -q -p no:cacheprovider {{files}}", hidden_tests=["tests/test_double.py", "tests/test_free.py"], fail_to_pass=["tests/test_double.py"], pass_to_pass_hidden=["tests/test_free.py"])
+        g = grade.grade_run(self.make_run(False, "f1"), grader=None)
+        self.assertEqual(g["hidden_frac"], 0.0, "the free file does not count")
+        self.assertIsNone(g["scenario_frac"])
+        self.assertEqual(g["hidden_basis"], "fail_to_pass")
+        self.assertFalse(g["regression"])
+        g = grade.grade_run(self.make_run(True, "f2"), grader=None)
+        self.assertEqual((g["hidden_frac"], g["solved"], g["regression"]), (1.0, True, False))
+        fx.write(self.task / "hidden-tests", "tests/test_p2p.py", "def test_p2p():\n    assert False\n")
+        self.edit_task(hidden_tests=["tests/test_double.py", "tests/test_p2p.py"], pass_to_pass_hidden=["tests/test_p2p.py"], fail_to_pass=["tests/test_double.py"])
+        g = grade.grade_run(self.make_run(True, "f3"), grader=None)
+        self.assertEqual(g["hidden_frac"], 1.0)
+        self.assertTrue(g["regression"])
+        self.assertFalse(g["solved"])
+        self.assertFalse(g["units"]["p2p:hidden:tests/test_p2p.py"])
+
+    def test_task_env_reaches_the_grading_commands(self):
+        self.edit_task(env={"CHECK_ENV": "run-{run}-{port}"}, hidden_cmd='test "$CHECK_ENV" = run-f4-77 && ' + fx.SUITE + " {files}")
+        run = self.make_run(True, "f4")
+        meta = json.loads((run / "run.json").read_text())
+        meta["port"] = 77
+        (run / "run.json").write_text(json.dumps(meta))
+        self.assertEqual(grade.grade_run(run, grader=None)["hidden_frac"], 1.0)
+
+    def test_task_env_templates(self):
+        t = {"env": {"URL": "pg://h:5433/{db}?run={run}&p={port}"}, "dbEnv": "DB_NAME"}
+        self.assertEqual(grade.task_env(t, "r", "d1", 4100), {"DB_NAME": "d1", "URL": "pg://h:5433/d1?run=r&p=4100"})
+        self.assertEqual(grade.task_env({}, "r", None, None), {})
+
+    def test_every_git_call_disables_auto_gc(self):
+        import run_eval
+        for fn in (grade.git, run_eval.git):
+            with mock.patch("subprocess.run") as m:
+                fn("/x", "status")
+            self.assertEqual(m.call_args[0][0][1:3], ["-c", "gc.auto=0"])
+        n = int(os.environ["GIT_CONFIG_COUNT"])
+        self.assertIn("gc.auto", [os.environ[f"GIT_CONFIG_KEY_{i}"] for i in range(n)])
 
     def test_run_without_a_goal_is_invalid(self):
         g = grade.grade_run(self.make_run(True, "r3", goal_set=False), grader=None)
