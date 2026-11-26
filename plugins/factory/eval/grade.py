@@ -161,7 +161,9 @@ def parse_stream(events, suite_cmd=""):
         if n in AGENT_TOOLS and role_of(tid) == "verifier" and tid in results:
             verdicts += re.findall(r"VERDICT:\s*(PASS|FAIL)", results[tid][1])
         elif n == "SubagentHandback" and parent and role_of(parent) == "verifier":  # the report arrives here, not in the Agent result
-            verdicts += re.findall(r"VERDICT:\s*(PASS|FAIL)", json.dumps(inp))
+            report = str(inp.get("message") or inp.get("report") or "")  # only the report field, never other input
+            found = re.findall(r"VERDICT:\s*(PASS|FAIL)", report)
+            verdicts += ["FAIL"] if "FAIL" in found else found[-1:]  # a report naming both counts as FAIL
     state = state_in(r.get("result")) or None
     state = state or end_state_from(events)
     # goal: the stream has no verdict events. It shows "Goal set: <condition>" as a synthetic message, and the evaluator's
@@ -269,21 +271,22 @@ def grade_tests(repo, task, task_dir, run, retries, failures=None):
 
     def attempt(key, cmd, tries):
         """True when any try passes; on failure, record the failing test lines of the last try in `failures`."""
-        out = ""
-        for _ in range(max(1, tries)):
+        for i in range(max(1, tries)):
             rc, out = sh(cmd, repo, env, timeout)
+            if rc != 0 and failures is not None:  # test-name lines only, no raw output: it could echo the environment
+                fails = [l.strip()[:300] for l in out.splitlines() if re.search(r"\bFAIL\b|[×✗]", l)]
+                failures[key] = {"failed_tries": i + 1, "rc": rc, "failing_lines": fails[:40]}
             if rc == 0:
+                if failures is not None and key in failures:
+                    failures[key]["passed_on_retry"] = True  # kept visible: a flaky pass is recorded, not hidden
                 return True
-        if failures is not None:
-            fails = [l.strip() for l in out.splitlines() if re.search(r"\bFAIL\b|[×✗]|Error:", l)]
-            failures[key] = {"failing_lines": fails[:40], "tail": out[-2000:]}
         return False
     with heavy.locked():
         if db and task.get("dbCreate"):
             sh(task["dbCreate"].format(db=db), repo, env)
         try:
             if task.get("suite_cmd"):  # one retry: a load-induced timeout must not read as a regression
-                units["p2p:suite"] = attempt("p2p:suite", task["suite_cmd"], 2)
+                units["p2p:suite"] = attempt("p2p:suite", task["suite_cmd"], 2)  # test_failures shows a pass on retry
             if hidden.is_dir():
                 shutil.copytree(hidden, repo, dirs_exist_ok=True)
             tmpl = task.get("hidden_cmd") or (task.get("suite_cmd", "") + " {files}")

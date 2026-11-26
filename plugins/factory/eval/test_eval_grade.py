@@ -50,7 +50,7 @@ class Metrics(unittest.TestCase):
             {"type": "assistant", "message": {"id": "m1", "model": "claude-sonnet-5-5", "content": [
                 {"type": "tool_use", "id": "A", "name": "Agent", "input": {"subagent_type": "factory:verifier", "prompt": "verify"}}]}},
             {"type": "assistant", "parent_tool_use_id": "A", "message": {"id": "m2", "model": "claude-opus-5-5", "content": [
-                {"type": "tool_use", "id": "H", "name": "SubagentHandback", "input": {"report": "all good\n\nVERDICT: PASS"}}]}},
+                {"type": "tool_use", "id": "H", "name": "SubagentHandback", "input": {"message": "all good\n\nVERDICT: PASS"}}]}},
             {"type": "user", "message": {"content": [{"type": "tool_result", "tool_use_id": "A", "content": [
                 {"type": "text", "text": "This agent's report was delivered to you as a message (its SubagentHandback call)."}]}]}},
         ]
