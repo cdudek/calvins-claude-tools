@@ -250,6 +250,7 @@ def prepare_run(task_dir, task, arm, run_dir, run_id, args, slot):
     if args.auth_mode == "token":
         env[TOKEN_VAR] = os.environ[TOKEN_VAR]
         env["CLAUDE_CONFIG_DIR"] = str(run_dir / "config")
+        copy_user_memory(run_dir / "config")
     elif args.auth_mode == "config-dir":
         env["CLAUDE_CONFIG_DIR"] = str(args.claude_config)
     # user-login: default config dir (its login), user settings excluded by --setting-sources; the user's
@@ -390,6 +391,24 @@ def plan_jobs(arms, repeats, stage, task_id, rng):
             rid = re.sub(r"[^A-Za-z0-9_-]", "-", f"{stage}-{task_id}-{a['name']}-b{b:02d}-{uuid.uuid4().hex[:6]}")
             jobs.append({"arm": a, "block": b, "stage": stage, "run_id": rid})
     return jobs
+
+
+def copy_user_memory(cfg, home=None):
+    """Token runs get a fresh config dir, so the person's global CLAUDE.md (and files it @-imports) would not load, unlike
+    user-login runs, where it loads for every arm. Copy them so both auth modes run under the same instructions."""
+    src = Path(home) if home else Path.home() / ".claude"
+    md = src / "CLAUDE.md"
+    if not md.is_file():
+        return []
+    cfg.mkdir(parents=True, exist_ok=True)
+    names = ["CLAUDE.md"] + re.findall(r"^@(\S+)\s*$", md.read_text(encoding="utf-8"), re.M)
+    copied = []
+    for n in names:
+        f = src / n
+        if f.is_file() and f.resolve().parent == src.resolve():  # only files beside CLAUDE.md, never a path outside it
+            shutil.copy(f, cfg / n)
+            copied.append(n)
+    return copied
 
 
 def resolve_auth(mode, claude_config):

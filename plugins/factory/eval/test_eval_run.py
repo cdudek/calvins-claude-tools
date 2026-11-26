@@ -106,6 +106,16 @@ class Run(unittest.TestCase):
         (self.task / "ticket-delta.md").write_text("## ADDED\n- req-1: Doubling returns twice the number, as the ticket says. [outcome-1]\n")
         self.dry("--arms", "pb2", "--parallel", "1")
 
+    def test_token_runs_get_the_same_user_memory_as_login_runs(self):
+        home = Path(self.tmp.name) / "home"
+        home.mkdir()
+        (home / "CLAUDE.md").write_text("# rules\n@RTK.md\n@../outside.md\n")
+        (home / "RTK.md").write_text("rtk\n")
+        (Path(self.tmp.name) / "outside.md").write_text("no\n")
+        cfg = Path(self.tmp.name) / "cfg"
+        self.assertEqual(run_eval.copy_user_memory(cfg, home), ["CLAUDE.md", "RTK.md"])
+        self.assertFalse((cfg / "outside.md").exists())
+
     def test_arm_without_verifier_gets_a_goal_it_can_meet(self):
         out = self.dry("--arms", "ablate_verifier,default", "--parallel", "1")
         cmds = [l for l in out.splitlines() if l.startswith("  claude ")]
