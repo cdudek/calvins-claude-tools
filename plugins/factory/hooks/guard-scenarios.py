@@ -3,6 +3,8 @@
 Any other subagent (builders, the UX verifier) is denied a tool call whose input names that folder.
 The main session (the coordinator) has no agent_type and is allowed: it drafts the scenarios, unless
 CFACTORY_EVAL=1 (the eval harness), which denies it too so a coordinator cannot read them.
+It also denies an Agent/Task call with run_in_background in a factory run (CFACTORY_EVAL=1, or a cwd inside a repo
+with .cfactory/ whose branch is milestone/*): /goal skips its evaluation while background work runs.
 Fails closed: a crash or a non-object input is denied when the text names the folder; only unreadable JSON passes.
 shortcut: matches the path as text (with ~, $HOME, // and /./ expanded), so a command that assembles the path at
 runtime gets through; upgrade to an OS-level read restriction if a builder is ever seen doing that.
@@ -10,6 +12,7 @@ runtime gets through; upgrade to an OS-level read restriction if a builder is ev
 import json
 import os
 import re
+import subprocess
 import sys
 
 # bare "verifier" too: the hook input's agent_type format for plugin agents is not documented
@@ -20,6 +23,26 @@ DENY = {"hookSpecificOutput": {
     "permissionDecision": "deny",
     "permissionDecisionReason": "factory holdout scenarios are for the verifier only; build from the delta and plan.",
 }}
+BG_DENY = {"hookSpecificOutput": {
+    "hookEventName": "PreToolUse",
+    "permissionDecision": "deny",
+    "permissionDecisionReason": "factory runs start every agent in the foreground: run it again without run_in_background",
+}}
+
+
+def factory_run(event):
+    if os.environ.get("CFACTORY_EVAL") == "1":
+        return True
+    # shortcut: a milestone/* branch in a repo with .cfactory/ also matches an owner working there by hand; upgrade to an explicit env var if that bites
+    cwd = str(event.get("cwd") or ".")
+    try:
+        git = lambda *a: subprocess.run(["git", "-C", cwd, *a], capture_output=True, text=True, timeout=5).stdout.strip()  # noqa: E731
+        if not git("symbolic-ref", "--short", "HEAD").startswith("milestone/"):
+            return False
+        top = git("rev-parse", "--show-toplevel")
+        return bool(top) and os.path.isdir(os.path.join(top, ".cfactory"))
+    except (OSError, subprocess.SubprocessError):
+        return False  # not a factory run as far as we can tell: an ordinary session must never lose background agents to a git error
 
 
 def mentions(text):
@@ -31,12 +54,14 @@ def mentions(text):
 
 
 def decide(event):
+    ti = event.get("tool_input")
+    if event.get("tool_name") in ("Agent", "Task") and isinstance(ti, dict) and ti.get("run_in_background") not in (None, False, 0, "", "false", "False") and factory_run(event):
+        return BG_DENY
     agent = str(event.get("agent_type") or "")
     if not agent and os.environ.get("CFACTORY_EVAL") != "1":
         return None
     if agent in ALLOWED:
         return None
-    ti = event.get("tool_input")
     if not agent and event.get("tool_name") in ("Agent", "Task") and isinstance(ti, dict) and str(ti.get("subagent_type") or "") == "factory:verifier":
         # eval mode: the coordinator may dispatch the verifier with the scenarios path; dispatch names are always namespaced,
         # so the bare alias is not accepted here (it could be another plugin's agent)

@@ -81,7 +81,7 @@ All of it except the scenarios lives in the app's own repository, versioned with
 - Every task runs in a `factory:builder` subagent, even a one-line fix. The coordinator only creates worktrees, runs checks, merges and logs.
 - Create each task worktree yourself, never with the Agent tool's worktree isolation: `git branch <slug>-<M>-<task> milestone/<slug>-<M>`, then `wt switch <slug>-<M>-<task> --no-cd --yes`, then the plan's `setup`.
 - Spawn builders (Sonnet 5.5, medium; low for mechanical replacement, high for complex tasks), 2 or 3 in parallel, each with its worktree path. Each owns disjoint files. Unfinished work stays in its worktree; never patch files.
-- Builders run in the foreground; a background builder pauses the goal check.
+- A hook denies `run_in_background` on every Agent call in a factory run, so every agent starts in the foreground.
 - Builders may add tests and edit exactly the existing test files their own task's `allowTestEdits` lists. They never touch CI config, `.github/`, `.cfactory/`, baselines, specs, deltas or the plan, and never add lint suppressions. They never get the `~/.cfactory/scenarios` path. `test-integrity.sh` enforces this by exit code.
 - The milestone's progress entry (with `firstPass`, `planRevisionsAfterApproval`, `diffMatchesPlan`) is committed and pushed before its PR can merge.
 

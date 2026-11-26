@@ -48,7 +48,7 @@ It starts "Met when any one of these is true." and lists numbered end states, in
 ## Facts the design rests on (code.claude.com/docs/en/goal, checked 2026-11-24)
 - The evaluator runs when a turn ends and sees the condition and the conversation; it calls no tools.
 - A goal ends when the evaluator says met, on `/goal clear`, on an unrecoverable error, or Ctrl+C in print mode. There is no built-in turn or token cap: bound it with a turn clause in the condition.
-- While a subagent or background shell runs at turn end, the evaluation is skipped. Builders and `gh pr checks --watch` run in the foreground.
+- While a subagent or background shell runs at turn end, the evaluation is skipped. The `guard-scenarios.py` hook denies `run_in_background` on Agent calls in a factory run; `gh pr checks --watch` runs in the foreground.
 - If Claude makes no tool use for several turns, the loop stops with the goal still set.
 - `--resume` and `--continue` restore an active goal but reset its turn count, timer and spend baseline. Met or cleared goals are not restored.
 - The condition can be up to 4,000 characters; the script refuses longer and the generated lines are about 400.

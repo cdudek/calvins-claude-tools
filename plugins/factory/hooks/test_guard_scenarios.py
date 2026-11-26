@@ -96,3 +96,35 @@ def test_eval_mode_main_session_may_dispatch_the_verifier_only():
     for sub in ("factory:builder", "verifier"):  # a bare alias could name another plugin's agent
         assert denied(go({"tool_name": "Agent", "tool_input": {"subagent_type": sub, "prompt": prompt}})), sub
     assert denied(go({"tool_name": "Bash", "tool_input": {"command": "cat ~/.cfactory/scenarios/x", "subagent_type": "verifier"}}))
+
+
+def _bg(env_extra, cwd, bg):
+    ti = {"subagent_type": "factory:builder", "prompt": "x"}
+    if bg:
+        ti["run_in_background"] = True
+    env = {k: v for k, v in os.environ.items() if k != "CFACTORY_EVAL"}
+    p = subprocess.run([sys.executable, str(SCRIPT)], input=json.dumps({"tool_name": "Agent", "cwd": str(cwd), "tool_input": ti}),
+                       capture_output=True, text=True, env={**env, **env_extra})
+    return json.loads(p.stdout) if p.stdout.strip() else None
+
+
+def test_background_agent_denied_in_a_factory_run(tmp_path):
+    out = _bg({"CFACTORY_EVAL": "1"}, tmp_path, True)
+    assert denied(out) and "without run_in_background" in out["hookSpecificOutput"]["permissionDecisionReason"]
+    repo = tmp_path / "r"
+    (repo / ".cfactory").mkdir(parents=True)
+    for cmd in (["init", "-q"], ["checkout", "-q", "-b", "milestone/x-M1"]):
+        subprocess.run(["git", "-C", str(repo), *cmd], check=True)
+    assert denied(_bg({}, repo, True))
+
+
+def test_foreground_agent_allowed_in_a_factory_run(tmp_path):
+    assert _bg({"CFACTORY_EVAL": "1"}, tmp_path, False) is None
+
+
+def test_background_agent_allowed_outside_a_factory_run(tmp_path):
+    assert _bg({}, tmp_path, True) is None
+    repo = tmp_path / "r"
+    (repo / ".cfactory").mkdir(parents=True)
+    subprocess.run(["git", "-C", str(repo), "init", "-q"], check=True)
+    assert _bg({}, repo, True) is None  # .cfactory/ alone, no milestone branch
