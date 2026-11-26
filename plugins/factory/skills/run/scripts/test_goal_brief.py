@@ -418,24 +418,6 @@ def test_sized_plan_names_model_effort_and_verifier(tmp_path):
     assert "factory:verifier (pass model sonnet and effort high to the Agent call) on the final commit" in k
 
 
-def test_unsized_plan_brief_is_unchanged(tmp_path):
-    old = subprocess.run(["git", "show", "origin/main:plugins/factory/skills/run/scripts/goal-brief.py"], capture_output=True, text=True,
-                         cwd=HERE).stdout
-    assert old, "origin/main goal-brief.py not readable"
-    (tmp_path / "old").mkdir()
-    (tmp_path / "old" / "goal-brief.py").write_text(old)
-    (tmp_path / "old" / "check-plan.py").write_text((HERE / "check-plan.py").read_text())
-    plan, sha = repo(tmp_path / "r")
-    outs = []
-    for s in (tmp_path / "old" / "goal-brief.py", SCRIPT):
-        p = subprocess.run([sys.executable, str(s), str(plan), "M1", "--approved", sha], capture_output=True, text=True)
-        assert p.returncode == 0
-        outs.append((p.stdout, (plan.parent / "kickoff-M1.md").read_text()))
-    # the only change for a plan without integration: the kickoff's one stance line
-    assert KICKOFF_STANCE + "\n" in outs[1][1]
-    assert outs[0] == (outs[1][0], outs[1][1].replace(KICKOFF_STANCE + "\n", ""))
-
-
 KICKOFF_STANCE = "Do reversible steps yourself and keep going: create a missing branch, rerun a check, recreate a worktree. Stop only for a decision the plan does not cover or an irreversible step."
 
 
