@@ -405,3 +405,30 @@ def test_every_agent_runs_in_the_foreground(tmp_path):
     # an unattended run exits under a background agent (a beta milestone, 2026-11-25)
     code, out, kick = run(tmp_path, "M1")
     assert code == 0 and "never with run_in_background" in kick.read_text()
+
+
+def test_sized_plan_names_model_effort_and_verifier(tmp_path):
+    m = copy.deepcopy(M1)
+    m["tasks"][0].update(model="haiku", effort="high")
+    m["verifier"] = {"model": "sonnet", "effort": "high"}
+    _, out, kick = run(tmp_path, "M1", plan_text([m, M2_OPEN, M3_OPEN]))
+    k = kick.read_text()
+    assert "Builder effort: high. Builder model: haiku." in k and "Builder effort: medium." in k
+    assert "Pass each task's builder model and effort to its Agent call" in k
+    assert "factory:verifier (pass model sonnet and effort high to the Agent call) on the final commit" in k
+
+
+def test_unsized_plan_brief_is_unchanged(tmp_path):
+    old = subprocess.run(["git", "show", "origin/main:plugins/factory/skills/run/scripts/goal-brief.py"], capture_output=True, text=True,
+                         cwd=HERE).stdout
+    assert old, "origin/main goal-brief.py not readable"
+    (tmp_path / "old").mkdir()
+    (tmp_path / "old" / "goal-brief.py").write_text(old)
+    (tmp_path / "old" / "check-plan.py").write_text((HERE / "check-plan.py").read_text())
+    plan, sha = repo(tmp_path / "r")
+    outs = []
+    for s in (tmp_path / "old" / "goal-brief.py", SCRIPT):
+        p = subprocess.run([sys.executable, str(s), str(plan), "M1", "--approved", sha], capture_output=True, text=True)
+        assert p.returncode == 0
+        outs.append((p.stdout, (plan.parent / "kickoff-M1.md").read_text()))
+    assert outs[0] == outs[1]

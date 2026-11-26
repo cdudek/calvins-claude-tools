@@ -296,6 +296,9 @@ def check(plan):
             errs.append(f"{mid} layer {layer} goes backwards")
         else:
             last = LAYERS.index(layer)
+        v = m.get("verifier", {})
+        if not isinstance(v, dict) or v.get("model", "opus") not in ("sonnet", "opus") or v.get("effort", "high") not in ("medium", "high"):
+            errs.append(f"{mid} verifier must be {{model: sonnet or opus, effort: medium or high}}")
         errs += surface_errs(m, mid) + deferred_errs(m, mid)
         mc = set(m.get("covers", []))
         covered |= mc
@@ -313,6 +316,8 @@ def check(plan):
                 errs.append(f"{mid}/{tid} has an empty check")
             if t.get("effort", "medium") not in ("low", "medium", "high"):
                 errs.append(f"{mid}/{tid} effort must be low, medium or high")
+            if t.get("model", "sonnet") not in ("haiku", "sonnet", "opus"):
+                errs.append(f"{mid}/{tid} model must be haiku, sonnet or opus")
             if not isinstance(t.get("needs", []), list):
                 errs.append(f"{mid}/{tid} needs must be a list")
             else:

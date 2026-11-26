@@ -55,7 +55,7 @@ All of it except the scenarios lives in the app's own repository, versioned with
 - Check the repo has fast commands (lint, typecheck, unit). Missing: ask.
 - Once per repo, link `specs/` and `specs/adr/` from the README.
 - Once per repo, if no git hooks run: set up cheap pre-commit and pre-push hooks per `references/git-hooks.md`, every command through `templates/git-hook-env.sh`. Nobody skips them with `--no-verify`.
-- Once per repo, if `<repo>/.cfactory/` is missing: Read `scripts/check-plan.py`, `scripts/goal-brief.py`, `scripts/migrate-ids.py` and `scripts/test-integrity.sh` from this skill's folder with the Read tool, Write them to `<repo>/.cfactory/`, and commit them on the first change branch. Refresh them the same way before every launch when the skill's copies differ. Always run them from `.cfactory/`, never by the plugin's install path: another plugin's guard refuses any Bash command that names the plugin cache.
+- Once per repo, if `<repo>/.cfactory/` is missing: Read `scripts/check-plan.py`, `scripts/goal-brief.py`, `scripts/migrate-ids.py`, `scripts/size-tasks.py` and `scripts/test-integrity.sh` from this skill's folder with the Read tool, Write them to `<repo>/.cfactory/`, and commit them on the first change branch. Refresh them the same way before every launch when the skill's copies differ. Always run them from `.cfactory/`, never by the plugin's install path: another plugin's guard refuses any Bash command that names the plugin cache.
 
 ### 1. Grill and spec
 - Grill per `references/grilling.md`, for every size. The tree covers test edits, who can see what, deferrals with probes, merge and production gate, holds, design boards and preflight tools.
@@ -125,7 +125,15 @@ Known limit: `hooks/guard-scenarios.py` (only `factory:verifier` may read the sc
 | Codex doing work or building | `gpt-6.2-sol` | high |
 | Codex advisory: plan review, risky-milestone pass | `gpt-6.2-astra` | high |
 
-Stations 0 to 2 run at high effort; the unattended build run uses `--model sonnet --effort medium`. A task marked `"effort"` in the plan overrides medium. Codex advisory runs as `codex exec -m <model> -c model_reasoning_effort=high -s read-only --ephemeral`.
+Stations 0 to 2 run at high effort; the unattended build run uses `--model sonnet --effort medium`. A task marked `"effort"` or `"model"` in the plan overrides the default, and a milestone `"verifier"` overrides Opus high.
+
+The planner sizes every task, then `python3 .cfactory/size-tasks.py <plan> --write` applies the rules from the plan's own data (files per task, milestone `risky`, a `migrat` path):
+- small (at most 3 files, not risky, no migration): `model: haiku`, `effort: high`.
+- normal: `sonnet`, `medium`.
+- large or risky (more than 8 files, a risky milestone, or a migration): `sonnet`, `high`.
+- milestone verifier: `sonnet`/`high` when every task in it is small, otherwise `opus`/`high`.
+
+The helper cannot see a task that implements an access, privacy or billing rule inside a non-risky milestone: mark that milestone `risky`, or set the task by hand. A task that implements an access or scope rule lists every read path of the guarded data it found, and the tests that assert the old behaviour are in its `allowTestEdits` (the read-path inventory). Codex advisory runs as `codex exec -m <model> -c model_reasoning_effort=high -s read-only --ephemeral`.
 
 ## The approval
 One approval, one SHA. The person sees four short things: intent, requirements, boards, a plain plan summary. Everything else is an exit code or the platform. After it, the run stops only for a real BLOCKED. The gallery is reviewed once, from the release PR, and stops nothing.
@@ -154,6 +162,7 @@ One approval, one SHA. The person sees four short things: intent, requirements, 
 ## Scripts
 Copied into `<repo>/.cfactory/` at intake and run from there:
 - `check-plan.py <plan.md> [--all] [--approved <sha>]`: dated slug, run caps, layers, needs, disjoint files, at least one requirement, requirement coverage, delta and intent, and that the approved files did not change: the whole plan text up to the json block, intent and delta; only appended progress entries may differ. `--all` also needs every milestone detailed with tasks.
+- `size-tasks.py <plan.md> [--write]`: prints per task its model and effort and per milestone the verifier tier from the sizing rules; `--write` sets those fields in the json block, leaving any the plan already sets.
 - `migrate-ids.py <repo> [--slug <slug>]`: one-shot rewrite of the old ids (`<spec>/R<n>`, `I<n>`, `C<n>`) in the git-tracked text files to `req-<n>`, `outcome-<n>`, `constraint-<n>`; refuses when two specs share a number; commits nothing.
 - `goal-brief.py <plan.md> <M> --approved <sha>` or `<plan.md> --all --approved <sha>`: kickoff file, `/goal` line, run command. The plan path is repo-relative, so it resolves inside any task worktree. At each milestone cut it records `--target <sha>`, the fetched integration or base head, which the integrity checks diff against.
 - `test-integrity.sh <worktree> <base-ref> [plan.md [--task <id> | --milestone <id>] [--approved <sha>] [--pin <sha>] [--checked <shas>] [--target <sha>]]`: touched tests, paths outside the task, CI, `.github/`, `.cfactory/`, plan, baselines, spec, skips, added lint suppressions. `--checked` lists the builder commits already checked; implementation changes outside them fail. `--milestone` requires `--approved`, which must be an ancestor of HEAD; the plan scope is read from it. A new test counts as in scope only in a task file's folder or via `allowTestEdits`; every new file gets the skip and suppression scans.

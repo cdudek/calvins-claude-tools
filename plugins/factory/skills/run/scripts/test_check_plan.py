@@ -481,3 +481,16 @@ def test_no_block(tmp_path):
     f.write_text("# no block\n")
     p = subprocess.run([sys.executable, str(SCRIPT), str(f)], capture_output=True, text=True)
     assert p.returncode == 1 and "PLAN FAIL" in p.stdout
+
+
+def test_task_model_and_milestone_verifier(tmp_path):
+    def ok(p):
+        p["milestones"][0]["tasks"][0].update(model="haiku", effort="high")
+        p["milestones"][0]["verifier"] = {"model": "sonnet", "effort": "medium"}
+    assert run(tmp_path / "a", mutated(ok))[0] == 0
+    code, out = run(tmp_path / "b", mutated(lambda p: p["milestones"][0]["tasks"][0].update(model="gpt")))
+    assert code == 1 and "M1/T1 model must be haiku, sonnet or opus" in out
+    code, out = run(tmp_path / "c", mutated(lambda p: p["milestones"][0].update(verifier={"model": "haiku"})))
+    assert code == 1 and "M1 verifier must be" in out
+    code, out = run(tmp_path / "d", mutated(lambda p: p["milestones"][0].update(verifier={"effort": "low"})))
+    assert code == 1 and "M1 verifier must be" in out
