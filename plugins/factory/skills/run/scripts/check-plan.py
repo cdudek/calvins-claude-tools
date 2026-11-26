@@ -172,6 +172,7 @@ def validate(plan_path, approved=None, every=False):
     except (OSError, ValueError) as e:  # json errors are ValueError
         return [str(e)], 0, 0
     errs, nm, nt = check(plan)
+    errs += guards_errs(plan, plan_path)
     errs += prose_errs(text[:block_match(text).end()], os.path.basename(plan_path))  # the log after the block stays free text
     if every:
         errs += ready_errs(plan)
@@ -201,6 +202,70 @@ def is_strs(v):
 
 def filled(v):
     return isinstance(v, str) and bool(v.strip())
+
+
+TEST_PATH = re.compile(r"(^|/)(tests?|__tests__|e2e)/|\.(test|spec)\.")
+NOTE = "NOTE "  # prefix of a message that is printed as PLAN NOTE and does not fail the check
+
+
+def covers(declared, f):
+    """Exact path, or a declared path ending in / that is a prefix of it."""
+    return any(f == o or (o.endswith("/") and f.startswith(o)) for o in declared)
+
+
+def guards_errs(plan, plan_path):
+    """A milestone's `guards` are regexes for how the guarded data is read, e.g. `(from|join)\\(comments\\b`.
+    One `git grep -l -P` per guard (PCRE, so `\\b` works on macOS and Linux) (tracked and untracked, gitignore respected, minus the change folder and
+    `.cfactory/`). A source file it finds must be a task `files` or `allowTestEdits` path of this or an earlier
+    milestone, a surface `exposure`, or a deferred `item`. A test file nobody owns only gets a NOTE."""
+    ms = [m for m in plan.get("milestones", []) if m.get("guards") is not None]
+    if not ms:
+        return []
+    errs = []
+    for m in ms:
+        gs = m["guards"]
+        if not (is_strs(gs) and gs and all(g.strip() for g in gs)):
+            errs.append(f"{m.get('id', '?')} guards must be a non-empty list of patterns")
+            continue
+        for g in gs:
+            try:
+                re.compile(g)
+            except re.error as e:
+                errs.append(f"{m.get('id', '?')} guard {g} is not a valid pattern: {e}")
+    if errs:
+        return errs
+    d = os.path.dirname(os.path.abspath(plan_path))
+    top = subprocess.run(["git", "-C", d, "rev-parse", "--show-toplevel"], capture_output=True, text=True)
+    if top.returncode:
+        return ["guards need the plan inside a git repo: the check runs git grep"]
+    root = top.stdout.strip()
+    folder = os.path.relpath(os.path.realpath(d), os.path.realpath(root))
+    if folder.startswith(".."):
+        return [f"guards: the plan folder {folder} is outside the repo"]
+    skip = [":(exclude).cfactory", f":(exclude){folder}"]
+    owned, declared = set(), set()
+    for m in plan["milestones"]:
+        for t in m.get("tasks", []):
+            owned |= set(t.get("files", [])) | set(t.get("allowTestEdits", []))
+        for s in m.get("surface") or []:
+            if isinstance(s, dict) and filled(s.get("exposure")):
+                declared.add(s["exposure"].strip())
+        for x in m.get("deferred") or []:
+            if isinstance(x, dict) and filled(x.get("item")) and filled(x.get("probe")):
+                declared.add(x["item"].strip())
+        for g in m.get("guards") or []:
+            p = subprocess.run(["git", "-C", root, "grep", "-l", "-P", "--untracked", "-e", g, "--", ".", *skip], capture_output=True, text=True)
+            if p.returncode not in (0, 1):
+                errs.append(f"guard {g}: git grep failed: {p.stderr.strip()}")
+                continue
+            for f in p.stdout.split("\n"):
+                if not f or covers(owned, f):
+                    continue
+                if TEST_PATH.search(f):
+                    errs.append(f"{NOTE}{m['id']} guard {g}: {f} reads it; if it asserts the old behaviour, add it to allowTestEdits")
+                elif not covers(declared, f):
+                    errs.append(f"{m['id']} guard {g}: {f} reads it but no task of {m['id']} or earlier owns it, no surface exposure names it and no deferred item with a probe lists it")
+    return errs
 
 
 def surface_errs(m, mid):
@@ -347,11 +412,12 @@ def main():
         print("usage: check-plan.py <plan.md> [--all] [--approved <sha>]", file=sys.stderr)
         return 2
     errs, nm, nt = validate(args[0], approved, every)
+    fails = [e for e in errs if not e.startswith(NOTE)]
     for e in errs:
-        print(f"PLAN FAIL {e}")
-    if not errs:
+        print(f"PLAN NOTE {e[len(NOTE):]}" if e.startswith(NOTE) else f"PLAN FAIL {e}")
+    if not fails:
         print(f"PLAN OK {nm} milestones {nt} tasks")
-    return 1 if errs else 0
+    return 1 if fails else 0
 
 
 if __name__ == "__main__":

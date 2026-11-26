@@ -61,7 +61,7 @@ All of it except the scenarios lives in the app's own repository, versioned with
 - Grill per `references/grilling.md`, for every size. The tree covers test edits, who can see what, deferrals with probes, merge and production gate, holds, design boards and preflight tools.
 - Write `intent.md` (`references/intent-template.md`), then `delta.md` with journeys and the design mapping, per `references/spec-standard.md`. Every requirement `req-<n>` (the next free number in the repo) cites `[outcome-<n>]` or `[constraint-<n>]`. Ids in prose come after an explainer of at most eight words ("guests see only their own comments in mail (req-159)"); scheme in `references/spec-standard.md`. No `[NEEDS CLARIFICATION` may remain.
 - Draft holdout scenarios with a separate agent that never sees builder output. Each names its `milestone`.
-- For a risky milestone, one read-only sweep of the base (an Explore agent) lists every place an actor can see the data. It becomes the plan's `surface`.
+- For a risky milestone, one read-only sweep of the base (an Explore agent) lists every place an actor can see the data. It becomes the plan's `surface`; the pattern for how the guarded data is read goes in `guards`, and `check-plan.py` fails on any source file that matches it and no task, surface exposure or probed deferral covers.
 
 ### 2. Plan and approval
 - Copy `references/plan-template.md` (or `plan-small-template.md`) to `changes/<slug>/plan.md` and fill it per `references/plan-standard.md`, including the `json cfactory` block.
