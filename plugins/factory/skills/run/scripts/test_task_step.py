@@ -54,69 +54,121 @@ def build(wt, name, text="x\n"):
     git(wt, "commit", "-qm", f"build {name}")
 
 
+def ok(repo, sha, cmd, *args):
+    return step(repo, cmd, P, "M1", *args, "--approved", sha)
+
+
 def test_full_flow_target_start_finish_gate_status(tmp_path):
     repo, sha = milestone_repo(tmp_path)
-    code, out = step(repo, "target", P, "M1")
+    code, out = ok(repo, sha, "target")
     assert code == 0 and out.strip() == f"TARGET OK {sha}"
-    code, out = step(repo, "start", P, "M1", "T1")
+    code, out = ok(repo, sha, "start", "T1")
     wt = repo / ".worktrees" / f"{SLUG}-M1-T1"
     assert code == 0 and out.strip() == f"START OK T1 {wt} {git(repo, 'rev-parse', 'HEAD')}" and (wt / ".setup-ran").exists()
-    assert step(repo, "start", P, "M1", "T1")[1].startswith("START OK T1") and "reused" in step(repo, "start", P, "M1", "T1")[1]
+    assert "reused" in ok(repo, sha, "start", "T1")[1]
     build(wt, "src/a.ts")
-    code, out = step(repo, "finish", P, "M1", "T1", "--approved", sha)
+    code, out = ok(repo, sha, "finish", "T1")
     built = git(wt, "rev-parse", "HEAD")
     assert code == 0 and f"FINISH OK T1 INTEGRITY OK builder={built} merged={git(repo, 'rev-parse', 'HEAD')}" in out
-    assert git(repo, "rev-parse", "HEAD^2") == built  # the checked commit itself was merged
+    assert git(repo, "rev-parse", "HEAD^2") == built and git(repo, "log", "-1", "--format=%s").startswith("factory-merge: ")
     st = json.loads((repo / ".factory/state/M1.json").read_text())
     assert st["checked"] == [built] and st["tasks"]["T1"]["builder"] == built and st["target"] == sha
     assert git(repo, "status", "--porcelain") == ""  # state is git-ignored
-    step(repo, "start", P, "M1", "T2")
+    ok(repo, sha, "start", "T2")
     build(repo / ".worktrees" / f"{SLUG}-M1-T2", "src/b.ts")
-    assert step(repo, "finish", P, "M1", "T2", "--approved", sha)[0] == 0
-    code, out = step(repo, "gate", P, "M1", "--approved", sha)
+    assert ok(repo, sha, "finish", "T2")[0] == 0
+    code, out = ok(repo, sha, "gate")
     assert code == 0 and "GATE integrity OK" in out and "GATE check-plan OK" in out, out
-    code, out = step(repo, "status", P, "M1")
-    assert code == 0 and f"target={sha}" in out and "T1:" in out and "T2:" in out
+    code, out = ok(repo, sha, "status")
+    assert code == 0 and f"target={sha}" in out and "T1:" in out and "T2:" in out and out.count(",") >= 2
 
 
 def test_finish_fails_on_a_path_outside_the_task_and_merges_nothing(tmp_path):
     repo, sha = milestone_repo(tmp_path)
-    step(repo, "target", P, "M1")
-    step(repo, "start", P, "M1", "T1")
+    ok(repo, sha, "target")
+    ok(repo, sha, "start", "T1")
     wt = repo / ".worktrees" / f"{SLUG}-M1-T1"
     build(wt, "src/a.ts")
     build(wt, "src/stray.ts")
     before = git(repo, "rev-parse", "HEAD")
-    code, out = step(repo, "finish", P, "M1", "T1", "--approved", sha)
+    code, out = ok(repo, sha, "finish", "T1")
     assert code == 1 and "FINISH FAIL T1 integrity" in out and "INTEGRITY FAIL outside task T1: src/stray.ts" in out
     assert git(repo, "rev-parse", "HEAD") == before and json.loads((repo / ".factory/state/M1.json").read_text())["checked"] == []
 
 
 def test_gate_fails_for_a_change_made_after_the_builder_check(tmp_path):
     repo, sha = milestone_repo(tmp_path)
-    step(repo, "target", P, "M1")
-    code, out = step(repo, "gate", P, "M1", "--approved", sha)
+    ok(repo, sha, "target")
+    code, out = ok(repo, sha, "gate")
     assert code == 1 and "GATE FAIL no task has passed `finish` yet" in out
-    step(repo, "start", P, "M1", "T1")
+    ok(repo, sha, "start", "T1")
     build(repo / ".worktrees" / f"{SLUG}-M1-T1", "src/a.ts")
-    assert step(repo, "finish", P, "M1", "T1", "--approved", sha)[0] == 0
+    assert ok(repo, sha, "finish", "T1")[0] == 0
     (repo / "src/a.ts").write_text("edited after the check\n")
     git(repo, "add", "-A")
     git(repo, "commit", "-qm", "direct")
-    code, out = step(repo, "gate", P, "M1", "--approved", sha)
+    code, out = ok(repo, sha, "gate")
     assert code == 1 and "GATE integrity FAIL" in out and "changed after the builder check: src/a.ts" in out
 
 
-def test_finish_gate_need_a_target_and_bad_ids_are_refused(tmp_path):
+def test_a_sha_added_to_the_state_file_never_reaches_checked(tmp_path):
     repo, sha = milestone_repo(tmp_path)
-    assert step(repo, "finish", P, "M1", "T1", "--approved", sha) == (1, "FINISH FAIL no target SHA recorded: run `target` first\n")
-    assert step(repo, "start", P, "M1", "../evil")[0] == 1
-    assert step(repo, "start", P, "x;rm", "T1")[0] == 2
-    assert step(repo, "bogus", P, "M1")[0] == 2
+    ok(repo, sha, "target")
+    (repo / "src").mkdir()
+    (repo / "src/a.ts").write_text("sneaked in\n")
+    git(repo, "add", "-A")
+    git(repo, "commit", "-qm", "direct")
+    sneaked = git(repo, "rev-parse", "HEAD")
+    f = repo / ".factory/state/M1.json"
+    st = json.loads(f.read_text())
+    st["checked"] = [sneaked]
+    st["tasks"]["T1"] = {"builder": sneaked, "merged": sneaked}
+    f.write_text(json.dumps(st))
+    code, out = ok(repo, sha, "gate")
+    assert code == 1 and "no task has passed `finish` yet" in out
+    assert f"checked={sneaked}" not in ok(repo, sha, "status")[1]
+
+
+def test_setup_comes_from_the_approved_commit_not_the_working_file(tmp_path):
+    repo, sha = milestone_repo(tmp_path)
+    ok(repo, sha, "target")
+    plan = repo / P
+    plan.write_text(plan.read_text().replace('"setup": "touch .setup-ran"', '"setup": "touch .pwned"'))  # uncommitted edit
+    assert ok(repo, sha, "start", "T1")[0] == 0
+    wt = repo / ".worktrees" / f"{SLUG}-M1-T1"
+    assert (wt / ".setup-ran").exists() and not (wt / ".pwned").exists()
+
+
+def test_bad_arguments_are_refused(tmp_path):
+    repo, sha = milestone_repo(tmp_path)
+    assert step(repo, "finish", P, "M1", "T1") [0] == 2  # --approved is required
+    assert step(repo, "start", P, "M1", "T1")[0] == 2
+    for bad in ("../evil", "T1;x", "M1-gap2", "-rf"):
+        assert ok(repo, sha, "start", bad)[0] == 2, bad
+    assert ok(repo, sha, "bogus")[0] == 2
+    code, out = step(repo, "target", P, "x;rm", "--approved", sha)
+    assert code == 1 and "not a milestone id" in out
+    code, out = step(repo, "target", str(repo / P), "M1", "--approved", sha)
+    assert code == 1 and "repo-relative" in out
+    code, out = step(repo, "target", "../plan.md", "M1", "--approved", sha)
+    assert code == 1 and "repo-relative" in out
+    code, out = step(repo, "target", P, "M1", "--approved", "deadbeef")
+    assert code == 1 and "not a commit" in out
+    code, out = step(repo, "target", "changes/nope.md", "M1", "--approved", sha)
+    assert code == 1 and "does not exist at approved" in out
+
+
+def test_finish_and_gate_need_a_valid_target(tmp_path):
+    repo, sha = milestone_repo(tmp_path)
+    assert ok(repo, sha, "finish", "T1")[0] == 1 and "no valid target SHA" in ok(repo, sha, "finish", "T1")[1]
+    f = repo / ".factory/state/M1.json"
+    f.parent.mkdir(parents=True)
+    f.write_text(json.dumps({"target": "0" * 40, "pin": None, "checked": [], "tasks": {}}))
+    assert "no valid target SHA" in ok(repo, sha, "gate")[1]
 
 
 def test_pin_is_recorded_and_passed_to_integrity(tmp_path):
     repo, sha = milestone_repo(tmp_path)
-    assert step(repo, "pin", P, "M1", sha) == (0, f"PIN OK {sha}\n")
+    assert ok(repo, sha, "pin", sha) == (0, f"PIN OK {sha}\n")
     assert json.loads((repo / ".factory/state/M1.json").read_text())["pin"] == sha
-    assert step(repo, "pin", P, "M1", "deadbeef")[0] == 1
+    assert ok(repo, sha, "pin", "deadbeef")[0] == 1

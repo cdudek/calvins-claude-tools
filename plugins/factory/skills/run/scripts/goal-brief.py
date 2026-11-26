@@ -142,7 +142,9 @@ def gap_line(m, change):
 def template_blocks():
     """skills/run/templates/kickoff.md: the kickoff's fixed prose, in blocks that start at a `@@ name` line."""
     blocks, name = {}, None
-    for line in (HERE.parent / "templates" / "kickoff.md").read_text(encoding="utf-8").split("\n"):
+    here = HERE / "kickoff.md"  # copied beside the script into <repo>/.factory/
+    path = here if here.exists() else HERE.parent / "templates" / "kickoff.md"
+    for line in path.read_text(encoding="utf-8").split("\n"):
         if line.startswith("@@ "):
             name = line[3:].strip()
             blocks[name] = []
@@ -199,14 +201,14 @@ def section(plan, m, P, root, sha, h, preflight, record=True):
     return fill(
         template_blocks()["milestone"], h=h, P=P, mid=mid, sha=sha, branch=branch, change=change, repo=root.name, covers=", ".join(m["covers"]),
         preflight="\n".join(preflight), task_lines="\n".join(task_lines(m)), risky_step=risky_step, ux_step=ui_step, gap_line=gap_line(m, change),
-        target_step=(f"Target: run `python3 .factory/task-step.py target {P}plan.md {mid}`. It fetches origin and records the head of `{tgt}` as the "
+        target_step=(f"Target: run `python3 .factory/task-step.py target {P}plan.md {mid} --approved {sha}`. It fetches origin and records the head of `{tgt}` as the "
                      f"<target SHA>, which every integrity call the scripts make passes, so a local `{tgt}` that lags origin never decides what "
                      "counts as this milestone's change.") if record else "",
         model_note=(" Pass each task's builder model and effort to its Agent call (a task with no model runs on Sonnet 5.5)."
                     if any("model" in t for t in m["tasks"]) else ""),
         bug_flow=("Bug flow (kind: bug): tell the builder its first commit holds only the failing regression test, no fix. When it reports that "
                   "commit, run the task's check with the worktree at that commit, paste the failing output, and record the SHA with "
-                  f"`python3 .factory/task-step.py pin {P}plan.md {mid} <failing-test SHA>`. The fix pass goes to the same worktree, and every "
+                  f"`python3 .factory/task-step.py pin {P}plan.md {mid} <failing-test SHA> --approved {sha}`. The fix pass goes to the same worktree, and every "
                   "later `finish` passes `--pin` for it.") if bug else "",
         commit_what=commit_what, verifier_tier=verifier_tier(m), ship_tail=ship_tail)
 

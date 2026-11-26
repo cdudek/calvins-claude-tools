@@ -87,7 +87,7 @@ def test_ui_milestone_brief(tmp_path):
     assert "gallery approval" not in goal and "by the owner" not in goal
     assert len(goal) < 1500
     k = kick.read_text()
-    assert "`python3 .factory/task-step.py start plan.md M1 <task id>`" in k and "never by the Agent tool's worktree isolation" in k
+    assert "`python3 .factory/task-step.py start plan.md M1 <task id> --approved " in k and "never by the Agent tool's worktree isolation" in k
     assert "git branch" not in k and "wt switch" not in k and "ff-only" not in k
     assert f"~/.factory/scenarios/{tmp_path.name}/2026-11-24-saved-searches/" in k
     assert "Arm auto-merge." in k and "ux-verifier" in k
@@ -263,7 +263,7 @@ def test_bug_is_a_plan_with_a_pinned_failing_test(tmp_path):
     k = kick.read_text()
     assert code == 0, out
     assert "first commit holds only the failing regression test" in k and "run the task's check with the worktree at that commit" in k
-    assert "`python3 .factory/task-step.py pin plan.md M1 <failing-test SHA>`" in k and "later `finish` passes `--pin`" in k
+    assert "`python3 .factory/task-step.py pin plan.md M1 <failing-test SHA> --approved " in k and "later `finish` passes `--pin`" in k
     code, out, kick = run(tmp_path / "f", "M1", plan_text(ms, kind="feature", requirements=[R1]), reqs=(R1,))
     assert code == 0 and "task-step.py pin" not in kick.read_text() and "failing regression test" not in kick.read_text()
 
@@ -322,7 +322,7 @@ def test_plan_path_is_the_repo_relative_one(tmp_path):
 def test_target_sha_is_fetched_recorded_and_passed_not_a_branch_name(tmp_path):
     code, out, kick = run(tmp_path / "a", "M1", plan_text(integration="integ"))
     k = kick.read_text()
-    assert code == 0 and "`python3 .factory/task-step.py target plan.md M1`" in k and "records the head of `integ` as the <target SHA>" in k
+    assert code == 0 and "`python3 .factory/task-step.py target plan.md M1 --approved " in k and "records the head of `integ` as the <target SHA>" in k
     assert k.index("task-step.py target") < k.index("task-step.py start")  # recorded before the first worktree and integrity call
     assert "<this worktree>" not in k and "--target <target SHA>" not in k
     code, out, kick = run(tmp_path / "b", "--all", plan_text(FULL, integration="integ"))
@@ -330,7 +330,7 @@ def test_target_sha_is_fetched_recorded_and_passed_not_a_branch_name(tmp_path):
     assert code == 0
     assert "`git fetch origin`, record `git rev-parse origin/integ` as that milestone's <target SHA>" in k
     assert "`git branch milestone/2026-11-24-saved-searches-<M> <target SHA>`" in k and "<M> origin/integ" not in k
-    assert "then run `python3 .factory/task-step.py target plan.md <M>` inside it" in k and k.count("task-step.py target plan.md M1") == 1
+    assert "then run `python3 .factory/task-step.py target plan.md <M> --approved " in k and k.count("task-step.py target plan.md M1") == 1
 
 
 def test_checked_task_commits_are_recorded_and_passed(tmp_path):
@@ -360,7 +360,7 @@ def test_ship_commits_first_then_verifies_that_sha_then_pushes_it(tmp_path):
         assert "progress entry" not in after and "commit it" not in after and "append" not in after  # nothing is committed after it
         assert "no PR number or merge SHA" in s
         assert "goes through Verify step 2 (per-task integrity, a new <checked SHA>, merge that commit), then repeat Ship from step 1" in s
-        assert "task-step.py status" in k and "target plan.md <M> --resume" in k and "<checked SHA>s" in k  # a resumed run re-records both
+        assert "task-step.py status" in k and "--approved " in k and "--resume" in k and "<checked SHA>s" in k  # a resumed run re-records both
         if mid == "M3":
             assert s.index("apply ") < s.index("the progress entry")  # the spec commit comes first too
         if mid == "M1":
