@@ -26,6 +26,7 @@ into `base`, auto-merge armed unless a milestone is risky or `deployOnMerge` is 
 with the merge-ready release PR URL) and `kind`.
 """
 import importlib.util
+import re
 import shlex
 import subprocess
 import sys
@@ -305,25 +306,43 @@ def git_out(cwd, *args):
     return subprocess.run(["git", "-C", str(cwd), *args], capture_output=True, text=True)
 
 
+def scrub(text):
+    """git echoes remote URLs in its errors: drop `user:pass@` from any `scheme://user:pass@host`."""
+    return re.sub(r"(\w+://)[^/@\s]+@", r"\1", text.strip())
+
+
+def valid_ref(cwd, name):
+    """A branch name git accepts that cannot be read as an option."""
+    return not name.startswith("-") and git_out(cwd, "check-ref-format", "--branch", name).returncode == 0
+
+
 def preflight_integration(plan_path, plan, sha):
     """Create the plan's integration branch on origin when it is missing. Returns (ok, line).
+    Only a branch named integration/... is pushed here; any other name gets the command to run by hand.
     shortcut: a repo with no origin remote skips this, the run's own `git fetch origin` fails loudly then."""
     integ, base, cwd = plan["integration"], plan["base"], plan_path.parent
+    for what, name in (("integration", integ), ("base", base)):
+        if not valid_ref(cwd, name):
+            return False, f"plan {what} {ascii(name)[:60]} is not a valid branch name"
+    if not re.fullmatch(r"[0-9a-f]{7,40}", str(sha)):
+        return False, f"approved revision {ascii(sha)[:60]} is not a commit hash"
     if git_out(cwd, "remote", "get-url", "origin").returncode:
         return True, ""
-    ls = git_out(cwd, "ls-remote", "--heads", "origin", integ)
+    ls = git_out(cwd, "ls-remote", "--heads", "--", "origin", integ)
     if ls.returncode:
-        return False, f"could not read origin: {ls.stderr.strip()}"
+        return False, f"could not read origin (git ls-remote --heads origin {integ} failed): {scrub(ls.stderr)}"
     if ls.stdout.strip():
         return True, f"{integ} exists on origin"
     push = f"git push origin {sha}:refs/heads/{integ}"
-    on_base = (git_out(cwd, "fetch", "-q", "origin", base).returncode == 0
-               and git_out(cwd, "merge-base", "--is-ancestor", sha, "FETCH_HEAD").returncode == 0)
+    if not integ.startswith("integration/"):
+        return False, f"{integ} is missing on origin and is not named integration/...: run `{push}` yourself"
+    on_base = (git_out(cwd, "fetch", "-q", "--", "origin", base).returncode == 0
+               and git_out(cwd, "merge-base", "--is-ancestor", "--", sha, "FETCH_HEAD").returncode == 0)
     if not on_base:
         return False, f"{integ} is missing on origin and the approved {sha} is not on {base}: run `{push}`"
     done = git_out(cwd, "push", "-q", "origin", f"{sha}:refs/heads/{integ}")
     if done.returncode:
-        return False, f"could not push {integ}: {done.stderr.strip()}. Run `{push}`"
+        return False, f"could not push {integ} (`{push}` failed): {scrub(done.stderr)}. Run it yourself"
     return True, f"created {integ} on origin from {sha}"
 
 

@@ -1,4 +1,5 @@
 import copy
+import importlib.util
 import json
 import shlex
 import subprocess
@@ -421,10 +422,10 @@ def test_sized_plan_names_model_effort_and_verifier(tmp_path):
 KICKOFF_STANCE = "Do reversible steps yourself and keep going: create a missing branch, rerun a check, recreate a worktree. Stop only for a decision the plan does not cover or an irreversible step."
 
 
-def with_origin(tmp_path, integ="integration/v1-beta", push_base=True):
+def with_origin(tmp_path, integ="integration/v1-beta", push_base=True, **top):
     """A repo whose origin is a local bare repo holding main; returns (plan, approved sha, bare path)."""
     work = tmp_path / "work"
-    plan, sha = repo(work, plan_text(integration=integ))
+    plan, sha = repo(work, plan_text(integration=integ, **top))
     git(work, "branch", "-M", "main")
     bare = tmp_path / "origin.git"
     subprocess.run(["git", "init", "-q", "--bare", str(bare)], check=True)
@@ -473,3 +474,52 @@ def test_plan_without_integration_has_no_preflight_and_the_stance_line(tmp_path)
     code, out, kick = run(tmp_path, "M1")
     assert code == 0 and out.startswith("-#-#- KICKOFF FILE -#-#-") and "PREFLIGHT" not in out
     assert KICKOFF_STANCE in kick.read_text()
+
+
+def load_brief():
+    spec = importlib.util.spec_from_file_location("goal_brief", SCRIPT)
+    mod = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(mod)
+    return mod
+
+
+def test_bad_integration_or_base_names_are_rejected_before_any_git_call(tmp_path):
+    for i, (integ, top) in enumerate((("-evil", {}), ("a..b", {}), ("x.lock", {}), ("integration/ok", {"base": "-b"}))):
+        (tmp_path / str(i)).mkdir()
+        plan, sha, bare = with_origin(tmp_path / str(i), integ=integ, **top)
+        p = brief(plan, "M1", "--approved", sha)
+        assert p.returncode == 1 and "BRIEF FAIL plan" in p.stdout and "not a valid branch name" in p.stdout, (integ, p.stdout)
+        assert heads(bare) == "main"
+
+
+def test_refs_come_after_a_double_dash(tmp_path):
+    gb, calls = load_brief(), []
+
+    def fake(cwd, *args):
+        calls.append(args)
+        return subprocess.CompletedProcess(args, 0, "" if args[0] == "ls-remote" else "x", "")
+    gb.git_out = fake
+    ok, _ = gb.preflight_integration(tmp_path / "plan.md", {"integration": "integration/v1", "base": "main"}, "abc1234")
+    assert ok
+    by = {c[0]: c for c in calls}
+    assert by["ls-remote"][by["ls-remote"].index("--") + 1:] == ("origin", "integration/v1")
+    assert by["fetch"][by["fetch"].index("--") + 1:] == ("origin", "main")
+    assert by["merge-base"][by["merge-base"].index("--") + 1:] == ("abc1234", "FETCH_HEAD")
+
+
+def test_credentials_are_stripped_from_git_errors(tmp_path):
+    scrub = load_brief().scrub
+    assert scrub("fatal: unable to access 'https://user:s3cret@host.example/x.git/': nope") == "fatal: unable to access 'https://host.example/x.git/': nope"
+    assert "s3cret" not in scrub("ssh://deploy:s3cret@host/x and https://tok@h/y")
+    plan, sha, bare = with_origin(tmp_path)
+    git(tmp_path / "work", "remote", "set-url", "origin", "https://user:s3cret@127.0.0.1:1/x.git")
+    p = brief(plan, "M1", "--approved", sha)
+    assert p.returncode == 1 and "could not read origin" in p.stdout and "s3cret" not in p.stdout + p.stderr
+
+
+def test_only_integration_branches_are_pushed(tmp_path):
+    plan, sha, bare = with_origin(tmp_path, integ="release/v1")
+    p = brief(plan, "M1", "--approved", sha)
+    assert p.returncode == 1 and "BRIEF FAIL" in p.stdout
+    assert f"run `git push origin {sha}:refs/heads/release/v1` yourself" in p.stdout
+    assert heads(bare) == "main"
