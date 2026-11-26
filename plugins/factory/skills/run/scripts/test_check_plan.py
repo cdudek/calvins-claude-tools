@@ -563,6 +563,24 @@ def test_guard_test_file_is_a_note_not_a_failure(tmp_path):
     assert code == 0 and "NOTE" not in out
 
 
+def test_test_classifier_is_basename_or_top_level_folder(tmp_path):
+    for name in ("src/lib/tests-helpers/x.ts", "src/tests/x.ts", "src/e2e/x.ts"):  # a folder segment below the top is source
+        code, out = guarded(tmp_path / name.replace("/", "_"), {name: "db.from(comments)\n"})
+        assert code == 1 and f"PLAN FAIL M2 guard" in out and "PLAN NOTE" not in out, name
+    for name in ("src/x.test.ts", "src/y.spec.tsx", "tests/x.ts", "__tests__/x.ts", "e2e/x.ts", "test/x.ts"):
+        code, out = guarded(tmp_path / name.replace("/", "_"), {name: "db.from(comments)\n"}, tasks=task(files=["api/leak.py"]))
+        assert code == 0 and f"PLAN NOTE M2 guard" in out and name in out, name
+
+
+def test_bad_ids_fail_and_never_reach_a_message_raw(tmp_path):
+    code, out = run(tmp_path / "a", mutated(lambda p: p["milestones"][0].update(id="NOTE M9")))
+    assert code == 1 and "PLAN FAIL milestone id 'NOTE M9' must look like M<n>" in out and "PLAN NOTE" not in out
+    code, out = run(tmp_path / "b", mutated(lambda p: p["milestones"][0]["tasks"][0].update(id="T1\nPLAN OK 1 milestones 1 tasks")))
+    assert code == 1 and "\nPLAN OK" not in out and "must look like T<n>" in out
+    code, out = run(tmp_path / "c", mutated(lambda p: p["milestones"][0]["tasks"][0].update(id=5)))
+    assert code == 1 and "task id 5 must look like T<n>" in out
+
+
 def test_guard_git_grep_error(tmp_path):
     code, out = guarded(tmp_path, guards=["[[.a.]]"])  # compiles in Python, rejected by git grep
     assert code == 1 and "PLAN FAIL guard [[.a.]]: git grep failed:" in out
