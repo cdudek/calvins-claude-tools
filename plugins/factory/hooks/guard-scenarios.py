@@ -37,9 +37,12 @@ def factory_run(event):
     cwd = str(event.get("cwd") or ".")
     try:
         git = lambda *a: subprocess.run(["git", "-C", cwd, *a], capture_output=True, text=True, timeout=5).stdout.strip()  # noqa: E731
-        return git("symbolic-ref", "--short", "HEAD").startswith("milestone/") and os.path.isdir(os.path.join(git("rev-parse", "--show-toplevel"), ".cfactory"))
+        if not git("symbolic-ref", "--short", "HEAD").startswith("milestone/"):
+            return False
+        top = git("rev-parse", "--show-toplevel")
+        return bool(top) and os.path.isdir(os.path.join(top, ".cfactory"))
     except (OSError, subprocess.SubprocessError):
-        return False
+        return False  # not a factory run as far as we can tell: an ordinary session must never lose background agents to a git error
 
 
 def mentions(text):
@@ -52,7 +55,7 @@ def mentions(text):
 
 def decide(event):
     ti = event.get("tool_input")
-    if event.get("tool_name") in ("Agent", "Task") and isinstance(ti, dict) and ti.get("run_in_background") is True and factory_run(event):
+    if event.get("tool_name") in ("Agent", "Task") and isinstance(ti, dict) and ti.get("run_in_background") not in (None, False, 0, "", "false", "False") and factory_run(event):
         return BG_DENY
     agent = str(event.get("agent_type") or "")
     if not agent and os.environ.get("CFACTORY_EVAL") != "1":
