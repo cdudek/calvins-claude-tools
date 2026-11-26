@@ -496,39 +496,85 @@ def test_task_model_and_milestone_verifier(tmp_path):
     assert code == 1 and "M1 verifier must be" in out
 
 
-def guarded(tmp_path, **ms):
-    """A temp git repo where api/leak.py reads the guarded table `comments`; returns the check result."""
+PAT = r"(from|join)\(comments\b"
+
+
+def guarded(tmp_path, files=None, guards=(PAT,), track=True, **ms):
+    """A temp git repo with source files that read the guarded table; returns (exit code, output)."""
     tmp_path.mkdir(parents=True, exist_ok=True)
     git(tmp_path, "init", "-q")
-    (tmp_path / "api").mkdir()
-    (tmp_path / "api" / "leak.py").write_text("select * from comments\n")
+    files = files or {"api/leak.py": "db.from(comments)\n"}
+    for name, body in files.items():
+        (tmp_path / name).parent.mkdir(parents=True, exist_ok=True)
+        (tmp_path / name).write_text(body)
     (tmp_path / "changes").mkdir()
-    p = mutated(lambda p: p["milestones"][1].update(guards=["comments"], **ms))
+    p = mutated(lambda p: p["milestones"][1].update(guards=list(guards), **ms))
     f = write_plan(tmp_path / "changes" / "x", p)
-    git(tmp_path, "add", "-A")
+    git(tmp_path, "add", "-A" if track else "changes")
     r = subprocess.run([sys.executable, str(SCRIPT), str(f)], capture_output=True, text=True)
     return r.returncode, r.stdout
 
 
-def test_guard_uncovered_file_fails(tmp_path):
+def task(files=(), edits=()):
+    return [{"id": "T2", "covers": ["req-2"], "files": ["b.py", *files], "check": "pytest", "needs": ["T1"], "allowTestEdits": list(edits)}]
+
+
+def test_guard_pattern_matches_reads_not_bare_name(tmp_path):
+    files = {"api/leak.py": "db.from(comments)\n", "api/other.py": "# comments are nice\n"}
+    code, out = guarded(tmp_path, files)
+    assert code == 1 and "api/leak.py reads it" in out and "other.py" not in out
+
+
+def test_guard_uncovered_source_file_fails(tmp_path):
     code, out = guarded(tmp_path)
     assert code == 1
-    assert "PLAN FAIL M2 guard comments: api/leak.py references it but no task of M2 or earlier owns it" in out
+    assert "PLAN FAIL M2 guard (from|join)\\(comments\\b: api/leak.py reads it but no task of M2 or earlier owns it, no surface exposure names it and no deferred item with a probe lists it" in out
+
+
+def test_guard_invalid_pattern(tmp_path):
+    code, out = guarded(tmp_path, guards=["(from"])
+    assert code == 1 and "PLAN FAIL M2 guard (from is not a valid pattern" in out
 
 
 def test_guard_covered_by_task_surface_or_probed_deferral(tmp_path):
-    tasks = [{"id": "T2", "covers": ["req-2"], "files": ["b.py", "api/leak.py"], "check": "pytest", "needs": ["T1"]}]
-    assert guarded(tmp_path / "a", tasks=tasks)[0] == 0
-    tasks = [{"id": "T2", "covers": ["req-2"], "files": ["b.py"], "check": "pytest", "needs": ["T1"], "allowTestEdits": ["api/"]}]
-    assert guarded(tmp_path / "a2", tasks=tasks)[0] == 0
-    s = [{"exposure": "api/leak.py list", "requirement": "req-2", "scenario": "scenario-1 guest sees own"}]
-    assert guarded(tmp_path / "b", risky=True, surface=s)[0] == 0
+    assert guarded(tmp_path / "a", tasks=task(files=["api/leak.py"]))[0] == 0
+    assert guarded(tmp_path / "b", tasks=task(files=["api/"]))[0] == 0
+    s = [{"exposure": "api/leak.py", "requirement": "req-2", "scenario": "scenario-1 guest sees own"}]
+    assert guarded(tmp_path / "c", risky=True, surface=s)[0] == 0
     d = [{"item": "api/leak.py", "reason": "dead code", "probe": "rg -n leak shows no caller"}]
-    assert guarded(tmp_path / "c", deferred=d)[0] == 0
+    assert guarded(tmp_path / "d", deferred=d)[0] == 0
+
+
+def test_guard_lookalike_path_not_covered(tmp_path):
+    d = [{"item": "api/leak.p", "reason": "dead code", "probe": "rg -n leak shows no caller"}]
+    code, out = guarded(tmp_path, deferred=d)
+    assert code == 1 and "api/leak.py reads it" in out
+    d = [{"item": "api/leak.py", "reason": "dead code", "probe": "rg"}]
+    s = [{"exposure": "GET api/leak.py", "requirement": "req-2", "scenario": "s"}]
+    assert guarded(tmp_path / "s", risky=True, surface=s)[0] == 1  # prose that merely contains the path
+
+
+def test_guard_test_file_is_a_note_not_a_failure(tmp_path):
+    files = {"api/leak.py": "db.from(comments)\n", "tests/leak.test.ts": "db.from(comments)\n"}
+    code, out = guarded(tmp_path, files, tasks=task(files=["api/leak.py"]))
+    assert code == 0
+    assert "PLAN NOTE M2 guard (from|join)\\(comments\\b: tests/leak.test.ts reads it; if it asserts the old behaviour, add it to allowTestEdits" in out
+    code, out = guarded(tmp_path / "o", files, tasks=task(files=["api/leak.py"], edits=["tests/leak.test.ts"]))
+    assert code == 0 and "NOTE" not in out
+
+
+def test_guard_git_grep_error(tmp_path):
+    code, out = guarded(tmp_path, guards=["[[.a.]]"])  # compiles in Python, rejected by git grep
+    assert code == 1 and "PLAN FAIL guard [[.a.]]: git grep failed:" in out
+
+
+def test_guard_scans_untracked_not_ignored(tmp_path):
+    files = {"api/new.py": "db.from(comments)\n", "node_modules/x.js": "db.from(comments)\n", ".gitignore": "node_modules/\n"}
+    code, out = guarded(tmp_path, files, tasks=task())
+    assert code == 1 and "api/new.py reads it" in out and "node_modules" not in out
 
 
 def test_guard_shape_and_no_guards(tmp_path):
-    code, out = run(tmp_path / "n", VALID)
-    assert code == 0
+    assert run(tmp_path / "n", VALID)[0] == 0
     code, out = run(tmp_path / "e", mutated(lambda p: p["milestones"][1].update(guards=[])))
     assert code == 1 and "M2 guards must be a non-empty list" in out
