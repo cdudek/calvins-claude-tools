@@ -225,6 +225,7 @@ def kickoff(plan, ms, plan_path, root, sha, every=False):
         f"You coordinate factory change {change}, {scope}. "
         f"The approved plan and delta are on `{tgt}`, or on this branch for milestone 1 in a repo without a plan PR. "
         f"Read {P}plan.md and {P}delta.md first. The owner approved revision `{sha}`; every integrity and plan check below passes it.",
+        "Do reversible steps yourself and keep going: create a missing branch, rerun a check, recreate a worktree. Stop only for a decision the plan does not cover or an irreversible step.",
         "Resume rule: read the progress log in plan.md, reconcile it with git and PR state, skip what is already done. "
         "Read a PR's state and merge SHA from `gh pr view <n> --json state,mergeCommit` or git, never from the log. "
         f"A resumed run has lost the recorded <target SHA> and <checked SHA>s: re-record the target as `git merge-base HEAD origin/{tgt}` "
@@ -300,6 +301,32 @@ def goal(plan, m, every=False):
     return "/goal Met when any one of these is true. " + " ".join(f"{i}) {s}." for i, s in enumerate(states, 1))
 
 
+def git_out(cwd, *args):
+    return subprocess.run(["git", "-C", str(cwd), *args], capture_output=True, text=True)
+
+
+def preflight_integration(plan_path, plan, sha):
+    """Create the plan's integration branch on origin when it is missing. Returns (ok, line).
+    shortcut: a repo with no origin remote skips this, the run's own `git fetch origin` fails loudly then."""
+    integ, base, cwd = plan["integration"], plan["base"], plan_path.parent
+    if git_out(cwd, "remote", "get-url", "origin").returncode:
+        return True, ""
+    ls = git_out(cwd, "ls-remote", "--heads", "origin", integ)
+    if ls.returncode:
+        return False, f"could not read origin: {ls.stderr.strip()}"
+    if ls.stdout.strip():
+        return True, f"{integ} exists on origin"
+    push = f"git push origin {sha}:refs/heads/{integ}"
+    on_base = (git_out(cwd, "fetch", "-q", "origin", base).returncode == 0
+               and git_out(cwd, "merge-base", "--is-ancestor", sha, "FETCH_HEAD").returncode == 0)
+    if not on_base:
+        return False, f"{integ} is missing on origin and the approved {sha} is not on {base}: run `{push}`"
+    done = git_out(cwd, "push", "-q", "origin", f"{sha}:refs/heads/{integ}")
+    if done.returncode:
+        return False, f"could not push {integ}: {done.stderr.strip()}. Run `{push}`"
+    return True, f"created {integ} on origin from {sha}"
+
+
 def print_run(out, g, turns):
     print("-#-#- KICKOFF FILE -#-#-")
     print(out)
@@ -344,6 +371,13 @@ def main():
         for e in errs:
             print(f"BRIEF FAIL {e}")
         return 1
+    if plan.get("integration"):
+        ok, msg = preflight_integration(path, plan, sha)
+        if not ok:
+            print(f"BRIEF FAIL {msg}")
+            return 1
+        if msg:
+            print(f"-#-#- PREFLIGHT -#-#-\n{msg}")
     out = path.parent / f"kickoff-{'all' if every else mid}.md"
     out.write_text(kickoff(plan, pick, path, root, sha, every), encoding="utf-8")
     print_run(out, g, sum(max_turns(x) for x in pick))
