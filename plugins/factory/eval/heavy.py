@@ -12,6 +12,19 @@ import sys
 from pathlib import Path
 
 
+GIT = ["git", "-c", "gc.auto=0"]  # a background gc collides with rmtree of run directories (gc.pid)
+
+
+def no_gc_env():
+    """Also stop the git calls of child scripts (test-integrity.sh, migrate-ids.py) from auto-gc: GIT_CONFIG_* in this process."""
+    n = int(os.environ.get("GIT_CONFIG_COUNT") or 0)
+    if not any(os.environ.get(f"GIT_CONFIG_KEY_{i}") == "gc.auto" for i in range(n)):
+        os.environ.update({"GIT_CONFIG_COUNT": str(n + 1), f"GIT_CONFIG_KEY_{n}": "gc.auto", f"GIT_CONFIG_VALUE_{n}": "0"})
+
+
+no_gc_env()
+
+
 def lock_path():
     return Path(os.environ.get("CFACTORY_EVAL_HEAVY_LOCK") or Path.home() / ".cfactory/eval/heavy.lock")
 

@@ -62,6 +62,48 @@ class Prepare(unittest.TestCase):
             prepare_task.main([str(self.repo), "--start", self.start, "--reference", self.ref, "--task-id", "x", "--plan", f"changes/{fx.SLUG}/plan.md",
                                "--out", str(self.repo / "task")])
 
+    def prepare_variant(self, *extra):
+        """A second task from the same repo, where the reference also adds a test that already passes at the start commit."""
+        if not (self.repo / "tests/test_free.py").exists():
+            fx.write(self.repo, "tests/test_free.py", "from src.app import noop\n\n\ndef test_free():\n    assert noop() is None\n")
+            fx.git(self.repo, "add", "-A")
+            fx.git(self.repo, "commit", "-q", "-m", "free")
+        out = Path(self.tmp.name) / "task2"
+        prepare_task.main([str(self.repo), "--start", self.start, "--reference", fx.git(self.repo, "rev-parse", "HEAD"), "--task-id", "t2", "--plan",
+                           f"changes/{fx.SLUG}/plan.md", "--out", str(out), "--suite-cmd", fx.SUITE, *extra])
+        return json.loads((out / "task.json").read_text()), out
+
+    def test_env_and_exclude_glob(self):
+        fx.write(self.repo, "assets/shot.png", "big")
+        fx.git(self.repo, "add", "-A")
+        fx.git(self.repo, "commit", "-q", "-m", "asset")
+        start = fx.git(self.repo, "rev-parse", "HEAD")
+        out = Path(self.tmp.name) / "task3"
+        prepare_task.main([str(self.repo), "--start", start, "--reference", start, "--task-id", "t3", "--plan", f"changes/{fx.SLUG}/plan.md", "--out", str(out),
+                           "--env", "TEST_DATABASE_URL=postgres://u@127.0.0.1:5433/{db}", "--env", "TAG={run}", "--exclude-glob", "assets/*"])
+        self.assertEqual(json.loads((out / "task.json").read_text())["env"], {"TEST_DATABASE_URL": "postgres://u@127.0.0.1:5433/{db}", "TAG": "{run}"})
+        with tarfile.open(out / "start.tar.gz") as tf:
+            names = tf.getnames()
+        self.assertNotIn("assets/shot.png", names)
+        self.assertIn("src/app.py", names)
+        with self.assertRaises(SystemExit):
+            prepare_task.main([str(self.repo), "--start", start, "--reference", start, "--task-id", "t3", "--plan", f"changes/{fx.SLUG}/plan.md", "--out", str(out), "--env", "nope"])
+
+    def test_prove_splits_failing_and_already_passing_hidden_files(self):
+        t, _ = self.prepare_variant("--prove")
+        self.assertEqual(t["fail_to_pass"], ["tests/test_double.py"])
+        self.assertEqual(t["pass_to_pass_hidden"], ["tests/test_free.py"])
+
+    def test_fail_to_pass_lists_given_by_hand(self):
+        t, _ = self.prepare_variant("--fail-to-pass", "tests/test_double.py")
+        self.assertEqual((t["fail_to_pass"], t["pass_to_pass_hidden"]), (["tests/test_double.py"], ["tests/test_free.py"]))
+        with self.assertRaises(SystemExit):
+            self.prepare_variant("--fail-to-pass", "tests/other.py")
+
+    def test_no_proof_leaves_the_lists_out(self):
+        self.assertNotIn("fail_to_pass", json.loads((self.out / "task.json").read_text()))
+        self.assertEqual(json.loads((self.out / "task.json").read_text())["env"], {})
+
 
 if __name__ == "__main__":
     unittest.main()

@@ -4,12 +4,14 @@ import json
 import os
 import random
 import shutil
+import tarfile
 import tempfile
 import unittest
 from pathlib import Path
 from unittest import mock
 
 import eval_fixtures as fx
+import prepare_task
 import run_eval
 
 
@@ -40,6 +42,34 @@ class Run(unittest.TestCase):
         self.assertIn("'/goal Met when any one of these is true.", out)
         self.assertIn("APP_PORT=4100", out)
         self.assertIn("DB_NAME=evaldb_", out)
+
+    def prepared(self, **extra):
+        """A task in its own directory, optionally with task.json overrides."""
+        tmp = Path(self.tmp.name) / "other"
+        tmp.mkdir()
+        task, *_ = fx.prepare(str(tmp), extra=["--env", "TEST_DATABASE_URL=postgres://u@127.0.0.1:5433/{db}", "--env", "TAG={run}-{port}"])
+        return task
+
+    def test_task_env_is_exported_and_shown_in_the_dry_run(self):
+        self.task = self.prepared()
+        out = self.dry("--arms", "default", "--parallel", "1")
+        self.assertRegex(out, r"TEST_DATABASE_URL=postgres://u@127\.0\.0\.1:5433/evaldb_grid_t1_default_b01_\w+\n")
+        self.assertRegex(out, r"TAG=grid-t1-default-b01-\w+-4100\n")
+        self.assertIn("DB_NAME=evaldb_", out)
+
+    def test_a_cfactory_folder_in_the_start_tree_does_not_crash_and_the_pinned_scripts_win(self):
+        self.task = self.prepared()
+        tree = Path(self.tmp.name) / "tree"
+        with tarfile.open(self.task / "start.tar.gz") as tf:
+            tf.extractall(tree, filter="data")
+        (tree / ".cfactory").mkdir()
+        (tree / ".cfactory/check-plan.py").write_text("stale")
+        prepare_task.pack(tree, self.task / "start.tar.gz")
+        self.dry("--arms", "default", "--parallel", "1")
+        repo = next(next((self.results / "grid").iterdir()).glob("repo-*"))
+        self.assertNotEqual((repo / ".cfactory/check-plan.py").read_text(), "stale")
+        self.assertTrue((repo / ".cfactory/goal-brief.py").exists())
+        self.assertEqual(run_eval.git(repo, "config", "gc.auto"), "0")
 
     def test_config_dir_mode_when_no_token(self):
         out = self.dry("--arms", "default", "--parallel", "1")

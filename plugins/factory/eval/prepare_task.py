@@ -3,6 +3,7 @@
            --out ~/.cfactory/eval/tasks/<name> [--suite-cmd C] [--e2e-cmd C] [--setup C] [--preflight C ...]
            [--milestone M1] [--scenarios DIR] [--verifier-scenarios DIR] [--ticket-delta FILE]
            [--test-glob G ...] [--intent-from-outcome] [--timeout-s N] [--e2e-timeout-s N]
+           [--env NAME=TEMPLATE ...] [--exclude-glob G ...] [--prove] [--fail-to-pass FILE ...] [--pass-to-pass-hidden FILE ...]
            [--port-env NAME] [--port-range LO HI] [--db-name TEMPLATE] [--db-env NAME] [--db-create C] [--db-drop C]
 Turns a finished change into a replayable eval task, written to --out (private; refused inside <repo>):
   start.tar.gz          the tree at --start, no git history, no pax header; its plan as of --start
@@ -11,18 +12,28 @@ Turns a finished change into a replayable eval task, written to --out (private; 
   verifier-scenarios/   scenarios the arm's own verifier may read (installed per run under ~/.cfactory/scenarios)
   ticket-delta.md       the raw-ticket delta for arms with context=raw
   task.json             everything run_eval.py and grade.py need
+--env NAME=TEMPLATE exports NAME into every arm and grading run; the template may use {db} {port} {run}.
+--exclude-glob leaves matching files (large assets such as evidence images) out of start.tar.gz.
+--prove runs the hidden command per hidden file on the start tree and records fail_to_pass (failed at start) and
+pass_to_pass_hidden (passed at start); --fail-to-pass / --pass-to-pass-hidden give the lists for tasks proven elsewhere
+(files not named in --fail-to-pass are pass_to_pass_hidden unless --pass-to-pass-hidden says otherwise).
 """
 import argparse
 import fnmatch
 import io
 import json
+import os
 import re
+import shlex
 import shutil
 import subprocess
 import sys
 import tarfile
 import tempfile
 from pathlib import Path
+
+import grade
+import heavy
 
 HERE = Path(__file__).resolve().parent
 FACTORY = HERE.parent
@@ -33,7 +44,7 @@ BLOCK = re.compile(r"^```json cfactory[ \t]*\n(.*?)^```", re.S | re.M)
 
 
 def git(repo, *args, raw=False, check=True):
-    p = subprocess.run(["git", "-C", str(repo), *args], capture_output=True, check=check)
+    p = subprocess.run([*heavy.GIT, "-C", str(repo), *args], capture_output=True, check=check)
     return p.stdout if raw else p.stdout.decode().strip()
 
 
@@ -66,7 +77,7 @@ def write_intent(folder, slug, plan_text):
 
 def migrate(tree):
     """Run the factory's migrate-ids.py on a throwaway git repo of the tree (it needs tracked files)."""
-    g = ["git", "-C", str(tree), "-c", "user.email=eval@eval", "-c", "user.name=eval"]
+    g = [*heavy.GIT, "-C", str(tree), "-c", "user.email=eval@eval", "-c", "user.name=eval"]
     subprocess.run([*g, "init", "-q"], check=True)
     subprocess.run([*g, "add", "-A"], check=True)
     subprocess.run([*g, "commit", "-q", "-m", "x"], check=True)
@@ -111,6 +122,38 @@ def reference_stat(repo, start, reference, tests):
     return {"files": len(files), "added": add, "removed": rem, "nontest_files": [f for f in files if f not in tests]}
 
 
+def prove(out, tests, a, env_map):
+    """Run the hidden command per hidden file on the packed start tree (what the arms get). Returns (fail_to_pass, pass_to_pass_hidden)."""
+    tmpl = a.hidden_cmd or (a.suite_cmd + " {files}")
+    db = re.sub(r"[^a-z0-9_]", "_", a.db_name.format(run="prove"))[:60] if a.db_name else None
+    port = a.port_range[0] if a.port_env else None
+    env = {**os.environ, "CFACTORY_EVAL": "1", **grade.task_env({"env": env_map, "dbEnv": a.db_env, "portEnv": a.port_env}, "prove", db, port)}
+    f2p, p2p = [], []
+    with tempfile.TemporaryDirectory() as tmp:
+        tree = Path(tmp)
+        with tarfile.open(out / "start.tar.gz") as tf:
+            tf.extractall(tree, filter="data")
+        if db and a.db_create:
+            grade.sh(a.db_create.format(db=db), tree, env)
+        try:
+            if a.setup and grade.sh(a.setup, tree, env)[0]:
+                sys.exit(f"--prove: the setup command failed: {a.setup}")
+            for t in tests:
+                dest, before = tree / t, None
+                if dest.exists():
+                    before = dest.read_bytes()
+                dest.parent.mkdir(parents=True, exist_ok=True)
+                shutil.copy(out / "hidden-tests" / t, dest)
+                (p2p if grade.sh(tmpl.format(files=shlex.quote(t)), tree, env, a.e2e_timeout_s)[0] == 0 else f2p).append(t)
+                dest.unlink()
+                if before is not None:
+                    dest.write_bytes(before)
+        finally:
+            if db and a.db_drop:
+                grade.sh(a.db_drop.format(db=db), tree, env)
+    return f2p, p2p
+
+
 def main(argv=None):
     ap = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
     ap.add_argument("repo")
@@ -132,6 +175,11 @@ def main(argv=None):
     ap.add_argument("--intent-from-outcome", action="store_true")
     ap.add_argument("--timeout-s", type=int, default=5400)
     ap.add_argument("--e2e-timeout-s", type=int, default=1800)
+    ap.add_argument("--env", action="append", default=[], metavar="NAME=TEMPLATE", help="variable for every arm and grading run; {db} {port} {run} are replaced")
+    ap.add_argument("--exclude-glob", action="append", default=[], help="leave matching files out of start.tar.gz")
+    ap.add_argument("--prove", action="store_true", help="run the hidden command per hidden file at start; record fail_to_pass and pass_to_pass_hidden")
+    ap.add_argument("--fail-to-pass", nargs="+", metavar="FILE", help="hidden files that fail at start (proven elsewhere)")
+    ap.add_argument("--pass-to-pass-hidden", nargs="+", metavar="FILE", help="hidden files that already pass at start")
     ap.add_argument("--port-env", default="")
     ap.add_argument("--port-range", nargs=2, type=int, default=[4100, 4999])
     ap.add_argument("--db-name", default="", help="template, {run} is replaced by the run id")
@@ -145,12 +193,21 @@ def main(argv=None):
         sys.exit("refusing: --out is inside the repo; task data is private and lives outside it")
     start, ref = git(repo, "rev-parse", a.start), git(repo, "rev-parse", a.reference)
     start_date = git(repo, "show", "-s", "--format=%cs", start)
+    env_map = {}
+    for item in a.env:
+        name, sep, tmpl = item.partition("=")
+        if not sep or not re.fullmatch(r"[A-Za-z_][A-Za-z0-9_]*", name):
+            sys.exit(f"--env wants NAME=TEMPLATE, got {item!r}")
+        env_map[name] = tmpl
     out.mkdir(parents=True, exist_ok=True)
 
     with tempfile.TemporaryDirectory() as tmp:
         tree = Path(tmp) / "tree"
         tree.mkdir()
         export_start(repo, start, tree)
+        for p in sorted(tree.rglob("*"), reverse=True):
+            if any(fnmatch.fnmatch(str(p.relative_to(tree)), g) for g in a.exclude_glob) and (p.is_file() or p.is_symlink()):
+                p.unlink()
         plan_path = tree / a.plan
         folder = plan_path.parent
         if not plan_path.exists():  # the plan was written after --start: take its folder as the reference has it
@@ -178,14 +235,24 @@ def main(argv=None):
     if a.ticket_delta:
         shutil.copy(a.ticket_delta, out / "ticket-delta.md")
 
+    lists = {}
+    if a.prove:
+        lists["fail_to_pass"], lists["pass_to_pass_hidden"] = prove(out, tests, a, env_map)
+    if a.fail_to_pass is not None or a.pass_to_pass_hidden is not None:
+        f2p = a.fail_to_pass if a.fail_to_pass is not None else [t for t in tests if t not in (a.pass_to_pass_hidden or [])]
+        p2p = a.pass_to_pass_hidden if a.pass_to_pass_hidden is not None else [t for t in tests if t not in f2p]
+        stray = [t for t in (*f2p, *p2p) if t not in tests]
+        if stray:
+            sys.exit(f"not hidden test files of this task: {stray}")
+        lists = {"fail_to_pass": f2p, "pass_to_pass_hidden": p2p}
     task = {"task_id": a.task_id, "slug": slug, "milestone": a.milestone, "plan": a.plan, "start": start, "reference": ref,
             "suite_cmd": a.suite_cmd, "e2e_cmd": a.e2e_cmd, "hidden_cmd": a.hidden_cmd, "setup": a.setup, "preflight": a.preflight,
             "timeout_s": a.timeout_s, "e2e_timeout_s": a.e2e_timeout_s, "hidden_tests": tests,
             "reference_stat": reference_stat(repo, start, ref, tests), "intent_from_outcome": a.intent_from_outcome,
             "portEnv": a.port_env, "portRange": a.port_range, "dbName": a.db_name, "dbEnv": a.db_env,
-            "dbCreate": a.db_create, "dbDrop": a.db_drop}
+            "dbCreate": a.db_create, "dbDrop": a.db_drop, "env": env_map, **lists}
     (out / "task.json").write_text(json.dumps(task, indent=1) + "\n", encoding="utf-8")
-    print(f"task {a.task_id}: {len(tests)} hidden test files, start {start[:10]}, reference {ref[:10]} -> {out}")
+    print(f"task {a.task_id}: {len(tests)} hidden test files{' (%d fail-to-pass)' % len(lists['fail_to_pass']) if lists else ''}, start {start[:10]}, reference {ref[:10]} -> {out}")
     return 0
 
 
