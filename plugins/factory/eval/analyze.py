@@ -275,6 +275,7 @@ def summarize(rows, default, rng, B):
                     "goal_met_not_solved_rate": mean([float(bool(r["goal_met_not_solved"])) for r in rs]),
                     "verifier_false_pass_rate": mean([float(bool(r["verifier_false_pass"])) for r in rs if r["verifier_verdict"]]) if any(r["verifier_verdict"] for r in rs) else None,
                     "unverified_exit_rate": mean([float(bool(r["unverified_exit"])) for r in rs]),
+                    "hold_rate": mean([float(r["end_state"] in ("HOLD", "SHIPPED")) for r in rs]),  # goal_met also counts a valid BLOCKED stop
                     "cache_hit": mean([r["cache_hit"] for r in rs if r["cache_hit"] is not None])}
         if base and arm != default:
             out[arm]["vs_default"] = compare(rs, base, rng, B)

@@ -45,6 +45,17 @@ class Metrics(unittest.TestCase):
         self.assertEqual(parse()["verifier_verdict"], "PASS")
         self.assertEqual(parse(verdict_pass=False)["verifier_verdict"], "FAIL")
 
+    def test_verifier_verdict_from_the_handback_call(self):
+        ev = [
+            {"type": "assistant", "message": {"id": "m1", "model": "claude-sonnet-5-5", "content": [
+                {"type": "tool_use", "id": "A", "name": "Agent", "input": {"subagent_type": "factory:verifier", "prompt": "verify"}}]}},
+            {"type": "assistant", "parent_tool_use_id": "A", "message": {"id": "m2", "model": "claude-opus-5-5", "content": [
+                {"type": "tool_use", "id": "H", "name": "SubagentHandback", "input": {"report": "all good\n\nVERDICT: PASS"}}]}},
+            {"type": "user", "message": {"content": [{"type": "tool_result", "tool_use_id": "A", "content": [
+                {"type": "text", "text": "This agent's report was delivered to you as a message (its SubagentHandback call)."}]}]}},
+        ]
+        self.assertEqual(grade.parse_stream(ev)["verifier_verdict"], "PASS")
+
     def test_goal_checks(self):
         m = parse()
         self.assertTrue(m["goal_set"] and m["goal_evaluated"] and m["goal_met"])
@@ -155,6 +166,7 @@ class EndToEnd(unittest.TestCase):
         self.assertTrue(g["regression"])
         self.assertFalse(g["solved"])
         self.assertFalse(g["units"]["p2p:hidden:tests/test_p2p.py"])
+        self.assertIn("p2p:hidden:tests/test_p2p.py", g["test_failures"], "a failed unit keeps its failing lines")
 
     def test_implementation_coupled_test_is_reported_but_never_scored(self):
         fx.write(self.task / "hidden-tests", "tests/test_coupled.py", "def test_coupled():\n    assert False\n")

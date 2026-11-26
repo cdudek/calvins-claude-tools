@@ -160,6 +160,8 @@ def parse_stream(events, suite_cmd=""):
     for i, n, inp, tid, parent in tool_uses:
         if n in AGENT_TOOLS and role_of(tid) == "verifier" and tid in results:
             verdicts += re.findall(r"VERDICT:\s*(PASS|FAIL)", results[tid][1])
+        elif n == "SubagentHandback" and parent and role_of(parent) == "verifier":  # the report arrives here, not in the Agent result
+            verdicts += re.findall(r"VERDICT:\s*(PASS|FAIL)", json.dumps(inp))
     state = state_in(r.get("result")) or None
     state = state or end_state_from(events)
     # goal: the stream has no verdict events. It shows "Goal set: <condition>" as a synthetic message, and the evaluator's
@@ -255,7 +257,7 @@ def task_env(task, run_id, db, port):
     return out
 
 
-def grade_tests(repo, task, task_dir, run, retries):
+def grade_tests(repo, task, task_dir, run, retries, failures=None):
     """Units: p2p:suite, p2p:hidden:<file> (passed at start), f2p:<file> (fail_to_pass; every hidden file when the task has no list),
     coupled:<file> (implementation_coupled: run and reported, never in hidden_frac or regression).
     Runs under the heavy lock, in a fresh database and the run's port."""
@@ -264,12 +266,24 @@ def grade_tests(repo, task, task_dir, run, retries):
     timeout = task.get("e2e_timeout_s", 1800) + 600
     units = {}
     hidden = task_dir / "hidden-tests"
+
+    def attempt(key, cmd, tries):
+        """True when any try passes; on failure, record the failing test lines of the last try in `failures`."""
+        out = ""
+        for _ in range(max(1, tries)):
+            rc, out = sh(cmd, repo, env, timeout)
+            if rc == 0:
+                return True
+        if failures is not None:
+            fails = [l.strip() for l in out.splitlines() if re.search(r"\bFAIL\b|[×✗]|Error:", l)]
+            failures[key] = {"failing_lines": fails[:40], "tail": out[-2000:]}
+        return False
     with heavy.locked():
         if db and task.get("dbCreate"):
             sh(task["dbCreate"].format(db=db), repo, env)
         try:
-            if task.get("suite_cmd"):
-                units["p2p:suite"] = sh(task["suite_cmd"], repo, env, timeout)[0] == 0
+            if task.get("suite_cmd"):  # one retry: a load-induced timeout must not read as a regression
+                units["p2p:suite"] = attempt("p2p:suite", task["suite_cmd"], 2)
             if hidden.is_dir():
                 shutil.copytree(hidden, repo, dirs_exist_ok=True)
             tmpl = task.get("hidden_cmd") or (task.get("suite_cmd", "") + " {files}")
@@ -280,7 +294,7 @@ def grade_tests(repo, task, task_dir, run, retries):
             for f in hidden_files:
                 cmd = tmpl.format(files=shlex.quote(f))
                 key = f"coupled:{f}" if f in coupled else f"f2p:{f}" if f in f2p else f"p2p:hidden:{f}"
-                units[key] = any(sh(cmd, repo, env, timeout)[0] == 0 for _ in range(max(1, retries)))
+                units[key] = attempt(key, cmd, retries)
         finally:
             if db and task.get("dbDrop"):
                 sh(task["dbDrop"].format(db=db), repo, env)
@@ -359,7 +373,8 @@ def grade_run(run_dir, grader=None, retries=3, task_dir=None):
         return g
     repo = Path(run["repo"])
     g.update(repo_metrics(repo, run["base_sha"], task["plan"], task, run["plugin"]))
-    units = grade_tests(repo, task, task_dir, run, retries)
+    g["test_failures"] = {}
+    units = grade_tests(repo, task, task_dir, run, retries, g["test_failures"])
     if grader:
         sc = grade_scenarios(repo, task_dir, grader)
         g["scenarios"] = sc
