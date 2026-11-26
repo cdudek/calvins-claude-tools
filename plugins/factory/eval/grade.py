@@ -232,7 +232,12 @@ def repo_metrics(repo, base, plan_rel, task, plugin):
                 allowed += t.get("files", [])
     except (OSError, AttributeError, ValueError):
         pass
-    integ = subprocess.run(["bash", str(Path(plugin) / "skills/run/scripts/test-integrity.sh"), str(repo), base], capture_output=True, text=True)
+    # milestone mode against the approved start commit: the plan's own allowTestEdits and coordinator paths
+    # (progress log entries) are legitimate; without the plan every allowed test edit would count as a violation
+    cmd = ["bash", str(Path(plugin) / "skills/run/scripts/test-integrity.sh"), str(repo), base]
+    if task.get("milestone") and (Path(repo) / plan_rel).is_file():
+        cmd += [plan_rel, "--milestone", task["milestone"], "--approved", base, "--target", base]  # replay repo has no integration branch
+    integ = subprocess.run(cmd, capture_output=True, text=True)
     return {"diff_files": len(files), "diff_lines": add + rem, "diff_ratio": (add + rem) / refsize if refsize else None,
             "files_outside_plan": [p for p, _, _ in files if not in_scope(p, allowed)] if allowed else [],
             "integrity_violations": len(re.findall(r"INTEGRITY FAIL", integ.stdout)), "integrity_output": integ.stdout[-1500:]}
