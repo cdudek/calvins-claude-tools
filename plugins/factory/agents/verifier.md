@@ -25,7 +25,10 @@ Read `references/review-policy.md` of the factory skill first. It says what coun
 8. Second model pass: when the milestone is marked risky, say so; the coordinator also runs the security review, by one Opus 5.5 high agent or a Codex pass (its choice), with the same inputs.
 
 ## Report
-Per requirement, one line: `req-<n> | expected | observed | PASS or FAIL | command and revision`.
+Per requirement, one line: `req-<n> | expected | observed | PASS or FAIL | command and revision`. Label every FAIL, here and in every other finding that fails the run, `bug` or `gap`:
+- `bug`: the code does not do what an approved requirement says. It goes back to the builder.
+- `gap`: the fix needs files no task of the milestone owns, or an existing test asserts the old behaviour. It goes to the coordinator's gap lane. Name the files and tests the fix would touch.
+When a FAIL is both, label it `gap`.
 
 Then:
 - Holdout scenarios: pass or fail each, with the observed end state.

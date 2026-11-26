@@ -220,7 +220,7 @@ def test_risky_milestone_gets_security_review(tmp_path):
     assert "Opus 5.5 high" in k and "gpt-6.2-astra" in k and "ux-verifier" not in k  # backend: no gallery
     assert "fix every High" not in k
     assert "only inside the task's own files and its allowTestEdits" in k
-    assert "BLOCKED: owner approves plan revision for <finding>" in k
+    assert "is a `gap`: see the gap lane under Verify" in k
 
 
 def test_goal_lists_end_states_in_order(tmp_path):
@@ -523,3 +523,19 @@ def test_only_integration_branches_are_pushed(tmp_path):
     assert p.returncode == 1 and "BRIEF FAIL" in p.stdout
     assert f"run `git push origin {sha}:refs/heads/release/v1` yourself" in p.stdout
     assert heads(bare) == "main"
+
+
+def test_gap_lane_names_the_may_touch_globs_and_the_log_line(tmp_path):
+    ms = [{**M1, "mayTouch": ["src/api/*", "tests/api/"]}, M2_OPEN, M3_OPEN]
+    code, out, kick = run(tmp_path, "M1", plan_text(ms))
+    k = kick.read_text()
+    assert code == 0 and "labels every FAIL `bug` or `gap`" in k
+    assert "matches M1's mayTouch (`src/api/*`, `tests/api/`)" in k and "`GAP-FIX M1 files=<a,b> tests=<c,d>`" in k
+    assert "one fix task `M1-gap`" in k and "`--task M1-gap` integrity" in k and "A second gap" in k
+    assert "a `gap` FAIL to the gap lane" in k
+
+
+def test_gap_lane_without_may_touch_ends_blocked(tmp_path):
+    code, out, kick = run(tmp_path, "M1")
+    k = kick.read_text()
+    assert code == 0 and "M1 has no `mayTouch`, so every `gap` ends `BLOCKED" in k and "GAP-FIX" not in k

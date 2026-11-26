@@ -129,6 +129,21 @@ def verifier_tier(m):
     return f" (pass model {v.get('model', 'opus')} and effort {v.get('effort', 'high')} to the Agent call)" if v else ""
 
 
+def gap_line(m, change):
+    """The plan-gap lane: one fix round per milestone, only inside the milestone's owner-approved `mayTouch` globs."""
+    mid = m["id"]
+    head = ("Gap lane, one round per milestone: the verifier labels every FAIL `bug` or `gap`. A `bug` goes back to the builder. "
+            "A `gap` needs files no task owns, or an existing test that asserts the old behaviour. ")
+    if not m.get("mayTouch"):
+        return head + f"{mid} has no `mayTouch`, so every `gap` ends `BLOCKED: owner approves plan revision for <files>`."
+    globs = ", ".join(f"`{g}`" for g in m["mayTouch"])
+    return (head + f"When a gap sits inside an approved requirement and every file it needs matches {mid}'s mayTouch ({globs}), append one line "
+            f"`GAP-FIX {mid} files=<a,b> tests=<c,d>` (comma-separated, no spaces; tests= only for existing tests to edit) to the progress log "
+            f"in plan.md and commit it. Then run one fix task `{mid}-gap` with exactly those files like any task: worktree `{change}-{mid}-gap` "
+            f"cut from the milestone head, a factory:builder, `--task {mid}-gap` integrity, record its <checked SHA>, merge it, then repeat Ship from step 1. "
+            "A second gap, a file outside mayTouch or a gap outside an approved requirement ends `BLOCKED: owner approves plan revision for <files>`.")
+
+
 def section(plan, m, P, root, sha, h, preflight, record=True):
     """One milestone's Build, Verify and Ship, under headings of level h. P is the plan's repo-relative folder prefix;
     record=False when the milestone is cut later in a --all run, whose cut step records the target SHA."""
@@ -173,14 +188,15 @@ def section(plan, m, P, root, sha, h, preflight, record=True):
     if m.get("risky"):
         lines.append("3. This milestone is risky (auth, money, consent or data exposure): also run a security review of the diff and delta, "
                      "by one Opus 5.5 high advisory agent or `codex exec -m gpt-6.2-astra -c model_reasoning_effort=high -s read-only --ephemeral`, "
-                     "and fix a confirmed High only inside the task's own files and its allowTestEdits. A fix that needs a new task, other files "
-                     "or another test edit ends `BLOCKED: owner approves plan revision for <finding>`.")
+                     "and fix a confirmed High only inside the task's own files and its allowTestEdits. A fix that needs other files "
+                     "or another test edit is a `gap`: see the gap lane under Verify.")
     if ui:
         lines.append(f"{4 if m.get('risky') else 3}. factory:ux-verifier against the design boards in `{P}design/`, which the owner approved "
                      f"at the single approval, per the factory ux-checks reference. Screenshots go to {P}evidence/{mid}/. Write the gallery to "
                      f"{P}evidence/{mid}/gallery.md; Ship commits it with the progress entry. It is evidence, not a stop: the milestone merges like any other.")
     lines += [
         "Failures go back to the builder of that task, at most 3 passes. Stop after 2 attempts at the same failure with no new evidence.",
+        gap_line(m, change),
         "",
         f"{h} Ship, in this order",
         "Commit first, verify that final commit, push that same SHA. Nothing is committed after the verifier: a later commit is a different SHA "
@@ -193,7 +209,7 @@ def section(plan, m, P, root, sha, h, preflight, record=True):
         f"2. Run {pre_pr}.",
         f"3. factory:verifier{verifier_tier(m)} on the final commit (`git rev-parse HEAD` is the <final SHA>), with the delta, base, diff and the holdout "
         f"scenarios in `~/.factory/scenarios/{root.name}/{change}/` for {', '.join(m['covers'])}. Never the builders' reasoning. "
-        "A failure goes back to the builder of that task; its new commit goes through Verify step 2 (per-task integrity, a new <checked SHA>, "
+        "A `bug` FAIL goes back to the builder of that task, a `gap` FAIL to the gap lane; the new commit goes through Verify step 2 (per-task integrity, a new <checked SHA>, "
         "merge that commit), then repeat Ship from step 1.",
     ]
     if hold:
@@ -250,7 +266,7 @@ def kickoff(plan, ms, plan_path, root, sha, every=False):
         f"End with exactly one state: {'HOLD' if hold else 'SHIPPED'}, INCOMPLETE or BLOCKED.",
         *([f"HOLD: {hold}. Only once the pushed SHA and the verifier PASS for that SHA are in the transcript."] if hold else []),
         "BLOCKED: an owner decision, credential, approval or destructive migration. Write the exact action needed and stop.",
-        "Scope beyond the delta, or a test, CI file or spec that must change: BLOCKED, the owner decides.",
+        "Scope beyond the delta, or a test, CI file or spec that must change and is not a gap-lane fix: BLOCKED, the owner decides.",
     ]
     return "\n".join(lines) + "\n"
 

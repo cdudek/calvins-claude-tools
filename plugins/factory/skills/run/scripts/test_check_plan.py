@@ -616,3 +616,10 @@ def test_task_prose_default_and_match_pass(tmp_path):
     f.write_text(f.read_text().replace("(medium effort)", "(high effort)"))
     p = subprocess.run([sys.executable, str(SCRIPT), str(f)], capture_output=True, text=True)
     assert p.returncode == 1 and "T1 prose says effort high but the json block says medium" in p.stdout
+
+
+def test_may_touch_shape(tmp_path):
+    assert run(tmp_path / "a", mutated(lambda p: p["milestones"][0].update(mayTouch=["src/api/*", "tests/api/"])))[0] == 0
+    for i, bad in enumerate(("src", [], [""], ["/etc/*"], ["../x"], ["a b"], ["a,b"], ["**"], ["*/"], [1])):
+        code, out = run(tmp_path / f"b{i}", mutated(lambda p: p["milestones"][0].update(mayTouch=bad)))
+        assert code == 1 and "M1 mayTouch" in out, bad

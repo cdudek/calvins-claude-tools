@@ -6,7 +6,7 @@ Validates the first fenced block with info string `json factory`, delta.md and i
 (intent ids are list items `- outcome-1: ...` / `- constraint-1: ...`; every delta requirement line `- req-<n>: ...` cites one as `[outcome-1]`).
 Old ids (`I1`, `C1`, `<spec>/R<n>`) fail with a pointer to migrate-ids.py. In the plan (through its json block) and in intent.md,
 an id written in prose must sit in parentheses after at least two words: `guests see their items (req-12)` (the 8-word cap in SKILL.md is guidance, not checked).
-A task's prose bullet that names an effort or model must match the task's json.
+A task's prose bullet that names an effort or model must match the task's json. A milestone's optional `mayTouch` is a non-empty list of narrow relative path globs.
 Prints `PLAN OK <n> milestones <m> tasks` (exit 0) or one `PLAN FAIL <reason>` per problem (exit 1).
 """
 import json
@@ -311,6 +311,17 @@ def guards_errs(plan, plan_path, notes):
     return errs
 
 
+def may_touch_errs(m, mid):
+    """`mayTouch`: path globs the owner approves with the plan, for the one plan-gap fix round. Narrow, relative, no spaces or commas (the log line is comma-separated)."""
+    if "mayTouch" not in m:
+        return []
+    g = m["mayTouch"]
+    if not (is_strs(g) and g):
+        return [f"{mid} mayTouch must be a non-empty list of path globs"]
+    bad = [x for x in g if not x or x.startswith("/") or ".." in x.split("/") or re.search(r"[\s,]", x) or x.strip("*/") == ""]
+    return [f"{mid} mayTouch {x!r} must be a relative path or glob, narrower than everything, with no spaces or commas" for x in bad]
+
+
 def surface_errs(m, mid):
     """A risky milestone with tasks lists every exposure with a scenario, or a deferral with its reason and probe."""
     surface = m.get("surface")
@@ -407,7 +418,7 @@ def check(plan):
         v = m.get("verifier", {})
         if not isinstance(v, dict) or v.get("model", "opus") not in ("sonnet", "opus") or v.get("effort", "high") not in ("medium", "high"):
             errs.append(f"{mid} verifier must be {{model: sonnet or opus, effort: medium or high}}")
-        errs += surface_errs(m, mid) + deferred_errs(m, mid)
+        errs += surface_errs(m, mid) + deferred_errs(m, mid) + may_touch_errs(m, mid)
         mc = set(m.get("covers", []))
         covered |= mc
         errs += [f"{mid} covers unknown requirement {r}" for r in sorted(mc - reqs)]

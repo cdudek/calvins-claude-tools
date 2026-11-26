@@ -7,7 +7,8 @@
 # plan's integration (else base) branch; --task/--milestone limit changed paths to the task(s) files,
 # new tests (inside a task file's directory) and allowTestEdits; --milestone requires --approved; --pin <sha> keeps that commit's tests as is; --checked (with
 # --milestone) lists the commits the per-task checks passed: every changed implementation path must
-# have its HEAD blob in one of them.
+# have its HEAD blob in one of them. Plan-gap lane: `GAP-FIX <M> files=<a,b> tests=<c,d>` lines in the plan's progress log (read at HEAD) extend
+# --milestone <M>, and are the whole scope of --task <M>-gap, but only for paths matching the approved milestone's mayTouch; one line per milestone.
 set -euo pipefail
 
 U="usage: test-integrity.sh <repo-or-worktree> <base-ref> [plan.md [--task <id> | --milestone <id>] [--approved <sha>] [--pin <sha>] [--target <sha>] [--checked <sha>[,<sha>...]]]"
@@ -46,7 +47,7 @@ fi
 allow="" files="" integ="" pbase="" slug="" last=0 planfile=""
 if [ -n "$plan" ]; then
   out=$(python3 -c '
-import json, os, re, subprocess, sys
+import fnmatch, json, os, re, subprocess, sys
 plan, repo, approved, task, ms = sys.argv[1:6]
 def git(*a): return subprocess.run(["git", "-C", repo, *a], capture_output=True, text=True, check=True).stdout
 top = os.path.realpath(git("rev-parse", "--show-toplevel").strip())
@@ -67,6 +68,19 @@ if ms and mss and mss[-1].get("id") == ms: print("LAST\t1")
 sel = None
 if task: sel = [t for m in mss for t in m.get("tasks", []) if t.get("id") == task]
 elif ms: sel = [t for m in mss if m.get("id") == ms for t in m.get("tasks", [])]
+# plan-gap lane: the one fix round the coordinator logs as `GAP-FIX <M> files=<a,b> tests=<c,d>` in the progress log (read at HEAD, not at --approved).
+# Only paths matching the milestone mayTouch globs the owner approved count; the fix task is `<M>-gap`.
+gap = ms or (task[:-4] if re.fullmatch(r"M\d+-gap", task) else "")
+if gap:
+    may = next((m.get("mayTouch") or [] for m in mss if m.get("id") == gap), [])
+    cur = open(plan if loose else os.path.join(top, rel)).read()
+    rounds = re.findall(r"^GAP-FIX " + gap + r" files=(\S*)(?: tests=(\S*))?[ \t]*$", cur, re.M)
+    ok = lambda f: any(fnmatch.fnmatchcase(f, g) or (g.endswith("/") and f.startswith(g)) for g in may)
+    if len(rounds) > 1: print("ERR\tmore than one gap round for " + gap + ": one per milestone")
+    if rounds and (ms or task == gap + "-gap"):
+        extra = {"files": [f for a, _ in rounds for f in a.split(",") if f and ok(f)], "allowTestEdits": [t for _, b in rounds for t in b.split(",") if t and ok(t)]}
+        if task: sel = [extra]
+        else: sel.append(extra)
 if sel is None: sel = [{"allowTestEdits": p.get("allowTestEdits", [])}]  # old plans: top-level list
 elif not sel: print("ERR\tno task or milestone " + (task or ms) + " in the plan")
 for t in sel:

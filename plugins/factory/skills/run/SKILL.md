@@ -90,7 +90,7 @@ Run in this order, paste the output into the transcript:
 3. `factory:verifier` with the delta, base, diff and the scenarios for this milestone and earlier ones (all of them on the last milestone). It also runs two neighbouring flows per changed behaviour. Never the builder's reasoning. Risky milestone: also a security review of the diff and delta by one of: an Opus 5.5 high agent or the Codex `gpt-6.2-astra` pass (the coordinator picks one; the kickoff says the same). Both fail only on Important findings (`references/review-policy.md`).
 4. UI milestone: `factory:ux-verifier` against the approved boards, per `references/ux-checks.md`. It writes `evidence/<M>/gallery.md`. No owner stop.
 - Failures go back to the builder: at most 3 passes per task. Stop after 2 attempts at the same failure with no new evidence.
-- A fix for a confirmed High stays inside the task's own files and `allowTestEdits`. Anything else ends `BLOCKED: owner approves plan revision for <finding>`.
+- A fix for a confirmed High stays inside the task's own files and `allowTestEdits`. The verifier labels each FAIL `bug` (back to the builder) or `gap` (needs files no task owns, or a test that asserts the old behaviour). A `gap` inside an approved requirement, every file matching the milestone's `mayTouch`, gets one fix task `<M>-gap` logged as `GAP-FIX <M> files=<a,b> tests=<c,d>` in the progress log (one round per milestone); anything else ends `BLOCKED: owner approves plan revision for <finding>`. Details: `references/goal-briefing.md`.
 - A bug (`kind: bug`): the builder's first commit holds only the failing test; show it fails on base and record that SHA; the fix pass runs integrity with `--pin <sha>`.
 
 ### 5. Ship
@@ -138,7 +138,7 @@ One approval, one SHA. The person sees four short things: intent, requirements, 
 
 ## Stop and ask
 - An owner decision, credential, approval or destructive migration blocks the work: write BLOCKED with the exact action needed, and stop.
-- Scope grows beyond the approved intent and delta, or a fix needs a new task, other files or another test edit: `BLOCKED: owner approves plan revision for <finding>`.
+- Scope grows beyond the approved intent and delta, or a fix needs files or tests outside the milestone's `mayTouch` (or a second gap round): `BLOCKED: owner approves plan revision for <finding>`.
 - The merge gate is missing or unreadable: the owner merges by hand.
 - A CI file, spec, ADR or scenario must change: only the owner decides, and the coordinator makes the change, never a builder.
 - Verifier and builder disagree after 3 passes.
