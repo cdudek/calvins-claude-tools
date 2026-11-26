@@ -28,7 +28,7 @@ BASE = {"change": "2026-11-24-saved-searches", "base": "main", "goalTurns": 12, 
 
 def plan_text(milestones=None, **top):
     plan = {**copy.deepcopy(BASE), "milestones": copy.deepcopy(milestones or [M1, M2_OPEN, M3_OPEN]), **top}
-    return "# Plan\n\n```json cfactory\n" + json.dumps(plan, indent=1) + "\n```\n\n## Progress log\n"
+    return "# Plan\n\n```json factory\n" + json.dumps(plan, indent=1) + "\n```\n\n## Progress log\n"
 
 
 def git(cwd, *args):
@@ -90,7 +90,7 @@ def test_ui_milestone_brief(tmp_path):
     assert ("git branch 2026-11-24-saved-searches-M1-T1 milestone/2026-11-24-saved-searches-M1`, then "
             "`wt switch 2026-11-24-saved-searches-M1-T1 --no-cd --yes`") in k
     assert f"{tmp_path.resolve()}/.worktrees/2026-11-24-saved-searches-M1-T1" in k and "ff-only" not in k
-    assert f"~/.cfactory/scenarios/{tmp_path.name}/2026-11-24-saved-searches/" in k
+    assert f"~/.factory/scenarios/{tmp_path.name}/2026-11-24-saved-searches/" in k
     assert "Arm auto-merge." in k and "ux-verifier" in k
     assert "never from the log" in k
     assert "after 12 turns" in goal
@@ -359,7 +359,7 @@ def test_ship_commits_first_then_verifies_that_sha_then_pushes_it(tmp_path):
         k = kick.read_text()
         s = ship_of(k)
         assert code == 0 and "factory:verifier" not in k.split("Ship, in this order")[0].replace("ux-verifier", "")  # not in Verify
-        order = [s.index(x) for x in ("1. Commit on", "the progress entry", "2. Run `bash .cfactory/test-integrity.sh",
+        order = [s.index(x) for x in ("1. Commit on", "the progress entry", "2. Run `bash .factory/test-integrity.sh",
                                        "3. factory:verifier on the final commit", "4. ")]
         assert order == sorted(order), (name, order)
         assert "Nothing is committed after the verifier" in s and s.count("<final SHA>") >= 2 and "verifier PASS for that SHA" in s

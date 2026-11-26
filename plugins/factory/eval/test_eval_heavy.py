@@ -21,7 +21,7 @@ class Heavy(unittest.TestCase):
 
     def test_cli_runs_the_command_and_returns_its_exit_code(self):
         with tempfile.TemporaryDirectory() as tmp:
-            env = {**os.environ, "CFACTORY_EVAL_HEAVY_LOCK": str(Path(tmp) / "l")}
+            env = {**os.environ, "FACTORY_EVAL_HEAVY_LOCK": str(Path(tmp) / "l")}
             r = subprocess.run([sys.executable, heavy.__file__, sys.executable, "-c", "import sys; sys.exit(3)"], env=env)
             self.assertEqual(r.returncode, 3)
 

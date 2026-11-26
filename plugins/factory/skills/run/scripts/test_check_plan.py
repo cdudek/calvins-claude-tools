@@ -26,7 +26,7 @@ INTENT = "# intent\n- outcome-1: people save a search\n- constraint-1: no change
 def write_plan(tmp_path, plan, delta=True, log="", intent=True):
     tmp_path.mkdir(parents=True, exist_ok=True)
     f = tmp_path / "plan.md"
-    f.write_text("# Plan\n\n```json cfactory\n" + json.dumps(plan) + "\n```\n" + log)
+    f.write_text("# Plan\n\n```json factory\n" + json.dumps(plan) + "\n```\n" + log)
     if delta:  # a delta that lists exactly the plan's requirements, each citing an intent id
         (tmp_path / "delta.md").write_text(
             "# delta\n### ADDED Requirements\n" + "".join(f"- {r}: When ..., the system shall ... [outcome-1]\n" for r in plan["requirements"]))
@@ -142,7 +142,7 @@ def test_bare_requirement_id_refused(tmp_path):
         p["milestones"][2]["covers"] = ["R9", "guests/R9"]
     code, out = run(tmp_path, mutated(f))
     assert code == 1 and "requirement id R9 must look like req-<n>" in out
-    assert "requirement id guests/R9 must look like req-<n> (old form: run `python3 .cfactory/migrate-ids.py" in out
+    assert "requirement id guests/R9 must look like req-<n> (old form: run `python3 .factory/migrate-ids.py" in out
 
 
 def test_plan_matches_delta(tmp_path):

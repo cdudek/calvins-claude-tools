@@ -8,7 +8,7 @@ BASE_FILES = {
     "src/a.ts": "export const a = 1\n",
     "src/a.test.ts": "it('a', () => {})\n",
     "package.json": "{}\n",
-    ".cfactory/goal-brief.py": "x\n",
+    ".factory/goal-brief.py": "x\n",
     ".github/workflows/ci.yml": "on: pull_request\n",
     ".github/actions/setup/action.yml": "name: setup\n",
     ".fitness/baseline.json": "{}\n",
@@ -50,8 +50,8 @@ def test_clean_branch_ok(tmp_path):
 
 
 @pytest.mark.parametrize("path,reason", [
-    (".cfactory/goal-brief.py", "harness changed"),
-    (".cfactory/new.sh", "harness changed"),
+    (".factory/goal-brief.py", "harness changed"),
+    (".factory/new.sh", "harness changed"),
     ("changes/2026-11-24-x/plan.md", "plan changed"),
     (".github/workflows/ci.yml", "CI config changed"),
     (".github/actions/setup/action.yml", "CI config changed"),
@@ -109,7 +109,7 @@ PLAN_PATH = "changes/2026-11-24-x/plan.md"
 
 
 def plan_text(plan, extra=""):
-    return "# plan\n\n```json cfactory\n" + json.dumps(plan, indent=1) + "\n```\n" + extra
+    return "# plan\n\n```json factory\n" + json.dumps(plan, indent=1) + "\n```\n" + extra
 
 
 def run(repo, *args):
@@ -402,9 +402,9 @@ def test_a_plan_copy_outside_every_worktree_is_still_read_without_approved(tmp_p
 
 
 def test_milestone_accepts_approved_content_and_rejects_later_edits(tmp_path):
-    # milestone 1 in a repo without a plan PR carries the approved delta and .cfactory/ on its own branch
+    # milestone 1 in a repo without a plan PR carries the approved delta and .factory/ on its own branch
     repo = plan_repo(tmp_path)
-    commit(repo, {"changes/2026-11-24-x/delta.md": "## ADDED\n- req-1: a, revised [outcome-1]\n- req-2: b [outcome-1]\n", ".cfactory/check-plan.py": "# copy\n"})
+    commit(repo, {"changes/2026-11-24-x/delta.md": "## ADDED\n- req-1: a, revised [outcome-1]\n- req-2: b [outcome-1]\n", ".factory/check-plan.py": "# copy\n"})
     approved = head(repo)
     commit(repo, {"src/a.ts": "export const a = 2\n", PLAN_PATH: plan_text(PLAN, "progress: M1 T1 done\n")})
     code, out = run(repo, "main", str(repo / PLAN_PATH), "--milestone", "M1", "--approved", approved)

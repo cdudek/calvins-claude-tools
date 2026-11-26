@@ -64,10 +64,10 @@ Critical and highly important customer journeys only, numbered `journey-<n>`. Ea
 Table, one row per design board: `board | screen | components | states`, the board column holding `board-<n>`. Every board is either a screen in this change or an owner-approved drop, written as `dropped: <reason>, approved`. An unmapped board blocks approval.
 
 ## Holdout scenarios
-- 3 to 10 end-to-end scenarios per feature (a bug or small feature: one), numbered `scenario-<n>`, stored in `~/.cfactory/scenarios/<repo>/<slug>/`.
+- 3 to 10 end-to-end scenarios per feature (a bug or small feature: one), numbered `scenario-<n>`, stored in `~/.factory/scenarios/<repo>/<slug>/`.
 - Drafted by a separate agent from the intent's outcomes and the journeys; the person sees them once, at the approval.
 - Each scenario starts with `milestone: <id>`: the first milestone that can run it. A milestone's verifier runs its own scenarios and earlier ones. The last milestone, or the release candidate, runs all.
-- Only the verifier reads them. The plugin hook `hooks/guard-scenarios.py` denies every other subagent any tool call that names the scenarios folder; the coordinator drafts them in the main session (with `CFACTORY_EVAL=1`, the eval harness, even the main session is denied).
+- Only the verifier reads them. The plugin hook `hooks/guard-scenarios.py` denies every other subagent any tool call that names the scenarios folder; the coordinator drafts them in the main session (with `FACTORY_EVAL=1`, the eval harness, even the main session is denied).
 - Known limit: the guard reads tool-input text, so a path assembled at runtime or reached through a symlink can bypass it. The verifier fails when the approved scenario set is missing.
 - A scenario is a user story with steps and an observable end state. No hints about implementation.
 - **Who can see what.** For anything that shows data to a role, the scenarios cover every place that role can see it: pages, lists, notifications, mail, queued jobs. They also cover role changes (member to guest) and mail already queued at the time of the change.
@@ -88,8 +88,8 @@ Things with content get `word-<n>`; positions in the plan get a capital letter a
 - `scenario-<n>`: holdout scenario. `journey-<n>`: journey. `board-<n>`: design board. `deferred-<n>`: deferral. `finding-<n>`: review or verifier finding.
 - `M<n>` (milestone) and `T<n>` (task) are positions and keep their form.
 - **Explainer first.** A person never meets a bare id: say in two to eight words what it does (`check-plan.py` enforces the two; the eight is guidance), then the id in parentheses, as in "guests see only their own comments in mail (req-159)". The plan check enforces this in the plan prose and in `intent.md`.
-- **Bare ids are fine only** in the `json cfactory` block, in fenced code, as the leading id of a delta requirement line or a defining list item (`- outcome-1: ...`), in headings, and in citation brackets like `[outcome-1]`.
-- A change approved under the old forms (`I1`, `C1`, `<spec-id>/R<n>`) runs `python3 .cfactory/migrate-ids.py . --slug <slug>` once, before its next approval.
+- **Bare ids are fine only** in the `json factory` block, in fenced code, as the leading id of a delta requirement line or a defining list item (`- outcome-1: ...`), in headings, and in citation brackets like `[outcome-1]`.
+- A change approved under the old forms (`I1`, `C1`, `<spec-id>/R<n>`) runs `python3 .factory/migrate-ids.py . --slug <slug>` once, before its next approval.
 
 ## Bug spec
 A failing example plus the expected result. Nothing else. The test that encodes it must fail on the base and pass on the fix. It is still four files: a one-line intent, a delta of one to three requirements, one scenario and a plan with `kind: bug` (`plan-small-template.md`).

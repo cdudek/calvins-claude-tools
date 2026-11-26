@@ -1,6 +1,6 @@
 # Goal briefing: three separate pieces
 
-`.cfactory/goal-brief.py changes/<slug>/plan.md <M> --approved <sha>` writes all of it from the approved plan. Never hand-write a goal line. `<sha>` is the commit the person approved.
+`.factory/goal-brief.py changes/<slug>/plan.md <M> --approved <sha>` writes all of it from the approved plan. Never hand-write a goal line. `<sha>` is the commit the person approved.
 
 | Piece | Holds | Never holds |
 |---|---|---|

@@ -96,7 +96,7 @@ class EndToEnd(unittest.TestCase):
         self.tmp = tempfile.TemporaryDirectory()
         self.addCleanup(self.tmp.cleanup)
         self.task, self.src, self.start, self.ref = fx.prepare(self.tmp.name)
-        lock = {"CFACTORY_EVAL_HEAVY_LOCK": str(Path(self.tmp.name) / "heavy.lock")}
+        lock = {"FACTORY_EVAL_HEAVY_LOCK": str(Path(self.tmp.name) / "heavy.lock")}
         p = mock.patch.dict(os.environ, lock)
         p.start()
         self.addCleanup(p.stop)

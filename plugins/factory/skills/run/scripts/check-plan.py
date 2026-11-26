@@ -2,7 +2,7 @@
 """Usage: check-plan.py <plan.md> [--all] [--approved <sha>]
 With --all every milestone must have tasks and the plan must have no `hold` (what goal-brief.py --all needs).
 With --approved plan.md through its json block, delta.md and intent.md must equal revision <sha> (only the text after the block may differ).
-Validates the first fenced block with info string `json cfactory`, delta.md and intent.md next to it
+Validates the first fenced block with info string `json factory`, delta.md and intent.md next to it
 (intent ids are list items `- outcome-1: ...` / `- constraint-1: ...`; every delta requirement line `- req-<n>: ...` cites one as `[outcome-1]`).
 Old ids (`I1`, `C1`, `<spec>/R<n>`) fail with a pointer to migrate-ids.py. In the plan (through its json block) and in intent.md,
 an id written in prose must sit in parentheses after at least two words: `guests see their items (req-12)` (the 8-word cap in SKILL.md is guidance, not checked).
@@ -20,7 +20,7 @@ SLUG = r"\d{4}-\d{2}-\d{2}-[a-z0-9]+(-[a-z0-9]+)*"
 REQ_ID = r"req-\d+"
 OLD_REQ = r"[a-z0-9]+(-[a-z0-9]+)*/R\d+"
 OLD_CITE = r"\[[IC]\d+\]"
-MIGRATE = "run `python3 .cfactory/migrate-ids.py . --slug <slug>` once"
+MIGRATE = "run `python3 .factory/migrate-ids.py . --slug <slug>` once"
 ID_WORD = r"\b(?:req|adr|outcome|constraint|scenario|journey|board|deferred|finding)-\d+\b"
 
 
@@ -119,13 +119,13 @@ def intent_errs(plan_path, delta_lines_by_id):
     return errs
 
 
-BLOCK = re.compile(r"^```json cfactory[ \t]*\n(.*?)^```", re.S | re.M)
+BLOCK = re.compile(r"^```json factory[ \t]*\n(.*?)^```", re.S | re.M)
 
 
 def block_match(text):
     m = BLOCK.search(text)
     if not m:
-        raise ValueError("no json cfactory block")
+        raise ValueError("no json factory block")
     return m
 
 
@@ -259,7 +259,7 @@ def covers(declared, f):
 def guards_errs(plan, plan_path, notes):
     """A milestone's `guards` are regexes for how the guarded data is read, e.g. `(from|join)\\(comments\\b`.
     One `git grep -l -P` per guard (PCRE, so `\\b` works on macOS and Linux) (tracked and untracked, gitignore respected, minus the change folder and
-    `.cfactory/`). A source file it finds must be a task `files` or `allowTestEdits` path of this or an earlier
+    `.factory/`). A source file it finds must be a task `files` or `allowTestEdits` path of this or an earlier
     milestone, a surface `exposure`, or a deferred `item`. A test file nobody owns is appended to `notes`, which never fail the check."""
     ms = [m for m in plan.get("milestones", []) if m.get("guards") is not None]
     if not ms:
@@ -285,7 +285,7 @@ def guards_errs(plan, plan_path, notes):
     folder = os.path.relpath(os.path.realpath(d), os.path.realpath(root))
     if folder.startswith(".."):
         return [f"guards: the plan folder {folder} is outside the repo"]
-    skip = [":(exclude).cfactory", f":(exclude){folder}"]
+    skip = [":(exclude).factory", f":(exclude){folder}"]
     owned, declared = set(), set()
     for m in plan["milestones"]:
         for t in m.get("tasks", []):

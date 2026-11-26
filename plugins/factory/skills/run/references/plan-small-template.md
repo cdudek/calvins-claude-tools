@@ -38,7 +38,7 @@ After a reload the saved search opens with its filters. Covers the reload rule (
 ## Turns
 - **Per milestone session:** 8 goal turns.
 
-```json cfactory
+```json factory
 {"change": "2026-11-25-fix-saved-search-reload", "base": "main", "goalTurns": 8, "kind": "bug",
  "requirements": ["req-4"],
  "milestones": [

@@ -33,7 +33,7 @@ class Run(unittest.TestCase):
         out = self.dry("--arms", "default", "--parallel", "1", env={"CLAUDE_CODE_OAUTH_TOKEN": "sk-secret-123"})
         self.assertNotIn("sk-secret-123", out)
         self.assertIn("CLAUDE_CODE_OAUTH_TOKEN=***REDACTED***", out)
-        for pin in ("CLAUDE_CODE_PRINT_BG_WAIT_CEILING_MS=0", "DISABLE_AUTOUPDATER=1", "CFACTORY_EVAL=1", "BASH_DEFAULT_TIMEOUT_MS=", "CFACTORY_EVAL_HEAVY_LOCK="):
+        for pin in ("CLAUDE_CODE_PRINT_BG_WAIT_CEILING_MS=0", "DISABLE_AUTOUPDATER=1", "FACTORY_EVAL=1", "BASH_DEFAULT_TIMEOUT_MS=", "FACTORY_EVAL_HEAVY_LOCK="):
             self.assertIn(pin, out)
         self.assertNotIn("CLAUDE_CODE_EFFORT_LEVEL", out)
         self.assertIn("--effort medium", out)
@@ -57,18 +57,18 @@ class Run(unittest.TestCase):
         self.assertRegex(out, r"TAG=grid-t1-default-b01-\w+-4100\n")
         self.assertIn("DB_NAME=evaldb_", out)
 
-    def test_a_cfactory_folder_in_the_start_tree_does_not_crash_and_the_pinned_scripts_win(self):
+    def test_a_factory_folder_in_the_start_tree_does_not_crash_and_the_pinned_scripts_win(self):
         self.task = self.prepared()
         tree = Path(self.tmp.name) / "tree"
         with tarfile.open(self.task / "start.tar.gz") as tf:
             tf.extractall(tree, filter="data")
-        (tree / ".cfactory").mkdir()
-        (tree / ".cfactory/check-plan.py").write_text("stale")
+        (tree / ".factory").mkdir()
+        (tree / ".factory/check-plan.py").write_text("stale")
         prepare_task.pack(tree, self.task / "start.tar.gz")
         self.dry("--arms", "default", "--parallel", "1")
         repo = next(next((self.results / "grid").iterdir()).glob("repo-*"))
-        self.assertNotEqual((repo / ".cfactory/check-plan.py").read_text(), "stale")
-        self.assertTrue((repo / ".cfactory/goal-brief.py").exists())
+        self.assertNotEqual((repo / ".factory/check-plan.py").read_text(), "stale")
+        self.assertTrue((repo / ".factory/goal-brief.py").exists())
         self.assertEqual(run_eval.git(repo, "config", "gc.auto"), "0")
 
     def test_config_dir_mode_when_no_token(self):

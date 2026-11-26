@@ -9,7 +9,7 @@ Arm order is randomized inside each repeat block; up to --parallel runs go at on
 own directory, test database and port. Heavy steps (E2E, hidden tests, app servers) share one lock: runs call `heavy <cmd>`.
 task.json `env` (name -> template with {db} {port} {run}) is exported into every arm's environment and graded with the same values.
 Auth: CLAUDE_CODE_OAUTH_TOKEN from the environment if set (never printed or stored), else the logged-in config dir
-~/.cfactory/eval/claude-config (shared by every run in that mode). Never set CLAUDE_CODE_EFFORT_LEVEL.
+~/.factory/eval/claude-config (shared by every run in that mode). Never set CLAUDE_CODE_EFFORT_LEVEL.
 --dry-run prepares the run directories, prints the exact command and environment (token redacted) and runs nothing.
 """
 import argparse
@@ -36,7 +36,7 @@ import grade
 
 HERE = Path(__file__).resolve().parent
 FACTORY_DIR = HERE.parent
-EVAL_HOME = Path(os.environ.get("CFACTORY_EVAL_HOME") or Path.home() / ".cfactory/eval")
+EVAL_HOME = Path(os.environ.get("FACTORY_EVAL_HOME") or Path.home() / ".factory/eval")
 TOKEN_VAR = "CLAUDE_CODE_OAUTH_TOKEN"
 KEEP_ENV = ("PATH", "HOME", "USER", "LANG", "LC_ALL", "TERM", "SHELL", "TMPDIR")
 SCRIPTS = ("check-plan.py", "goal-brief.py", "migrate-ids.py", "test-integrity.sh")
@@ -171,13 +171,13 @@ def parse_brief(out):
 def prepare_run(task_dir, task, arm, run_dir, run_id, args, slot):
     """Everything up to the claude command. Returns the spec dict; run_dir is created here."""
     run_dir.mkdir(parents=True)
-    repo = run_dir / f"repo-{run_id}"  # the repo name keys ~/.cfactory/scenarios, so it must be unique per run
+    repo = run_dir / f"repo-{run_id}"  # the repo name keys ~/.factory/scenarios, so it must be unique per run
     repo.mkdir()
     with tarfile.open(task_dir / "start.tar.gz") as tf:
         tf.extractall(repo, filter="data")
     plugin = run_dir / "plugin"
     export_plugin(args.factory_repo, args.factory_commit, plugin, arm)
-    cf = repo / ".cfactory"
+    cf = repo / ".factory"
     cf.mkdir(exist_ok=True)  # the start tree may carry one; the pinned scripts below overwrite its copies
     for s in SCRIPTS:
         shutil.copy(plugin / "skills/run/scripts" / s, cf / s)
@@ -207,7 +207,7 @@ def prepare_run(task_dir, task, arm, run_dir, run_id, args, slot):
         git(repo, "push", "-q", "origin", f"HEAD:refs/heads/{integration}")
     git(repo, "switch", "-q", "-c", f"milestone/{task['slug']}-{task['milestone']}")
     which = "--all" if task["milestone"] == "all" else task["milestone"]
-    brief = subprocess.run([sys.executable, ".cfactory/goal-brief.py", task["plan"], which, "--approved", start_sha],
+    brief = subprocess.run([sys.executable, ".factory/goal-brief.py", task["plan"], which, "--approved", start_sha],
                            cwd=repo, capture_output=True, text=True)
     if brief.returncode:
         raise SystemExit(f"goal-brief failed for {run_id}:\n{brief.stdout}{brief.stderr}")
@@ -227,7 +227,7 @@ def prepare_run(task_dir, task, arm, run_dir, run_id, args, slot):
     (bindir / "heavy").write_text(f'#!/usr/bin/env bash\nexec python3 {shlex.quote(str(HERE / "heavy.py"))} "$@"\n')
     (bindir / "heavy").chmod(0o755)
     scen = task_dir / "verifier-scenarios"
-    scen_dest = Path.home() / ".cfactory/scenarios" / repo.name / task["slug"]
+    scen_dest = Path.home() / ".factory/scenarios" / repo.name / task["slug"]
     if scen.is_dir():
         shutil.copytree(scen, scen_dest)
 
@@ -249,7 +249,7 @@ def prepare_run(task_dir, task, arm, run_dir, run_id, args, slot):
     env["PATH"] = f"{bindir}:{env.get('PATH', '')}"
     ms = str((task["e2e_timeout_s"] + 600) * 1000)
     env.update(CLAUDE_CODE_PRINT_BG_WAIT_CEILING_MS="0", BASH_DEFAULT_TIMEOUT_MS=ms, BASH_MAX_TIMEOUT_MS=ms,
-               DISABLE_AUTOUPDATER="1", CFACTORY_EVAL="1", CFACTORY_EVAL_HEAVY_LOCK=str(grade.heavy.lock_path()))
+               DISABLE_AUTOUPDATER="1", FACTORY_EVAL="1", FACTORY_EVAL_HEAVY_LOCK=str(grade.heavy.lock_path()))
     if args.auth_mode == "token":
         env[TOKEN_VAR] = os.environ[TOKEN_VAR]
         env["CLAUDE_CONFIG_DIR"] = str(run_dir / "config")

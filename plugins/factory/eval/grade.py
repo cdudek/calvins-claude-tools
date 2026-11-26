@@ -25,13 +25,13 @@ from pathlib import Path
 
 import heavy
 
-BLOCK = re.compile(r"^```json cfactory[ \t]*\n(.*?)^```", re.S | re.M)
+BLOCK = re.compile(r"^```json factory[ \t]*\n(.*?)^```", re.S | re.M)
 STATES = ("SHIPPED", "HOLD", "BLOCKED", "INCOMPLETE")
 EDIT_TOOLS = {"Edit", "Write", "MultiEdit", "NotebookEdit"}
 AGENT_TOOLS = {"Agent", "Task"}
 TEST_CMD = re.compile(r"\b(pytest|vitest|jest|rspec|mocha|(npm|pnpm|yarn|bun)( run)? test|go test|cargo test|make test|playwright test|bin/rspec)\b")
 WEIGHT = {"in": 1.0, "out": 5.0, "cr": 0.1, "cc": 1.25}  # relative token prices, used only to split a model's cost between roles
-EXCLUDED = (".cfactory/", "changes/", "specs/")
+EXCLUDED = (".factory/", "changes/", "specs/")
 COMPONENTS = (("input_tokens", "inputTokens", "in"), ("output_tokens", "outputTokens", "out"),
               ("cache_read_input_tokens", "cacheReadInputTokens", "cr"), ("cache_creation_input_tokens", "cacheCreationInputTokens", "cc"))
 
@@ -264,7 +264,7 @@ def grade_tests(repo, task, task_dir, run, retries, failures=None):
     coupled:<file> (implementation_coupled: run and reported, never in hidden_frac or regression).
     Runs under the heavy lock, in a fresh database and the run's port."""
     db = run.get("db")
-    env = {**os.environ, "CFACTORY_EVAL": "1", **task_env(task, run.get("run_id"), db, run.get("port"))}
+    env = {**os.environ, "FACTORY_EVAL": "1", **task_env(task, run.get("run_id"), db, run.get("port"))}
     timeout = task.get("e2e_timeout_s", 1800) + 600
     units = {}
     hidden = task_dir / "hidden-tests"

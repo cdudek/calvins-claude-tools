@@ -23,7 +23,7 @@ Input: the plan path, the task id, the milestone branch, and the delta requireme
 
 ## Never
 - Edit, delete, skip or weaken an existing test, snapshot or fixture, except exactly the files in your own task's `allowTestEdits`, nothing else.
-- Edit CI config, `.github/`, `.cfactory/`, baseline files (`.fitness/**`, `*baseline*.json`), `specs/`, `delta.md`, `plan.md` or anything under `~/.cfactory/scenarios`; do not try to read the scenarios.
+- Edit CI config, `.github/`, `.factory/`, baseline files (`.fitness/**`, `*baseline*.json`), `specs/`, `delta.md`, `plan.md` or anything under `~/.factory/scenarios`; do not try to read the scenarios.
 - Add `|| true`, `.skip(`, `.only(`, an always-passing mock, or a lint suppression (`biome-ignore`, `eslint-disable`, `oxlint-disable`, `@ts-ignore`, `@ts-expect-error`, `# noqa`).
 - Grow scope. A missing requirement or a conflicting plan means stop and report.
 

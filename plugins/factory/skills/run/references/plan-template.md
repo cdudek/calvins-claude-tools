@@ -56,7 +56,7 @@ A signed-in user saves a search and reopens it from the sidebar with the same fi
 - **Per milestone session:** 12 goal turns.
 - **Critical path:** M1, M2, M3 in order.
 
-```json cfactory
+```json factory
 {"change": "2026-11-24-saved-searches", "base": "main", "goalTurns": 12,
  "setup": "npm ci", "preflight": ["command -v npm"], "deployOnMerge": false,
  "requirements": ["req-1", "req-2", "req-3"],

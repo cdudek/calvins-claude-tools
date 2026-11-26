@@ -140,8 +140,8 @@ def section(plan, m, P, root, sha, h, preflight, record=True):
     last = mid == plan["milestones"][-1]["id"]
     pin = " --pin <failing-test SHA>" if bug else ""
     flags = f"--approved {sha}{pin} --target <target SHA>"
-    pre_pr = (f"`bash .cfactory/test-integrity.sh <this worktree> <target SHA> {P}plan.md --milestone {mid} {flags} "
-              f"--checked <checked SHAs, comma separated>` and `python3 .cfactory/check-plan.py {P}plan.md --approved {sha}`; both must pass")
+    pre_pr = (f"`bash .factory/test-integrity.sh <this worktree> <target SHA> {P}plan.md --milestone {mid} {flags} "
+              f"--checked <checked SHAs, comma separated>` and `python3 .factory/check-plan.py {P}plan.md --approved {sha}`; both must pass")
     lines = [
         f"{h} Build",
         *preflight,
@@ -165,7 +165,7 @@ def section(plan, m, P, root, sha, h, preflight, record=True):
         f"{h} Verify, in this order, pasting each output into the transcript",
         "1. The repo's fast checks: lint, typecheck, unit. No local CI.",
         f"2. Per task, before merging it into `{branch}`: "
-        f"`bash .cfactory/test-integrity.sh {root}/.worktrees/<task-worktree> {branch} {P}plan.md --task <task id> {flags}` "
+        f"`bash .factory/test-integrity.sh {root}/.worktrees/<task-worktree> {branch} {P}plan.md --task <task id> {flags}` "
         "must print INTEGRITY OK. "
         f"Then record `git -C {root}/.worktrees/<task-worktree> rev-parse HEAD` as that task's <checked SHA> (every INTEGRITY OK commit, "
         f"also an earlier pass's) and merge exactly that commit into `{branch}`.",
@@ -192,7 +192,7 @@ def section(plan, m, P, root, sha, h, preflight, record=True):
         "next action; no PR number or merge SHA, they are not known yet and `gh pr view` has them).",
         f"2. Run {pre_pr}.",
         f"3. factory:verifier{verifier_tier(m)} on the final commit (`git rev-parse HEAD` is the <final SHA>), with the delta, base, diff and the holdout "
-        f"scenarios in `~/.cfactory/scenarios/{root.name}/{change}/` for {', '.join(m['covers'])}. Never the builders' reasoning. "
+        f"scenarios in `~/.factory/scenarios/{root.name}/{change}/` for {', '.join(m['covers'])}. Never the builders' reasoning. "
         "A failure goes back to the builder of that task; its new commit goes through Verify step 2 (per-task integrity, a new <checked SHA>, "
         "merge that commit), then repeat Ship from step 1.",
     ]

@@ -60,7 +60,7 @@ loose = os.path.isabs(plan) and rel.startswith("..") and not approved and os.pat
 if rel.startswith("..") and not loose: sys.exit("plan " + plan + " is not a path inside " + top)
 print("PLANFILE\t" + (plan if loose else os.path.join(top, rel)))
 text = git("show", approved + ":" + rel) if approved else open(plan if loose else os.path.join(top, rel)).read()
-p = json.loads(re.search(r"^```json cfactory[ \t]*\n(.*?)^```", text, re.S | re.M).group(1))
+p = json.loads(re.search(r"^```json factory[ \t]*\n(.*?)^```", text, re.S | re.M).group(1))
 mss = p.get("milestones", [])
 print("BASE\t" + str(p.get("base", ""))); print("INTEG\t" + str(p.get("integration", ""))); print("SLUG\t" + str(p.get("change", "")))
 if ms and mss and mss[-1].get("id") == ms: print("LAST\t1")
@@ -172,12 +172,12 @@ while IFS=$'\t' read -r status path _; do
       specs/adr/*) ;;
       specs/*) [ "$last" -eq 1 ] && continue ;;
     esac
-    # approved content: milestone 1 carries the approved delta, intent, ADRs and .cfactory/ when there is no plan PR
+    # approved content: milestone 1 carries the approved delta, intent, ADRs and .factory/ when there is no plan PR
     if [ -n "$approved" ] && [ "$(git -C "$repo" rev-parse --verify --quiet "HEAD:$path" || echo gone)" = \
          "$(git -C "$repo" rev-parse --verify --quiet "$approved:$path" || echo gone)" ]; then continue; fi
   fi
   case "$path" in
-    .cfactory/*) say "harness changed: $path" ;;
+    .factory/*) say "harness changed: $path" ;;
     changes/*/plan.md) say "plan changed: $path" ;;
     .github/*) say "CI config changed: $path" ;;
     .fitness/*|*baseline*.json) say "baseline changed: $path" ;;

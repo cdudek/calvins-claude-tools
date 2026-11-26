@@ -40,11 +40,9 @@ changes/<slug>/delta.md               ADDED / MODIFIED / REMOVED requirements re
 changes/<slug>/plan.md                plan, progress log at the bottom
 changes/<slug>/kickoff-<M>.md         run briefing per milestone, written by goal-brief.py
 changes/<slug>/evidence/<M>/          screenshots, verifier and UX reports, gallery.md
-~/.cfactory/scenarios/<repo>/<slug>/  holdout scenarios, verifier only
+~/.factory/scenarios/<repo>/<slug>/  holdout scenarios, verifier only
 ```
-The folders keep the `cfactory` name: Factory.ai's CLI already uses `.factory/`, and approved plans parse the ```` ```json cfactory ```` fence.
-
-All of it except the scenarios lives in the app's own repository, versioned with the code; a multi-app change writes one delta per repo. The intent stays in the change folder after shipping. When the change merges, the delta goes into `specs/<YYYY-MM>/<YYYY-MM-DD>__<feature>.md` in the same PR. A decision that is expensive to reverse gets an ADR per `references/spec-standard.md`: drafted as `proposed`, set to `accepted` before the approval commit is recorded, never deleted; a later ADR supersedes it.
+Repos set up before version 0.3.0 run `python3 <plugin>/skills/run/scripts/migrate-name.py <repo>` once, and `migrate-name.py --home` once for the home folder.All of it except the scenarios lives in the app's own repository, versioned with the code; a multi-app change writes one delta per repo. The intent stays in the change folder after shipping. When the change merges, the delta goes into `specs/<YYYY-MM>/<YYYY-MM-DD>__<feature>.md` in the same PR. A decision that is expensive to reverse gets an ADR per `references/spec-standard.md`: drafted as `proposed`, set to `accepted` before the approval commit is recorded, never deleted; a later ADR supersedes it.
 
 ## Stations
 
@@ -55,7 +53,7 @@ All of it except the scenarios lives in the app's own repository, versioned with
 - Check the repo has fast commands (lint, typecheck, unit). Missing: ask.
 - Once per repo, link `specs/` and `specs/adr/` from the README.
 - Once per repo, if no git hooks run: set up cheap pre-commit and pre-push hooks per `references/git-hooks.md`, every command through `templates/git-hook-env.sh`. Nobody skips them with `--no-verify`.
-- Once per repo, if `<repo>/.cfactory/` is missing: Read `scripts/check-plan.py`, `scripts/goal-brief.py`, `scripts/migrate-ids.py` and `scripts/test-integrity.sh` from this skill's folder with the Read tool, Write them to `<repo>/.cfactory/`, and commit them on the first change branch. Refresh them the same way before every launch when the skill's copies differ. Always run them from `.cfactory/`, never by the plugin's install path: another plugin's guard refuses any Bash command that names the plugin cache.
+- Once per repo, if `<repo>/.factory/` is missing: Read `scripts/check-plan.py`, `scripts/goal-brief.py`, `scripts/migrate-ids.py` and `scripts/test-integrity.sh` from this skill's folder with the Read tool, Write them to `<repo>/.factory/`, and commit them on the first change branch. Refresh them the same way before every launch when the skill's copies differ. Always run them from `.factory/`, never by the plugin's install path: another plugin's guard refuses any Bash command that names the plugin cache.
 
 ### 1. Grill and spec
 - Grill per `references/grilling.md`, for every size. The tree covers test edits, who can see what, deferrals with probes, merge and production gate, holds, design boards and preflight tools.
@@ -64,31 +62,31 @@ All of it except the scenarios lives in the app's own repository, versioned with
 - For a risky milestone, one read-only sweep of the base (an Explore agent) lists every place an actor can see the data. It becomes the plan's `surface`; the pattern for how the guarded data is read goes in `guards`, and `check-plan.py` fails on any source file that matches it and no task, surface exposure or probed deferral covers.
 
 ### 2. Plan and approval
-- Copy `references/plan-template.md` (or `plan-small-template.md`) to `changes/<slug>/plan.md` and fill it per `references/plan-standard.md`, including the `json cfactory` block.
-- A change approved under the old ids (`I1`, `C1`, `<spec>/R<n>`) runs `python3 .cfactory/migrate-ids.py . --slug <slug>` once before its next approval; it rewrites in place and commits nothing.
-- Run `python3 .cfactory/check-plan.py changes/<slug>/plan.md`, with `--all` when the run will be `--all` (every milestone then needs tasks). It must print `PLAN OK`. Run every `preflight` command now.
+- Copy `references/plan-template.md` (or `plan-small-template.md`) to `changes/<slug>/plan.md` and fill it per `references/plan-standard.md`, including the `json factory` block.
+- A change approved under the old ids (`I1`, `C1`, `<spec>/R<n>`) runs `python3 .factory/migrate-ids.py . --slug <slug>` once before its next approval; it rewrites in place and commits nothing.
+- Run `python3 .factory/check-plan.py changes/<slug>/plan.md`, with `--all` when the run will be `--all` (every milestone then needs tasks). It must print `PLAN OK`. Run every `preflight` command now.
 - A project run (`--all`) has no `hold`: settle billing and other owner actions during grilling, before approval.
 - One fresh review of the plan by Codex `gpt-6.2-astra`, correctness against the intent and delta only. It checks the riskiest step and the options rejected in Risks. Apply `references/review-policy.md`.
-- **PRs: one per milestone, nothing else.** In repos where Actions minutes cost money (the person says so at intake) there is no plan PR: commit intent, delta, plan, `.cfactory/` and any new ADRs (as `proposed`) on milestone 1's branch, push it without a PR, and they merge with milestone 1's PR. Elsewhere a plan PR on `plan/<slug>` holds them.
+- **PRs: one per milestone, nothing else.** In repos where Actions minutes cost money (the person says so at intake) there is no plan PR: commit intent, delta, plan, `.factory/` and any new ADRs (as `proposed`) on milestone 1's branch, push it without a PR, and they merge with milestone 1's PR. Elsewhere a plan PR on `plan/<slug>` holds them.
 - Check every new ADR number is unused on the base.
 - **The approval.** The person approves intent, delta, plan and boards together. Set new ADRs to `accepted` first, so milestone 1 carries the exact approved blobs; no step changes an ADR's status after approval. Commit, then record the SHA (`git rev-parse HEAD`) as `approved: <sha>` in the plan's first progress entry. Changed scope later means a new revision and a new approval.
 
 ### 3. Build
 - Stations 0 to 2 run in a normal session, never under `/goal`. They end at the approval. The launched run is a separate process.
 - Optional integration branch: when the plan sets `"integration": "<branch>"`, create it from `base`. Milestone branches are cut from it and their PRs target it.
-- Per milestone: `wt switch -c milestone/<slug>-<M>` from a fresh base (the integration branch when set), then inside it run `python3 .cfactory/goal-brief.py changes/<slug>/plan.md <M> --approved <sha>`, or `--all --approved <sha>` for the whole plan. It refuses a plan that fails the check, changed since `<sha>`, or a milestone without tasks. It writes `kickoff-<M>.md` and prints the `/goal` line and the run command. Never hand-write a goal line.
-- **Launch.** First refresh `<repo>/.cfactory/` from this skill's scripts (Read, then Write, as station 0 says) and regenerate the kickoff when `.cfactory/` changed or the kickoff names agents that no longer exist (an old plugin prefix). Commit both. Then start the RUN command goal-brief prints with the Bash tool and `run_in_background: true` (`claude -p ... "/goal ..."`; print mode honors a goal prompt). When it finishes, report the end state line (SHIPPED, HOLD, BLOCKED or INCOMPLETE) from the run's final result. Details: `references/goal-briefing.md`.
+- Per milestone: `wt switch -c milestone/<slug>-<M>` from a fresh base (the integration branch when set), then inside it run `python3 .factory/goal-brief.py changes/<slug>/plan.md <M> --approved <sha>`, or `--all --approved <sha>` for the whole plan. It refuses a plan that fails the check, changed since `<sha>`, or a milestone without tasks. It writes `kickoff-<M>.md` and prints the `/goal` line and the run command. Never hand-write a goal line.
+- **Launch.** First refresh `<repo>/.factory/` from this skill's scripts (Read, then Write, as station 0 says) and regenerate the kickoff when `.factory/` changed or the kickoff names agents that no longer exist (an old plugin prefix). Commit both. Then start the RUN command goal-brief prints with the Bash tool and `run_in_background: true` (`claude -p ... "/goal ..."`; print mode honors a goal prompt). When it finishes, report the end state line (SHIPPED, HOLD, BLOCKED or INCOMPLETE) from the run's final result. Details: `references/goal-briefing.md`.
 - Every task runs in a `factory:builder` subagent, even a one-line fix. The coordinator only creates worktrees, runs checks, merges and logs.
 - Create each task worktree yourself, never with the Agent tool's worktree isolation: `git branch <slug>-<M>-<task> milestone/<slug>-<M>`, then `wt switch <slug>-<M>-<task> --no-cd --yes`, then the plan's `setup`.
 - Spawn builders (Sonnet 5.5, medium; low for mechanical replacement, high for complex tasks), 2 or 3 in parallel, each with its worktree path. Each owns disjoint files. Unfinished work stays in its worktree; never patch files.
 - A hook denies `run_in_background` on every Agent call in a factory run, so every agent starts in the foreground.
-- Builders may add tests and edit exactly the existing test files their own task's `allowTestEdits` lists. They never touch CI config, `.github/`, `.cfactory/`, baselines, specs, deltas or the plan, and never add lint suppressions. They never get the `~/.cfactory/scenarios` path. `test-integrity.sh` enforces this by exit code.
+- Builders may add tests and edit exactly the existing test files their own task's `allowTestEdits` lists. They never touch CI config, `.github/`, `.factory/`, baselines, specs, deltas or the plan, and never add lint suppressions. They never get the `~/.factory/scenarios` path. `test-integrity.sh` enforces this by exit code.
 - The milestone's progress entry (with `firstPass`, `planRevisionsAfterApproval`, `diffMatchesPlan`) is committed and pushed before its PR can merge.
 
 ### 4. Verify
 Run in this order, paste the output into the transcript:
 1. Fast checks: lint, typecheck, unit. No local CI.
-2. Per task, before merging it: `bash .cfactory/test-integrity.sh <task-worktree> milestone/<slug>-<M> <plan.md> --task <id> --approved <sha>` must print `INTEGRITY OK`.
+2. Per task, before merging it: `bash .factory/test-integrity.sh <task-worktree> milestone/<slug>-<M> <plan.md> --task <id> --approved <sha>` must print `INTEGRITY OK`.
 3. `factory:verifier` with the delta, base, diff and the scenarios for this milestone and earlier ones (all of them on the last milestone). It also runs two neighbouring flows per changed behaviour. Never the builder's reasoning. Risky milestone: also a security review of the diff and delta by one of: an Opus 5.5 high agent or the Codex `gpt-6.2-astra` pass (the coordinator picks one; the kickoff says the same). Both fail only on Important findings (`references/review-policy.md`).
 4. UI milestone: `factory:ux-verifier` against the approved boards, per `references/ux-checks.md`. It writes `evidence/<M>/gallery.md`. No owner stop.
 - Failures go back to the builder: at most 3 passes per task. Stop after 2 attempts at the same failure with no new evidence.
@@ -113,7 +111,7 @@ Run in this order, paste the output into the transcript:
 - Optional weekly entropy run opening small cleanup PRs, only after three changes shipped.
 - After any change to the factory itself, replay one known-good and one known-bad task.
 
-Known limit: `hooks/guard-scenarios.py` (only `factory:verifier` may read the scenarios) matches tool-input text (with `~`, `$HOME`, `//` and `/./` expanded, and `cfactory` plus `scenarios` in one input), so a path assembled at runtime or reached through a symlink can bypass it. It fails closed on a crash or a non-object input that names the folder, and with `CFACTORY_EVAL=1` it denies the main session too. The verifier fails when the approved scenario set is missing.
+Known limit: `hooks/guard-scenarios.py` (only `factory:verifier` may read the scenarios) matches tool-input text (with `~`, `$HOME`, `//` and `/./` expanded, and `factory` plus `scenarios` in one input), so a path assembled at runtime or reached through a symlink can bypass it. It fails closed on a crash or a non-object input that names the folder, and with `FACTORY_EVAL=1` it denies the main session too. The verifier fails when the approved scenario set is missing.
 
 ## Models and effort
 | Role | Model | Effort |
@@ -160,11 +158,11 @@ One approval, one SHA. The person sees four short things: intent, requirements, 
 - `references/research.md`: why each rule exists, with sources. Read before changing a rule.
 
 ## Scripts
-Copied into `<repo>/.cfactory/` at intake and run from there:
+Copied into `<repo>/.factory/` at intake and run from there:
 - `check-plan.py <plan.md> [--all] [--approved <sha>]`: dated slug, run caps, layers, needs, disjoint files, at least one requirement, requirement coverage, delta and intent, and that the approved files did not change: the whole plan text up to the json block, intent and delta; only appended progress entries may differ. `--all` also needs every milestone detailed with tasks.
 - `migrate-ids.py <repo> [--slug <slug>]`: one-shot rewrite of the old ids (`<spec>/R<n>`, `I<n>`, `C<n>`) in the git-tracked text files to `req-<n>`, `outcome-<n>`, `constraint-<n>`; refuses when two specs share a number; commits nothing.
 - `goal-brief.py <plan.md> <M> --approved <sha>` or `<plan.md> --all --approved <sha>`: kickoff file, `/goal` line, run command. The plan path is repo-relative, so it resolves inside any task worktree. At each milestone cut it records `--target <sha>`, the fetched integration or base head, which the integrity checks diff against.
-- `test-integrity.sh <worktree> <base-ref> [plan.md [--task <id> | --milestone <id>] [--approved <sha>] [--pin <sha>] [--checked <shas>] [--target <sha>]]`: touched tests, paths outside the task, CI, `.github/`, `.cfactory/`, plan, baselines, spec, skips, added lint suppressions. `--checked` lists the builder commits already checked; implementation changes outside them fail. `--milestone` requires `--approved`, which must be an ancestor of HEAD; the plan scope is read from it. A new test counts as in scope only in a task file's folder or via `allowTestEdits`; every new file gets the skip and suppression scans.
+- `test-integrity.sh <worktree> <base-ref> [plan.md [--task <id> | --milestone <id>] [--approved <sha>] [--pin <sha>] [--checked <shas>] [--target <sha>]]`: touched tests, paths outside the task, CI, `.github/`, `.factory/`, plan, baselines, spec, skips, added lint suppressions. `--checked` lists the builder commits already checked; implementation changes outside them fail. `--milestone` requires `--approved`, which must be an ancestor of HEAD; the plan scope is read from it. A new test counts as in scope only in a task file's folder or via `allowTestEdits`; every new file gets the skip and suppression scans.
 
 ## Not built
 Board, receipts and approval ledgers; local CI; self-policing hooks; one agent per stage; pixel diffs; E2E repeat logic; satisfaction scoring; digital twins; dark no-review mode; a foreman, queue or status page.
