@@ -76,7 +76,7 @@ End the plan body (before the progress log) with one fenced block whose info str
 - `surface` (milestone, required when `risky`): every place an actor can see the data, from the sweep of the base: routes and pages, lists, notifications, mail, queues, role changes (member to guest). Each entry is `{exposure, requirement, scenario}` or `{exposure, requirement, deferred: {reason, probe}}`. `requirement` is a requirement this milestone covers.
 - `deferred` (milestone, optional): `{item, reason, probe}`. `probe` is the command you ran and what it showed. A reason written as a fact without a probe fails.
 - `effort` (task, optional): `low` for mechanical code or text replacement, `high` for complex work, default `medium`. The builder runs on Sonnet 5.5 at this effort.
-- `model` (task, optional): `haiku`, `sonnet` or `opus`, default `sonnet`. The builder dispatch passes it with `effort`. `scripts/size-tasks.py` sets both from the rules in SKILL.md.
+- `model` (task, optional): `haiku`, `sonnet` or `opus`, default `sonnet`. The builder dispatch passes it with `effort`.
 - `verifier` (milestone, optional): `{"model": "sonnet" | "opus", "effort": "medium" | "high"}`, default Opus 5.5 high. The verifier dispatch passes it. Security review of a risky milestone is not affected.
 - `allowTestEdits` (task, optional): existing test files this task edits, nothing else. A top-level `allowTestEdits` fails. `test-integrity.sh` reads it per task.
 - Milestone `tasks` only on detailed milestones. When present, their `covers` union equals the milestone's `covers`, and every `check` is non-empty.

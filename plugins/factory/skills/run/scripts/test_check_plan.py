@@ -494,3 +494,23 @@ def test_task_model_and_milestone_verifier(tmp_path):
     assert code == 1 and "M1 verifier must be" in out
     code, out = run(tmp_path / "d", mutated(lambda p: p["milestones"][0].update(verifier={"effort": "low"})))
     assert code == 1 and "M1 verifier must be" in out
+
+
+def test_task_prose_must_match_json(tmp_path):
+    plan = mutated(lambda p: p["milestones"][0]["tasks"][0].update(effort="high"))
+    f = write_plan(tmp_path, plan)
+    f.write_text(f.read_text().replace("# Plan\n", "# Plan\n- **T1 saved chip (medium effort, haiku).** builds it\n", 1))
+    p = subprocess.run([sys.executable, str(SCRIPT), str(f)], capture_output=True, text=True)
+    assert p.returncode == 1
+    assert "M1/T1 prose says effort medium but the json block says high" in p.stdout
+    assert "M1/T1 prose says model haiku but the json block says sonnet" in p.stdout
+
+
+def test_task_prose_default_and_match_pass(tmp_path):
+    f = write_plan(tmp_path, VALID)  # no json effort counts as medium
+    f.write_text(f.read_text().replace("# Plan\n", "# Plan\n- **T1 saved chip (medium effort).** ok\n- **T2:** says nothing\n", 1))
+    p = subprocess.run([sys.executable, str(SCRIPT), str(f)], capture_output=True, text=True)
+    assert p.returncode == 0, p.stdout
+    f.write_text(f.read_text().replace("(medium effort)", "(high effort)"))
+    p = subprocess.run([sys.executable, str(SCRIPT), str(f)], capture_output=True, text=True)
+    assert p.returncode == 1 and "T1 prose says effort high but the json block says medium" in p.stdout

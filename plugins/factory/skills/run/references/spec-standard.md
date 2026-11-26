@@ -87,7 +87,7 @@ Things with content get `word-<n>`; positions in the plan get a capital letter a
 - `outcome-<n>` and `constraint-<n>`: the intent's outcomes and constraints, written `- outcome-1: ...` in `intent.md` and cited as `[outcome-1]`.
 - `scenario-<n>`: holdout scenario. `journey-<n>`: journey. `board-<n>`: design board. `deferred-<n>`: deferral. `finding-<n>`: review or verifier finding.
 - `M<n>` (milestone) and `T<n>` (task) are positions and keep their form.
-- **Explainer first.** A person never meets a bare id: say in at most eight words what it does, then the id in parentheses, as in "guests see only their own comments in mail (req-159)". The plan check enforces this in the plan prose and in `intent.md`.
+- **Explainer first.** A person never meets a bare id: say in two to eight words what it does (`check-plan.py` enforces the two; the eight is guidance), then the id in parentheses, as in "guests see only their own comments in mail (req-159)". The plan check enforces this in the plan prose and in `intent.md`.
 - **Bare ids are fine only** in the `json cfactory` block, in fenced code, as the leading id of a delta requirement line or a defining list item (`- outcome-1: ...`), in headings, and in citation brackets like `[outcome-1]`.
 - A change approved under the old forms (`I1`, `C1`, `<spec-id>/R<n>`) runs `python3 .cfactory/migrate-ids.py . --slug <slug>` once, before its next approval.
 
