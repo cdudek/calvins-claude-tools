@@ -98,6 +98,9 @@ def addendum(arm, task):
     """System-prompt text for what frontmatter cannot express. Empty for the default arm."""
     out = []
     ab = set(arm["ablate"])
+    if arm["context"] == "raw" and arm["harness"] == "factory":
+        out.append(f"Builders get only the ticket in changes/{task['slug']}/ticket.md as their task description: never pass them "
+                   "delta.md, intent.md or the plan's requirement text. The verifier still checks against the delta.")
     if arm["builder_kind"] == "codex-sol":
         out.append("Builders: instead of factory:builder, run each task through `codex exec -m gpt-6.2-sol -c model_reasoning_effort=high` in its worktree, then continue as usual.")
     if "verifier" in ab:
@@ -166,11 +169,13 @@ def prepare_run(task_dir, task, arm, run_dir, run_id, args, slot):
     for s in SCRIPTS:
         shutil.copy(plugin / "skills/run/scripts" / s, cf / s)
     plan = repo / task["plan"]
+    ticket = task_dir / "ticket-delta.md"
     if arm["context"] == "raw":
-        ticket = task_dir / "ticket-delta.md"
+        # factory arms keep the approved delta (check-plan and the verifier need it); builders are given only the ticket.
+        # plain arms get the ticket in place of the delta after goal-brief has run (see below).
         if not ticket.exists():
             raise SystemExit(f"arm {arm['name']} has context=raw but {ticket} is missing")
-        shutil.copy(ticket, plan.parent / "delta.md")
+        shutil.copy(ticket, plan.parent / "ticket.md")
     ensure_hold(plan)
     if "integrity" in arm["ablate"] or arm["enforcement"] == "prompt":
         (cf / "test-integrity.sh").write_text("#!/usr/bin/env bash\necho 'INTEGRITY OK (disabled by the eval arm)'\n")
@@ -191,6 +196,9 @@ def prepare_run(task_dir, task, arm, run_dir, run_id, args, slot):
     if brief.returncode:
         raise SystemExit(f"goal-brief failed for {run_id}:\n{brief.stdout}{brief.stderr}")
     kickoff_file, goal, max_turns = parse_brief(brief.stdout)
+    if arm["context"] == "raw" and arm["harness"] != "factory":
+        shutil.copy(ticket, plan.parent / "delta.md")
+        git(repo, "commit", "-q", "-am", "eval: ticket context")
     kickoff_file = repo / kickoff_file
     kickoff = kickoff_file.read_text(encoding="utf-8") if arm["harness"] == "factory" else plain_kickoff(task, goal)
     sysprompt = run_dir / "system-prompt.md"
