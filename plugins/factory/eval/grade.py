@@ -256,7 +256,8 @@ def task_env(task, run_id, db, port):
 
 
 def grade_tests(repo, task, task_dir, run, retries):
-    """Units: p2p:suite, p2p:hidden:<file> (passed at start), f2p:<file> (fail_to_pass; every hidden file when the task has no list).
+    """Units: p2p:suite, p2p:hidden:<file> (passed at start), f2p:<file> (fail_to_pass; every hidden file when the task has no list),
+    coupled:<file> (implementation_coupled: run and reported, never in hidden_frac or regression).
     Runs under the heavy lock, in a fresh database and the run's port."""
     db = run.get("db")
     env = {**os.environ, "CFACTORY_EVAL": "1", **task_env(task, run.get("run_id"), db, run.get("port"))}
@@ -274,10 +275,11 @@ def grade_tests(repo, task, task_dir, run, retries):
             tmpl = task.get("hidden_cmd") or (task.get("suite_cmd", "") + " {files}")
             hidden_files = task.get("hidden_tests", [])
             p2p = set(task.get("pass_to_pass_hidden") or [])
-            f2p = set(task["fail_to_pass"]) if "fail_to_pass" in task else set(hidden_files) - p2p
+            coupled = set(task.get("implementation_coupled") or [])  # tests that import a symbol the ticket never names: reported, never scored
+            f2p = set(task["fail_to_pass"]) if "fail_to_pass" in task else set(hidden_files) - p2p - coupled
             for f in hidden_files:
                 cmd = tmpl.format(files=shlex.quote(f))
-                key = f"f2p:{f}" if f in f2p else f"p2p:hidden:{f}"
+                key = f"coupled:{f}" if f in coupled else f"f2p:{f}" if f in f2p else f"p2p:hidden:{f}"
                 units[key] = any(sh(cmd, repo, env, timeout)[0] == 0 for _ in range(max(1, retries)))
         finally:
             if db and task.get("dbDrop"):

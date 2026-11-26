@@ -156,6 +156,14 @@ class EndToEnd(unittest.TestCase):
         self.assertFalse(g["solved"])
         self.assertFalse(g["units"]["p2p:hidden:tests/test_p2p.py"])
 
+    def test_implementation_coupled_test_is_reported_but_never_scored(self):
+        fx.write(self.task / "hidden-tests", "tests/test_coupled.py", "def test_coupled():\n    assert False\n")
+        self.edit_task(hidden_cmd=f"{sys.executable} -m pytest -q -p no:cacheprovider {{files}}", hidden_tests=["tests/test_double.py", "tests/test_coupled.py"],
+                       fail_to_pass=["tests/test_double.py"], implementation_coupled=["tests/test_coupled.py"])
+        g = grade.grade_run(self.make_run(True, "c1"), grader=None)
+        self.assertFalse(g["units"]["coupled:tests/test_coupled.py"])
+        self.assertEqual((g["hidden_frac"], g["regression"], g["solved"]), (1.0, False, True))
+
     def test_task_env_reaches_the_grading_commands(self):
         self.edit_task(env={"CHECK_ENV": "run-{run}-{port}"}, hidden_cmd='test "$CHECK_ENV" = run-f4-77 && ' + fx.SUITE + " {files}")
         run = self.make_run(True, "f4")
