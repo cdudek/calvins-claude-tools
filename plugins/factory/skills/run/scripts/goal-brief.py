@@ -117,8 +117,15 @@ def task_lines(m, change, root, setup):
             f"- {t['id']} covers {', '.join(t['covers'])}. Worktree: `git branch {wt} milestone/{change}-{m['id']}`, then "
             f"`wt switch {wt} --no-cd --yes` (at {root}/.worktrees/{wt}); "
             + (f"run `{setup}` in it; " if setup else "")
-            + f"its HEAD must equal the milestone head. Owns only: {', '.join(t['files'])}. Uses {needs}. Its check: `{t['check']}`. Builder effort: {effort}.")
+            + f"its HEAD must equal the milestone head. Owns only: {', '.join(t['files'])}. Uses {needs}. Its check: `{t['check']}`. Builder effort: {effort}."
+            + (f" Builder model: {t['model']}." if "model" in t else ""))
     return out
+
+
+def verifier_tier(m):
+    """The milestone's own verifier model and effort, or nothing for the default (Opus 5.5 high)."""
+    v = m.get("verifier")
+    return f" (pass model {v.get('model', 'opus')} and effort {v.get('effort', 'high')} to the Agent call)" if v else ""
 
 
 def section(plan, m, P, root, sha, h, preflight, record=True):
@@ -143,7 +150,9 @@ def section(plan, m, P, root, sha, h, preflight, record=True):
         *task_lines(m, change, root, plan.get("setup")),
         "Every task runs in a factory:builder subagent (Sonnet 5.5, at the task's builder effort), even a one-line fix; "
         "you only create worktrees, run checks, merge and log. Run 2 or 3 at a time, in the foreground, "
-        "each given its worktree path, owned files, requirement ids and check. Never give a builder the scenarios path.",
+        "each given its worktree path, owned files, requirement ids and check. Never give a builder the scenarios path."
+        + (" Pass each task's builder model and effort to its Agent call (a task with no model runs on Sonnet 5.5)."
+           if any("model" in t for t in m["tasks"]) else ""),
         "Every agent you start (builders, verifiers, reviews) runs in the foreground, never with run_in_background: a background agent pauses the goal check, and an unattended run exits under it.",
         "Unfinished work stays in its task worktree and the next pass gets the same path. Never patch files "
         "(no `git apply`, no copied diffs). To read a diff: `rtk proxy git diff`.",
@@ -181,7 +190,7 @@ def section(plan, m, P, root, sha, h, preflight, record=True):
         + ("the gallery and " if ui else "") + "the progress entry to plan.md (time, milestone, requirement ids, done and remaining, check result, "
         "next action; no PR number or merge SHA, they are not known yet and `gh pr view` has them).",
         f"2. Run {pre_pr}.",
-        f"3. factory:verifier on the final commit (`git rev-parse HEAD` is the <final SHA>), with the delta, base, diff and the holdout "
+        f"3. factory:verifier{verifier_tier(m)} on the final commit (`git rev-parse HEAD` is the <final SHA>), with the delta, base, diff and the holdout "
         f"scenarios in `~/.cfactory/scenarios/{root.name}/{change}/` for {', '.join(m['covers'])}. Never the builders' reasoning. "
         "A failure goes back to the builder of that task; its new commit goes through Verify step 2 (per-task integrity, a new <checked SHA>, "
         "merge that commit), then repeat Ship from step 1.",
