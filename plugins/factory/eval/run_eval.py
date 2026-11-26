@@ -192,7 +192,8 @@ def prepare_run(task_dir, task, arm, run_dir, run_id, args, slot):
     ensure_hold(plan)
     if "integrity" in arm["ablate"] or arm["enforcement"] == "prompt":
         (cf / "test-integrity.sh").write_text("#!/usr/bin/env bash\necho 'INTEGRITY OK (disabled by the eval arm)'\n")
-    base = grade.plan_json(plan.read_text(encoding="utf-8"))["base"]
+    pj = grade.plan_json(plan.read_text(encoding="utf-8"))
+    base, integration = pj["base"], pj.get("integration")
     origin = run_dir / "origin.git"
     subprocess.run([*grade.heavy.GIT, "init", "-q", "--bare", str(origin)], check=True)
     git(repo, "init", "-q", "-b", base)
@@ -202,6 +203,8 @@ def prepare_run(task_dir, task, arm, run_dir, run_id, args, slot):
     start_sha = git(repo, "rev-parse", "HEAD")
     git(repo, "remote", "add", "origin", str(origin))
     git(repo, "push", "-q", "origin", base)
+    if integration and integration != base:  # the real repo has it before M1 starts; without it runs stop to ask for it
+        git(repo, "push", "-q", "origin", f"HEAD:refs/heads/{integration}")
     git(repo, "switch", "-q", "-c", f"milestone/{task['slug']}-{task['milestone']}")
     which = "--all" if task["milestone"] == "all" else task["milestone"]
     brief = subprocess.run([sys.executable, ".cfactory/goal-brief.py", task["plan"], which, "--approved", start_sha],
