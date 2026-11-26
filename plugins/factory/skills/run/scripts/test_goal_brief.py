@@ -431,4 +431,63 @@ def test_unsized_plan_brief_is_unchanged(tmp_path):
         p = subprocess.run([sys.executable, str(s), str(plan), "M1", "--approved", sha], capture_output=True, text=True)
         assert p.returncode == 0
         outs.append((p.stdout, (plan.parent / "kickoff-M1.md").read_text()))
-    assert outs[0] == outs[1]
+    # the only change for a plan without integration: the kickoff's one stance line
+    assert KICKOFF_STANCE + "\n" in outs[1][1]
+    assert outs[0] == (outs[1][0], outs[1][1].replace(KICKOFF_STANCE + "\n", ""))
+
+
+KICKOFF_STANCE = "Do reversible steps yourself and keep going: create a missing branch, rerun a check, recreate a worktree. Stop only for a decision the plan does not cover or an irreversible step."
+
+
+def with_origin(tmp_path, integ="integration/v1-beta", push_base=True):
+    """A repo whose origin is a local bare repo holding main; returns (plan, approved sha, bare path)."""
+    work = tmp_path / "work"
+    plan, sha = repo(work, plan_text(integration=integ))
+    git(work, "branch", "-M", "main")
+    bare = tmp_path / "origin.git"
+    subprocess.run(["git", "init", "-q", "--bare", str(bare)], check=True)
+    git(work, "remote", "add", "origin", str(bare))
+    if push_base:
+        git(work, "push", "-q", "origin", "main")
+    return plan, sha, bare
+
+
+def heads(bare):
+    return git(bare, "for-each-ref", "--format=%(refname:short)", "refs/heads")
+
+
+def test_integration_exists_on_origin_nothing_changes(tmp_path):
+    plan, sha, bare = with_origin(tmp_path)
+    git(bare, "branch", "integration/v1-beta", "main")
+    before = heads(bare)
+    p = brief(plan, "M1", "--approved", sha)
+    assert p.returncode == 0 and "-#-#- PREFLIGHT -#-#-\nintegration/v1-beta exists on origin" in p.stdout
+    assert heads(bare) == before
+
+
+def test_missing_integration_is_created_from_the_approved_sha(tmp_path):
+    plan, sha, bare = with_origin(tmp_path)
+    p = brief(plan, "M1", "--approved", sha)
+    assert p.returncode == 0 and f"created integration/v1-beta on origin from {sha}" in p.stdout
+    assert git(bare, "rev-parse", "integration/v1-beta") == sha
+
+
+def test_missing_integration_with_sha_off_base_fails_with_the_command(tmp_path):
+    plan, sha, bare = with_origin(tmp_path, push_base=False)
+    other = tmp_path / "other"
+    other.mkdir()
+    git(other, "init", "-q")
+    (other / "f.txt").write_text("x")
+    git(other, "add", "-A")
+    git(other, "commit", "-q", "-m", "unrelated base")
+    git(other, "push", "-q", str(bare), "HEAD:refs/heads/main")
+    p = brief(plan, "M1", "--approved", sha)
+    assert p.returncode == 1 and "BRIEF FAIL" in p.stdout
+    assert f"run `git push origin {sha}:refs/heads/integration/v1-beta`" in p.stdout
+    assert "integration/v1-beta" not in heads(bare)
+
+
+def test_plan_without_integration_has_no_preflight_and_the_stance_line(tmp_path):
+    code, out, kick = run(tmp_path, "M1")
+    assert code == 0 and out.startswith("-#-#- KICKOFF FILE -#-#-") and "PREFLIGHT" not in out
+    assert KICKOFF_STANCE in kick.read_text()
