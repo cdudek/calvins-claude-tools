@@ -73,9 +73,17 @@ elif ms: sel = [t for m in mss if m.get("id") == ms for t in m.get("tasks", [])]
 gap = ms or (task[:-4] if re.fullmatch(r"M\d+-gap", task) else "")
 if gap:
     may = next((m.get("mayTouch") or [] for m in mss if m.get("id") == gap), [])
-    cur = open(plan if loose else os.path.join(top, rel)).read()
+    # The log is read from the committed tree: an uncommitted plan edit must not grant scope. Only a replay copy outside every worktree (loose) is read from disk.
+    try: cur = open(plan).read() if loose else git("show", "HEAD:" + rel)
+    except subprocess.CalledProcessError: cur = ""
     rounds = re.findall(r"^GAP-FIX " + gap + r" files=(\S*)(?: tests=(\S*))?[ \t]*$", cur, re.M)
-    ok = lambda f: any(fnmatch.fnmatchcase(f, g) or (g.endswith("/") and f.startswith(g)) for g in may)
+    # `*` never crosses `/`: a glob matches a path with the same number of segments, each by fnmatchcase; a trailing `/` is a directory prefix.
+    # A glob needs a static first segment and no `**`, else it matches nothing (check-plan rejects it at approval too).
+    static = lambda g: g != "" and not g.startswith("/") and ".." not in g.split("/") and "**" not in g and not re.search(r"[*?\[]", g.split("/")[0])
+    def ok(f):
+        fs = f.split("/")
+        return any(static(g) and ((g.endswith("/") and f.startswith(g)) or (not g.endswith("/") and len(g.split("/")) == len(fs)
+                   and all(fnmatch.fnmatchcase(a, b) for a, b in zip(fs, g.split("/"))))) for g in may)
     if len(rounds) > 1: print("ERR\tmore than one gap round for " + gap + ": one per milestone")
     if rounds and (ms or task == gap + "-gap"):
         extra = {"files": [f for a, _ in rounds for f in a.split(",") if f and ok(f)], "allowTestEdits": [t for _, b in rounds for t in b.split(",") if t and ok(t)]}

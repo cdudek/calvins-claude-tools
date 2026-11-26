@@ -620,6 +620,6 @@ def test_task_prose_default_and_match_pass(tmp_path):
 
 def test_may_touch_shape(tmp_path):
     assert run(tmp_path / "a", mutated(lambda p: p["milestones"][0].update(mayTouch=["src/api/*", "tests/api/"])))[0] == 0
-    for i, bad in enumerate(("src", [], [""], ["/etc/*"], ["../x"], ["a b"], ["a,b"], ["**"], ["*/"], [1])):
+    for i, bad in enumerate(("src", [], [""], ["/etc/*"], ["../x"], ["a b"], ["a,b"], ["**"], ["*/"], [1], ["*.ts"], ["src/**"], ["src/**/x.ts"], ["src/*/"], ["*/x"])):
         code, out = run(tmp_path / f"b{i}", mutated(lambda p: p["milestones"][0].update(mayTouch=bad)))
         assert code == 1 and "M1 mayTouch" in out, bad

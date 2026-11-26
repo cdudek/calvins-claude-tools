@@ -528,3 +528,24 @@ def test_gap_log_line_without_may_touch_widens_nothing(tmp_path):
     commit(repo, {"src/api/list.ts": "x\n", PLAN_PATH: plan_text(PLAN, "GAP-FIX M1 files=src/api/list.ts\n")})
     code, out = run(repo, "main", str(repo / PLAN_PATH), "--milestone", "M1", "--approved", appr(repo))
     assert code == 1 and "outside milestone M1: src/api/list.ts" in out
+
+
+def test_star_never_crosses_a_slash_in_may_touch(tmp_path):
+    repo = gap_repo(tmp_path, "GAP-FIX M1 files=src/api/deep/x.ts,src/api/ok.ts", edits={"src/api/deep/x.ts": "x\n", "src/api/ok.ts": "x\n"})
+    code, out = run(repo, "main", str(repo / PLAN_PATH), "--milestone", "M1", "--approved", appr(repo))
+    assert code == 1 and "outside milestone M1: src/api/deep/x.ts" in out and "outside milestone M1: src/api/ok.ts" not in out
+
+
+def test_wildcard_first_segment_and_double_star_match_nothing(tmp_path):
+    plan = {**PLAN, "milestones": [{**PLAN["milestones"][0], "mayTouch": ["*", "**", "*/x.ts", "src/**"]}, PLAN["milestones"][1]]}
+    repo = plan_repo(tmp_path, plan)
+    commit(repo, {"src/x.ts": "x\n", "a/x.ts": "x\n", PLAN_PATH: plan_text(plan, "GAP-FIX M1 files=src/x.ts,a/x.ts\n")})
+    code, out = run(repo, "main", str(repo / PLAN_PATH), "--milestone", "M1", "--approved", appr(repo))
+    assert code == 1 and "outside milestone M1: src/x.ts" in out and "outside milestone M1: a/x.ts" in out
+
+
+def test_uncommitted_gap_log_line_grants_no_scope(tmp_path):
+    repo = gap_repo(tmp_path, edits={"src/api/list.ts": "x\n"})
+    (repo / PLAN_PATH).write_text(plan_text(MAY_PLAN, "GAP-FIX M1 files=src/api/list.ts\n"))  # in the working file only
+    code, out = run(repo, "main", str(repo / PLAN_PATH), "--milestone", "M1", "--approved", appr(repo))
+    assert code == 1 and "outside milestone M1: src/api/list.ts" in out

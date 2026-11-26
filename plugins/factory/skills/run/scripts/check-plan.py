@@ -318,8 +318,11 @@ def may_touch_errs(m, mid):
     g = m["mayTouch"]
     if not (is_strs(g) and g):
         return [f"{mid} mayTouch must be a non-empty list of path globs"]
-    bad = [x for x in g if not x or x.startswith("/") or ".." in x.split("/") or re.search(r"[\s,]", x) or x.strip("*/") == ""]
-    return [f"{mid} mayTouch {x!r} must be a relative path or glob, narrower than everything, with no spaces or commas" for x in bad]
+    def bad(x):  # `*` stays inside one path segment; the first segment is static; a trailing `/` is a plain directory prefix; no `**`
+        segs = x.split("/")
+        return (not x or x.startswith("/") or ".." in segs or "**" in x or re.search(r"[\s,]", x) is not None or re.search(r"[*?\[]", segs[0]) is not None
+                or (x.endswith("/") and re.search(r"[*?\[]", x) is not None))
+    return [f"{mid} mayTouch {x!r} must be a relative path under a static directory (`src/api/*`, `tests/api/`): `*` stays in one path segment, no `**`, no spaces or commas" for x in g if bad(x)]
 
 
 def surface_errs(m, mid):
