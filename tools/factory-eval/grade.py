@@ -25,13 +25,13 @@ from pathlib import Path
 
 import heavy
 
-BLOCK = re.compile(r"^```json cfactory[ \t]*\n(.*?)^```", re.S | re.M)
+BLOCK = re.compile(r"^```json factory[ \t]*\n(.*?)^```", re.S | re.M)
 STATES = ("SHIPPED", "HOLD", "BLOCKED", "INCOMPLETE")
 EDIT_TOOLS = {"Edit", "Write", "MultiEdit", "NotebookEdit"}
 AGENT_TOOLS = {"Agent", "Task"}
 TEST_CMD = re.compile(r"\b(pytest|vitest|jest|rspec|mocha|(npm|pnpm|yarn|bun)( run)? test|go test|cargo test|make test|playwright test|bin/rspec)\b")
 WEIGHT = {"in": 1.0, "out": 5.0, "cr": 0.1, "cc": 1.25}  # relative token prices, used only to split a model's cost between roles
-EXCLUDED = (".cfactory/", "changes/", "specs/")
+EXCLUDED = (".factory/", "changes/", "specs/")
 COMPONENTS = (("input_tokens", "inputTokens", "in"), ("output_tokens", "outputTokens", "out"),
               ("cache_read_input_tokens", "cacheReadInputTokens", "cr"), ("cache_creation_input_tokens", "cacheCreationInputTokens", "cc"))
 
@@ -160,6 +160,10 @@ def parse_stream(events, suite_cmd=""):
     for i, n, inp, tid, parent in tool_uses:
         if n in AGENT_TOOLS and role_of(tid) == "verifier" and tid in results:
             verdicts += re.findall(r"VERDICT:\s*(PASS|FAIL)", results[tid][1])
+        elif n == "SubagentHandback" and parent and role_of(parent) == "verifier":  # the report arrives here, not in the Agent result
+            report = str(inp.get("message") or inp.get("report") or "")  # only the report field, never other input
+            found = re.findall(r"VERDICT:\s*(PASS|FAIL)", report)
+            verdicts += ["FAIL"] if "FAIL" in found else found[-1:]  # a report naming both counts as FAIL
     state = state_in(r.get("result")) or None
     state = state or end_state_from(events)
     # goal: the stream has no verdict events. It shows "Goal set: <condition>" as a synthetic message, and the evaluator's
@@ -232,7 +236,12 @@ def repo_metrics(repo, base, plan_rel, task, plugin):
                 allowed += t.get("files", [])
     except (OSError, AttributeError, ValueError):
         pass
-    integ = subprocess.run(["bash", str(Path(plugin) / "skills/run/scripts/test-integrity.sh"), str(repo), base], capture_output=True, text=True)
+    # milestone mode against the approved start commit: the plan's own allowTestEdits and coordinator paths
+    # (progress log entries) are legitimate; without the plan every allowed test edit would count as a violation
+    cmd = ["bash", str(Path(plugin) / "skills/run/scripts/test-integrity.sh"), str(repo), base]
+    if task.get("milestone") and (Path(repo) / plan_rel).is_file():
+        cmd += [plan_rel, "--milestone", task["milestone"], "--approved", base, "--target", base]  # replay repo has no integration branch
+    integ = subprocess.run(cmd, capture_output=True, text=True)
     return {"diff_files": len(files), "diff_lines": add + rem, "diff_ratio": (add + rem) / refsize if refsize else None,
             "files_outside_plan": [p for p, _, _ in files if not in_scope(p, allowed)] if allowed else [],
             "integrity_violations": len(re.findall(r"INTEGRITY FAIL", integ.stdout)), "integrity_output": integ.stdout[-1500:]}
@@ -250,30 +259,45 @@ def task_env(task, run_id, db, port):
     return out
 
 
-def grade_tests(repo, task, task_dir, run, retries):
-    """Units: p2p:suite, p2p:hidden:<file> (passed at start), f2p:<file> (fail_to_pass; every hidden file when the task has no list).
+def grade_tests(repo, task, task_dir, run, retries, failures=None):
+    """Units: p2p:suite, p2p:hidden:<file> (passed at start), f2p:<file> (fail_to_pass; every hidden file when the task has no list),
+    coupled:<file> (implementation_coupled: run and reported, never in hidden_frac or regression).
     Runs under the heavy lock, in a fresh database and the run's port."""
     db = run.get("db")
-    env = {**os.environ, "CFACTORY_EVAL": "1", **task_env(task, run.get("run_id"), db, run.get("port"))}
+    env = {**os.environ, "FACTORY_EVAL": "1", **task_env(task, run.get("run_id"), db, run.get("port"))}
     timeout = task.get("e2e_timeout_s", 1800) + 600
     units = {}
     hidden = task_dir / "hidden-tests"
+
+    def attempt(key, cmd, tries):
+        """True when any try passes; on failure, record the failing test lines of the last try in `failures`."""
+        for i in range(max(1, tries)):
+            rc, out = sh(cmd, repo, env, timeout)
+            if rc != 0 and failures is not None:  # test-name lines only, no raw output: it could echo the environment
+                fails = [l.strip()[:300] for l in out.splitlines() if re.search(r"\bFAIL\b|[×✗]", l)]
+                failures[key] = {"failed_tries": i + 1, "rc": rc, "failing_lines": fails[:40]}
+            if rc == 0:
+                if failures is not None and key in failures:
+                    failures[key]["passed_on_retry"] = True  # kept visible: a flaky pass is recorded, not hidden
+                return True
+        return False
     with heavy.locked():
         if db and task.get("dbCreate"):
             sh(task["dbCreate"].format(db=db), repo, env)
         try:
-            if task.get("suite_cmd"):
-                units["p2p:suite"] = sh(task["suite_cmd"], repo, env, timeout)[0] == 0
+            if task.get("suite_cmd"):  # one retry: a load-induced timeout must not read as a regression
+                units["p2p:suite"] = attempt("p2p:suite", task["suite_cmd"], 2)  # test_failures shows a pass on retry
             if hidden.is_dir():
                 shutil.copytree(hidden, repo, dirs_exist_ok=True)
             tmpl = task.get("hidden_cmd") or (task.get("suite_cmd", "") + " {files}")
             hidden_files = task.get("hidden_tests", [])
             p2p = set(task.get("pass_to_pass_hidden") or [])
-            f2p = set(task["fail_to_pass"]) if "fail_to_pass" in task else set(hidden_files) - p2p
+            coupled = set(task.get("implementation_coupled") or [])  # tests that import a symbol the ticket never names: reported, never scored
+            f2p = set(task["fail_to_pass"]) if "fail_to_pass" in task else set(hidden_files) - p2p - coupled
             for f in hidden_files:
                 cmd = tmpl.format(files=shlex.quote(f))
-                key = f"f2p:{f}" if f in f2p else f"p2p:hidden:{f}"
-                units[key] = any(sh(cmd, repo, env, timeout)[0] == 0 for _ in range(max(1, retries)))
+                key = f"coupled:{f}" if f in coupled else f"f2p:{f}" if f in f2p else f"p2p:hidden:{f}"
+                units[key] = attempt(key, cmd, retries)
         finally:
             if db and task.get("dbDrop"):
                 sh(task["dbDrop"].format(db=db), repo, env)
@@ -352,7 +376,8 @@ def grade_run(run_dir, grader=None, retries=3, task_dir=None):
         return g
     repo = Path(run["repo"])
     g.update(repo_metrics(repo, run["base_sha"], task["plan"], task, run["plugin"]))
-    units = grade_tests(repo, task, task_dir, run, retries)
+    g["test_failures"] = {}
+    units = grade_tests(repo, task, task_dir, run, retries, g["test_failures"])
     if grader:
         sc = grade_scenarios(repo, task_dir, grader)
         g["scenarios"] = sc

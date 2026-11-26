@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 """Usage: prepare_task.py <repo> --start <sha> --reference <sha> --task-id <id> --plan <repo-relative plan path>
-           --out ~/.cfactory/eval/tasks/<name> [--suite-cmd C] [--e2e-cmd C] [--setup C] [--preflight C ...]
+           --out ~/.factory/eval/tasks/<name> [--suite-cmd C] [--e2e-cmd C] [--setup C] [--preflight C ...]
            [--milestone M1] [--scenarios DIR] [--verifier-scenarios DIR] [--ticket-delta FILE]
            [--test-glob G ...] [--intent-from-outcome] [--timeout-s N] [--e2e-timeout-s N]
            [--env NAME=TEMPLATE ...] [--exclude-glob G ...] [--prove] [--fail-to-pass FILE ...] [--pass-to-pass-hidden FILE ...]
@@ -9,7 +9,7 @@ Turns a finished change into a replayable eval task, written to --out (private; 
   start.tar.gz          the tree at --start, no git history, no pax header; its plan as of --start
   hidden-tests/         files --reference added or changed that match a test glob (kept out of the run)
   scenarios/            eval-only prose scenarios, graded by the fixed grader
-  verifier-scenarios/   scenarios the arm's own verifier may read (installed per run under ~/.cfactory/scenarios)
+  verifier-scenarios/   scenarios the arm's own verifier may read (installed per run under ~/.factory/scenarios)
   ticket-delta.md       the raw-ticket delta for arms with context=raw
   task.json             everything run_eval.py and grade.py need
 --env NAME=TEMPLATE exports NAME into every arm and grading run; the template may use {db} {port} {run}.
@@ -36,11 +36,11 @@ import grade
 import heavy
 
 HERE = Path(__file__).resolve().parent
-FACTORY = HERE.parent
-MIGRATE = FACTORY / "skills/run/scripts/migrate-ids.py"
+FACTORY = HERE.parents[1] / "plugins" / "factory"
+MIGRATE = HERE / "migrate-ids.py"  # one-shot id rewrite for old replay trees, kept here, not in the runtime plugin
 DEFAULT_GLOBS = ["*test*", "*spec*", "*/__tests__/*", "e2e/*", "*/e2e/*"]
 ENTRY = re.compile(r"^###\s+(\d{4}-\d{2}-\d{2})\b")
-BLOCK = re.compile(r"^```json cfactory[ \t]*\n(.*?)^```", re.S | re.M)
+BLOCK = re.compile(r"^```json factory[ \t]*\n(.*?)^```", re.S | re.M)
 
 
 def git(repo, *args, raw=False, check=True):
@@ -127,7 +127,7 @@ def prove(out, tests, a, env_map):
     tmpl = a.hidden_cmd or (a.suite_cmd + " {files}")
     db = re.sub(r"[^a-z0-9_]", "_", a.db_name.format(run="prove"))[:60] if a.db_name else None
     port = a.port_range[0] if a.port_env else None
-    env = {**os.environ, "CFACTORY_EVAL": "1", **grade.task_env({"env": env_map, "dbEnv": a.db_env, "portEnv": a.port_env}, "prove", db, port)}
+    env = {**os.environ, "FACTORY_EVAL": "1", **grade.task_env({"env": env_map, "dbEnv": a.db_env, "portEnv": a.port_env}, "prove", db, port)}
     f2p, p2p = [], []
     with tempfile.TemporaryDirectory() as tmp:
         tree = Path(tmp)

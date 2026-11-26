@@ -9,7 +9,7 @@ Arm order is randomized inside each repeat block; up to --parallel runs go at on
 own directory, test database and port. Heavy steps (E2E, hidden tests, app servers) share one lock: runs call `heavy <cmd>`.
 task.json `env` (name -> template with {db} {port} {run}) is exported into every arm's environment and graded with the same values.
 Auth: CLAUDE_CODE_OAUTH_TOKEN from the environment if set (never printed or stored), else the logged-in config dir
-~/.cfactory/eval/claude-config (shared by every run in that mode). Never set CLAUDE_CODE_EFFORT_LEVEL.
+~/.factory/eval/claude-config (shared by every run in that mode). Never set CLAUDE_CODE_EFFORT_LEVEL.
 --dry-run prepares the run directories, prints the exact command and environment (token redacted) and runs nothing.
 """
 import argparse
@@ -35,11 +35,11 @@ import configs
 import grade
 
 HERE = Path(__file__).resolve().parent
-FACTORY_DIR = HERE.parent
-EVAL_HOME = Path(os.environ.get("CFACTORY_EVAL_HOME") or Path.home() / ".cfactory/eval")
+FACTORY_DIR = HERE.parents[1] / "plugins" / "factory"
+EVAL_HOME = Path(os.environ.get("FACTORY_EVAL_HOME") or Path.home() / ".factory/eval")
 TOKEN_VAR = "CLAUDE_CODE_OAUTH_TOKEN"
 KEEP_ENV = ("PATH", "HOME", "USER", "LANG", "LC_ALL", "TERM", "SHELL", "TMPDIR")
-SCRIPTS = ("check-plan.py", "goal-brief.py", "migrate-ids.py", "test-integrity.sh")
+SCRIPTS = ("check-plan.py", "goal-brief.py", "task-step.py", "test-integrity.sh")
 AGENT_FILES = {"builder": "builder.md", "verifier": "verifier.md", "ux_verifier": "ux-verifier.md"}
 INFRA = [  # (reason, pattern) matched against the result event, rate-limit events and stderr
     ("rate-limit", r"rate.?limit|usage limit|too many requests|\b429\b|overloaded|\b529\b|limit reached|resets? at"),
@@ -94,15 +94,31 @@ def export_plugin(factory_repo, commit, dest, arm):
         set_frontmatter(dest / "agents" / fname, model, effort)
 
 
+SKIP_LINE = "`VERDICT: PASS (verifier skipped in this eval arm)`"
+
+
+def skip_verifier_goal(goal):
+    """An arm without a verifier cannot meet a goal that asks for a verifier PASS: the goal checker rejects the arm's own line and the
+    run argues with it until it stops BLOCKED. Rewrite the verifier clause to accept the skip line, and fail loud if it is missing."""
+    out = goal.replace("a verifier PASS for that same SHA", f"the line {SKIP_LINE} for that same SHA (this eval arm runs no verifier)")
+    out = out.replace("verifier evidence for", f"the line {SKIP_LINE} (this eval arm runs no verifier) in place of verifier evidence for")
+    if out == goal:
+        raise SystemExit("skip_verifier_goal: the goal names no verifier clause to rewrite; goal-brief changed its wording")
+    return out
+
+
 def addendum(arm, task):
     """System-prompt text for what frontmatter cannot express. Empty for the default arm."""
     out = []
     ab = set(arm["ablate"])
+    if arm["context"] == "raw" and arm["harness"] == "factory":
+        out.append(f"Builders get only the ticket in changes/{task['slug']}/ticket.md as their task description: never pass them "
+                   "delta.md, intent.md or the plan's requirement text. The verifier still checks against the delta.")
     if arm["builder_kind"] == "codex-sol":
         out.append("Builders: instead of factory:builder, run each task through `codex exec -m gpt-6.2-sol -c model_reasoning_effort=high` in its worktree, then continue as usual.")
     if "verifier" in ab:
-        out.append("Skip the verifier step: do not dispatch factory:verifier and do not run holdout scenarios yourself. The goal still asks for a verifier PASS: "
-                   "once the pushed SHA is in the transcript, write `VERDICT: PASS (verifier skipped in this eval arm)` for that SHA yourself. Everything else stays.")
+        out.append("Skip the verifier step: do not dispatch factory:verifier and do not run holdout scenarios yourself. The goal accepts the skip line in place of "
+                   f"a verifier PASS: once the pushed SHA is in the transcript, write {SKIP_LINE} for that SHA yourself. Everything else stays.")
     if "security" in ab or arm["reviewer"] == "off":
         out.append("Skip the security review even for a risky milestone.")
     elif arm["reviewer"] == "codex-astra":
@@ -155,26 +171,30 @@ def parse_brief(out):
 def prepare_run(task_dir, task, arm, run_dir, run_id, args, slot):
     """Everything up to the claude command. Returns the spec dict; run_dir is created here."""
     run_dir.mkdir(parents=True)
-    repo = run_dir / f"repo-{run_id}"  # the repo name keys ~/.cfactory/scenarios, so it must be unique per run
+    repo = run_dir / f"repo-{run_id}"  # the repo name keys ~/.factory/scenarios, so it must be unique per run
     repo.mkdir()
     with tarfile.open(task_dir / "start.tar.gz") as tf:
         tf.extractall(repo, filter="data")
     plugin = run_dir / "plugin"
     export_plugin(args.factory_repo, args.factory_commit, plugin, arm)
-    cf = repo / ".cfactory"
+    cf = repo / ".factory"
     cf.mkdir(exist_ok=True)  # the start tree may carry one; the pinned scripts below overwrite its copies
     for s in SCRIPTS:
         shutil.copy(plugin / "skills/run/scripts" / s, cf / s)
+    shutil.copy(plugin / "skills/run/templates/kickoff.md", cf / "kickoff.md")  # goal-brief.py reads its template beside itself
     plan = repo / task["plan"]
+    ticket = task_dir / "ticket-delta.md"
     if arm["context"] == "raw":
-        ticket = task_dir / "ticket-delta.md"
+        # factory arms keep the approved delta (check-plan and the verifier need it); builders are given only the ticket.
+        # plain arms get the ticket in place of the delta after goal-brief has run (see below).
         if not ticket.exists():
             raise SystemExit(f"arm {arm['name']} has context=raw but {ticket} is missing")
-        shutil.copy(ticket, plan.parent / "delta.md")
+        shutil.copy(ticket, plan.parent / "ticket.md")
     ensure_hold(plan)
     if "integrity" in arm["ablate"] or arm["enforcement"] == "prompt":
         (cf / "test-integrity.sh").write_text("#!/usr/bin/env bash\necho 'INTEGRITY OK (disabled by the eval arm)'\n")
-    base = grade.plan_json(plan.read_text(encoding="utf-8"))["base"]
+    pj = grade.plan_json(plan.read_text(encoding="utf-8"))
+    base, integration = pj["base"], pj.get("integration")
     origin = run_dir / "origin.git"
     subprocess.run([*grade.heavy.GIT, "init", "-q", "--bare", str(origin)], check=True)
     git(repo, "init", "-q", "-b", base)
@@ -184,13 +204,20 @@ def prepare_run(task_dir, task, arm, run_dir, run_id, args, slot):
     start_sha = git(repo, "rev-parse", "HEAD")
     git(repo, "remote", "add", "origin", str(origin))
     git(repo, "push", "-q", "origin", base)
+    if integration and integration != base:  # the real repo has it before M1 starts; without it runs stop to ask for it
+        git(repo, "push", "-q", "origin", f"HEAD:refs/heads/{integration}")
     git(repo, "switch", "-q", "-c", f"milestone/{task['slug']}-{task['milestone']}")
     which = "--all" if task["milestone"] == "all" else task["milestone"]
-    brief = subprocess.run([sys.executable, ".cfactory/goal-brief.py", task["plan"], which, "--approved", start_sha],
+    brief = subprocess.run([sys.executable, ".factory/goal-brief.py", task["plan"], which, "--approved", start_sha],
                            cwd=repo, capture_output=True, text=True)
     if brief.returncode:
         raise SystemExit(f"goal-brief failed for {run_id}:\n{brief.stdout}{brief.stderr}")
     kickoff_file, goal, max_turns = parse_brief(brief.stdout)
+    if arm["harness"] == "factory" and "verifier" in arm["ablate"]:
+        goal = skip_verifier_goal(goal)
+    if arm["context"] == "raw" and arm["harness"] != "factory":
+        shutil.copy(ticket, plan.parent / "delta.md")
+        git(repo, "commit", "-q", "-am", "eval: ticket context")
     kickoff_file = repo / kickoff_file
     kickoff = kickoff_file.read_text(encoding="utf-8") if arm["harness"] == "factory" else plain_kickoff(task, goal)
     sysprompt = run_dir / "system-prompt.md"
@@ -201,7 +228,7 @@ def prepare_run(task_dir, task, arm, run_dir, run_id, args, slot):
     (bindir / "heavy").write_text(f'#!/usr/bin/env bash\nexec python3 {shlex.quote(str(HERE / "heavy.py"))} "$@"\n')
     (bindir / "heavy").chmod(0o755)
     scen = task_dir / "verifier-scenarios"
-    scen_dest = Path.home() / ".cfactory/scenarios" / repo.name / task["slug"]
+    scen_dest = Path.home() / ".factory/scenarios" / repo.name / task["slug"]
     if scen.is_dir():
         shutil.copytree(scen, scen_dest)
 
@@ -223,10 +250,11 @@ def prepare_run(task_dir, task, arm, run_dir, run_id, args, slot):
     env["PATH"] = f"{bindir}:{env.get('PATH', '')}"
     ms = str((task["e2e_timeout_s"] + 600) * 1000)
     env.update(CLAUDE_CODE_PRINT_BG_WAIT_CEILING_MS="0", BASH_DEFAULT_TIMEOUT_MS=ms, BASH_MAX_TIMEOUT_MS=ms,
-               DISABLE_AUTOUPDATER="1", CFACTORY_EVAL="1", CFACTORY_EVAL_HEAVY_LOCK=str(grade.heavy.lock_path()))
+               DISABLE_AUTOUPDATER="1", FACTORY_EVAL="1", FACTORY_EVAL_HEAVY_LOCK=str(grade.heavy.lock_path()))
     if args.auth_mode == "token":
         env[TOKEN_VAR] = os.environ[TOKEN_VAR]
         env["CLAUDE_CONFIG_DIR"] = str(run_dir / "config")
+        copy_user_memory(run_dir / "config")
     elif args.auth_mode == "config-dir":
         env["CLAUDE_CONFIG_DIR"] = str(args.claude_config)
     # user-login: default config dir (its login), user settings excluded by --setting-sources; the user's
@@ -367,6 +395,24 @@ def plan_jobs(arms, repeats, stage, task_id, rng):
             rid = re.sub(r"[^A-Za-z0-9_-]", "-", f"{stage}-{task_id}-{a['name']}-b{b:02d}-{uuid.uuid4().hex[:6]}")
             jobs.append({"arm": a, "block": b, "stage": stage, "run_id": rid})
     return jobs
+
+
+def copy_user_memory(cfg, home=None):
+    """Token runs get a fresh config dir, so the person's global CLAUDE.md (and files it @-imports) would not load, unlike
+    user-login runs, where it loads for every arm. Copy them so both auth modes run under the same instructions."""
+    src = Path(home) if home else Path.home() / ".claude"
+    md = src / "CLAUDE.md"
+    if not md.is_file():
+        return []
+    cfg.mkdir(parents=True, exist_ok=True)
+    names = ["CLAUDE.md"] + re.findall(r"^@(\S+)\s*$", md.read_text(encoding="utf-8"), re.M)
+    copied = []
+    for n in names:
+        f = src / n
+        if f.is_file() and f.resolve().parent == src.resolve():  # only files beside CLAUDE.md, never a path outside it
+            shutil.copy(f, cfg / n)
+            copied.append(n)
+    return copied
 
 
 def resolve_auth(mode, claude_config):

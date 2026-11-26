@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 """Usage: migrate-ids.py <repo> [--slug <slug>]
-One-shot rewrite of the old factory ids in the git-tracked text files of <repo> (never `.cfactory/` or `.git/`), committing nothing:
+One-shot rewrite of the old factory ids in the git-tracked text files of <repo> (never `.factory/` or `.git/`), committing nothing:
   <spec-id>/R<n>  ->  req-<n>        every tracked text file; refused, with the conflicts listed, when two spec ids share a number
   - I<n>: / - C<n>:  ->  - outcome-<n>: / - constraint-<n>:   in changes/*/intent.md
   [I<n>] / [C<n>]    ->  [outcome-<n>] / [constraint-<n>]     in changes/*/ and specs/ files
@@ -21,7 +21,7 @@ WORD = {"I": "outcome", "C": "constraint"}
 
 def tracked(repo):
     out = subprocess.run(["git", "-C", str(repo), "ls-files", "-z"], capture_output=True, text=True, check=True).stdout
-    return [p for p in out.split("\0") if p and not p.startswith(".cfactory/")]
+    return [p for p in out.split("\0") if p and not p.startswith(".factory/")]
 
 
 def read_text(path):

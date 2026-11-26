@@ -31,7 +31,7 @@ def test_happy_path(tmp_path):
         "changes/2026-12-01-a/intent.md": "# intent\n- I1: people save\n- C1: no cost\n",
         "changes/2026-12-01-a/delta.md": "### ADDED Requirements\n- guests/R160: z [I1] [C1]\n",
         "changes/2026-12-01-a/plan.md": "Covers guests/R160.\n",
-        ".cfactory/check-plan.py": "# guests/R999 stays\n",
+        ".factory/check-plan.py": "# guests/R999 stays\n",
         "logo.bin": "x",
     })
     (tmp_path / "logo.bin").write_bytes(b"\xff\xfe guests/R1")
@@ -41,7 +41,7 @@ def test_happy_path(tmp_path):
     assert (tmp_path / "changes/2026-12-01-a/intent.md").read_text() == "# intent\n- outcome-1: people save\n- constraint-1: no cost\n"
     assert "- req-160: z [outcome-1] [constraint-1]" in (tmp_path / "changes/2026-12-01-a/delta.md").read_text()
     assert (tmp_path / "changes/2026-12-01-a/plan.md").read_text() == "Covers req-160.\n"
-    assert (tmp_path / ".cfactory/check-plan.py").read_text() == "# guests/R999 stays\n"
+    assert (tmp_path / ".factory/check-plan.py").read_text() == "# guests/R999 stays\n"
     assert git(tmp_path, "log", "--oneline").count("\n") == 0  # no commit was made
 
 

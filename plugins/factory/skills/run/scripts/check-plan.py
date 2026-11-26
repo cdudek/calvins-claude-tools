@@ -2,10 +2,11 @@
 """Usage: check-plan.py <plan.md> [--all] [--approved <sha>]
 With --all every milestone must have tasks and the plan must have no `hold` (what goal-brief.py --all needs).
 With --approved plan.md through its json block, delta.md and intent.md must equal revision <sha> (only the text after the block may differ).
-Validates the first fenced block with info string `json cfactory`, delta.md and intent.md next to it
+Validates the first fenced block with info string `json factory`, delta.md and intent.md next to it
 (intent ids are list items `- outcome-1: ...` / `- constraint-1: ...`; every delta requirement line `- req-<n>: ...` cites one as `[outcome-1]`).
-Old ids (`I1`, `C1`, `<spec>/R<n>`) fail with a pointer to migrate-ids.py. In the plan (through its json block) and in intent.md,
-an id written in prose must sit in parentheses after at least two words: `guests see their items (req-12)`.
+Old ids (`I1`, `C1`, `<spec>/R<n>`) fail with a one-line rewrite hint. In the plan (through its json block) and in intent.md,
+an id written in prose must sit in parentheses after at least two words: `guests see their items (req-12)` (the 8-word cap in SKILL.md is guidance, not checked).
+A task's prose bullet that names an effort or model must match the task's json. A milestone's optional `mayTouch` is a non-empty list of narrow relative path globs.
 Prints `PLAN OK <n> milestones <m> tasks` (exit 0) or one `PLAN FAIL <reason>` per problem (exit 1).
 """
 import json
@@ -19,7 +20,7 @@ SLUG = r"\d{4}-\d{2}-\d{2}-[a-z0-9]+(-[a-z0-9]+)*"
 REQ_ID = r"req-\d+"
 OLD_REQ = r"[a-z0-9]+(-[a-z0-9]+)*/R\d+"
 OLD_CITE = r"\[[IC]\d+\]"
-MIGRATE = "run `python3 .cfactory/migrate-ids.py . --slug <slug>` once"
+MIGRATE = "rewrite it as req-<n>, outcome-<n> or constraint-<n> by hand"
 ID_WORD = r"\b(?:req|adr|outcome|constraint|scenario|journey|board|deferred|finding)-\d+\b"
 
 
@@ -73,6 +74,22 @@ def prose_errs(text, name):
     return errs
 
 
+def task_prose_errs(text, plan):
+    """A task's prose bullet (starts with its id, like `**T3 ... (high effort).**`) must not name another effort or model than the task's json (no json effort counts as medium, no json model as sonnet)."""
+    errs = []
+    for m in plan.get("milestones", []):
+        for t in m.get("tasks", []):
+            tid = str(t.get("id"))
+            for line in text.splitlines():
+                if not re.match(r"\s*[-*]\s*\**" + re.escape(tid) + r"\b", line):
+                    continue
+                for word, found, want in (("effort", re.findall(r"\b(low|medium|high) effort\b", line), t.get("effort", "medium")),
+                                          ("model", re.findall(r"\b(haiku|sonnet|opus)\b", line), t.get("model", "sonnet"))):
+                    if found and found[0] != want:
+                        errs.append(f"{m.get('id')}/{tid} prose says {word} {found[0]} but the json block says {want}: make them agree")
+    return errs
+
+
 def intent_errs(plan_path, delta_lines_by_id):
     """intent.md must exist; every delta requirement cites an intent id it defines; no open question anywhere."""
     intent, delta = read_next(plan_path, "intent.md"), read_next(plan_path, "delta.md")
@@ -102,13 +119,13 @@ def intent_errs(plan_path, delta_lines_by_id):
     return errs
 
 
-BLOCK = re.compile(r"^```json cfactory[ \t]*\n(.*?)^```", re.S | re.M)
+BLOCK = re.compile(r"^```json factory[ \t]*\n(.*?)^```", re.S | re.M)
 
 
 def block_match(text):
     m = BLOCK.search(text)
     if not m:
-        raise ValueError("no json cfactory block")
+        raise ValueError("no json factory block")
     return m
 
 
@@ -170,10 +187,14 @@ def validate(plan_path, approved=None, every=False):
         text = open(plan_path, encoding="utf-8").read()
         plan = json.loads(block_text(text))
     except (OSError, ValueError) as e:  # json errors are ValueError
-        return [str(e)], 0, 0
+        return [str(e)], 0, 0, []
+    errs, notes = id_errs(plan), []
+    if errs:
+        return errs, 0, 0, notes
     errs, nm, nt = check(plan)
-    errs += guards_errs(plan, plan_path)
-    errs += prose_errs(text[:block_match(text).end()], os.path.basename(plan_path))  # the log after the block stays free text
+    errs += guards_errs(plan, plan_path, notes)
+    head = text[:block_match(text).end()]  # the log after the block stays free text
+    errs += prose_errs(head, os.path.basename(plan_path)) + task_prose_errs(head, plan)
     if every:
         errs += ready_errs(plan)
     delta = read_next(plan_path, "delta.md")
@@ -193,7 +214,7 @@ def validate(plan_path, approved=None, every=False):
             errs += approved_errs(plan_path, approved)
         except ValueError as e:
             errs.append(str(e))
-    return errs, nm, nt
+    return errs, nm, nt, notes
 
 
 def is_strs(v):
@@ -204,8 +225,30 @@ def filled(v):
     return isinstance(v, str) and bool(v.strip())
 
 
-TEST_PATH = re.compile(r"(^|/)(tests?|__tests__|e2e)/|\.(test|spec)\.")
-NOTE = "NOTE "  # prefix of a message that is printed as PLAN NOTE and does not fail the check
+TEST_DIR = re.compile(r"(tests?|__tests__|e2e)/")
+TEST_FILE = re.compile(r"[^/]*\.(test|spec)\.[^/]*")
+MS_ID, TASK_ID = r"M\d+", r"T\d+"
+
+
+def is_test_path(f):
+    """A test file: its basename is *.test.* or *.spec.*, or it sits under a top-level test/, tests/, __tests__/ or e2e/ folder.
+    A source file in src/lib/tests-helpers/ is not a test."""
+    return bool(TEST_FILE.fullmatch(f.rsplit("/", 1)[-1]) or TEST_DIR.match(f))
+
+
+def id_errs(plan):
+    """Milestone and task ids go into every message, so they must look like M<n> and T<n> before anything else runs.
+    A bad id is shown escaped and cut, never raw."""
+    errs = []
+    for m in plan.get("milestones", []):
+        if not isinstance(m, dict):
+            continue
+        if not re.fullmatch(MS_ID, str(m.get("id", ""))):
+            errs.append(f"milestone id {ascii(m.get('id'))[:40]} must look like M<n>")
+        for t in m.get("tasks", []) if isinstance(m.get("tasks", []), list) else []:
+            if isinstance(t, dict) and not re.fullmatch(TASK_ID, str(t.get("id", ""))):
+                errs.append(f"task id {ascii(t.get('id'))[:40]} must look like T<n>")
+    return errs
 
 
 def covers(declared, f):
@@ -213,11 +256,11 @@ def covers(declared, f):
     return any(f == o or (o.endswith("/") and f.startswith(o)) for o in declared)
 
 
-def guards_errs(plan, plan_path):
+def guards_errs(plan, plan_path, notes):
     """A milestone's `guards` are regexes for how the guarded data is read, e.g. `(from|join)\\(comments\\b`.
     One `git grep -l -P` per guard (PCRE, so `\\b` works on macOS and Linux) (tracked and untracked, gitignore respected, minus the change folder and
-    `.cfactory/`). A source file it finds must be a task `files` or `allowTestEdits` path of this or an earlier
-    milestone, a surface `exposure`, or a deferred `item`. A test file nobody owns only gets a NOTE."""
+    `.factory/`). A source file it finds must be a task `files` or `allowTestEdits` path of this or an earlier
+    milestone, a surface `exposure`, or a deferred `item`. A test file nobody owns is appended to `notes`, which never fail the check."""
     ms = [m for m in plan.get("milestones", []) if m.get("guards") is not None]
     if not ms:
         return []
@@ -242,7 +285,7 @@ def guards_errs(plan, plan_path):
     folder = os.path.relpath(os.path.realpath(d), os.path.realpath(root))
     if folder.startswith(".."):
         return [f"guards: the plan folder {folder} is outside the repo"]
-    skip = [":(exclude).cfactory", f":(exclude){folder}"]
+    skip = [":(exclude).factory", f":(exclude){folder}"]
     owned, declared = set(), set()
     for m in plan["milestones"]:
         for t in m.get("tasks", []):
@@ -261,11 +304,25 @@ def guards_errs(plan, plan_path):
             for f in p.stdout.split("\n"):
                 if not f or covers(owned, f):
                     continue
-                if TEST_PATH.search(f):
-                    errs.append(f"{NOTE}{m['id']} guard {g}: {f} reads it; if it asserts the old behaviour, add it to allowTestEdits")
+                if is_test_path(f):
+                    notes.append(f"{m['id']} guard {g}: {f} reads it; if it asserts the old behaviour, add it to allowTestEdits")
                 elif not covers(declared, f):
                     errs.append(f"{m['id']} guard {g}: {f} reads it but no task of {m['id']} or earlier owns it, no surface exposure names it and no deferred item with a probe lists it")
     return errs
+
+
+def may_touch_errs(m, mid):
+    """`mayTouch`: path globs the owner approves with the plan, for the one plan-gap fix round. Narrow, relative, no spaces or commas (the log line is comma-separated)."""
+    if "mayTouch" not in m:
+        return []
+    g = m["mayTouch"]
+    if not (is_strs(g) and g):
+        return [f"{mid} mayTouch must be a non-empty list of path globs"]
+    def bad(x):  # `*` stays inside one path segment; the first segment is static; a trailing `/` is a plain directory prefix; no `**`
+        segs = x.split("/")
+        return (not x or x.startswith("/") or ".." in segs or "**" in x or re.search(r"[\s,]", x) is not None or re.search(r"[*?\[]", segs[0]) is not None
+                or (x.endswith("/") and re.search(r"[*?\[]", x) is not None))
+    return [f"{mid} mayTouch {x!r} must be a relative path under a static directory (`src/api/*`, `tests/api/`): `*` stays in one path segment, no `**`, no spaces or commas" for x in g if bad(x)]
 
 
 def surface_errs(m, mid):
@@ -364,7 +421,7 @@ def check(plan):
         v = m.get("verifier", {})
         if not isinstance(v, dict) or v.get("model", "opus") not in ("sonnet", "opus") or v.get("effort", "high") not in ("medium", "high"):
             errs.append(f"{mid} verifier must be {{model: sonnet or opus, effort: medium or high}}")
-        errs += surface_errs(m, mid) + deferred_errs(m, mid)
+        errs += surface_errs(m, mid) + deferred_errs(m, mid) + may_touch_errs(m, mid)
         mc = set(m.get("covers", []))
         covered |= mc
         errs += [f"{mid} covers unknown requirement {r}" for r in sorted(mc - reqs)]
@@ -411,13 +468,14 @@ def main():
     if len(args) != 1:
         print("usage: check-plan.py <plan.md> [--all] [--approved <sha>]", file=sys.stderr)
         return 2
-    errs, nm, nt = validate(args[0], approved, every)
-    fails = [e for e in errs if not e.startswith(NOTE)]
+    errs, nm, nt, notes = validate(args[0], approved, every)
+    for n in notes:
+        print(f"PLAN NOTE {n}")
     for e in errs:
-        print(f"PLAN NOTE {e[len(NOTE):]}" if e.startswith(NOTE) else f"PLAN FAIL {e}")
-    if not fails:
+        print(f"PLAN FAIL {e}")
+    if not errs:
         print(f"PLAN OK {nm} milestones {nt} tasks")
-    return 1 if fails else 0
+    return 1 if errs else 0
 
 
 if __name__ == "__main__":

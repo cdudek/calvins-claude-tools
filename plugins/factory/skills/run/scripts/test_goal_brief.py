@@ -1,4 +1,5 @@
 import copy
+import importlib.util
 import json
 import shlex
 import subprocess
@@ -27,7 +28,7 @@ BASE = {"change": "2026-11-24-saved-searches", "base": "main", "goalTurns": 12, 
 
 def plan_text(milestones=None, **top):
     plan = {**copy.deepcopy(BASE), "milestones": copy.deepcopy(milestones or [M1, M2_OPEN, M3_OPEN]), **top}
-    return "# Plan\n\n```json cfactory\n" + json.dumps(plan, indent=1) + "\n```\n\n## Progress log\n"
+    return "# Plan\n\n```json factory\n" + json.dumps(plan, indent=1) + "\n```\n\n## Progress log\n"
 
 
 def git(cwd, *args):
@@ -86,10 +87,9 @@ def test_ui_milestone_brief(tmp_path):
     assert "gallery approval" not in goal and "by the owner" not in goal
     assert len(goal) < 1500
     k = kick.read_text()
-    assert ("git branch 2026-11-24-saved-searches-M1-T1 milestone/2026-11-24-saved-searches-M1`, then "
-            "`wt switch 2026-11-24-saved-searches-M1-T1 --no-cd --yes`") in k
-    assert f"{tmp_path.resolve()}/.worktrees/2026-11-24-saved-searches-M1-T1" in k and "ff-only" not in k
-    assert f"~/.cfactory/scenarios/{tmp_path.name}/2026-11-24-saved-searches/" in k
+    assert "`python3 .factory/task-step.py start plan.md M1 <task id> --approved " in k and "never by the Agent tool's worktree isolation" in k
+    assert "git branch" not in k and "wt switch" not in k and "ff-only" not in k
+    assert f"~/.factory/scenarios/{tmp_path.name}/2026-11-24-saved-searches/" in k
     assert "Arm auto-merge." in k and "ux-verifier" in k
     assert "never from the log" in k
     assert "after 12 turns" in goal
@@ -136,10 +136,9 @@ def test_integrity_and_plan_calls_carry_the_approved_sha(tmp_path):
     sha = git(tmp_path, "rev-parse", "HEAD")
     k = kick.read_text()
     assert code == 0
-    assert (f"test-integrity.sh {tmp_path.resolve()}/.worktrees/<task-worktree> milestone/2026-11-24-saved-searches-M1 "
-            f"plan.md --task <task id> --approved {sha}") in k
-    assert f"--milestone M1 --approved {sha}" in k and f"check-plan.py plan.md --approved {sha}" in k
-    assert k.index("--task <task id>") < k.index("--milestone M1")  # per task first, then before the PR
+    assert f"`python3 .factory/task-step.py finish plan.md M1 <task id> --approved {sha}`" in k
+    assert f"`python3 .factory/task-step.py gate plan.md M1 --approved {sha}`" in k
+    assert k.index("task-step.py finish") < k.index("task-step.py gate")  # per task first, then before the PR
     assert "--pin" not in k  # only the bug flow pins
 
 
@@ -147,7 +146,7 @@ def test_every_task_in_a_builder_and_work_moves_by_worktree(tmp_path):
     code, out, kick = run(tmp_path, "M1")
     k = kick.read_text()
     assert code == 0 and "Every task runs in a factory:builder subagent" in k and "even a one-line fix" in k
-    assert "only create worktrees, run checks, merge and log" in k
+    assert "you only start worktrees, run checks, merge and log" in k
     assert "the next pass gets the same path" in k and "Never patch files" in k and "rtk proxy git diff" in k
 
 
@@ -219,7 +218,7 @@ def test_risky_milestone_gets_security_review(tmp_path):
     assert "Opus 5.5 high" in k and "gpt-6.2-astra" in k and "ux-verifier" not in k  # backend: no gallery
     assert "fix every High" not in k
     assert "only inside the task's own files and its allowTestEdits" in k
-    assert "BLOCKED: owner approves plan revision for <finding>" in k
+    assert "is a `gap`: see the gap lane under Verify" in k
 
 
 def test_goal_lists_end_states_in_order(tmp_path):
@@ -234,11 +233,11 @@ def test_goal_lists_end_states_in_order(tmp_path):
 def test_setup_and_preflight_only_when_the_plan_has_them(tmp_path):
     code, out, kick = run(tmp_path / "a", "M1")
     k = kick.read_text()
-    assert code == 0 and "preflight command" not in k and "in it; its HEAD" not in k and "tool or credential" not in k
+    assert code == 0 and "preflight command" not in k and "tool or credential" not in k
     pf = ["command -v squawk", "gcloud auth print-access-token >/dev/null"]
     code, out, kick = run(tmp_path / "b", "M1", plan_text(setup="npm ci", preflight=pf))
     k = kick.read_text()
-    assert code == 0 and "run `npm ci` in it" in k
+    assert code == 0 and "runs the plan's `setup` in it" in k
     assert "`command -v squawk`" in k and "`gcloud auth print-access-token >/dev/null`" in k
     assert "BLOCKED: <tool or credential> missing: <exact fix>" in k
     assert k.index("preflight command") < k.index("One worktree per task")  # first Build step
@@ -254,7 +253,7 @@ def test_hold_pushes_and_opens_no_pr(tmp_path):
     assert "Open no PR" in k and "push `milestone/2026-11-24-saved-searches-M2` once" in k and f"HOLD: {hold}" in k
     assert "1) HOLD: the last message starts with HOLD: and the transcript shows the pushed SHA" in goal and "verifier PASS for that same SHA" in goal
     assert f"In this run, {hold} is not such an action" in goal and "SHIPPED" not in goal
-    assert "--milestone M2 --approved" in k  # the integrity check still runs before the push
+    assert "task-step.py gate plan.md M2 --approved" in k  # the integrity check still runs before the push
 
 
 def test_bug_is_a_plan_with_a_pinned_failing_test(tmp_path):
@@ -264,12 +263,9 @@ def test_bug_is_a_plan_with_a_pinned_failing_test(tmp_path):
     k = kick.read_text()
     assert code == 0, out
     assert "first commit holds only the failing regression test" in k and "run the task's check with the worktree at that commit" in k
-    assert "record the SHA as <failing-test SHA>" in k
-    sha = git(tmp_path, "rev-parse", "HEAD")
-    assert f"--task <task id> --approved {sha} --pin <failing-test SHA>" in k  # every later integrity call for the task
-    assert f"--milestone M1 --approved {sha} --pin <failing-test SHA>" in k
+    assert "`python3 .factory/task-step.py pin plan.md M1 <failing-test SHA> --approved " in k and "later `finish` passes `--pin`" in k
     code, out, kick = run(tmp_path / "f", "M1", plan_text(ms, kind="feature", requirements=[R1]), reqs=(R1,))
-    assert code == 0 and "--pin" not in kick.read_text() and "failing regression test" not in kick.read_text()
+    assert code == 0 and "task-step.py pin" not in kick.read_text() and "failing regression test" not in kick.read_text()
 
 
 def test_small_flag_is_gone(tmp_path):
@@ -317,8 +313,8 @@ def test_plan_path_is_the_repo_relative_one(tmp_path):
     p = brief(plan, "--all", "--approved", sha)  # the owner may well pass an absolute path
     k = (plan.parent / "kickoff-all.md").read_text()
     assert p.returncode == 0, p.stdout
-    assert f"{sub}/plan.md --task <task id> --approved {sha}" in k and f"{sub}/plan.md --milestone M1 --approved {sha}" in k
-    assert f"check-plan.py {sub}/plan.md --approved {sha}" in k and f"git show {sha}:{sub}/plan.md" in k
+    assert f"task-step.py finish {sub}/plan.md M1 <task id> --approved {sha}" in k and f"task-step.py gate {sub}/plan.md M1 --approved {sha}" in k
+    assert f"git show {sha}:{sub}/plan.md" in k
     assert f"{sub}/evidence/M1/gallery.md" in k and f"`{sub}/design/`" in k
     assert str(tmp_path) not in k.replace(f"{tmp_path.resolve()}/.worktrees", "")  # no absolute plan path anywhere
 
@@ -326,25 +322,23 @@ def test_plan_path_is_the_repo_relative_one(tmp_path):
 def test_target_sha_is_fetched_recorded_and_passed_not_a_branch_name(tmp_path):
     code, out, kick = run(tmp_path / "a", "M1", plan_text(integration="integ"))
     k = kick.read_text()
-    assert code == 0 and "`git fetch origin`, then `git rev-parse origin/integ` and record the output as <target SHA>" in k
-    assert k.index("git fetch origin") < k.index("test-integrity.sh")  # recorded before the first integrity call
-    assert "<this worktree> <target SHA> plan.md --milestone M1 " in k and "<this worktree> integ" not in k
-    assert k.count("--target <target SHA>") == 2  # the per-task call and the pre-PR call
-    assert "--task <task id> --approved" in k and "--target <target SHA> --checked <checked SHAs, comma separated>" in k
+    assert code == 0 and "`python3 .factory/task-step.py target plan.md M1 --approved " in k and "records the head of `integ` as the <target SHA>" in k
+    assert k.index("task-step.py target") < k.index("task-step.py start")  # recorded before the first worktree and integrity call
+    assert "<this worktree>" not in k and "--target <target SHA>" not in k
     code, out, kick = run(tmp_path / "b", "--all", plan_text(FULL, integration="integ"))
     k = kick.read_text()
     assert code == 0
     assert "`git fetch origin`, record `git rev-parse origin/integ` as that milestone's <target SHA>" in k
     assert "`git branch milestone/2026-11-24-saved-searches-<M> <target SHA>`" in k and "<M> origin/integ" not in k
-    assert k.count("git rev-parse origin/integ") == 2 and k.count("<this worktree> <target SHA>") == 3  # M1 records, M2 and M3 cut
+    assert "then run `python3 .factory/task-step.py target plan.md <M> --approved " in k and k.count("task-step.py target plan.md M1") == 1
 
 
 def test_checked_task_commits_are_recorded_and_passed(tmp_path):
     code, out, kick = run(tmp_path, "M1")
     k = kick.read_text()
-    assert code == 0 and "rev-parse HEAD` as that task's <checked SHA> (every INTEGRITY OK commit" in k
-    assert "merge exactly that commit" in k
-    assert k.index("<checked SHA>") < k.index("--checked <checked SHAs, comma separated>")
+    assert code == 0 and "records its HEAD as a <checked SHA> (every INTEGRITY OK commit" in k
+    assert "merges exactly that commit" in k
+    assert k.index("<checked SHA>") < k.index("task-step.py gate") and "every <checked SHA>" in k
 
 
 def ship_of(kick_text):
@@ -358,7 +352,7 @@ def test_ship_commits_first_then_verifies_that_sha_then_pushes_it(tmp_path):
         k = kick.read_text()
         s = ship_of(k)
         assert code == 0 and "factory:verifier" not in k.split("Ship, in this order")[0].replace("ux-verifier", "")  # not in Verify
-        order = [s.index(x) for x in ("1. Commit on", "the progress entry", "2. Run `bash .cfactory/test-integrity.sh",
+        order = [s.index(x) for x in ("1. Commit on", "the progress entry", "2. Run `python3 .factory/task-step.py gate",
                                        "3. factory:verifier on the final commit", "4. ")]
         assert order == sorted(order), (name, order)
         assert "Nothing is committed after the verifier" in s and s.count("<final SHA>") >= 2 and "verifier PASS for that SHA" in s
@@ -366,7 +360,7 @@ def test_ship_commits_first_then_verifies_that_sha_then_pushes_it(tmp_path):
         assert "progress entry" not in after and "commit it" not in after and "append" not in after  # nothing is committed after it
         assert "no PR number or merge SHA" in s
         assert "goes through Verify step 2 (per-task integrity, a new <checked SHA>, merge that commit), then repeat Ship from step 1" in s
-        assert "git merge-base HEAD origin/" in k and "<checked SHA>s" in k  # a resumed run re-records both
+        assert "task-step.py status" in k and "--approved " in k and "--resume" in k and "<checked SHA>s" in k  # a resumed run re-records both
         if mid == "M3":
             assert s.index("apply ") < s.index("the progress entry")  # the spec commit comes first too
         if mid == "M1":
@@ -418,31 +412,13 @@ def test_sized_plan_names_model_effort_and_verifier(tmp_path):
     assert "factory:verifier (pass model sonnet and effort high to the Agent call) on the final commit" in k
 
 
-def test_unsized_plan_brief_is_unchanged(tmp_path):
-    old = subprocess.run(["git", "show", "origin/main:plugins/factory/skills/run/scripts/goal-brief.py"], capture_output=True, text=True,
-                         cwd=HERE).stdout
-    assert old, "origin/main goal-brief.py not readable"
-    (tmp_path / "old").mkdir()
-    (tmp_path / "old" / "goal-brief.py").write_text(old)
-    (tmp_path / "old" / "check-plan.py").write_text((HERE / "check-plan.py").read_text())
-    plan, sha = repo(tmp_path / "r")
-    outs = []
-    for s in (tmp_path / "old" / "goal-brief.py", SCRIPT):
-        p = subprocess.run([sys.executable, str(s), str(plan), "M1", "--approved", sha], capture_output=True, text=True)
-        assert p.returncode == 0
-        outs.append((p.stdout, (plan.parent / "kickoff-M1.md").read_text()))
-    # the only change for a plan without integration: the kickoff's one stance line
-    assert KICKOFF_STANCE + "\n" in outs[1][1]
-    assert outs[0] == (outs[1][0], outs[1][1].replace(KICKOFF_STANCE + "\n", ""))
-
-
 KICKOFF_STANCE = "Do reversible steps yourself and keep going: create a missing branch, rerun a check, recreate a worktree. Stop only for a decision the plan does not cover or an irreversible step."
 
 
-def with_origin(tmp_path, integ="integration/v1-beta", push_base=True):
+def with_origin(tmp_path, integ="integration/v1-beta", push_base=True, **top):
     """A repo whose origin is a local bare repo holding main; returns (plan, approved sha, bare path)."""
     work = tmp_path / "work"
-    plan, sha = repo(work, plan_text(integration=integ))
+    plan, sha = repo(work, plan_text(integration=integ, **top))
     git(work, "branch", "-M", "main")
     bare = tmp_path / "origin.git"
     subprocess.run(["git", "init", "-q", "--bare", str(bare)], check=True)
@@ -491,3 +467,75 @@ def test_plan_without_integration_has_no_preflight_and_the_stance_line(tmp_path)
     code, out, kick = run(tmp_path, "M1")
     assert code == 0 and out.startswith("-#-#- KICKOFF FILE -#-#-") and "PREFLIGHT" not in out
     assert KICKOFF_STANCE in kick.read_text()
+
+
+def load_brief():
+    spec = importlib.util.spec_from_file_location("goal_brief", SCRIPT)
+    mod = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(mod)
+    return mod
+
+
+def test_bad_integration_or_base_names_are_rejected_before_any_git_call(tmp_path):
+    for i, (integ, top) in enumerate((("-evil", {}), ("a..b", {}), ("x.lock", {}), ("integration/ok", {"base": "-b"}))):
+        (tmp_path / str(i)).mkdir()
+        plan, sha, bare = with_origin(tmp_path / str(i), integ=integ, **top)
+        p = brief(plan, "M1", "--approved", sha)
+        assert p.returncode == 1 and "BRIEF FAIL plan" in p.stdout and "not a valid branch name" in p.stdout, (integ, p.stdout)
+        assert heads(bare) == "main"
+
+
+def test_refs_come_after_a_double_dash(tmp_path):
+    gb, calls = load_brief(), []
+
+    def fake(cwd, *args):
+        calls.append(args)
+        return subprocess.CompletedProcess(args, 0, "" if args[0] == "ls-remote" else "x", "")
+    gb.git_out = fake
+    ok, _ = gb.preflight_integration(tmp_path / "plan.md", {"integration": "integration/v1", "base": "main"}, "abc1234")
+    assert ok
+    by = {c[0]: c for c in calls}
+    assert by["ls-remote"][by["ls-remote"].index("--") + 1:] == ("origin", "integration/v1")
+    assert by["fetch"][by["fetch"].index("--") + 1:] == ("origin", "main")
+    assert by["merge-base"][by["merge-base"].index("--") + 1:] == ("abc1234", "FETCH_HEAD")
+
+
+def test_credentials_are_stripped_from_git_errors(tmp_path):
+    scrub = load_brief().scrub
+    assert scrub("fatal: unable to access 'https://user:s3cret@host.example/x.git/': nope") == "fatal: unable to access 'https://host.example/x.git/': nope"
+    assert "s3cret" not in scrub("ssh://deploy:s3cret@host/x and https://tok@h/y")
+    plan, sha, bare = with_origin(tmp_path)
+    git(tmp_path / "work", "remote", "set-url", "origin", "https://user:s3cret@127.0.0.1:1/x.git")
+    p = brief(plan, "M1", "--approved", sha)
+    assert p.returncode == 1 and "could not read origin" in p.stdout and "s3cret" not in p.stdout + p.stderr
+
+
+def test_only_integration_branches_are_pushed(tmp_path):
+    plan, sha, bare = with_origin(tmp_path, integ="release/v1")
+    p = brief(plan, "M1", "--approved", sha)
+    assert p.returncode == 1 and "BRIEF FAIL" in p.stdout
+    assert f"run `git push origin {sha}:refs/heads/release/v1` yourself" in p.stdout
+    assert heads(bare) == "main"
+
+
+def test_gap_lane_names_the_may_touch_globs_and_the_log_line(tmp_path):
+    ms = [{**M1, "mayTouch": ["src/api/*", "tests/api/"]}, M2_OPEN, M3_OPEN]
+    code, out, kick = run(tmp_path, "M1", plan_text(ms))
+    k = kick.read_text()
+    assert code == 0 and "labels every FAIL `bug` or `gap`" in k
+    assert "matches M1's mayTouch (`src/api/*`, `tests/api/`)" in k and "`GAP-FIX M1 files=<a,b> tests=<c,d>`" in k
+    assert "one fix task `M1-gap`" in k and "`--task M1-gap` integrity" in k and "A second gap" in k
+    assert "a `gap` FAIL to the gap lane" in k
+
+
+def test_gap_lane_without_may_touch_ends_blocked(tmp_path):
+    code, out, kick = run(tmp_path, "M1")
+    k = kick.read_text()
+    assert code == 0 and "M1 has no `mayTouch`, so every `gap` ends `BLOCKED" in k and "GAP-FIX" not in k
+
+
+def test_kickoff_comes_from_the_template_with_no_placeholder_left(tmp_path):
+    for name, mid, text in (("one", "M1", plan_text()), ("all", "--all", plan_text(FULL, integration="integ")), ("hold", "M2", plan_text([M1, M2_RISKY, M3_OPEN], hold="x y"))):
+        code, out, kick = run(tmp_path / name, mid, text)
+        assert code == 0 and "{{" not in kick.read_text() and "}}" not in kick.read_text() and "@@" not in kick.read_text(), name
+    assert (HERE.parent / "templates" / "kickoff.md").read_text().startswith("@@ top")

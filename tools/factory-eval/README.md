@@ -1,6 +1,6 @@
 # Factory eval
 
-Measures which factory configuration to make the default: cost, time and quality per arm, on replayed tasks. Python 3 stdlib plus matplotlib. Task data and results are private and live in `~/.cfactory/eval/`, never in a repo.
+Measures which factory configuration to make the default: cost, time and quality per arm, on replayed tasks. Python 3 stdlib plus matplotlib. Task data and results are private and live in `~/.factory/eval/`, never in a repo.
 
 ## What it measures
 - **Quality (`hidden_frac`)** is the same fixed grading for every arm, never the arm's own verifier: the tests the task's reference commit added or changed (copied into the result tree after the run). `hidden_frac` is the share of `fail_to_pass` files that pass (all hidden files when `task.json` has no such list; `grade.json` says which in `hidden_basis`), so a hidden file that already passes at the start commit gives a do-nothing arm no credit. The repo's existing suite and the `pass_to_pass_hidden` files must still pass, otherwise `regression`. Prose scenarios, graded by one blind grader (default Codex `gpt-6.2-astra`, read-only; `--grader opus` is the alternative), are a separate optional `scenario_frac` (null without eval-only scenarios). `solved` means `hidden_frac == 1` and no regression.
@@ -22,23 +22,23 @@ Plackett-Burman factors, default level first: A verifier model Opus/Sonnet, B bu
 ## Prepare a task
 ```bash
 python3 prepare_task.py <repo> --start <sha> --reference <sha> --task-id <id> --plan changes/<slug>/plan.md \
-  --out ~/.cfactory/eval/tasks/<name> --suite-cmd "<fast suite>" --e2e-cmd "<e2e>" --setup "<install>" \
+  --out ~/.factory/eval/tasks/<name> --suite-cmd "<fast suite>" --e2e-cmd "<e2e>" --setup "<install>" \
   --scenarios <folder of prose scenarios> --intent-from-outcome
 ```
 It writes the start tree as a tarball without history (plan progress entries dated after the start commit are stripped), the hidden tests, the reference diff stat and `task.json`. Optional: `--env NAME=TEMPLATE` (repeatable; exported into every arm and the grading run, templates may use `{db}`, `{port}`, `{run}`, e.g. `TEST_DATABASE_URL=postgres://user@127.0.0.1:5433/{db}`; shown by `--dry-run`), `--exclude-glob G` (repeatable; leaves large non-code assets such as evidence images out of `start.tar.gz`), `--prove` (runs the hidden command per hidden file on the start tree and records `fail_to_pass` and `pass_to_pass_hidden` in `task.json`) or `--fail-to-pass FILE...` / `--pass-to-pass-hidden FILE...` (the same lists, for tasks proven elsewhere), `--verifier-scenarios` (what the arm's own verifier may read), `--ticket-delta` (the raw-ticket delta, needed by arms with context `raw`), `--hidden-cmd` (`{files}` is replaced), `--port-env/--port-range` and `--db-name/--db-env/--db-create/--db-drop` (per-run port and database). `--intent-from-outcome` writes a minimal `intent.md` and runs the factory's `migrate-ids.py` on the tree. A plan written before the readable-id scheme may still need shimming (bare ids in prose, citations, a per-task `allowTestEdits`, the risky milestone surface); run `check-plan.py` on the start tree and its output says what. A plan without `hold` gets one at run time: eval repos have a local bare origin and no pull requests, so runs end `HOLD`.
 
 ## Run
 ```bash
-python3 run_eval.py --task ~/.cfactory/eval/tasks/<name> --stage grid --repeats 3 --parallel 3 --dry-run
-python3 run_eval.py --task ~/.cfactory/eval/tasks/<name> --stage grid --repeats 3 --parallel 3
-python3 grade.py ~/.cfactory/eval/results/grid/<run-id>
-python3 analyze.py ~/.cfactory/eval/results/grid
-python3 plot.py ~/.cfactory/eval/results/grid
+python3 run_eval.py --task ~/.factory/eval/tasks/<name> --stage grid --repeats 3 --parallel 3 --dry-run
+python3 run_eval.py --task ~/.factory/eval/tasks/<name> --stage grid --repeats 3 --parallel 3
+python3 grade.py ~/.factory/eval/results/grid/<run-id>
+python3 analyze.py ~/.factory/eval/results/grid
+python3 plot.py ~/.factory/eval/results/grid
 ```
 `grade.py` runs once per run. `plot.py` writes `plots/` and `report.html`, local only.
-- **Auth**: if `CLAUDE_CODE_OAUTH_TOKEN` (from `claude setup-token`) is in the environment it is used and never printed or stored. Otherwise all runs share the one logged-in config dir `~/.cfactory/eval/claude-config` (log in there once); each run still gets its own `--settings` and plugin copy, but history and todos are shared across runs in that mode.
+- **Auth**: if `CLAUDE_CODE_OAUTH_TOKEN` (from `claude setup-token`) is in the environment it is used and never printed or stored. Otherwise all runs share the one logged-in config dir `~/.factory/eval/claude-config` (log in there once); each run still gets its own `--settings` and plugin copy, but history and todos are shared across runs in that mode.
 - **Isolation**: a unique directory per run, one commit, no history, factory plugin copied from a pinned commit with each agent's model and effort written into its frontmatter. The coordinator's model and effort are `--model` and `--effort`; `CLAUDE_CODE_EFFORT_LEVEL` is never set. `ANTHROPIC_DEFAULT_HAIKU_MODEL` must be unset (the runner refuses otherwise): it re-points the goal evaluator and the `haiku` alias for every arm. Managed policy files cannot be removed by a clean config dir; they are the same for every arm.
-- **Parallel**: `--parallel N` (default 3), arms land on random free slots. Each run has its own directory, database (`dbName` template) and port block. Heavy steps share one lock, `~/.cfactory/eval/heavy.lock`: runs call `heavy <cmd>` for E2E, full test runs and app servers, and `grade.py` takes the same lock. Each run records `slot` and `concurrent_at_start`; `analyze.py` computes the mean parallel load over every run's interval and reports time raw and load-adjusted.
+- **Parallel**: `--parallel N` (default 3), arms land on random free slots. Each run has its own directory, database (`dbName` template) and port block. Heavy steps share one lock, `~/.factory/eval/heavy.lock`: runs call `heavy <cmd>` for E2E, full test runs and app servers, and `grade.py` takes the same lock. Each run records `slot` and `concurrent_at_start`; `analyze.py` computes the mean parallel load over every run's interval and reports time raw and load-adjusted.
 - **Infrastructure**: rate-limit, auth and unreachable-API stops set `infra_failure` and `rerun` in `run.json`; rerun them with the same command and arm list, they are never dropped silently. A timeout is a failure.
 - A cascade arm runs its tiers in turn, escalating when a tier does not end `SHIPPED` or `HOLD`; `analyze.py` folds the tiers into one row with the summed cost.
 
@@ -54,4 +54,4 @@ python3 plot.py ~/.cfactory/eval/results/grid
 01 cost vs `hidden_frac` with the front, interval crosses and time as size: which arm to pick. 02 cost per solved task. 03 cost per role: where the money goes. 04 time ECDFs: tails. 05 pass^k: reliability. 06 forest against the default with the equivalence band (+-10% cost, +-5 min, +-0.05 `hidden_frac`). 07 screening main effects. 08 verifier and goal-evaluator confusion matrices: false passes. 09 failure taxonomy. 10 routing: policies against the per-task oracle, regret. 11 cache hit vs cost: confound check.
 
 ## Tests
-`python3 -m pytest -q -p no:cacheprovider plugins/factory/eval`, also run by `scripts/run-plugin-tests.sh`. Fixtures are synthetic: a tiny git repo and fake streams. No test calls a model.
+`python3 -m pytest -q -p no:cacheprovider tools/factory-eval`, also run by `scripts/run-plugin-tests.sh`. Fixtures are synthetic: a tiny git repo and fake streams. No test calls a model.

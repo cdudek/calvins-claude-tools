@@ -8,7 +8,7 @@ BASE_FILES = {
     "src/a.ts": "export const a = 1\n",
     "src/a.test.ts": "it('a', () => {})\n",
     "package.json": "{}\n",
-    ".cfactory/goal-brief.py": "x\n",
+    ".factory/goal-brief.py": "x\n",
     ".github/workflows/ci.yml": "on: pull_request\n",
     ".github/actions/setup/action.yml": "name: setup\n",
     ".fitness/baseline.json": "{}\n",
@@ -50,8 +50,8 @@ def test_clean_branch_ok(tmp_path):
 
 
 @pytest.mark.parametrize("path,reason", [
-    (".cfactory/goal-brief.py", "harness changed"),
-    (".cfactory/new.sh", "harness changed"),
+    (".factory/goal-brief.py", "harness changed"),
+    (".factory/new.sh", "harness changed"),
     ("changes/2026-11-24-x/plan.md", "plan changed"),
     (".github/workflows/ci.yml", "CI config changed"),
     (".github/actions/setup/action.yml", "CI config changed"),
@@ -109,7 +109,7 @@ PLAN_PATH = "changes/2026-11-24-x/plan.md"
 
 
 def plan_text(plan, extra=""):
-    return "# plan\n\n```json cfactory\n" + json.dumps(plan, indent=1) + "\n```\n" + extra
+    return "# plan\n\n```json factory\n" + json.dumps(plan, indent=1) + "\n```\n" + extra
 
 
 def run(repo, *args):
@@ -402,9 +402,9 @@ def test_a_plan_copy_outside_every_worktree_is_still_read_without_approved(tmp_p
 
 
 def test_milestone_accepts_approved_content_and_rejects_later_edits(tmp_path):
-    # milestone 1 in a repo without a plan PR carries the approved delta and .cfactory/ on its own branch
+    # milestone 1 in a repo without a plan PR carries the approved delta and .factory/ on its own branch
     repo = plan_repo(tmp_path)
-    commit(repo, {"changes/2026-11-24-x/delta.md": "## ADDED\n- req-1: a, revised [outcome-1]\n- req-2: b [outcome-1]\n", ".cfactory/check-plan.py": "# copy\n"})
+    commit(repo, {"changes/2026-11-24-x/delta.md": "## ADDED\n- req-1: a, revised [outcome-1]\n- req-2: b [outcome-1]\n", ".factory/check-plan.py": "# copy\n"})
     approved = head(repo)
     commit(repo, {"src/a.ts": "export const a = 2\n", PLAN_PATH: plan_text(PLAN, "progress: M1 T1 done\n")})
     code, out = run(repo, "main", str(repo / PLAN_PATH), "--milestone", "M1", "--approved", approved)
@@ -472,3 +472,80 @@ def test_approved_must_be_an_ancestor_of_head(tmp_path):
     for mode in ("--task", "--milestone"):
         code, out = run(repo, "main", str(repo / PLAN_PATH), mode, "T1" if mode == "--task" else "M1", "--approved", foreign)
         assert code == 1 and f"INTEGRITY FAIL approved {foreign} is not an ancestor of HEAD" in out, out
+
+
+MAY_PLAN = {**PLAN, "milestones": [{**PLAN["milestones"][0], "mayTouch": ["src/api/*", "src/b.test.ts"]}, PLAN["milestones"][1]]}
+
+
+def gap_repo(tmp_path, *log, edits=None):
+    """MAY_PLAN is approved; the fix round's files are committed with the log lines under the plan's json block."""
+    tmp_path.mkdir(parents=True, exist_ok=True)
+    repo = plan_repo(tmp_path, MAY_PLAN)
+    commit(repo, {**(edits or {}), PLAN_PATH: plan_text(MAY_PLAN, "".join(f"{l}\n" for l in log))})
+    return repo
+
+
+def test_gap_fix_files_are_in_scope_only_when_logged_and_inside_may_touch(tmp_path):
+    repo = gap_repo(tmp_path, "GAP-FIX M1 files=src/api/list.ts", edits={"src/api/list.ts": "x\n"})
+    code, out = run(repo, "main", str(repo / PLAN_PATH), "--milestone", "M1", "--approved", appr(repo))
+    assert code == 0 and out.strip() == "INTEGRITY OK", out
+    repo = gap_repo(tmp_path / "n", edits={"src/api/list.ts": "x\n"})  # not logged
+    code, out = run(repo, "main", str(repo / PLAN_PATH), "--milestone", "M1", "--approved", appr(repo))
+    assert code == 1 and "outside milestone M1: src/api/list.ts" in out
+    repo = gap_repo(tmp_path / "o", "GAP-FIX M1 files=src/api/list.ts,src/secret.ts", edits={"src/api/list.ts": "x\n", "src/secret.ts": "x\n"})
+    code, out = run(repo, "main", str(repo / PLAN_PATH), "--milestone", "M1", "--approved", appr(repo))
+    assert code == 1 and "outside milestone M1: src/secret.ts" in out and "outside milestone M1: src/api/list.ts" not in out
+
+
+def test_gap_fix_task_scope_and_test_edit(tmp_path):
+    """The fix task is cut from the milestone head, which already holds the log line, so its base is that head."""
+    repo = gap_repo(tmp_path, "GAP-FIX M1 files=src/api/list.ts tests=src/b.test.ts")
+    ms = head(repo)
+    commit(repo, {"src/api/list.ts": "x\n", "src/b.test.ts": "it('b', () => { /* new rule */ })\n"})
+    code, out = run(repo, ms, str(repo / PLAN_PATH), "--task", "M1-gap", "--approved", appr(repo))
+    assert code == 0 and out.strip() == "INTEGRITY OK", out
+    commit(repo, {"src/a.ts": "export const a = 3\n"})  # a plan task's file, but not the fix task's
+    code, out = run(repo, ms, str(repo / PLAN_PATH), "--task", "M1-gap", "--approved", appr(repo))
+    assert code == 1 and "outside task M1-gap: src/a.ts" in out
+    repo = gap_repo(tmp_path / "t", "GAP-FIX M1 files=src/api/list.ts")
+    ms = head(repo)
+    commit(repo, {"src/b.test.ts": "it('b', () => { /* x */ })\n"})
+    code, out = run(repo, ms, str(repo / PLAN_PATH), "--task", "M1-gap", "--approved", appr(repo))
+    assert code == 1 and "existing test changed or deleted: src/b.test.ts" in out  # not named in tests=
+
+
+def test_second_gap_round_and_unlogged_fix_task_fail(tmp_path):
+    repo = gap_repo(tmp_path, "GAP-FIX M1 files=src/api/a.ts", "GAP-FIX M1 files=src/api/b.ts", edits={"src/api/a.ts": "x\n"})
+    code, out = run(repo, "main", str(repo / PLAN_PATH), "--milestone", "M1", "--approved", appr(repo))
+    assert code == 1 and "more than one gap round for M1" in out
+    repo = gap_repo(tmp_path / "n", edits={"src/api/a.ts": "x\n"})
+    code, out = run(repo, "main", str(repo / PLAN_PATH), "--task", "M1-gap", "--approved", appr(repo))
+    assert code == 1 and "no task or milestone M1-gap" in out
+
+
+def test_gap_log_line_without_may_touch_widens_nothing(tmp_path):
+    repo = plan_repo(tmp_path)  # the approved plan has no mayTouch
+    commit(repo, {"src/api/list.ts": "x\n", PLAN_PATH: plan_text(PLAN, "GAP-FIX M1 files=src/api/list.ts\n")})
+    code, out = run(repo, "main", str(repo / PLAN_PATH), "--milestone", "M1", "--approved", appr(repo))
+    assert code == 1 and "outside milestone M1: src/api/list.ts" in out
+
+
+def test_star_never_crosses_a_slash_in_may_touch(tmp_path):
+    repo = gap_repo(tmp_path, "GAP-FIX M1 files=src/api/deep/x.ts,src/api/ok.ts", edits={"src/api/deep/x.ts": "x\n", "src/api/ok.ts": "x\n"})
+    code, out = run(repo, "main", str(repo / PLAN_PATH), "--milestone", "M1", "--approved", appr(repo))
+    assert code == 1 and "outside milestone M1: src/api/deep/x.ts" in out and "outside milestone M1: src/api/ok.ts" not in out
+
+
+def test_wildcard_first_segment_and_double_star_match_nothing(tmp_path):
+    plan = {**PLAN, "milestones": [{**PLAN["milestones"][0], "mayTouch": ["*", "**", "*/x.ts", "src/**"]}, PLAN["milestones"][1]]}
+    repo = plan_repo(tmp_path, plan)
+    commit(repo, {"src/x.ts": "x\n", "a/x.ts": "x\n", PLAN_PATH: plan_text(plan, "GAP-FIX M1 files=src/x.ts,a/x.ts\n")})
+    code, out = run(repo, "main", str(repo / PLAN_PATH), "--milestone", "M1", "--approved", appr(repo))
+    assert code == 1 and "outside milestone M1: src/x.ts" in out and "outside milestone M1: a/x.ts" in out
+
+
+def test_uncommitted_gap_log_line_grants_no_scope(tmp_path):
+    repo = gap_repo(tmp_path, edits={"src/api/list.ts": "x\n"})
+    (repo / PLAN_PATH).write_text(plan_text(MAY_PLAN, "GAP-FIX M1 files=src/api/list.ts\n"))  # in the working file only
+    code, out = run(repo, "main", str(repo / PLAN_PATH), "--milestone", "M1", "--approved", appr(repo))
+    assert code == 1 and "outside milestone M1: src/api/list.ts" in out

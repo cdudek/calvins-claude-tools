@@ -26,7 +26,7 @@ INTENT = "# intent\n- outcome-1: people save a search\n- constraint-1: no change
 def write_plan(tmp_path, plan, delta=True, log="", intent=True):
     tmp_path.mkdir(parents=True, exist_ok=True)
     f = tmp_path / "plan.md"
-    f.write_text("# Plan\n\n```json cfactory\n" + json.dumps(plan) + "\n```\n" + log)
+    f.write_text("# Plan\n\n```json factory\n" + json.dumps(plan) + "\n```\n" + log)
     if delta:  # a delta that lists exactly the plan's requirements, each citing an intent id
         (tmp_path / "delta.md").write_text(
             "# delta\n### ADDED Requirements\n" + "".join(f"- {r}: When ..., the system shall ... [outcome-1]\n" for r in plan["requirements"]))
@@ -142,7 +142,7 @@ def test_bare_requirement_id_refused(tmp_path):
         p["milestones"][2]["covers"] = ["R9", "guests/R9"]
     code, out = run(tmp_path, mutated(f))
     assert code == 1 and "requirement id R9 must look like req-<n>" in out
-    assert "requirement id guests/R9 must look like req-<n> (old form: run `python3 .cfactory/migrate-ids.py" in out
+    assert "requirement id guests/R9 must look like req-<n> (old form: rewrite it as req-<n>" in out
 
 
 def test_plan_matches_delta(tmp_path):
@@ -422,7 +422,7 @@ def out_of(f):
     return subprocess.run([sys.executable, str(SCRIPT), str(f)], capture_output=True, text=True).stdout
 
 
-def test_old_forms_are_refused_with_the_migrate_pointer(tmp_path):
+def test_old_forms_are_refused_with_a_rewrite_hint(tmp_path):
     f = write_plan(tmp_path, VALID)
     (f.parent / "delta.md").write_text("### ADDED Requirements\n- guests/R1: old id [I1]\n- req-2: old cite [C1]\n")
     (f.parent / "intent.md").write_text("# intent\n- I1: people save a search\n- C1: guests keep today's search\n")
@@ -430,7 +430,7 @@ def test_old_forms_are_refused_with_the_migrate_pointer(tmp_path):
     assert "intent.md defines no ids" in out and "old `- I1:` form found" in out
     assert "delta requirement guests/R1 uses the old <spec>/R<n> id" in out
     assert "requirement req-2 in delta.md cites an old [I<n>] or [C<n>] id" in out
-    assert out.count("migrate-ids.py") >= 3
+    assert out.count("rewrite it as req-<n>, outcome-<n> or constraint-<n> by hand") >= 3
 
 
 def test_duplicate_requirement_number_fails(tmp_path):
@@ -563,6 +563,24 @@ def test_guard_test_file_is_a_note_not_a_failure(tmp_path):
     assert code == 0 and "NOTE" not in out
 
 
+def test_test_classifier_is_basename_or_top_level_folder(tmp_path):
+    for name in ("src/lib/tests-helpers/x.ts", "src/tests/x.ts", "src/e2e/x.ts"):  # a folder segment below the top is source
+        code, out = guarded(tmp_path / name.replace("/", "_"), {name: "db.from(comments)\n"})
+        assert code == 1 and f"PLAN FAIL M2 guard" in out and "PLAN NOTE" not in out, name
+    for name in ("src/x.test.ts", "src/y.spec.tsx", "tests/x.ts", "__tests__/x.ts", "e2e/x.ts", "test/x.ts"):
+        code, out = guarded(tmp_path / name.replace("/", "_"), {name: "db.from(comments)\n"}, tasks=task(files=["api/leak.py"]))
+        assert code == 0 and f"PLAN NOTE M2 guard" in out and name in out, name
+
+
+def test_bad_ids_fail_and_never_reach_a_message_raw(tmp_path):
+    code, out = run(tmp_path / "a", mutated(lambda p: p["milestones"][0].update(id="NOTE M9")))
+    assert code == 1 and "PLAN FAIL milestone id 'NOTE M9' must look like M<n>" in out and "PLAN NOTE" not in out
+    code, out = run(tmp_path / "b", mutated(lambda p: p["milestones"][0]["tasks"][0].update(id="T1\nPLAN OK 1 milestones 1 tasks")))
+    assert code == 1 and "\nPLAN OK" not in out and "must look like T<n>" in out
+    code, out = run(tmp_path / "c", mutated(lambda p: p["milestones"][0]["tasks"][0].update(id=5)))
+    assert code == 1 and "task id 5 must look like T<n>" in out
+
+
 def test_guard_git_grep_error(tmp_path):
     code, out = guarded(tmp_path, guards=["[[.a.]]"])  # compiles in Python, rejected by git grep
     assert code == 1 and "PLAN FAIL guard [[.a.]]: git grep failed:" in out
@@ -578,3 +596,30 @@ def test_guard_shape_and_no_guards(tmp_path):
     assert run(tmp_path / "n", VALID)[0] == 0
     code, out = run(tmp_path / "e", mutated(lambda p: p["milestones"][1].update(guards=[])))
     assert code == 1 and "M2 guards must be a non-empty list" in out
+
+
+def test_task_prose_must_match_json(tmp_path):
+    plan = mutated(lambda p: p["milestones"][0]["tasks"][0].update(effort="high"))
+    f = write_plan(tmp_path, plan)
+    f.write_text(f.read_text().replace("# Plan\n", "# Plan\n- **T1 saved chip (medium effort, haiku).** builds it\n", 1))
+    p = subprocess.run([sys.executable, str(SCRIPT), str(f)], capture_output=True, text=True)
+    assert p.returncode == 1
+    assert "M1/T1 prose says effort medium but the json block says high" in p.stdout
+    assert "M1/T1 prose says model haiku but the json block says sonnet" in p.stdout
+
+
+def test_task_prose_default_and_match_pass(tmp_path):
+    f = write_plan(tmp_path, VALID)  # no json effort counts as medium
+    f.write_text(f.read_text().replace("# Plan\n", "# Plan\n- **T1 saved chip (medium effort).** ok\n- **T2:** says nothing\n", 1))
+    p = subprocess.run([sys.executable, str(SCRIPT), str(f)], capture_output=True, text=True)
+    assert p.returncode == 0, p.stdout
+    f.write_text(f.read_text().replace("(medium effort)", "(high effort)"))
+    p = subprocess.run([sys.executable, str(SCRIPT), str(f)], capture_output=True, text=True)
+    assert p.returncode == 1 and "T1 prose says effort high but the json block says medium" in p.stdout
+
+
+def test_may_touch_shape(tmp_path):
+    assert run(tmp_path / "a", mutated(lambda p: p["milestones"][0].update(mayTouch=["src/api/*", "tests/api/"])))[0] == 0
+    for i, bad in enumerate(("src", [], [""], ["/etc/*"], ["../x"], ["a b"], ["a,b"], ["**"], ["*/"], [1], ["*.ts"], ["src/**"], ["src/**/x.ts"], ["src/*/"], ["*/x"])):
+        code, out = run(tmp_path / f"b{i}", mutated(lambda p: p["milestones"][0].update(mayTouch=bad)))
+        assert code == 1 and "M1 mayTouch" in out, bad

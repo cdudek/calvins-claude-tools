@@ -14,7 +14,7 @@ Callers can double a number with the app. Covers the doubling rule (req-1).
 ### M1 backend: doubling
 - **Result:** double(2) returns 4.
 
-```json cfactory
+```json factory
 {{"change": "{SLUG}", "base": "main", "goalTurns": 8, "requirements": ["req-1"],
  "milestones": [
    {{"id": "M1", "layer": "backend", "covers": ["req-1"],

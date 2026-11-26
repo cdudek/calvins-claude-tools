@@ -46,9 +46,9 @@ Milestones run in this order; an empty layer is skipped; the same layer may repe
 - **E2E:** only critical and highly important journeys. No per-button or per-label E2E.
 
 ## Graph block
-End the plan body (before the progress log) with one fenced block whose info string is `json cfactory`. `scripts/check-plan.py` reads the first one.
+End the plan body (before the progress log) with one fenced block whose info string is `json factory`. `scripts/check-plan.py` reads the first one.
 
-```json cfactory
+```json factory
 {"change": "2026-11-24-saved-searches", "base": "main", "goalTurns": 12,
  "setup": "npm ci", "preflight": ["command -v npm"], "deployOnMerge": false,
  "requirements": ["req-1", "req-2"],
@@ -74,14 +74,15 @@ End the plan body (before the progress log) with one fenced block whose info str
 - `layer`: `components`, `layouts`, `backend`, `screens` or `rest`.
 - `risky` (milestone, optional): `true` when it touches auth, money, consent or data; adds a security review by an Opus 5.5 high advisory agent or the Codex `gpt-6.2-astra` pass. A risky milestone needs `surface`.
 - `surface` (milestone, required when `risky`): every place an actor can see the data, from the sweep of the base: routes and pages, lists, notifications, mail, queues, role changes (member to guest). Each entry is `{exposure, requirement, scenario}` or `{exposure, requirement, deferred: {reason, probe}}`. `requirement` is a requirement this milestone covers.
-- `guards` (milestone, required when `risky` and a requirement is about access, privacy, visibility or billing): regular expressions (PCRE) for how the guarded data is read: the query call, not the bare name. Generic form: `(from|join|findAll)\\(orders\\b` matches the code that queries `orders`; the bare word `orders` also matches every comment, type and test. `check-plan.py` runs `git grep -l -P` for each over tracked and untracked files (gitignore respected; not the change folder, not `.cfactory/`) and fails on an invalid pattern. A source file it finds must be a task's `files` or `allowTestEdits` path of this or an earlier milestone, a `surface` `exposure`, or a `deferred` `item` (which has a probe); the path must equal the entry, or the entry ends in `/` and is its folder. A test file (under `test/`, `tests/`, `__tests__/`, `e2e/`, or named `*.test.*` or `*.spec.*`) that no task owns is only a `PLAN NOTE`: if it asserts the old behaviour, add it to `allowTestEdits`.
+- `guards` (milestone, required when `risky` and a requirement is about access, privacy, visibility or billing): regular expressions (PCRE) for how the guarded data is read: the query call, not the bare name. Generic form: `(from|join|findAll)\\(orders\\b` matches the code that queries `orders`; the bare word `orders` also matches every comment, type and test. `check-plan.py` runs `git grep -l -P` for each over tracked and untracked files (gitignore respected; not the change folder, not `.factory/`) and fails on an invalid pattern. A source file it finds must be a task's `files` or `allowTestEdits` path of this or an earlier milestone, a `surface` `exposure`, or a `deferred` `item` (which has a probe); the path must equal the entry, or the entry ends in `/` and is its folder. A test file (under `test/`, `tests/`, `__tests__/`, `e2e/`, or named `*.test.*` or `*.spec.*`) that no task owns is only a `PLAN NOTE`: if it asserts the old behaviour, add it to `allowTestEdits`.
+- `mayTouch` (milestone, optional): path globs (`src/api/*`, `tests/api/`) the owner approves with the plan, for the one plan-gap fix round: the files and existing tests a verifier `gap` FAIL may touch without a new approval. Relative, no spaces or commas, never everything. Ask for it on milestones with access or privacy requirements, seeded from the files the `guards` check listed. Without it a gap ends BLOCKED. `test-integrity.sh` reads the coordinator's logged `GAP-FIX` line and keeps only paths matching it.
 - `deferred` (milestone, optional): `{item, reason, probe}`. `probe` is the command you ran and what it showed. A reason written as a fact without a probe fails.
 - `effort` (task, optional): `low` for mechanical code or text replacement, `high` for complex work, default `medium`. The builder runs on Sonnet 5.5 at this effort.
-- `model` (task, optional): `haiku`, `sonnet` or `opus`, default `sonnet`. The builder dispatch passes it with `effort`. `scripts/size-tasks.py` sets both from the rules in SKILL.md.
+- `model` (task, optional): `haiku`, `sonnet` or `opus`, default `sonnet`. The builder dispatch passes it with `effort`.
 - `verifier` (milestone, optional): `{"model": "sonnet" | "opus", "effort": "medium" | "high"}`, default Opus 5.5 high. The verifier dispatch passes it. Security review of a risky milestone is not affected.
 - `allowTestEdits` (task, optional): existing test files this task edits, nothing else. A top-level `allowTestEdits` fails. `test-integrity.sh` reads it per task.
 - Milestone `tasks` only on detailed milestones. When present, their `covers` union equals the milestone's `covers`, and every `check` is non-empty.
 - Task `needs` is a list and references tasks of earlier milestones only. Milestone ids are unique. A milestone has no `needs`.
 - `files` are disjoint within a milestone. Task files are required once a milestone is detailed.
-- Requirement ids are `req-<n>`, unique across the repo (`references/spec-standard.md`, "Ids and explainers"). The old `<spec>/R<n>`, `I<n>` and `C<n>` forms fail with a pointer to `migrate-ids.py`.
+- Requirement ids are `req-<n>`, unique across the repo (`references/spec-standard.md`, "Ids and explainers"). The old `<spec>/R<n>`, `I<n>` and `C<n>` forms fail with a rewrite hint.
 - Every requirement is covered by at least one milestone; every `covers` id exists in `requirements`. The plan's `requirements` equal the delta's ADDED, MODIFIED and REMOVED ids. A REMOVED id is covered by a task like any other: the task proves the old behaviour is gone.

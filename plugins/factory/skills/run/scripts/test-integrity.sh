@@ -7,7 +7,8 @@
 # plan's integration (else base) branch; --task/--milestone limit changed paths to the task(s) files,
 # new tests (inside a task file's directory) and allowTestEdits; --milestone requires --approved; --pin <sha> keeps that commit's tests as is; --checked (with
 # --milestone) lists the commits the per-task checks passed: every changed implementation path must
-# have its HEAD blob in one of them.
+# have its HEAD blob in one of them. Plan-gap lane: `GAP-FIX <M> files=<a,b> tests=<c,d>` lines in the plan's progress log (read at HEAD) extend
+# --milestone <M>, and are the whole scope of --task <M>-gap, but only for paths matching the approved milestone's mayTouch; one line per milestone.
 set -euo pipefail
 
 U="usage: test-integrity.sh <repo-or-worktree> <base-ref> [plan.md [--task <id> | --milestone <id>] [--approved <sha>] [--pin <sha>] [--target <sha>] [--checked <sha>[,<sha>...]]]"
@@ -46,7 +47,7 @@ fi
 allow="" files="" integ="" pbase="" slug="" last=0 planfile=""
 if [ -n "$plan" ]; then
   out=$(python3 -c '
-import json, os, re, subprocess, sys
+import fnmatch, json, os, re, subprocess, sys
 plan, repo, approved, task, ms = sys.argv[1:6]
 def git(*a): return subprocess.run(["git", "-C", repo, *a], capture_output=True, text=True, check=True).stdout
 top = os.path.realpath(git("rev-parse", "--show-toplevel").strip())
@@ -60,13 +61,34 @@ loose = os.path.isabs(plan) and rel.startswith("..") and not approved and os.pat
 if rel.startswith("..") and not loose: sys.exit("plan " + plan + " is not a path inside " + top)
 print("PLANFILE\t" + (plan if loose else os.path.join(top, rel)))
 text = git("show", approved + ":" + rel) if approved else open(plan if loose else os.path.join(top, rel)).read()
-p = json.loads(re.search(r"^```json cfactory[ \t]*\n(.*?)^```", text, re.S | re.M).group(1))
+p = json.loads(re.search(r"^```json factory[ \t]*\n(.*?)^```", text, re.S | re.M).group(1))
 mss = p.get("milestones", [])
 print("BASE\t" + str(p.get("base", ""))); print("INTEG\t" + str(p.get("integration", ""))); print("SLUG\t" + str(p.get("change", "")))
 if ms and mss and mss[-1].get("id") == ms: print("LAST\t1")
 sel = None
 if task: sel = [t for m in mss for t in m.get("tasks", []) if t.get("id") == task]
 elif ms: sel = [t for m in mss if m.get("id") == ms for t in m.get("tasks", [])]
+# plan-gap lane: the one fix round the coordinator logs as `GAP-FIX <M> files=<a,b> tests=<c,d>` in the progress log (read at HEAD, not at --approved).
+# Only paths matching the milestone mayTouch globs the owner approved count; the fix task is `<M>-gap`.
+gap = ms or (task[:-4] if re.fullmatch(r"M\d+-gap", task) else "")
+if gap:
+    may = next((m.get("mayTouch") or [] for m in mss if m.get("id") == gap), [])
+    # The log is read from the committed tree: an uncommitted plan edit must not grant scope. Only a replay copy outside every worktree (loose) is read from disk.
+    try: cur = open(plan).read() if loose else git("show", "HEAD:" + rel)
+    except subprocess.CalledProcessError: cur = ""
+    rounds = re.findall(r"^GAP-FIX " + gap + r" files=(\S*)(?: tests=(\S*))?[ \t]*$", cur, re.M)
+    # `*` never crosses `/`: a glob matches a path with the same number of segments, each by fnmatchcase; a trailing `/` is a directory prefix.
+    # A glob needs a static first segment and no `**`, else it matches nothing (check-plan rejects it at approval too).
+    static = lambda g: g != "" and not g.startswith("/") and ".." not in g.split("/") and "**" not in g and not re.search(r"[*?\[]", g.split("/")[0])
+    def ok(f):
+        fs = f.split("/")
+        return any(static(g) and ((g.endswith("/") and f.startswith(g)) or (not g.endswith("/") and len(g.split("/")) == len(fs)
+                   and all(fnmatch.fnmatchcase(a, b) for a, b in zip(fs, g.split("/"))))) for g in may)
+    if len(rounds) > 1: print("ERR\tmore than one gap round for " + gap + ": one per milestone")
+    if rounds and (ms or task == gap + "-gap"):
+        extra = {"files": [f for a, _ in rounds for f in a.split(",") if f and ok(f)], "allowTestEdits": [t for _, b in rounds for t in b.split(",") if t and ok(t)]}
+        if task: sel = [extra]
+        else: sel.append(extra)
 if sel is None: sel = [{"allowTestEdits": p.get("allowTestEdits", [])}]  # old plans: top-level list
 elif not sel: print("ERR\tno task or milestone " + (task or ms) + " in the plan")
 for t in sel:
@@ -172,12 +194,12 @@ while IFS=$'\t' read -r status path _; do
       specs/adr/*) ;;
       specs/*) [ "$last" -eq 1 ] && continue ;;
     esac
-    # approved content: milestone 1 carries the approved delta, intent, ADRs and .cfactory/ when there is no plan PR
+    # approved content: milestone 1 carries the approved delta, intent, ADRs and .factory/ when there is no plan PR
     if [ -n "$approved" ] && [ "$(git -C "$repo" rev-parse --verify --quiet "HEAD:$path" || echo gone)" = \
          "$(git -C "$repo" rev-parse --verify --quiet "$approved:$path" || echo gone)" ]; then continue; fi
   fi
   case "$path" in
-    .cfactory/*) say "harness changed: $path" ;;
+    .factory/*) say "harness changed: $path" ;;
     changes/*/plan.md) say "plan changed: $path" ;;
     .github/*) say "CI config changed: $path" ;;
     .fitness/*|*baseline*.json) say "baseline changed: $path" ;;

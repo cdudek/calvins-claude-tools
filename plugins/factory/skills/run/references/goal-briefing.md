@@ -1,6 +1,6 @@
 # Goal briefing: three separate pieces
 
-`.cfactory/goal-brief.py changes/<slug>/plan.md <M> --approved <sha>` writes all of it from the approved plan. Never hand-write a goal line. `<sha>` is the commit the person approved.
+`.factory/goal-brief.py changes/<slug>/plan.md <M> --approved <sha>` writes all of it from the approved plan. Never hand-write a goal line. `<sha>` is the commit the person approved.
 
 | Piece | Holds | Never holds |
 |---|---|---|
@@ -35,10 +35,17 @@ It starts "Met when any one of these is true." and lists numbered end states, in
 
 ## Merge rules
 - **With `integration`:** milestone PRs merge into it on their own, after fast checks, test-integrity and the verifier. No remote CI is required there.
-- **The release PR** (integration into base) waits for a human only when a milestone is `risky` or `deployOnMerge` is true. The run then ends `SHIPPED` with the merge-ready release PR URL. Otherwise it merges on its own after required CI.
+- **The release PR** (integration into base) waits for a human only when a milestone is `risky`, `deployOnMerge` is true or the plan sets `merge: owner`. The run then ends `SHIPPED` with the merge-ready release PR URL. Otherwise it merges on its own after required CI.
 - **Paid repos (Actions minutes cost money):** a multi-milestone change always sets `integration`; the human merge decision applies only to the release PR.
 - **Without `integration`:** `merge: auto` arms auto-merge; `merge: owner` never does, and the run ends the same way, at SHIPPED with the merge-ready PR URL.
 - **With a `hold`:** no PR is opened and nothing merges. The branch is pushed once.
+
+## Plan gaps (the gap lane)
+- **Label:** the verifier marks each FAIL `bug` (the code misses an approved requirement; back to the builder) or `gap` (the fix needs files no task owns, or an existing test asserts the old behaviour).
+- **Approval:** a milestone may carry `mayTouch`, path globs the owner approves with the plan. It is the only widening of scope an unattended run gets.
+- **A `gap` inside an approved requirement, every file matching `mayTouch`:** the coordinator appends `GAP-FIX <M> files=<a,b> tests=<c,d>` to the plan's progress log and commits it, then runs one fix task `<M>-gap` with exactly those files like any task, then reruns integrity and the verifier.
+- **Integrity:** `test-integrity.sh --milestone <M>` and `--task <M>-gap` read the `GAP-FIX` line from the plan at HEAD and keep only paths that match the approved `mayTouch`; a line cannot widen scope beyond it. Two `GAP-FIX` lines for one milestone fail the check: one round per milestone.
+- **Everything else** (second gap, file outside `mayTouch`, gap outside an approved requirement, no `mayTouch`) ends `BLOCKED` naming the files.
 
 ## Bug flow (`kind: bug`)
 1. The builder's first commit holds only the failing test.

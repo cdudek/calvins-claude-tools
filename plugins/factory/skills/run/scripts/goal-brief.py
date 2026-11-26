@@ -11,10 +11,10 @@ Writes kickoff-<M>.md (kickoff-all.md) next to plan.md, then prints three sectio
 Exit 1 with `BRIEF FAIL <reason>` if the plan fails check_plan.validate (which also fails a plan, delta.md or
 intent.md that changed since <sha>, the commit the owner approved; with --all it also needs every milestone
 detailed and no hold) or the milestone is not detailed.
-The kickoff names <sha> and passes it to every test-integrity.sh and check-plan.py call (`--task`/`--milestone`),
-with the plan as a repo-relative path (changes/<slug>/plan.md: the coordinator runs the scripts against task
-worktrees of the same repo). It records the fetched target SHA of origin/<target> and the INTEGRITY OK commit of
-every task: the pre-PR call passes the first as <base-ref> and `--target`, the second as `--checked`.
+The kickoff's fixed prose lives in ../templates/kickoff.md (blocks `@@ name`, {{key}} placeholders); this script fills it and
+generates only the data-dependent lines and the /goal condition. The coordinator calls task-step.py (target, start, finish,
+gate, status, pin) with <sha> and the plan as a repo-relative path (changes/<slug>/plan.md); it runs test-integrity.sh and
+check-plan.py, records the fetched target SHA and every INTEGRITY OK commit in .factory/state/<M>.json.
 A bug or small feature is a normal plan with `kind` (one milestone, one task); `kind: bug` adds the two-commit
 flow (the first commit holds only the failing test, later integrity calls pass `--pin` for it).
 
@@ -26,6 +26,7 @@ into `base`, auto-merge armed unless a milestone is risky or `deployOnMerge` is 
 with the merge-ready release PR URL) and `kind`.
 """
 import importlib.util
+import re
 import shlex
 import subprocess
 import sys
@@ -107,18 +108,13 @@ def wait_line(plan):
     return wait + ("and CI conclusion." if plan.get("merge") == "owner" else "merge SHA and CI conclusion.")
 
 
-def task_lines(m, change, root, setup):
+def task_lines(m):
     out = []
     for t in m["tasks"]:
-        wt = f"{change}-{m['id']}-{t['id']}"
         needs = ", ".join(t.get("needs", [])) or "nothing"
-        effort = t.get("effort", "medium")
         out.append(
-            f"- {t['id']} covers {', '.join(t['covers'])}. Worktree: `git branch {wt} milestone/{change}-{m['id']}`, then "
-            f"`wt switch {wt} --no-cd --yes` (at {root}/.worktrees/{wt}); "
-            + (f"run `{setup}` in it; " if setup else "")
-            + f"its HEAD must equal the milestone head. Owns only: {', '.join(t['files'])}. Uses {needs}. Its check: `{t['check']}`. Builder effort: {effort}."
-            + (f" Builder model: {t['model']}." if "model" in t else ""))
+            f"- {t['id']} covers {', '.join(t['covers'])}. Owns only: {', '.join(t['files'])}. Uses {needs}. Its check: `{t['check']}`. "
+            f"Builder effort: {t.get('effort', 'medium')}." + (f" Builder model: {t['model']}." if "model" in t else ""))
     return out
 
 
@@ -128,90 +124,97 @@ def verifier_tier(m):
     return f" (pass model {v.get('model', 'opus')} and effort {v.get('effort', 'high')} to the Agent call)" if v else ""
 
 
+def gap_line(m, change):
+    """The plan-gap lane: one fix round per milestone, only inside the milestone's owner-approved `mayTouch` globs."""
+    mid = m["id"]
+    head = ("Gap lane, one round per milestone: the verifier labels every FAIL `bug` or `gap`. A `bug` goes back to the builder. "
+            "A `gap` needs files no task owns, or an existing test that asserts the old behaviour. ")
+    if not m.get("mayTouch"):
+        return head + f"{mid} has no `mayTouch`, so every `gap` ends `BLOCKED: owner approves plan revision for <files>`."
+    globs = ", ".join(f"`{g}`" for g in m["mayTouch"])
+    return (head + f"When a gap sits inside an approved requirement and every file it needs matches {mid}'s mayTouch ({globs}), append one line "
+            f"`GAP-FIX {mid} files=<a,b> tests=<c,d>` (comma-separated, no spaces; tests= only for existing tests to edit) to the progress log "
+            f"in plan.md and commit it. Then run one fix task `{mid}-gap` with exactly those files like any task: worktree `{change}-{mid}-gap` "
+            f"cut from the milestone head, a factory:builder, `--task {mid}-gap` integrity, record its <checked SHA>, merge it, then repeat Ship from step 1. "
+            "A second gap, a file outside mayTouch or a gap outside an approved requirement ends `BLOCKED: owner approves plan revision for <files>`.")
+
+
+def template_blocks():
+    """skills/run/templates/kickoff.md: the kickoff's fixed prose, in blocks that start at a `@@ name` line."""
+    blocks, name = {}, None
+    here = HERE / "kickoff.md"  # copied beside the script into <repo>/.factory/
+    path = here if here.exists() else HERE.parent / "templates" / "kickoff.md"
+    for line in path.read_text(encoding="utf-8").split("\n"):
+        if line.startswith("@@ "):
+            name = line[3:].strip()
+            blocks[name] = []
+        elif name:
+            blocks[name].append(line)
+    return {k: "\n".join(v).strip("\n") for k, v in blocks.items()}
+
+
+def fill(block, **vals):
+    """Replace {{key}} in one pass (a value is never scanned again). A line that is only an empty {{key}} disappears."""
+    out = []
+    for line in block.split("\n"):
+        m = re.fullmatch(r"\{\{(\w+)\}\}", line.strip())
+        if m and vals[m.group(1)] == "":
+            continue
+        out.append(re.sub(r"\{\{(\w+)\}\}", lambda x: vals[x.group(1)], line))
+    return "\n".join(out)
+
+
 def section(plan, m, P, root, sha, h, preflight, record=True):
-    """One milestone's Build, Verify and Ship, under headings of level h. P is the plan's repo-relative folder prefix;
-    record=False when the milestone is cut later in a --all run, whose cut step records the target SHA."""
+    """One milestone's Build, Verify and Ship, under headings of level h, from the template. P is the plan's repo-relative
+    folder prefix; record=False when the milestone is cut later in a --all run, whose cut step records the target SHA."""
     change, mid, ui = plan["change"], m["id"], m["layer"] in UI_LAYERS
     branch = f"milestone/{change}-{mid}"
     tgt = target(plan)
-    action = merge_action(plan, tgt)
     hold, bug = plan.get("hold"), plan.get("kind") == "bug"
     last = mid == plan["milestones"][-1]["id"]
-    pin = " --pin <failing-test SHA>" if bug else ""
-    flags = f"--approved {sha}{pin} --target <target SHA>"
-    pre_pr = (f"`bash .cfactory/test-integrity.sh <this worktree> <target SHA> {P}plan.md --milestone {mid} {flags} "
-              f"--checked <checked SHAs, comma separated>` and `python3 .cfactory/check-plan.py {P}plan.md --approved {sha}`; both must pass")
-    lines = [
-        f"{h} Build",
-        *preflight,
-        *([f"Target: run `git fetch origin`, then `git rev-parse origin/{tgt}` and record the output as <target SHA>. Every integrity call "
-           f"below passes it, so a local `{tgt}` that lags origin never decides what counts as this milestone's change."] if record else []),
-        "One worktree per task, created by you, never by the Agent tool's worktree isolation:",
-        *task_lines(m, change, root, plan.get("setup")),
-        "Every task runs in a factory:builder subagent (Sonnet 5.5, at the task's builder effort), even a one-line fix; "
-        "you only create worktrees, run checks, merge and log. Run 2 or 3 at a time, in the foreground, "
-        "each given its worktree path, owned files, requirement ids and check. Never give a builder the scenarios path."
-        + (" Pass each task's builder model and effort to its Agent call (a task with no model runs on Sonnet 5.5)."
-           if any("model" in t for t in m["tasks"]) else ""),
-        "Every agent you start (builders, verifiers, reviews) runs in the foreground, never with run_in_background: a background agent pauses the goal check, and an unattended run exits under it.",
-        "Unfinished work stays in its task worktree and the next pass gets the same path. Never patch files "
-        "(no `git apply`, no copied diffs). To read a diff: `rtk proxy git diff`.",
-        *(["Bug flow (kind: bug): tell the builder its first commit holds only the failing regression test, no fix. When it reports that "
-           "commit, run the task's check with the worktree at that commit, paste the failing output, and record the SHA as "
-           "<failing-test SHA>. The fix pass goes to the same worktree, and every later integrity call for the task passes "
-           "`--pin <failing-test SHA>`."] if bug else []),
-        "",
-        f"{h} Verify, in this order, pasting each output into the transcript",
-        "1. The repo's fast checks: lint, typecheck, unit. No local CI.",
-        f"2. Per task, before merging it into `{branch}`: "
-        f"`bash .cfactory/test-integrity.sh {root}/.worktrees/<task-worktree> {branch} {P}plan.md --task <task id> {flags}` "
-        "must print INTEGRITY OK. "
-        f"Then record `git -C {root}/.worktrees/<task-worktree> rev-parse HEAD` as that task's <checked SHA> (every INTEGRITY OK commit, "
-        f"also an earlier pass's) and merge exactly that commit into `{branch}`.",
-    ]
+    risky_step = ui_step = ""
     if m.get("risky"):
-        lines.append("3. This milestone is risky (auth, money, consent or data exposure): also run a security review of the diff and delta, "
-                     "by one Opus 5.5 high advisory agent or `codex exec -m gpt-6.2-astra -c model_reasoning_effort=high -s read-only --ephemeral`, "
-                     "and fix a confirmed High only inside the task's own files and its allowTestEdits. A fix that needs a new task, other files "
-                     "or another test edit ends `BLOCKED: owner approves plan revision for <finding>`.")
+        risky_step = ("3. This milestone is risky (auth, money, consent or data exposure): also run a security review of the diff and delta, "
+                      "by one Opus 5.5 high advisory agent or `codex exec -m gpt-6.2-astra -c model_reasoning_effort=high -s read-only --ephemeral`, "
+                      "and fix a confirmed High only inside the task's own files and its allowTestEdits. A fix that needs other files "
+                      "or another test edit is a `gap`: see the gap lane under Verify.")
     if ui:
-        lines.append(f"{4 if m.get('risky') else 3}. factory:ux-verifier against the design boards in `{P}design/`, which the owner approved "
-                     f"at the single approval, per the factory ux-checks reference. Screenshots go to {P}evidence/{mid}/. Write the gallery to "
-                     f"{P}evidence/{mid}/gallery.md; Ship commits it with the progress entry. It is evidence, not a stop: the milestone merges like any other.")
-    lines += [
-        "Failures go back to the builder of that task, at most 3 passes. Stop after 2 attempts at the same failure with no new evidence.",
-        "",
-        f"{h} Ship, in this order",
-        "Commit first, verify that final commit, push that same SHA. Nothing is committed after the verifier: a later commit is a different SHA "
-        "and needs the verifier again.",
-        f"1. Commit on `{branch}`: " + (f"the delta, as your own commit: apply {P}delta.md to the spec files it names (this is the last milestone). "
-                                       f"First check that every MODIFIED or REMOVED entry's prior text still matches the spec on `{plan['base']}` and "
-                                       "every ADDED id is unused; on a mismatch stop `BLOCKED: delta conflicts with base, owner re-approves`. Then " if last else "")
-        + ("the gallery and " if ui else "") + "the progress entry to plan.md (time, milestone, requirement ids, done and remaining, check result, "
-        "next action; no PR number or merge SHA, they are not known yet and `gh pr view` has them).",
-        f"2. Run {pre_pr}.",
-        f"3. factory:verifier{verifier_tier(m)} on the final commit (`git rev-parse HEAD` is the <final SHA>), with the delta, base, diff and the holdout "
-        f"scenarios in `~/.cfactory/scenarios/{root.name}/{change}/` for {', '.join(m['covers'])}. Never the builders' reasoning. "
-        "A failure goes back to the builder of that task; its new commit goes through Verify step 2 (per-task integrity, a new <checked SHA>, "
-        "merge that commit), then repeat Ship from step 1.",
-    ]
+        ui_step = (f"{4 if m.get('risky') else 3}. factory:ux-verifier against the design boards in `{P}design/`, which the owner approved "
+                   f"at the single approval, per the factory ux-checks reference. Screenshots go to {P}evidence/{mid}/. Write the gallery to "
+                   f"{P}evidence/{mid}/gallery.md; Ship commits it with the progress entry. It is evidence, not a stop: the milestone merges like any other.")
+    commit_what = ""
+    if last:
+        commit_what = (f"the delta, as your own commit: apply {P}delta.md to the spec files it names (this is the last milestone). "
+                       f"First check that every MODIFIED or REMOVED entry's prior text still matches the spec on `{plan['base']}` and "
+                       "every ADDED id is unused; on a mismatch stop `BLOCKED: delta conflicts with base, owner re-approves`. Then ")
+    commit_what += "the gallery and " if ui else ""
     if hold:
-        lines.append(f"4. Open no PR and merge nothing: the owner action `{hold}` comes first. Then push `{branch}` once, which is the <final SHA>, "
+        ship_tail = (f"4. Open no PR and merge nothing: the owner action `{hold}` comes first. Then push `{branch}` once, which is the <final SHA>, "
                      "and print the pushed SHA with the verifier PASS for that SHA.")
-        return lines
-    lines += [
-        f"4. Push `{branch}`, which is the <final SHA>, print it with the verifier PASS for that SHA, and open the milestone's one PR into `{tgt}`, "
-        "linking the delta revision and the reports. Every push to an open PR runs CI again, so batch fixes into one push.",
-        action[0].upper() + action[1:] + ".",
-        wait_line(plan),
-    ]
-    if last and plan.get("integration"):
-        lines.append(release_line(plan))
-    return lines
+    else:
+        tail = [f"4. Push `{branch}`, which is the <final SHA>, print it with the verifier PASS for that SHA, and open the milestone's one PR into `{tgt}`, "
+                "linking the delta revision and the reports. Every push to an open PR runs CI again, so batch fixes into one push.",
+                (lambda a: a[0].upper() + a[1:] + ".")(merge_action(plan, tgt)), wait_line(plan)]
+        if last and plan.get("integration"):
+            tail.append(release_line(plan))
+        ship_tail = "\n".join(tail)
+    return fill(
+        template_blocks()["milestone"], h=h, P=P, mid=mid, sha=sha, branch=branch, change=change, repo=root.name, covers=", ".join(m["covers"]),
+        preflight="\n".join(preflight), task_lines="\n".join(task_lines(m)), risky_step=risky_step, ux_step=ui_step, gap_line=gap_line(m, change),
+        target_step=(f"Target: run `python3 .factory/task-step.py target {P}plan.md {mid} --approved {sha}`. It fetches origin and records the head of `{tgt}` as the "
+                     f"<target SHA>, which every integrity call the scripts make passes, so a local `{tgt}` that lags origin never decides what "
+                     "counts as this milestone's change.") if record else "",
+        model_note=(" Pass each task's builder model and effort to its Agent call (a task with no model runs on Sonnet 5.5)."
+                    if any("model" in t for t in m["tasks"]) else ""),
+        bug_flow=("Bug flow (kind: bug): tell the builder its first commit holds only the failing regression test, no fix. When it reports that "
+                  "commit, run the task's check with the worktree at that commit, paste the failing output, and record the SHA with "
+                  f"`python3 .factory/task-step.py pin {P}plan.md {mid} <failing-test SHA> --approved {sha}`. The fix pass goes to the same worktree, and every "
+                  "later `finish` passes `--pin` for it.") if bug else "",
+        commit_what=commit_what, verifier_tier=verifier_tier(m), ship_tail=ship_tail)
 
 
 def kickoff(plan, ms, plan_path, root, sha, every=False):
-    """The kickoff for the milestones in ms (one, or all in order)."""
+    """The kickoff for the milestones in ms (one, or all in order), filled into skills/run/templates/kickoff.md."""
     change, P, tgt = plan["change"], repo_prefix(plan_path), target(plan)
     hold = plan.get("hold")
     first = f"milestone/{change}-{ms[0]['id']}"
@@ -219,39 +222,17 @@ def kickoff(plan, ms, plan_path, root, sha, every=False):
             "Any failure ends `BLOCKED: <tool or credential> missing: <exact fix>`."] if plan.get("preflight") else [])
     scope = (f"every milestone in order ({', '.join(x['id'] for x in ms)}), starting from this worktree on branch `{first}`" if every
              else f"milestone {ms[0]['id']} only, from this worktree on branch `{first}`")
-    lines = [
-        f"# Kickoff: {change}, " + (f"all {len(ms)} milestones" if every else f"milestone {ms[0]['id']} ({ms[0]['layer']})"),
-        "",
-        f"You coordinate factory change {change}, {scope}. "
-        f"The approved plan and delta are on `{tgt}`, or on this branch for milestone 1 in a repo without a plan PR. "
-        f"Read {P}plan.md and {P}delta.md first. The owner approved revision `{sha}`; every integrity and plan check below passes it.",
-        "Do reversible steps yourself and keep going: create a missing branch, rerun a check, recreate a worktree. Stop only for a decision the plan does not cover or an irreversible step.",
-        "Resume rule: read the progress log in plan.md, reconcile it with git and PR state, skip what is already done. "
-        "Read a PR's state and merge SHA from `gh pr view <n> --json state,mergeCommit` or git, never from the log. "
-        f"A resumed run has lost the recorded <target SHA> and <checked SHA>s: re-record the target as `git merge-base HEAD origin/{tgt}` "
-        "after `git fetch origin`, and each merged task's <checked SHA> as the second parent of its merge, after its per-task integrity passes again.",
-    ]
-    if every:
-        lines += [
-            f"At the start of each milestone, re-read the pinned plan (`git show {sha}:{P}plan.md`, its json block) and the progress log "
-            "in plan.md, and reconcile with git and PR state. Start a milestone only after the previous one is merged. A later milestone "
-            f"gets its own worktree: `git fetch origin`, record `git rev-parse origin/{tgt}` as that milestone's <target SHA>, "
-            f"`git branch milestone/{change}-<M> <target SHA>`, `wt switch milestone/{change}-<M> --no-cd --yes`.",
-            *pre,
-        ]
-        pre = []
+    h = "###" if every else "##"
+    blocks, secs = template_blocks(), []
     for i, x in enumerate(ms):
-        lines += ["", *([f"## Milestone {x['id']} ({x['layer']}), branch `milestone/{change}-{x['id']}`"] if every else [])]
-        lines += section(plan, x, P, root, sha, "###" if every else "##", pre, record=i == 0)
-    lines += [
-        "",
-        "## Stop",
-        f"End with exactly one state: {'HOLD' if hold else 'SHIPPED'}, INCOMPLETE or BLOCKED.",
-        *([f"HOLD: {hold}. Only once the pushed SHA and the verifier PASS for that SHA are in the transcript."] if hold else []),
-        "BLOCKED: an owner decision, credential, approval or destructive migration. Write the exact action needed and stop.",
-        "Scope beyond the delta, or a test, CI file or spec that must change: BLOCKED, the owner decides.",
-    ]
-    return "\n".join(lines) + "\n"
+        head = f"## Milestone {x['id']} ({x['layer']}), branch `milestone/{change}-{x['id']}`\n" if every else ""
+        secs.append(head + section(plan, x, P, root, sha, h, [] if every else pre, record=i == 0))
+    return fill(
+        blocks["top"], title=f"{change}, " + (f"all {len(ms)} milestones" if every else f"milestone {ms[0]['id']} ({ms[0]['layer']})"),
+        change=change, scope=scope, tgt=tgt, P=P, sha=sha,
+        all_start=fill(blocks["all_start"], P=P, sha=sha, tgt=tgt, change=change, preflight="\n".join(pre)) if every else "",
+        milestones="\n\n".join(secs), end_state="HOLD" if hold else "SHIPPED",
+        hold_stop=f"HOLD: {hold}. Only once the pushed SHA and the verifier PASS for that SHA are in the transcript." if hold else "") + "\n"
 
 
 def goal(plan, m, every=False):
@@ -305,25 +286,43 @@ def git_out(cwd, *args):
     return subprocess.run(["git", "-C", str(cwd), *args], capture_output=True, text=True)
 
 
+def scrub(text):
+    """git echoes remote URLs in its errors: drop `user:pass@` from any `scheme://user:pass@host`."""
+    return re.sub(r"(\w+://)[^/@\s]+@", r"\1", text.strip())
+
+
+def valid_ref(cwd, name):
+    """A branch name git accepts that cannot be read as an option."""
+    return not name.startswith("-") and git_out(cwd, "check-ref-format", "--branch", name).returncode == 0
+
+
 def preflight_integration(plan_path, plan, sha):
     """Create the plan's integration branch on origin when it is missing. Returns (ok, line).
+    Only a branch named integration/... is pushed here; any other name gets the command to run by hand.
     shortcut: a repo with no origin remote skips this, the run's own `git fetch origin` fails loudly then."""
     integ, base, cwd = plan["integration"], plan["base"], plan_path.parent
+    for what, name in (("integration", integ), ("base", base)):
+        if not valid_ref(cwd, name):
+            return False, f"plan {what} {ascii(name)[:60]} is not a valid branch name"
+    if not re.fullmatch(r"[0-9a-f]{7,40}", str(sha)):
+        return False, f"approved revision {ascii(sha)[:60]} is not a commit hash"
     if git_out(cwd, "remote", "get-url", "origin").returncode:
         return True, ""
-    ls = git_out(cwd, "ls-remote", "--heads", "origin", integ)
+    ls = git_out(cwd, "ls-remote", "--heads", "--", "origin", integ)
     if ls.returncode:
-        return False, f"could not read origin: {ls.stderr.strip()}"
+        return False, f"could not read origin (git ls-remote --heads origin {integ} failed): {scrub(ls.stderr)}"
     if ls.stdout.strip():
         return True, f"{integ} exists on origin"
     push = f"git push origin {sha}:refs/heads/{integ}"
-    on_base = (git_out(cwd, "fetch", "-q", "origin", base).returncode == 0
-               and git_out(cwd, "merge-base", "--is-ancestor", sha, "FETCH_HEAD").returncode == 0)
+    if not integ.startswith("integration/"):
+        return False, f"{integ} is missing on origin and is not named integration/...: run `{push}` yourself"
+    on_base = (git_out(cwd, "fetch", "-q", "--", "origin", base).returncode == 0
+               and git_out(cwd, "merge-base", "--is-ancestor", "--", sha, "FETCH_HEAD").returncode == 0)
     if not on_base:
         return False, f"{integ} is missing on origin and the approved {sha} is not on {base}: run `{push}`"
     done = git_out(cwd, "push", "-q", "origin", f"{sha}:refs/heads/{integ}")
     if done.returncode:
-        return False, f"could not push {integ}: {done.stderr.strip()}. Run `{push}`"
+        return False, f"could not push {integ} (`{push}` failed): {scrub(done.stderr)}. Run it yourself"
     return True, f"created {integ} on origin from {sha}"
 
 

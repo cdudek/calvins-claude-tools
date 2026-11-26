@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 """Usage: heavy.py <command> [args...]
 Runs the command while holding one global file lock, so E2E suites, hidden-test runs and app servers of parallel
-eval runs never overlap. The lock file is $CFACTORY_EVAL_HEAVY_LOCK, default ~/.cfactory/eval/heavy.lock.
+eval runs never overlap. The lock file is $FACTORY_EVAL_HEAVY_LOCK, default ~/.factory/eval/heavy.lock.
 Runs get it as `heavy <cmd>` (a wrapper in their PATH); grade.py imports `locked()`.
 """
 import contextlib
@@ -26,7 +26,7 @@ no_gc_env()
 
 
 def lock_path():
-    return Path(os.environ.get("CFACTORY_EVAL_HEAVY_LOCK") or Path.home() / ".cfactory/eval/heavy.lock")
+    return Path(os.environ.get("FACTORY_EVAL_HEAVY_LOCK") or Path.home() / ".factory/eval/heavy.lock")
 
 
 @contextlib.contextmanager

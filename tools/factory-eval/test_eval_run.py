@@ -33,7 +33,7 @@ class Run(unittest.TestCase):
         out = self.dry("--arms", "default", "--parallel", "1", env={"CLAUDE_CODE_OAUTH_TOKEN": "sk-secret-123"})
         self.assertNotIn("sk-secret-123", out)
         self.assertIn("CLAUDE_CODE_OAUTH_TOKEN=***REDACTED***", out)
-        for pin in ("CLAUDE_CODE_PRINT_BG_WAIT_CEILING_MS=0", "DISABLE_AUTOUPDATER=1", "CFACTORY_EVAL=1", "BASH_DEFAULT_TIMEOUT_MS=", "CFACTORY_EVAL_HEAVY_LOCK="):
+        for pin in ("CLAUDE_CODE_PRINT_BG_WAIT_CEILING_MS=0", "DISABLE_AUTOUPDATER=1", "FACTORY_EVAL=1", "BASH_DEFAULT_TIMEOUT_MS=", "FACTORY_EVAL_HEAVY_LOCK="):
             self.assertIn(pin, out)
         self.assertNotIn("CLAUDE_CODE_EFFORT_LEVEL", out)
         self.assertIn("--effort medium", out)
@@ -57,18 +57,18 @@ class Run(unittest.TestCase):
         self.assertRegex(out, r"TAG=grid-t1-default-b01-\w+-4100\n")
         self.assertIn("DB_NAME=evaldb_", out)
 
-    def test_a_cfactory_folder_in_the_start_tree_does_not_crash_and_the_pinned_scripts_win(self):
+    def test_a_factory_folder_in_the_start_tree_does_not_crash_and_the_pinned_scripts_win(self):
         self.task = self.prepared()
         tree = Path(self.tmp.name) / "tree"
         with tarfile.open(self.task / "start.tar.gz") as tf:
             tf.extractall(tree, filter="data")
-        (tree / ".cfactory").mkdir()
-        (tree / ".cfactory/check-plan.py").write_text("stale")
+        (tree / ".factory").mkdir()
+        (tree / ".factory/check-plan.py").write_text("stale")
         prepare_task.pack(tree, self.task / "start.tar.gz")
         self.dry("--arms", "default", "--parallel", "1")
         repo = next(next((self.results / "grid").iterdir()).glob("repo-*"))
-        self.assertNotEqual((repo / ".cfactory/check-plan.py").read_text(), "stale")
-        self.assertTrue((repo / ".cfactory/goal-brief.py").exists())
+        self.assertNotEqual((repo / ".factory/check-plan.py").read_text(), "stale")
+        self.assertTrue((repo / ".factory/goal-brief.py").exists())
         self.assertEqual(run_eval.git(repo, "config", "gc.auto"), "0")
 
     def test_config_dir_mode_when_no_token(self):
@@ -105,6 +105,27 @@ class Run(unittest.TestCase):
         shutil.rmtree(self.results, ignore_errors=True)
         (self.task / "ticket-delta.md").write_text("## ADDED\n- req-1: Doubling returns twice the number, as the ticket says. [outcome-1]\n")
         self.dry("--arms", "pb2", "--parallel", "1")
+
+    def test_token_runs_get_the_same_user_memory_as_login_runs(self):
+        home = Path(self.tmp.name) / "home"
+        home.mkdir()
+        (home / "CLAUDE.md").write_text("# rules\n@RTK.md\n@../outside.md\n")
+        (home / "RTK.md").write_text("rtk\n")
+        (Path(self.tmp.name) / "outside.md").write_text("no\n")
+        cfg = Path(self.tmp.name) / "cfg"
+        self.assertEqual(run_eval.copy_user_memory(cfg, home), ["CLAUDE.md", "RTK.md"])
+        self.assertFalse((cfg / "outside.md").exists())
+
+    def test_arm_without_verifier_gets_a_goal_it_can_meet(self):
+        out = self.dry("--arms", "ablate_verifier,default", "--parallel", "1")
+        cmds = [l for l in out.splitlines() if l.startswith("  claude ")]
+        skip = [c for c in cmds if "verifier skipped in this eval arm" in c]
+        self.assertEqual(len(skip), 1, "only the arm without a verifier gets the rewritten goal")
+        self.assertNotIn("a verifier PASS for that same SHA", skip[0])
+
+    def test_skip_verifier_goal_fails_loud_on_unknown_wording(self):
+        with self.assertRaises(SystemExit):
+            run_eval.skip_verifier_goal("/goal Met when the tests pass")
 
     def test_plain_arm_has_no_plugin_and_same_goal_line(self):
         out = self.dry("--arms", "plain_sonnet,default", "--parallel", "1")
