@@ -22,7 +22,7 @@ Read `references/review-policy.md` of the factory skill first. It says what coun
 5. For each behaviour the change touched, exercise two neighbouring flows it might have broken (a flow that shares its data, and a flow that shares its screen or endpoint). Name them in the report.
 6. Run the fast checks and the plan's validation command. Report exit codes.
 7. Read the diff last. Look for weakened tests, removed assertions, hard-coded outputs, stubs.
-8. Second model pass: when the milestone is marked risky, say so; the coordinator runs a Codex pass with the same inputs.
+8. Second model pass: when the milestone is marked risky, say so; the coordinator also runs the security review, by one Opus 5.5 high agent or a Codex pass (its choice), with the same inputs.
 
 ## Report
 Per requirement, one line: `req-<n> | expected | observed | PASS or FAIL | command and revision`.

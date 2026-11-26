@@ -55,11 +55,11 @@ All of it except the scenarios lives in the app's own repository, versioned with
 - Check the repo has fast commands (lint, typecheck, unit). Missing: ask.
 - Once per repo, link `specs/` and `specs/adr/` from the README.
 - Once per repo, if no git hooks run: set up cheap pre-commit and pre-push hooks per `references/git-hooks.md`, every command through `templates/git-hook-env.sh`. Nobody skips them with `--no-verify`.
-- Once per repo, if `<repo>/.cfactory/` is missing: Read `scripts/check-plan.py`, `scripts/goal-brief.py`, `scripts/migrate-ids.py`, `scripts/size-tasks.py` and `scripts/test-integrity.sh` from this skill's folder with the Read tool, Write them to `<repo>/.cfactory/`, and commit them on the first change branch. Refresh them the same way before every launch when the skill's copies differ. Always run them from `.cfactory/`, never by the plugin's install path: another plugin's guard refuses any Bash command that names the plugin cache.
+- Once per repo, if `<repo>/.cfactory/` is missing: Read `scripts/check-plan.py`, `scripts/goal-brief.py`, `scripts/migrate-ids.py` and `scripts/test-integrity.sh` from this skill's folder with the Read tool, Write them to `<repo>/.cfactory/`, and commit them on the first change branch. Refresh them the same way before every launch when the skill's copies differ. Always run them from `.cfactory/`, never by the plugin's install path: another plugin's guard refuses any Bash command that names the plugin cache.
 
 ### 1. Grill and spec
 - Grill per `references/grilling.md`, for every size. The tree covers test edits, who can see what, deferrals with probes, merge and production gate, holds, design boards and preflight tools.
-- Write `intent.md` (`references/intent-template.md`), then `delta.md` with journeys and the design mapping, per `references/spec-standard.md`. Every requirement `req-<n>` (the next free number in the repo) cites `[outcome-<n>]` or `[constraint-<n>]`. Ids in prose come after an explainer of at most eight words ("guests see only their own comments in mail (req-159)"); scheme in `references/spec-standard.md`. No `[NEEDS CLARIFICATION` may remain.
+- Write `intent.md` (`references/intent-template.md`), then `delta.md` with journeys and the design mapping, per `references/spec-standard.md`. Every requirement `req-<n>` (the next free number in the repo) cites `[outcome-<n>]` or `[constraint-<n>]`. Ids in prose come after an explainer of two to eight words (the check enforces the two, the eight is guidance): ("guests see only their own comments in mail (req-159)"); scheme in `references/spec-standard.md`. No `[NEEDS CLARIFICATION` may remain.
 - Draft holdout scenarios with a separate agent that never sees builder output. Each names its `milestone`.
 - For a risky milestone, one read-only sweep of the base (an Explore agent) lists every place an actor can see the data. It becomes the plan's `surface`; the pattern for how the guarded data is read goes in `guards`, and `check-plan.py` fails on any source file that matches it and no task, surface exposure or probed deferral covers.
 
@@ -89,7 +89,7 @@ All of it except the scenarios lives in the app's own repository, versioned with
 Run in this order, paste the output into the transcript:
 1. Fast checks: lint, typecheck, unit. No local CI.
 2. Per task, before merging it: `bash .cfactory/test-integrity.sh <task-worktree> milestone/<slug>-<M> <plan.md> --task <id> --approved <sha>` must print `INTEGRITY OK`.
-3. `factory:verifier` with the delta, base, diff and the scenarios for this milestone and earlier ones (all of them on the last milestone). It also runs two neighbouring flows per changed behaviour. Never the builder's reasoning. Risky milestone: also a security review by one Opus 5.5 high agent or the Codex `gpt-6.2-astra` pass. Both fail only on Important findings (`references/review-policy.md`).
+3. `factory:verifier` with the delta, base, diff and the scenarios for this milestone and earlier ones (all of them on the last milestone). It also runs two neighbouring flows per changed behaviour. Never the builder's reasoning. Risky milestone: also a security review of the diff and delta by one of: an Opus 5.5 high agent or the Codex `gpt-6.2-astra` pass (the coordinator picks one; the kickoff says the same). Both fail only on Important findings (`references/review-policy.md`).
 4. UI milestone: `factory:ux-verifier` against the approved boards, per `references/ux-checks.md`. It writes `evidence/<M>/gallery.md`. No owner stop.
 - Failures go back to the builder: at most 3 passes per task. Stop after 2 attempts at the same failure with no new evidence.
 - A fix for a confirmed High stays inside the task's own files and `allowTestEdits`. Anything else ends `BLOCKED: owner approves plan revision for <finding>`.
@@ -99,7 +99,7 @@ Run in this order, paste the output into the transcript:
 - Before the PR: `test-integrity.sh ... --milestone <M> --approved <sha>` and `check-plan.py <plan.md> --approved <sha>` must pass.
 - One PR per milestone into the base (the integration branch when the plan sets one). Link the delta and the reports.
 - With an integration branch, milestone PRs merge on their own after the verify steps; no remote CI there. The release PR into `base` links every milestone's `gallery.md` and runs the full required CI.
-- The release PR waits for a human only when a milestone is `risky` or `deployOnMerge` is true. The run then ends `SHIPPED` with the merge-ready URL. Otherwise it merges on its own after required CI.
+- The release PR waits for a human only when a milestone is `risky`, `deployOnMerge` is true or the plan sets `merge: owner`. The run then ends `SHIPPED` with the merge-ready URL. Otherwise it merges on its own after required CI.
 - Without integration: `merge: auto` arms auto-merge; `merge: owner` never does, and the run ends at SHIPPED with the merge-ready PR URL.
 - Commit everything first (progress entry, gallery, spec changes), then run the verifier on that final SHA, then push that same SHA. Any later commit means verifying again.
 - With a `hold`: push the milestone branch, open no PR, end `HOLD` with the pushed SHA and a verifier PASS for that same SHA.
@@ -127,13 +127,13 @@ Known limit: `hooks/guard-scenarios.py` (only `factory:verifier` may read the sc
 
 Stations 0 to 2 run at high effort; the unattended build run uses `--model sonnet --effort medium`. A task marked `"effort"` or `"model"` in the plan overrides the default, and a milestone `"verifier"` overrides Opus high.
 
-The planner sizes every task, then `python3 .cfactory/size-tasks.py <plan> --write` applies the rules from the plan's own data (files per task, milestone `risky`, a `migrat` path):
-- small (at most 3 files, not risky, no migration): `model: haiku`, `effort: high`.
-- normal: `sonnet`, `medium`.
-- large or risky (more than 8 files, a risky milestone, or a migration): `sonnet`, `high`.
-- milestone verifier: `sonnet`/`high` when every task in it is small, otherwise `opus`/`high`.
+The planner sets each task's `effort` and, when not Sonnet, `model`, judging size and risk per task from the requirements and the code:
+- A small, low-risk task (a few files, no access, privacy or billing rule, no migration) may use `haiku`/`high`.
+- A task that implements an access, privacy, security or billing rule, or a migration, uses `sonnet`/`high`.
+- A milestone whose tasks are all small may set `verifier` `sonnet`/`high`. Otherwise the default Opus high stands.
+- Milestone `risky` is about the milestone's review (security pass, `surface`), not every task's size.
 
-The helper cannot see a task that implements an access, privacy or billing rule inside a non-risky milestone: mark that milestone `risky`, or set the task by hand. A task that implements an access or scope rule lists every read path of the guarded data it found, and the tests that assert the old behaviour are in its `allowTestEdits` (the read-path inventory). Codex advisory runs as `codex exec -m <model> -c model_reasoning_effort=high -s read-only --ephemeral`.
+A task that implements an access or scope rule lists every read path of the guarded data it found, and the tests that assert the old behaviour are in its `allowTestEdits` (the read-path inventory). Codex advisory runs as `codex exec -m <model> -c model_reasoning_effort=high -s read-only --ephemeral`.
 
 ## The approval
 One approval, one SHA. The person sees four short things: intent, requirements, boards, a plain plan summary. Everything else is an exit code or the platform. After it, the run stops only for a real BLOCKED. The gallery is reviewed once, from the release PR, and stops nothing.
@@ -162,7 +162,6 @@ One approval, one SHA. The person sees four short things: intent, requirements, 
 ## Scripts
 Copied into `<repo>/.cfactory/` at intake and run from there:
 - `check-plan.py <plan.md> [--all] [--approved <sha>]`: dated slug, run caps, layers, needs, disjoint files, at least one requirement, requirement coverage, delta and intent, and that the approved files did not change: the whole plan text up to the json block, intent and delta; only appended progress entries may differ. `--all` also needs every milestone detailed with tasks.
-- `size-tasks.py <plan.md> [--write]`: prints per task its model and effort and per milestone the verifier tier from the sizing rules; `--write` sets those fields in the json block, leaving any the plan already sets.
 - `migrate-ids.py <repo> [--slug <slug>]`: one-shot rewrite of the old ids (`<spec>/R<n>`, `I<n>`, `C<n>`) in the git-tracked text files to `req-<n>`, `outcome-<n>`, `constraint-<n>`; refuses when two specs share a number; commits nothing.
 - `goal-brief.py <plan.md> <M> --approved <sha>` or `<plan.md> --all --approved <sha>`: kickoff file, `/goal` line, run command. The plan path is repo-relative, so it resolves inside any task worktree. At each milestone cut it records `--target <sha>`, the fetched integration or base head, which the integrity checks diff against.
 - `test-integrity.sh <worktree> <base-ref> [plan.md [--task <id> | --milestone <id>] [--approved <sha>] [--pin <sha>] [--checked <shas>] [--target <sha>]]`: touched tests, paths outside the task, CI, `.github/`, `.cfactory/`, plan, baselines, spec, skips, added lint suppressions. `--checked` lists the builder commits already checked; implementation changes outside them fail. `--milestone` requires `--approved`, which must be an ancestor of HEAD; the plan scope is read from it. A new test counts as in scope only in a task file's folder or via `allowTestEdits`; every new file gets the skip and suppression scans.

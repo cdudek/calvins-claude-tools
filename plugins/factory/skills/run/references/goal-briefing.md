@@ -35,7 +35,7 @@ It starts "Met when any one of these is true." and lists numbered end states, in
 
 ## Merge rules
 - **With `integration`:** milestone PRs merge into it on their own, after fast checks, test-integrity and the verifier. No remote CI is required there.
-- **The release PR** (integration into base) waits for a human only when a milestone is `risky` or `deployOnMerge` is true. The run then ends `SHIPPED` with the merge-ready release PR URL. Otherwise it merges on its own after required CI.
+- **The release PR** (integration into base) waits for a human only when a milestone is `risky`, `deployOnMerge` is true or the plan sets `merge: owner`. The run then ends `SHIPPED` with the merge-ready release PR URL. Otherwise it merges on its own after required CI.
 - **Paid repos (Actions minutes cost money):** a multi-milestone change always sets `integration`; the human merge decision applies only to the release PR.
 - **Without `integration`:** `merge: auto` arms auto-merge; `merge: owner` never does, and the run ends the same way, at SHIPPED with the merge-ready PR URL.
 - **With a `hold`:** no PR is opened and nothing merges. The branch is pushed once.

@@ -5,7 +5,8 @@ With --approved plan.md through its json block, delta.md and intent.md must equa
 Validates the first fenced block with info string `json cfactory`, delta.md and intent.md next to it
 (intent ids are list items `- outcome-1: ...` / `- constraint-1: ...`; every delta requirement line `- req-<n>: ...` cites one as `[outcome-1]`).
 Old ids (`I1`, `C1`, `<spec>/R<n>`) fail with a pointer to migrate-ids.py. In the plan (through its json block) and in intent.md,
-an id written in prose must sit in parentheses after at least two words: `guests see their items (req-12)`.
+an id written in prose must sit in parentheses after at least two words: `guests see their items (req-12)` (the 8-word cap in SKILL.md is guidance, not checked).
+A task's prose bullet that names an effort or model must match the task's json.
 Prints `PLAN OK <n> milestones <m> tasks` (exit 0) or one `PLAN FAIL <reason>` per problem (exit 1).
 """
 import json
@@ -70,6 +71,22 @@ def prose_errs(text, name):
                     depth -= 1
             if start is None or len(re.findall(r"[^\s()]+", line[:start])) < 2:
                 errs.append(f"{name}:{n} bare id {m.group(0)}: say what it does first, then the id in parentheses, like `guests see their items ({m.group(0)})`")
+    return errs
+
+
+def task_prose_errs(text, plan):
+    """A task's prose bullet (starts with its id, like `**T3 ... (high effort).**`) must not name another effort or model than the task's json (no json effort counts as medium, no json model as sonnet)."""
+    errs = []
+    for m in plan.get("milestones", []):
+        for t in m.get("tasks", []):
+            tid = str(t.get("id"))
+            for line in text.splitlines():
+                if not re.match(r"\s*[-*]\s*\**" + re.escape(tid) + r"\b", line):
+                    continue
+                for word, found, want in (("effort", re.findall(r"\b(low|medium|high) effort\b", line), t.get("effort", "medium")),
+                                          ("model", re.findall(r"\b(haiku|sonnet|opus)\b", line), t.get("model", "sonnet"))):
+                    if found and found[0] != want:
+                        errs.append(f"{m.get('id')}/{tid} prose says {word} {found[0]} but the json block says {want}: make them agree")
     return errs
 
 
@@ -173,7 +190,8 @@ def validate(plan_path, approved=None, every=False):
         return [str(e)], 0, 0
     errs, nm, nt = check(plan)
     errs += guards_errs(plan, plan_path)
-    errs += prose_errs(text[:block_match(text).end()], os.path.basename(plan_path))  # the log after the block stays free text
+    head = text[:block_match(text).end()]  # the log after the block stays free text
+    errs += prose_errs(head, os.path.basename(plan_path)) + task_prose_errs(head, plan)
     if every:
         errs += ready_errs(plan)
     delta = read_next(plan_path, "delta.md")
