@@ -142,7 +142,7 @@ def test_bare_requirement_id_refused(tmp_path):
         p["milestones"][2]["covers"] = ["R9", "guests/R9"]
     code, out = run(tmp_path, mutated(f))
     assert code == 1 and "requirement id R9 must look like req-<n>" in out
-    assert "requirement id guests/R9 must look like req-<n> (old form: run `python3 .factory/migrate-ids.py" in out
+    assert "requirement id guests/R9 must look like req-<n> (old form: rewrite it as req-<n>" in out
 
 
 def test_plan_matches_delta(tmp_path):
@@ -422,7 +422,7 @@ def out_of(f):
     return subprocess.run([sys.executable, str(SCRIPT), str(f)], capture_output=True, text=True).stdout
 
 
-def test_old_forms_are_refused_with_the_migrate_pointer(tmp_path):
+def test_old_forms_are_refused_with_a_rewrite_hint(tmp_path):
     f = write_plan(tmp_path, VALID)
     (f.parent / "delta.md").write_text("### ADDED Requirements\n- guests/R1: old id [I1]\n- req-2: old cite [C1]\n")
     (f.parent / "intent.md").write_text("# intent\n- I1: people save a search\n- C1: guests keep today's search\n")
@@ -430,7 +430,7 @@ def test_old_forms_are_refused_with_the_migrate_pointer(tmp_path):
     assert "intent.md defines no ids" in out and "old `- I1:` form found" in out
     assert "delta requirement guests/R1 uses the old <spec>/R<n> id" in out
     assert "requirement req-2 in delta.md cites an old [I<n>] or [C<n>] id" in out
-    assert out.count("migrate-ids.py") >= 3
+    assert out.count("rewrite it as req-<n>, outcome-<n> or constraint-<n> by hand") >= 3
 
 
 def test_duplicate_requirement_number_fails(tmp_path):

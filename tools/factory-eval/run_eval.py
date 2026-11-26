@@ -35,11 +35,11 @@ import configs
 import grade
 
 HERE = Path(__file__).resolve().parent
-FACTORY_DIR = HERE.parent
+FACTORY_DIR = HERE.parents[1] / "plugins" / "factory"
 EVAL_HOME = Path(os.environ.get("FACTORY_EVAL_HOME") or Path.home() / ".factory/eval")
 TOKEN_VAR = "CLAUDE_CODE_OAUTH_TOKEN"
 KEEP_ENV = ("PATH", "HOME", "USER", "LANG", "LC_ALL", "TERM", "SHELL", "TMPDIR")
-SCRIPTS = ("check-plan.py", "goal-brief.py", "migrate-ids.py", "test-integrity.sh")
+SCRIPTS = ("check-plan.py", "goal-brief.py", "task-step.py", "test-integrity.sh")
 AGENT_FILES = {"builder": "builder.md", "verifier": "verifier.md", "ux_verifier": "ux-verifier.md"}
 INFRA = [  # (reason, pattern) matched against the result event, rate-limit events and stderr
     ("rate-limit", r"rate.?limit|usage limit|too many requests|\b429\b|overloaded|\b529\b|limit reached|resets? at"),
@@ -181,6 +181,7 @@ def prepare_run(task_dir, task, arm, run_dir, run_id, args, slot):
     cf.mkdir(exist_ok=True)  # the start tree may carry one; the pinned scripts below overwrite its copies
     for s in SCRIPTS:
         shutil.copy(plugin / "skills/run/scripts" / s, cf / s)
+    shutil.copy(plugin / "skills/run/templates/kickoff.md", cf / "kickoff.md")  # goal-brief.py reads its template beside itself
     plan = repo / task["plan"]
     ticket = task_dir / "ticket-delta.md"
     if arm["context"] == "raw":

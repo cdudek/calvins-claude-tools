@@ -36,8 +36,8 @@ import grade
 import heavy
 
 HERE = Path(__file__).resolve().parent
-FACTORY = HERE.parent
-MIGRATE = FACTORY / "skills/run/scripts/migrate-ids.py"
+FACTORY = HERE.parents[1] / "plugins" / "factory"
+MIGRATE = HERE / "migrate-ids.py"  # one-shot id rewrite for old replay trees, kept here, not in the runtime plugin
 DEFAULT_GLOBS = ["*test*", "*spec*", "*/__tests__/*", "e2e/*", "*/e2e/*"]
 ENTRY = re.compile(r"^###\s+(\d{4}-\d{2}-\d{2})\b")
 BLOCK = re.compile(r"^```json factory[ \t]*\n(.*?)^```", re.S | re.M)

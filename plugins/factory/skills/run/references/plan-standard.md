@@ -84,5 +84,5 @@ End the plan body (before the progress log) with one fenced block whose info str
 - Milestone `tasks` only on detailed milestones. When present, their `covers` union equals the milestone's `covers`, and every `check` is non-empty.
 - Task `needs` is a list and references tasks of earlier milestones only. Milestone ids are unique. A milestone has no `needs`.
 - `files` are disjoint within a milestone. Task files are required once a milestone is detailed.
-- Requirement ids are `req-<n>`, unique across the repo (`references/spec-standard.md`, "Ids and explainers"). The old `<spec>/R<n>`, `I<n>` and `C<n>` forms fail with a pointer to `migrate-ids.py`.
+- Requirement ids are `req-<n>`, unique across the repo (`references/spec-standard.md`, "Ids and explainers"). The old `<spec>/R<n>`, `I<n>` and `C<n>` forms fail with a rewrite hint.
 - Every requirement is covered by at least one milestone; every `covers` id exists in `requirements`. The plan's `requirements` equal the delta's ADDED, MODIFIED and REMOVED ids. A REMOVED id is covered by a task like any other: the task proves the old behaviour is gone.

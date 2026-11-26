@@ -9,7 +9,7 @@ from pathlib import Path
 import eval_fixtures as fx
 import prepare_task
 
-CHECK = Path(__file__).resolve().parent.parent / "skills/run/scripts/check-plan.py"
+CHECK = Path(__file__).resolve().parents[2] / "plugins/factory/skills/run/scripts/check-plan.py"
 
 
 class Prepare(unittest.TestCase):

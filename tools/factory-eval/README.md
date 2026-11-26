@@ -54,4 +54,4 @@ python3 plot.py ~/.factory/eval/results/grid
 01 cost vs `hidden_frac` with the front, interval crosses and time as size: which arm to pick. 02 cost per solved task. 03 cost per role: where the money goes. 04 time ECDFs: tails. 05 pass^k: reliability. 06 forest against the default with the equivalence band (+-10% cost, +-5 min, +-0.05 `hidden_frac`). 07 screening main effects. 08 verifier and goal-evaluator confusion matrices: false passes. 09 failure taxonomy. 10 routing: policies against the per-task oracle, regret. 11 cache hit vs cost: confound check.
 
 ## Tests
-`python3 -m pytest -q -p no:cacheprovider plugins/factory/eval`, also run by `scripts/run-plugin-tests.sh`. Fixtures are synthetic: a tiny git repo and fake streams. No test calls a model.
+`python3 -m pytest -q -p no:cacheprovider tools/factory-eval`, also run by `scripts/run-plugin-tests.sh`. Fixtures are synthetic: a tiny git repo and fake streams. No test calls a model.

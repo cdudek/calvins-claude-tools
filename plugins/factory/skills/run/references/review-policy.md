@@ -22,4 +22,4 @@ Everything else that is true but small. Report at most five Nits, the five that 
 ## What fails
 - The verifier and the security review fail only on Important findings.
 - Nits never fail a run. They go in the report under their own heading.
-- A fix for an Important finding stays inside the task's own files and its `allowTestEdits`. Anything else ends `BLOCKED: owner approves plan revision for <finding>`.
+- A fix for an Important finding stays inside the task's own files and its `allowTestEdits`. Anything else is a `gap`: the coordinator's gap lane handles it inside the milestone's `mayTouch`, or it ends `BLOCKED: owner approves plan revision for <finding>`.

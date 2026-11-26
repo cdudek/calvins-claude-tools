@@ -11,7 +11,7 @@ from unittest import mock
 import eval_fixtures as fx
 import grade
 
-FACTORY = Path(__file__).resolve().parent.parent
+FACTORY = Path(__file__).resolve().parents[2] / "plugins" / "factory"
 
 
 def parse(**kw):

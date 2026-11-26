@@ -89,7 +89,7 @@ Things with content get `word-<n>`; positions in the plan get a capital letter a
 - `M<n>` (milestone) and `T<n>` (task) are positions and keep their form.
 - **Explainer first.** A person never meets a bare id: say in two to eight words what it does (`check-plan.py` enforces the two; the eight is guidance), then the id in parentheses, as in "guests see only their own comments in mail (req-159)". The plan check enforces this in the plan prose and in `intent.md`.
 - **Bare ids are fine only** in the `json factory` block, in fenced code, as the leading id of a delta requirement line or a defining list item (`- outcome-1: ...`), in headings, and in citation brackets like `[outcome-1]`.
-- A change approved under the old forms (`I1`, `C1`, `<spec-id>/R<n>`) runs `python3 .factory/migrate-ids.py . --slug <slug>` once, before its next approval.
+- A change approved under the old forms (`I1`, `C1`, `<spec-id>/R<n>`) is rewritten by hand to the new ids before its next approval; `check-plan.py` names each old id it finds.
 
 ## Bug spec
 A failing example plus the expected result. Nothing else. The test that encodes it must fail on the base and pass on the fix. It is still four files: a one-line intent, a delta of one to three requirements, one scenario and a plan with `kind: bug` (`plan-small-template.md`).

@@ -4,7 +4,7 @@ With --all every milestone must have tasks and the plan must have no `hold` (wha
 With --approved plan.md through its json block, delta.md and intent.md must equal revision <sha> (only the text after the block may differ).
 Validates the first fenced block with info string `json factory`, delta.md and intent.md next to it
 (intent ids are list items `- outcome-1: ...` / `- constraint-1: ...`; every delta requirement line `- req-<n>: ...` cites one as `[outcome-1]`).
-Old ids (`I1`, `C1`, `<spec>/R<n>`) fail with a pointer to migrate-ids.py. In the plan (through its json block) and in intent.md,
+Old ids (`I1`, `C1`, `<spec>/R<n>`) fail with a one-line rewrite hint. In the plan (through its json block) and in intent.md,
 an id written in prose must sit in parentheses after at least two words: `guests see their items (req-12)` (the 8-word cap in SKILL.md is guidance, not checked).
 A task's prose bullet that names an effort or model must match the task's json. A milestone's optional `mayTouch` is a non-empty list of narrow relative path globs.
 Prints `PLAN OK <n> milestones <m> tasks` (exit 0) or one `PLAN FAIL <reason>` per problem (exit 1).
@@ -20,7 +20,7 @@ SLUG = r"\d{4}-\d{2}-\d{2}-[a-z0-9]+(-[a-z0-9]+)*"
 REQ_ID = r"req-\d+"
 OLD_REQ = r"[a-z0-9]+(-[a-z0-9]+)*/R\d+"
 OLD_CITE = r"\[[IC]\d+\]"
-MIGRATE = "run `python3 .factory/migrate-ids.py . --slug <slug>` once"
+MIGRATE = "rewrite it as req-<n>, outcome-<n> or constraint-<n> by hand"
 ID_WORD = r"\b(?:req|adr|outcome|constraint|scenario|journey|board|deferred|finding)-\d+\b"
 
 

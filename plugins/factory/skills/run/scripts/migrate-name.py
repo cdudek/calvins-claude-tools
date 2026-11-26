@@ -12,6 +12,7 @@ import subprocess
 import sys
 from pathlib import Path
 
+OLD_DIR = ".cfactory"  # the one name the rest of the plugin no longer uses; the session-start hook reads it from here
 FENCE = re.compile(r"^(\s*`{3,}json )cfactory\b", re.M)
 
 
