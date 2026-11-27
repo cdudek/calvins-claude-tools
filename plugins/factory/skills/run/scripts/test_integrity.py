@@ -880,3 +880,58 @@ def test_kickoff_and_handover_exemptions_cover_one_path_segment_only(tmp_path):
     commit(repo, {"src/a.ts": "export const a = 2\n", "changes/2026-11-24-x/kickoff-M1.md": "k\n", "changes/2026-11-24-x/handover-a.md": "h\n"})
     code, out = run(repo, "main", str(repo / PLAN_PATH), "--milestone", "M1", "--approved", appr(repo))
     assert code == 0 and out.strip() == "INTEGRITY OK", out
+
+
+def test_add_only_counts_node_assert_calls(tmp_path):
+    base = "it('x', () => {\n  assert.strictEqual(a(), 1)\n  assert (b)\n  assert.deepStrictEqual(c(), [1])\n})\n"
+    ao_fail(tmp_path / "a", "src/a.test.ts", base, base.replace("  assert (b)\n", ""), "block x: assertions dropped from 3 to 2")
+    ao_fail(tmp_path / "b", "src/a.test.ts", base, base.replace("  assert.strictEqual(a(), 1)\n", "  expect(a()).toBeTruthy()\n"), "block x: strict matchers replaced by loose ones")
+    ao_fail(tmp_path / "c", "src/a.test.ts", base, base.replace("assert.deepStrictEqual(c(), [1])", "expect(c()).toBeDefined()"), "block x: strict matchers replaced by loose ones")
+    assert addonly(tmp_path / "ok", "src/a.test.ts", base, base.replace("a(), 1", "a(), 2") + "it('y', () => { assert.equal(1, 1) })\n")[0] == 0
+
+
+def test_add_only_fails_closed_on_a_third_argument_that_is_not_a_literal(tmp_path):
+    base = "it('t', async () => {\n  expect(a()).toBe(1)\n}, 5000)\n"
+    ao_fail(tmp_path / "expr", "src/a.test.ts", base, base.replace("5000", "BASE * 2"), "is not a literal and changed")
+    ao_fail(tmp_path / "name", "src/a.test.ts", base, base.replace("5000", "LIMIT"), "block t: timeout LIMIT is not a literal and changed")
+    ao_fail(tmp_path / "gone", "src/a.test.ts", base, base.replace("}, 5000)", "})"), "block t: timeout removed, cannot verify")
+    ao_fail(tmp_path / "opts", "src/a.test.ts", "it('t', () => {\n  expect(a()).toBe(1)\n}, { timeout: 100 })\n", "it('t', () => {\n  expect(a()).toBe(1)\n}, { timeout: LIMIT })\n", "is not a literal and changed")
+    one = "it('t', () => { expect(a()).toBe(1) }, 5000)\n"  # on the test line itself
+    ao_fail(tmp_path / "line", "src/a.test.ts", one, one.replace("5000", "SLOW"), "is not a literal and changed")
+    assert addonly(tmp_path / "ok", "src/a.test.ts", base, base.replace("toBe(1)", "toBe(2)"))[0] == 0  # unchanged argument
+
+
+def test_add_only_fails_when_the_block_count_of_a_name_drops(tmp_path):
+    two = "it('dup', () => {\n  expect(a()).toBe(1)\n})\nit('dup', () => {\n  expect(b()).toBe(2)\n})\n"
+    merged = "it('dup', () => {\n  expect(a()).toBe(1)\n  expect(b()).toBe(2)\n})\n"  # same total, one block fewer
+    ao_fail(tmp_path / "a", "src/a.test.ts", two, merged, "block dup: block count dropped from 2 to 1")
+    ao_fail(tmp_path / "b", "tests/test_a.py", "def test_d():\n    assert a() == 1\n\n\ndef test_d():\n    assert b() == 2\n", "def test_d():\n    assert a() == 1\n    assert b() == 2\n", "block test_d: block count dropped from 2 to 1")
+    assert addonly(tmp_path / "ok", "src/a.test.ts", two, two + "it('dup', () => { expect(1).toBe(1) })\n")[0] == 0
+
+
+def test_add_only_counts_nothing_inside_multi_line_comments_and_literals(tmp_path):
+    base = "it('x', () => {\n  expect(a()).toBe(1)\n})\n"
+    for i, new in enumerate(("it('x', () => {\n  /*\n  expect(a()).toBe(1)\n  */\n})\n", "it('x', () => {\n  /* start\n  expect(a()).toBe(1) */\n})\n",
+                             "it('x', () => {\n  const s = `\n  expect(a()).toBe(1)\n  `\n})\n")):
+        ao_fail(tmp_path / f"js{i}", "src/a.test.ts", base, new, "block x: assertions dropped from 1 to 0")
+    pbase = "def test_x():\n    assert a() == 1\n"
+    ao_fail(tmp_path / "py", "tests/test_a.py", pbase, 'def test_x():\n    """\n    assert a() == 1\n    """\n', "block test_x: assertions dropped from 1 to 0")
+    ghost = "/*\nit('ghost', () => {\n  expect(1).toBe(1)\n})\n*/\n" + base
+    assert addonly(tmp_path / "ok", "src/a.test.ts", ghost, base)[0] == 0  # a test inside a comment is not a block
+    live = "const t = `\nit('ghost', () => {})\n`\n" + base
+    assert addonly(tmp_path / "ok2", "src/a.test.ts", live, base)[0] == 0
+    assert addonly(tmp_path / "ok3", "src/a.test.ts", base, "/* header\n   comment */\n" + base)[0] == 0
+
+
+def test_kickoff_exemption_needs_the_md_extension_and_one_segment(tmp_path):
+    for i, name in enumerate(("changes/2026-11-24-x/kickoff-M1.txt", "changes/2026-11-24-x/kickoff-a/b.md", "changes/2026-11-24-x/kickoff-M1")):
+        (tmp_path / str(i)).mkdir()
+        repo = plan_repo(tmp_path / str(i))
+        commit(repo, {"src/a.ts": "export const a = 2\n", name: "x\n"})
+        code, out = run(repo, "main", str(repo / PLAN_PATH), "--milestone", "M1", "--approved", appr(repo))
+        assert code == 1 and f"outside milestone M1: {name}" in out, (name, out)
+    (tmp_path / "ok").mkdir()
+    repo = plan_repo(tmp_path / "ok")
+    commit(repo, {"src/a.ts": "export const a = 2\n", "changes/2026-11-24-x/kickoff-M1.md": "k\n", "changes/2026-11-24-x/kickoff-all.md": "k\n"})
+    code, out = run(repo, "main", str(repo / PLAN_PATH), "--milestone", "M1", "--approved", appr(repo))
+    assert code == 0 and out.strip() == "INTEGRITY OK", out

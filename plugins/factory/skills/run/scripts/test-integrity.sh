@@ -200,7 +200,7 @@ while IFS=$'\t' read -r status path _; do
         continue ;;
       "changes/$slug/evidence/"*) continue ;;
       # one path segment only (a case `*` also matches `/`): kickoff-a/plan.md or handover-x/delta.md fall through to the checks below, the plan, delta and spec rules among them
-      "changes/$slug/kickoff-"*|"changes/$slug/handover-"*.md) case "${path#changes/$slug/}" in */*) ;; *) continue ;; esac ;;
+      "changes/$slug/kickoff-"*.md|"changes/$slug/handover-"*.md) case "${path#changes/$slug/}" in */*) ;; *) continue ;; esac ;;
       specs/adr/*) ;;
       specs/*) [ "$last" -eq 1 ] && continue ;;
     esac
@@ -236,9 +236,10 @@ while IFS=$'\t' read -r status path _; do
 done <<< "$names"
 
 # Add-only gate: an existing test file a task or gap round may edit (allowTestEdits, tests=) may only grow. Input: the allowed paths in $ALLOW, argv: repo, base commit.
-# shortcut: a line-based parser, not a language parser: a block runs from its `it(`/`test(`/`describe(`/`def test_` line to the next one, totals are summed per block name,
-# `it.each` and dynamic names are not seen, comments and strings are stripped line by line (a multi-line block comment still counts as code), and an assertion moved
-# between blocks looks like a drop. It is a floor, not the proof: the independent checks behind it are the verifier and the Codex pass. Upgrade to a real parser when a real edit trips it.
+# shortcut: a line-based parser, not a language parser: a block runs from its `it(`/`test(`/`describe(`/`def test_` line to the next one, totals and block counts are summed per
+# block name, comments and strings (also multi-line ones) are stripped by a small scanner. It is a floor, not the proof: the independent checks behind it are the verifier and the
+# Codex pass. Known limits, not fixed: `it.each` and dynamic names, an aliased `test`, assertions moved into helpers or between blocks, `expect.assertions`, snapshot matchers, regex
+# literals holding quotes, Python line continuations and nested describe scopes. Upgrade to a real parser when a real edit trips it.
 addonly_py() {
   python3 - "$@" <<'PY'
 import os, re, subprocess, sys
@@ -246,12 +247,13 @@ repo, base = sys.argv[1:3]
 JS_START = re.compile(r"""^\s*x?(?:it|test|describe)(?:\.\w+)*\s*\(\s*(["'`])(.*?)\1""")
 PY_START = re.compile(r"\s*(?:async\s+)?def (test_\w*)")
 SKIP = re.compile(r"\.(?:skip|only|todo|fixme)\b|\.(?:skipIf|runIf)\(|\bthis\.skip\(|\btest\.fixme\(|\b(?:xit|xdescribe|xtest)\(|pytest\.(?:skip|importorskip)\(|@pytest\.mark\.(?:skip|xfail)|@unittest\.skip(?:If|Unless)?\b")
-STRICT = re.compile(r"\.(?:toBe|toEqual|toStrictEqual|toHaveLength)\(|\.toThrow\(\s*[^)\s]|\bassertEqual\b")
+STRICT = re.compile(r"\.(?:toBe|toEqual|toStrictEqual|toHaveLength)\(|\.toThrow\(\s*[^)\s]|\bassertEqual\b|\bassert\.(?:equal|strictEqual|deepStrictEqual)\(")
 LOOSE = re.compile(r"\.(?:toBeTruthy|toBeDefined|toContain|toMatch|toBeGreaterThan)\(")
+JS_ASSERT = re.compile(r"\bexpect\s*\(|\bassert\b\s*(?:\.\w+\s*)?\(")
 NUM = r"0[xX][0-9a-fA-F_]+|\d[\d_]*(?:\.\d+)?(?:[eE][+-]?\d+)?"
-# a timeout: `timeout: N`, `jest|test|vitest.setTimeout(N)` (N may be any expression: not a literal means +infinity), and a numeric or plain-name third argument of it/test
-TIMEOUT = [re.compile(r"\btimeout:\s*([^,})\s]+)"), re.compile(r"\b(?:jest|test|vitest)\.setTimeout\(\s*([^,)]+)"),
-           re.compile(r"^\s*\}\s*,\s*(" + NUM + r"|[A-Za-z_$][\w$.]*)\s*\)"), re.compile(r",\s*(" + NUM + r")\s*\)\s*;?\s*$")]
+# a timeout: `timeout: X`, `jest|test|vitest.setTimeout(X)`, and the whole third argument of it/test (`}, X)` on its own closing line, or on a test line). X that is not a literal is unverifiable.
+TIMEOUT = [re.compile(r"\btimeout:\s*([^,})\s]+)"), re.compile(r"\b(?:jest|test|vitest)\.setTimeout\(\s*([^,)]+)"), re.compile(r"^\s*\}\s*,\s*([^)]+?)\s*\)\s*;?\s*$")]
+TIMEOUT_ON_TEST_LINE = re.compile(r",\s*([^,()]+?)\s*\)\s*;?\s*$")
 EARLY = [re.compile(r"^\s*return\s*;?\s*$"), re.compile(r"\bif\s*\(\s*false\s*\)"), re.compile(r"^\s*if\s+(?:0|False)\s*:")]
 INF = float("inf")
 
@@ -259,23 +261,31 @@ def show(ref, path):
     p = subprocess.run(["git", "-C", repo, "show", ref + ":" + path], capture_output=True, text=True)
     return p.stdout if p.returncode == 0 else None
 
-def clean(l, py):
-    """The line without comments, its string literals reduced to "" (so toThrow("x") still has an argument)."""
-    out, q, i = [], None, 0
-    while i < len(l):
-        c = l[i]
-        if q:
-            if c == "\\": i += 2; continue
-            if c == q: q = None; out.append('""')
-            i += 1; continue
-        if c in ("\"'" if py else "\"'`"): q = c; i += 1; continue
-        if (py and c == "#") or (not py and l.startswith("//", i)): break
-        if not py and l.startswith("/*", i):
-            j = l.find("*/", i + 2)
-            if j < 0: break
-            i = j + 2; continue
-        out.append(c); i += 1
-    return "".join(out)
+def scan(lines, py):
+    """[(cleaned line, started outside a comment or string)]: comments dropped, string literals reduced to "". A /* */ comment, a template literal or a Python
+    triple-quoted string carries over to the next lines; a plain quote ends with its line."""
+    out, q, blk = [], None, False
+    for l in lines:
+        clean, fresh, i = [], q is None and not blk, 0
+        while i < len(l):
+            c = l[i]
+            if blk:
+                j = l.find("*/", i)
+                if j < 0: i = len(l); continue
+                blk, i = False, j + 2; continue
+            if q:
+                if c == "\\": i += 2; continue
+                if l.startswith(q, i): i += len(q); q = None; clean.append('""'); continue
+                i += 1; continue
+            tri = next((t for t in ('"""', "\'\'\'") if py and l.startswith(t, i)), None)
+            if tri: q = tri; i += 3; continue
+            if c in ("\"'" if py else "\"'`"): q = c; i += 1; continue
+            if (py and c == "#") or (not py and l.startswith("//", i)): break
+            if not py and l.startswith("/*", i): blk = True; i += 2; continue
+            clean.append(c); i += 1
+        if q in ('"', "'"): q = None
+        out.append(("".join(clean), fresh))
+    return out
 
 def num(tok):
     t = tok.replace("_", "")
@@ -285,9 +295,10 @@ def num(tok):
 def parse(text, py):
     """{block name: totals summed over every block with that name}; the lines before the first block are <top of file>."""
     lines = text.split("\n")
+    sc = scan(lines, py)
     starts = []
     for i, l in enumerate(lines):
-        m = (PY_START if py else JS_START).match(l)
+        m = (PY_START if py else JS_START).match(l) if sc[i][1] else None
         if m:
             while py and i > 0 and lines[i - 1].strip().startswith("@") and (not starts or starts[-1][0] < i - 1):
                 i -= 1  # decorators belong to the test below them
@@ -295,20 +306,24 @@ def parse(text, py):
     cuts = [(0, "<top of file>")] + starts + [(len(lines), None)]
     out = {}
     for (a, name), (b, _) in zip(cuts, cuts[1:]):
-        c = out.setdefault(name, dict(assertions=0, skips=0, strict=0, loose=0, timeout=0.0, odd=[], early=0))
+        c = out.setdefault(name, dict(blocks=0, assertions=0, skips=0, strict=0, loose=0, timeout=0.0, ntimeouts=0, odd=[], early=0))
+        c["blocks"] += 1
         seen = False
-        for raw in lines[a:b]:
-            l = clean(raw, py)
-            n = len(re.findall(r"^\s*assert\b|\bself\.assert\w*\(", l)) if py else len(re.findall(r"\bexpect\s*\(", l))
+        for i in range(a, b):
+            l = sc[i][0]
+            n = len(re.findall(r"^\s*assert\b|\bself\.assert\w*\(", l)) if py else len(JS_ASSERT.findall(l))
             c["assertions"] += n
             c["skips"] += len(SKIP.findall(l))
             bare = py and re.match(r"\s*assert\b", l) is not None
             c["strict"] += len(STRICT.findall(l)) + (1 if bare and "==" in l else 0)
             c["loose"] += len(LOOSE.findall(l)) + (1 if bare and "==" not in l else 0)
-            for tok in set(tok.strip() for t in TIMEOUT for tok in t.findall(raw)):  # one count per token per line, whichever pattern saw it
-                v = num(tok)
-                if v == INF: c["odd"].append(tok)
-                else: c["timeout"] += v
+            if not py:
+                pats = TIMEOUT + ([TIMEOUT_ON_TEST_LINE] if JS_START.match(lines[i]) else [])
+                for tok in set(tok.strip() for t in pats for tok in t.findall(l)):  # one count per token per line, whichever pattern saw it
+                    c["ntimeouts"] += 1
+                    v = num(tok)
+                    if v == INF: c["odd"].append(tok)
+                    else: c["timeout"] += v
             if not seen and not name.startswith("<"):
                 c["early"] += sum(1 for e in EARLY if e.search(l))
             if n: seen = True
@@ -333,10 +348,12 @@ for path in sorted(set(p for p in os.environ.get("ALLOW", "").split("\n") if p))
             bad(name, "test block removed or renamed")
             continue
         n = nb[name]
+        if n["blocks"] < o["blocks"]: bad(name, "block count dropped from %d to %d" % (o["blocks"], n["blocks"]))
         if n["assertions"] < o["assertions"]: bad(name, "assertions dropped from %d to %d" % (o["assertions"], n["assertions"]))
         if n["skips"] > o["skips"]: bad(name, "skip or focus marker added")
         if n["strict"] < o["strict"] and n["loose"] > o["loose"]: bad(name, "strict matchers replaced by loose ones")
         if n["timeout"] > o["timeout"]: bad(name, "timeout raised from %d to %d" % (o["timeout"], n["timeout"]))
+        if o["ntimeouts"] and n["ntimeouts"] < o["ntimeouts"]: bad(name, "timeout removed, cannot verify")
         for tok in n["odd"]:
             if n["odd"].count(tok) > o["odd"].count(tok): bad(name, "timeout " + tok + " is not a literal and changed"); break
         if n["early"] > o["early"]: bad(name, "early exit added before the first assertion")
