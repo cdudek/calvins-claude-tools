@@ -213,6 +213,9 @@ def cmd_finish(c, task):
     if (r := rule_test_first(c, task, "FINISH")) is not None:
         return r
     wt = c.worktree(task)
+    done = st["tasks"].get(task)
+    if not wt.exists() and done and git(c.repo, "merge-base", "--is-ancestor", done["merged"], "HEAD").returncode == 0:
+        return say("FINISH", True, f"{task} already merged builder={done['builder']} merged={done['merged']}")
     if not wt.exists():
         return say("FINISH", False, f"no worktree {wt}")
     p = integrity(str(wt), c.branch, c.plan_arg, "--task", task, *c.flags(st))
@@ -229,7 +232,9 @@ def cmd_finish(c, task):
     st["checked"] = st["checked"] + [built] if built not in st["checked"] else st["checked"]
     st["tasks"][task] = {"builder": built, "merged": merged}
     c.save(st)
-    return say("FINISH", True, f"{task} INTEGRITY OK builder={built} merged={merged}")
+    # The work is merged and the branch keeps it: drop the checkout (a full copy of the repo) unless a tracked file is still uncommitted.
+    gone = not out(wt, "status", "--porcelain", "--untracked-files=no") and git(c.repo, "worktree", "remove", "--force", str(wt)).returncode == 0
+    return say("FINISH", True, f"{task} INTEGRITY OK builder={built} merged={merged}" + (" worktree removed" if gone else ""))
 
 
 def cmd_gate(c):

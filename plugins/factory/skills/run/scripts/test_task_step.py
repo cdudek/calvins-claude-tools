@@ -67,9 +67,11 @@ def test_full_flow_target_start_finish_gate_status(tmp_path):
     assert code == 0 and out.strip() == f"START OK T1 {wt} {git(repo, 'rev-parse', 'HEAD')}" and (wt / ".setup-ran").exists()
     assert "reused" in ok(repo, sha, "start", "T1")[1]
     build(wt, "src/a.ts")
-    code, out = ok(repo, sha, "finish", "T1")
     built = git(wt, "rev-parse", "HEAD")
-    assert code == 0 and f"FINISH OK T1 INTEGRITY OK builder={built} merged={git(repo, 'rev-parse', 'HEAD')}" in out
+    code, out = ok(repo, sha, "finish", "T1")
+    assert code == 0 and f"FINISH OK T1 INTEGRITY OK builder={built} merged={git(repo, 'rev-parse', 'HEAD')} worktree removed" in out
+    assert not wt.exists() and git(repo, "rev-parse", f"{SLUG}-M1-T1") == built  # the checkout goes, the branch keeps the work
+    assert "FINISH OK T1 already merged" in ok(repo, sha, "finish", "T1")[1]
     assert git(repo, "rev-parse", "HEAD^2") == built and git(repo, "log", "-1", "--format=%s").startswith("factory-merge: ")
     st = json.loads((repo / ".factory/state/M1.json").read_text())
     assert st["checked"] == [built] and st["tasks"]["T1"]["builder"] == built and st["target"] == sha
@@ -81,6 +83,17 @@ def test_full_flow_target_start_finish_gate_status(tmp_path):
     assert code == 0 and "GATE integrity OK" in out and "GATE check-plan OK" in out, out
     code, out = ok(repo, sha, "status")
     assert code == 0 and f"target={sha}" in out and "T1:" in out and "T2:" in out and out.count(",") >= 2
+
+
+def test_finish_keeps_a_worktree_with_an_uncommitted_tracked_edit(tmp_path):
+    repo, sha = milestone_repo(tmp_path)
+    ok(repo, sha, "target")
+    ok(repo, sha, "start", "T1")
+    wt = repo / ".worktrees" / f"{SLUG}-M1-T1"
+    build(wt, "src/a.ts")
+    (wt / "src/a.ts").write_text("edited after the commit\n")
+    code, out = ok(repo, sha, "finish", "T1")
+    assert code == 0 and "worktree removed" not in out and (wt / "src/a.ts").read_text() == "edited after the commit\n"
 
 
 def test_finish_fails_on_a_path_outside_the_task_and_merges_nothing(tmp_path):
