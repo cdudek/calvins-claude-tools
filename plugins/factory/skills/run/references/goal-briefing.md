@@ -21,6 +21,7 @@ It starts "Met when any one of these is true." and lists numbered end states, in
 3. **INCOMPLETE:** after `goalTurns` turns, the last message starts with INCOMPLETE and names the next step.
 
 ## Starting the run
+- **File refresh first:** before `goal-brief.py` runs for a milestone, a read-only agent checks each task's `files` and `allowTestEdits` against the current tree (moved or renamed files, files the requirement obviously needs, existing tests the change will break). The coordinator records the result as a plan revision under the standing approval before cutting the milestone.
 - **Where:** the milestone worktree on `milestone/<slug>-<M>`, cut from a base that already holds the approved plan (or on milestone 1's branch where the plan lives there).
 - **One milestone:** `goal-brief.py <plan.md> <M> --approved <sha>`.
 - **Whole plan:** `goal-brief.py <plan.md> --all --approved <sha>`. Every milestone must already have tasks. It prints one kickoff and one goal. The coordinator runs the milestones in order and, at each milestone start, re-reads the pinned plan and the progress log. `--max-turns` is the sum of each milestone's own value.

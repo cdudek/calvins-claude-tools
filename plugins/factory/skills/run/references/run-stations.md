@@ -5,6 +5,7 @@ The launched run reads its own kickoff (`kickoff-<M>.md`, from `templates/kickof
 ## 3. Build
 - Stations 0 to 2 run in a normal session, never under `/goal`. They end at the approval. The launched run is a separate process.
 - Optional integration branch: when the plan sets `"integration": "<branch>"`, milestone branches are cut from it and their PRs target it. `goal-brief.py` creates it on origin from the approved SHA when it is missing and that SHA is on `base`.
+- **File refresh at each milestone cut.** Before `goal-brief.py` runs for a milestone, a read-only agent checks each task's `files` and `allowTestEdits` against the current tree: moved or renamed files, files the requirement obviously needs, existing tests the change will break. The coordinator records the result as a plan revision under the standing approval, then cuts the milestone.
 - Per milestone: `wt switch -c milestone/<slug>-<M>` from a fresh base (the integration branch when set). Inside it run `python3 .factory/goal-brief.py changes/<slug>/plan.md <M> --approved <sha>`, or `--all --approved <sha>` for the whole plan.
 - `goal-brief.py` refuses a plan that fails the check, changed since `<sha>`, or a milestone without tasks. It writes `kickoff-<M>.md` and prints the `/goal` line and the run command. Never hand-write a goal line.
 - **Launch.** The session-start hook keeps `.factory/` current; regenerate the kickoff when `.factory/` changed or the kickoff names agents that no longer exist (an old plugin prefix), and commit both.
