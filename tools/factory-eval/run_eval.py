@@ -182,6 +182,18 @@ def apply_sizing(plan_path, sizing):
     plan_path.write_text(head + json.dumps(data, indent=1) + "\n" + tail, encoding="utf-8")
 
 
+def apply_may_touch(plan_path, milestone, globs):
+    """Write the owner-approved `mayTouch` globs into the replay plan's milestone, so a gap inside them gets a fix round
+    instead of BLOCKED (task.json `may_touch`: the files the real run's gaps needed)."""
+    text = plan_path.read_text(encoding="utf-8")
+    m = grade.BLOCK.search(text)
+    data = json.loads(m.group(1))
+    for ms in data.get("milestones", []):
+        if ms.get("id") == milestone:
+            ms["mayTouch"] = list(globs)
+    plan_path.write_text(text[:m.start(1)] + json.dumps(data, indent=1) + "\n" + text[m.end(1):], encoding="utf-8")
+
+
 def parse_brief(out):
     sec = {}
     parts = re.split(r"-#-#- (.+?) -#-#-\n", out)
@@ -217,6 +229,8 @@ def prepare_run(task_dir, task, arm, run_dir, run_id, args, slot):
     ensure_hold(plan)
     if arm.get("sizing"):
         apply_sizing(plan, arm["sizing"])
+    if task.get("may_touch") and task["milestone"] != "all":
+        apply_may_touch(plan, task["milestone"], task["may_touch"])
     if "integrity" in arm["ablate"] or arm["enforcement"] == "prompt":
         (cf / "test-integrity.sh").write_text("#!/usr/bin/env bash\necho 'INTEGRITY OK (disabled by the eval arm)'\n")
     pj = grade.plan_json(plan.read_text(encoding="utf-8"))
@@ -260,7 +274,8 @@ def prepare_run(task_dir, task, arm, run_dir, run_id, args, slot):
 
     coord_model, coord_effort = arm["roles"]["coordinator"]
     settings = run_dir / "settings.json"
-    settings.write_text(json.dumps({"env": {"DISABLE_AUTOUPDATER": "1"}}, indent=1))
+    allow = ["Bash(codex exec *)"] if "codex" in (arm["builder_kind"] + arm["reviewer"]) else []  # the arm asks for codex; auto mode's classifier denies it otherwise
+    settings.write_text(json.dumps({"env": {"DISABLE_AUTOUPDATER": "1"}, "permissions": {"allow": allow}}, indent=1))
     argv = ["claude", "-p", "--model", coord_model, "--effort", coord_effort, "--permission-mode", args.permission_mode,
             "--permission-prompts", "none", "--max-turns", str(max_turns), "--strict-mcp-config", "--settings", str(settings),
             "--append-system-prompt-file", str(sysprompt), "--output-format", "stream-json", "--verbose", "--forward-subagent-text"]
