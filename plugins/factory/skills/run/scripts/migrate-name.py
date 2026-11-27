@@ -1,8 +1,9 @@
 #!/usr/bin/env python3
 """Usage: migrate-name.py <repo> | migrate-name.py --home
 One-shot rename of the old `cfactory` name to `factory`, committing nothing:
-  <repo>   `git mv .cfactory .factory` (refused when .factory exists) and the plan fence ```json cfactory -> ```json factory
-           in every git-tracked changes/**/plan*.md. Prints what it changed.
+  <repo>   `git mv .cfactory .factory` (refused when .factory exists), then every mention of the old name in every git-tracked
+           text file outside .factory/ (plan fences, docs, CLAUDE.md, tests that look for the fence, env names):
+           cfactory -> factory, CFACTORY -> FACTORY. Binary files are left alone. Prints what it changed.
   --home   moves ~/.cfactory to ~/.factory (refused when ~/.factory exists).
 Afterwards refresh the scripts copied into .factory/ from the plugin, and have the owner approve a new revision of any plan
 whose approved revision still has the old fence (check-plan.py --approved compares the plan through its json block).
@@ -13,7 +14,17 @@ import sys
 from pathlib import Path
 
 OLD_DIR = ".cfactory"  # the one name the rest of the plugin no longer uses; the session-start hook reads it from here
-FENCE = re.compile(r"^(\s*`{3,}json )cfactory\b", re.M)
+OLD = [(re.compile(r"(?<![A-Za-z0-9])cfactory(?![A-Za-z0-9])"), "factory"),
+       (re.compile(r"(?<![A-Za-z0-9])CFACTORY(?![A-Za-z0-9])"), "FACTORY")]  # `_` may follow: CFACTORY_EVAL
+
+
+def rewrite(text):
+    """The text with every mention of the old name replaced, and how many there were."""
+    n = 0
+    for pat, new in OLD:
+        text, k = pat.subn(new, text)
+        n += k
+    return text, n
 
 
 def git(repo, *args):
@@ -33,15 +44,18 @@ def migrate_repo(repo):
         if moved.returncode:
             return 1, [f"git mv .cfactory .factory failed: {moved.stderr.strip()}"]
         out.append("moved .cfactory -> .factory")
-    for rel in git(repo, "ls-files", "-z", "--", "changes").stdout.split("\0"):
+    for rel in git(repo, "ls-files", "-z").stdout.split("\0"):
         path = repo / rel
-        if not rel or not re.fullmatch(r"plan[^/]*\.md", path.name) or not rel.startswith("changes/"):
-            continue
-        text = path.read_text(encoding="utf-8")
-        fixed = FENCE.sub(r"\1factory", text)
-        if fixed != text:
+        if not rel or rel.startswith(".factory/") or not path.is_file() or path.is_symlink():
+            continue  # .factory/ holds the plugin's script copy, which the session-start hook refreshes
+        try:
+            text = path.read_text(encoding="utf-8")
+        except (UnicodeDecodeError, OSError):
+            continue  # binary or unreadable: left alone
+        fixed, n = rewrite(text)
+        if n:
             path.write_text(fixed, encoding="utf-8")
-            out.append(f"rewrote the plan fence in {rel}")
+            out.append(f"rewrote {n} mention{'s' if n > 1 else ''} in {rel}")
     return 0, out or ["nothing to change"]
 
 
