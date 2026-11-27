@@ -125,18 +125,19 @@ def verifier_tier(m):
 
 
 def gap_line(m, change):
-    """The plan-gap lane: one fix round per milestone, only inside the milestone's owner-approved `mayTouch` globs."""
-    mid = m["id"]
-    head = ("Gap lane, one round per milestone: the verifier labels every FAIL `bug` or `gap`. A `bug` goes back to the builder. "
+    """The plan-gap lane: up to `gapRounds` fix rounds per milestone (default 3), only inside the milestone's owner-approved `mayTouch` globs."""
+    mid, cap = m["id"], m.get("gapRounds", 3)
+    head = (f"Gap lane, up to {cap} rounds per milestone: the verifier labels every FAIL `bug` or `gap`. A `bug` goes back to the builder. "
             "A `gap` needs files no task owns, or an existing test that asserts the old behaviour. ")
     if not m.get("mayTouch"):
         return head + f"{mid} has no `mayTouch`, so every `gap` ends `BLOCKED: owner approves plan revision for <files>`."
     globs = ", ".join(f"`{g}`" for g in m["mayTouch"])
     return (head + f"When a gap sits inside an approved requirement and every file it needs matches {mid}'s mayTouch ({globs}), append one line "
-            f"`GAP-FIX {mid} files=<a,b> tests=<c,d>` (comma-separated, no spaces; tests= only for existing tests to edit) to the progress log "
-            f"in plan.md and commit it. Then run one fix task `{mid}-gap` with exactly those files like any task: worktree `{change}-{mid}-gap` "
-            f"cut from the milestone head, a factory:builder, `--task {mid}-gap` integrity, record its <checked SHA>, merge it, then repeat Ship from step 1. "
-            "A second gap, a file outside mayTouch or a gap outside an approved requirement ends `BLOCKED: owner approves plan revision for <files>`.")
+            f"`GAP-FIX {mid} round=<n> files=<a,b> tests=<c,d>` (n counts rounds from 1, each once; comma-separated, no spaces; tests= only for existing tests to edit) "
+            f"to the progress log in plan.md and commit it. Then run one fix task `{mid}-gap<n>` with exactly that round's files like any task: worktree "
+            f"`{change}-{mid}-gap<n>` cut from the milestone head, a factory:builder, `--task {mid}-gap<n>` integrity, record its <checked SHA>, merge it, "
+            f"then repeat Ship from step 1. A gap after round {cap}, a file outside mayTouch or a gap outside an approved requirement "
+            "ends `BLOCKED: owner approves plan revision for <files>`.")
 
 
 def template_blocks():

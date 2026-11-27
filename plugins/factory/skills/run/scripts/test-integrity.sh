@@ -7,8 +7,9 @@
 # plan's integration (else base) branch; --task/--milestone limit changed paths to the task(s) files,
 # new tests (inside a task file's directory) and allowTestEdits; --milestone requires --approved; --pin <sha> keeps that commit's tests as is; --checked (with
 # --milestone) lists the commits the per-task checks passed: every changed implementation path must
-# have its HEAD blob in one of them. Plan-gap lane: `GAP-FIX <M> files=<a,b> tests=<c,d>` lines in the plan's progress log (read at HEAD) extend
-# --milestone <M>, and are the whole scope of --task <M>-gap, but only for paths matching the approved milestone's mayTouch; one line per milestone.
+# have its HEAD blob in one of them. Plan-gap lane: `GAP-FIX <M> round=<n> files=<a,b> tests=<c,d>` lines in the plan's progress log (read at HEAD) extend
+# --milestone <M> (all rounds), and are the whole scope of --task <M>-gap<n> (round n; <M>-gap is round 1), but only for paths matching the approved
+# milestone's mayTouch; rounds are numbered 1..n once each (a line without round= is round 1), at most the milestone's gapRounds (default 3).
 set -euo pipefail
 
 U="usage: test-integrity.sh <repo-or-worktree> <base-ref> [plan.md [--task <id> | --milestone <id>] [--approved <sha>] [--pin <sha>] [--target <sha>] [--checked <sha>[,<sha>...]]]"
@@ -68,15 +69,19 @@ if ms and mss and mss[-1].get("id") == ms: print("LAST\t1")
 sel = None
 if task: sel = [t for m in mss for t in m.get("tasks", []) if t.get("id") == task]
 elif ms: sel = [t for m in mss if m.get("id") == ms for t in m.get("tasks", [])]
-# plan-gap lane: the one fix round the coordinator logs as `GAP-FIX <M> files=<a,b> tests=<c,d>` in the progress log (read at HEAD, not at --approved).
-# Only paths matching the milestone mayTouch globs the owner approved count; the fix task is `<M>-gap`.
-gap = ms or (task[:-4] if re.fullmatch(r"M\d+[a-z]?-gap", task) else "")
+# plan-gap lane: the fix rounds the coordinator logs as `GAP-FIX <M> round=<n> files=<a,b> tests=<c,d>` in the progress log (read at HEAD, not at --approved);
+# a legacy line without `round=` is round 1. At most the milestone gapRounds (default 3), numbered 1..n once each.
+# Only paths matching the milestone mayTouch globs the owner approved count; the fix task of round n is `<M>-gap<n>` (`<M>-gap` is round 1).
+gm = re.fullmatch(r"(M\d+[a-z]?)-gap([1-9]\d*)?", task)
+gap = ms or (gm.group(1) if gm else "")
 if gap:
-    may = next((m.get("mayTouch") or [] for m in mss if m.get("id") == gap), [])
+    m0 = next((m for m in mss if m.get("id") == gap), {})
+    may, cap = m0.get("mayTouch") or [], m0.get("gapRounds", 3)
+    if not (type(cap) is int and 1 <= cap <= 5): cap = 3
     # The log is read from the committed tree: an uncommitted plan edit must not grant scope. Only a replay copy outside every worktree (loose) is read from disk.
     try: cur = open(plan).read() if loose else git("show", "HEAD:" + rel)
     except subprocess.CalledProcessError: cur = ""
-    rounds = re.findall(r"^GAP-FIX " + gap + r" files=(\S*)(?: tests=(\S*))?[ \t]*$", cur, re.M)
+    rounds = [(int(r or 1), a, b) for r, a, b in re.findall(r"^GAP-FIX " + gap + r"(?: round=(\d+))? files=(\S*)(?: tests=(\S*))?[ \t]*$", cur, re.M)]
     # `*` never crosses `/`: a glob matches a path with the same number of segments, each by fnmatchcase; a trailing `/` is a directory prefix.
     # A glob needs a static first segment and no `**`, else it matches nothing (check-plan rejects it at approval too).
     static = lambda g: g != "" and not g.startswith("/") and ".." not in g.split("/") and "**" not in g and not re.search(r"[*?\[]", g.split("/")[0])
@@ -84,9 +89,11 @@ if gap:
         fs = f.split("/")
         return any(static(g) and ((g.endswith("/") and f.startswith(g)) or (not g.endswith("/") and len(g.split("/")) == len(fs)
                    and all(fnmatch.fnmatchcase(a, b) for a, b in zip(fs, g.split("/"))))) for g in may)
-    if len(rounds) > 1: print("ERR\tmore than one gap round for " + gap + ": one per milestone")
-    if rounds and (ms or task == gap + "-gap"):
-        extra = {"files": [f for a, _ in rounds for f in a.split(",") if f and ok(f)], "allowTestEdits": [t for _, b in rounds for t in b.split(",") if t and ok(t)]}
+    if sorted(r for r, _, _ in rounds) != list(range(1, len(rounds) + 1)): print("ERR\tgap rounds for " + gap + " must be numbered 1..n, each round once")
+    if len(rounds) > cap: print("ERR\tmore than " + str(cap) + " gap rounds for " + gap + " (gapRounds " + str(cap) + ")")
+    want = rounds if ms else [x for x in rounds if x[0] == int(gm.group(2) or 1)]
+    if want:
+        extra = {"files": [f for _, a, _ in want for f in a.split(",") if f and ok(f)], "allowTestEdits": [t for _, _, b in want for t in b.split(",") if t and ok(t)]}
         if task: sel = [extra]
         else: sel.append(extra)
 if sel is None: sel = [{"allowTestEdits": p.get("allowTestEdits", [])}]  # old plans: top-level list

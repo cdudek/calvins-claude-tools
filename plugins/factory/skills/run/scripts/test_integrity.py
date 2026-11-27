@@ -477,11 +477,11 @@ def test_approved_must_be_an_ancestor_of_head(tmp_path):
 MAY_PLAN = {**PLAN, "milestones": [{**PLAN["milestones"][0], "mayTouch": ["src/api/*", "src/b.test.ts"]}, PLAN["milestones"][1]]}
 
 
-def gap_repo(tmp_path, *log, edits=None):
+def gap_repo(tmp_path, *log, edits=None, plan=MAY_PLAN):
     """MAY_PLAN is approved; the fix round's files are committed with the log lines under the plan's json block."""
     tmp_path.mkdir(parents=True, exist_ok=True)
-    repo = plan_repo(tmp_path, MAY_PLAN)
-    commit(repo, {**(edits or {}), PLAN_PATH: plan_text(MAY_PLAN, "".join(f"{l}\n" for l in log))})
+    repo = plan_repo(tmp_path, plan)
+    commit(repo, {**(edits or {}), PLAN_PATH: plan_text(plan, "".join(f"{l}\n" for l in log))})
     return repo
 
 
@@ -514,13 +514,99 @@ def test_gap_fix_task_scope_and_test_edit(tmp_path):
     assert code == 1 and "existing test changed or deleted: src/b.test.ts" in out  # not named in tests=
 
 
-def test_second_gap_round_and_unlogged_fix_task_fail(tmp_path):
-    repo = gap_repo(tmp_path, "GAP-FIX M1 files=src/api/a.ts", "GAP-FIX M1 files=src/api/b.ts", edits={"src/api/a.ts": "x\n"})
-    code, out = run(repo, "main", str(repo / PLAN_PATH), "--milestone", "M1", "--approved", appr(repo))
-    assert code == 1 and "more than one gap round for M1" in out
-    repo = gap_repo(tmp_path / "n", edits={"src/api/a.ts": "x\n"})
+def test_unlogged_fix_task_fails(tmp_path):
+    repo = gap_repo(tmp_path, edits={"src/api/a.ts": "x\n"})
     code, out = run(repo, "main", str(repo / PLAN_PATH), "--task", "M1-gap", "--approved", appr(repo))
     assert code == 1 and "no task or milestone M1-gap" in out
+
+
+def ms_run(repo, *args):
+    return run(repo, "main", str(repo / PLAN_PATH), "--milestone", "M1", "--approved", appr(repo), *args)
+
+
+def test_milestone_unions_every_logged_round(tmp_path):
+    log = ("GAP-FIX M1 round=1 files=src/api/a.ts", "GAP-FIX M1 round=2 files=src/api/b.ts tests=src/b.test.ts")
+    repo = gap_repo(tmp_path, *log, edits={"src/api/a.ts": "x\n", "src/api/b.ts": "x\n", "src/b.test.ts": "it('b', () => { /* r2 */ })\n"})
+    code, out = ms_run(repo)
+    assert code == 0 and out.strip() == "INTEGRITY OK", out
+    repo = gap_repo(tmp_path / "n", *log[:1], edits={"src/api/a.ts": "x\n", "src/api/b.ts": "x\n"})  # round 2 not logged
+    code, out = ms_run(repo)
+    assert code == 1 and "outside milestone M1: src/api/b.ts" in out and "outside milestone M1: src/api/a.ts" not in out
+
+
+def test_legacy_line_without_round_counts_as_round_one(tmp_path):
+    repo = gap_repo(tmp_path, "GAP-FIX M1 files=src/api/a.ts", "GAP-FIX M1 round=2 files=src/api/b.ts", edits={"src/api/a.ts": "x\n", "src/api/b.ts": "x\n"})
+    assert ms_run(repo)[0] == 0
+    repo = gap_repo(tmp_path / "d", "GAP-FIX M1 files=src/api/a.ts", "GAP-FIX M1 round=1 files=src/api/b.ts", edits={"src/api/a.ts": "x\n"})
+    code, out = ms_run(repo)
+    assert code == 1 and "gap rounds for M1 must be numbered 1..n, each round once" in out
+    repo = gap_repo(tmp_path / "t", "GAP-FIX M1 files=src/api/a.ts", "GAP-FIX M1 files=src/api/b.ts", edits={"src/api/a.ts": "x\n"})
+    assert "each round once" in ms_run(repo)[1]  # two legacy lines are a duplicate round 1
+
+
+def test_rounds_must_be_consecutive_and_unique(tmp_path):
+    for i, log in enumerate((("GAP-FIX M1 round=2 files=src/api/a.ts",), ("GAP-FIX M1 round=1 files=src/api/a.ts", "GAP-FIX M1 round=3 files=src/api/b.ts"),
+                             ("GAP-FIX M1 round=1 files=src/api/a.ts", "GAP-FIX M1 round=1 files=src/api/b.ts"), ("GAP-FIX M1 round=0 files=src/api/a.ts",))):
+        code, out = ms_run(gap_repo(tmp_path / str(i), *log, edits={"src/api/a.ts": "x\n"}))
+        assert code == 1 and "each round once" in out, log
+    # the same check guards the fix task, so a bad log cannot be run round by round
+    repo = gap_repo(tmp_path / "t", "GAP-FIX M1 round=2 files=src/api/a.ts")
+    code, out = run(repo, "main", str(repo / PLAN_PATH), "--task", "M1-gap2", "--approved", appr(repo))
+    assert code == 1 and "each round once" in out
+
+
+def test_more_rounds_than_the_cap_fail(tmp_path):
+    four = tuple(f"GAP-FIX M1 round={n} files=src/api/a.ts" for n in (1, 2, 3, 4))  # the default cap is 3
+    code, out = ms_run(gap_repo(tmp_path / "d", *four, edits={"src/api/a.ts": "x\n"}))
+    assert code == 1 and "more than 3 gap rounds for M1" in out
+    one = {**MAY_PLAN, "milestones": [{**MAY_PLAN["milestones"][0], "gapRounds": 1}, PLAN["milestones"][1]]}
+    code, out = ms_run(gap_repo(tmp_path / "o", *four[:2], edits={"src/api/a.ts": "x\n"}, plan=one))
+    assert code == 1 and "more than 1 gap rounds for M1" in out
+    five = {**MAY_PLAN, "milestones": [{**MAY_PLAN["milestones"][0], "gapRounds": 5}, PLAN["milestones"][1]]}
+    code, out = ms_run(gap_repo(tmp_path / "f", *four, edits={"src/api/a.ts": "x\n"}, plan=five))
+    assert code == 0 and out.strip() == "INTEGRITY OK", out
+
+
+def test_fix_task_is_scoped_to_exactly_its_round(tmp_path):
+    repo = gap_repo(tmp_path, "GAP-FIX M1 round=1 files=src/api/a.ts", "GAP-FIX M1 round=2 files=src/api/b.ts tests=src/b.test.ts")
+    ms = head(repo)
+    commit(repo, {"src/api/b.ts": "x\n", "src/b.test.ts": "it('b', () => { /* r2 */ })\n"})
+    task = lambda t: run(repo, ms, str(repo / PLAN_PATH), "--task", t, "--approved", appr(repo))
+    code, out = task("M1-gap2")
+    assert code == 0 and out.strip() == "INTEGRITY OK", out
+    code, out = task("M1-gap")  # alias of round 1, which owns only src/api/a.ts
+    assert code == 1 and "outside task M1-gap: src/api/b.ts" in out and "existing test changed or deleted: src/b.test.ts" in out
+    code, out = task("M1-gap1")
+    assert code == 1 and "outside task M1-gap1: src/api/b.ts" in out
+    code, out = task("M1-gap3")
+    assert code == 1 and "no task or milestone M1-gap3" in out
+    commit(repo, {"src/api/a.ts": "x\n"})  # round 1's file is not round 2's
+    assert "outside task M1-gap2: src/api/a.ts" in task("M1-gap2")[1]
+
+
+def test_every_round_stays_inside_the_approved_may_touch(tmp_path):
+    log = ("GAP-FIX M1 round=1 files=src/api/a.ts", "GAP-FIX M1 round=2 files=src/secret.ts,src/api/deep/x.ts")
+    code, out = ms_run(gap_repo(tmp_path, *log, edits={"src/api/a.ts": "x\n", "src/secret.ts": "x\n", "src/api/deep/x.ts": "x\n"}))
+    assert code == 1 and "outside milestone M1: src/secret.ts" in out and "outside milestone M1: src/api/deep/x.ts" in out
+    assert "outside milestone M1: src/api/a.ts" not in out
+
+
+def test_gap_rounds_work_for_a_milestone_with_a_letter_suffix(tmp_path):
+    first = {**MAY_PLAN["milestones"][0], "id": "M1a"}
+    plan = {**MAY_PLAN, "milestones": [first, PLAN["milestones"][1]]}
+    repo = gap_repo(tmp_path, "GAP-FIX M1a round=1 files=src/api/a.ts", "GAP-FIX M1a round=2 files=src/api/b.ts", edits={"src/api/a.ts": "x\n", "src/api/b.ts": "x\n"}, plan=plan)
+    code, out = run(repo, "main", str(repo / PLAN_PATH), "--milestone", "M1a", "--approved", appr(repo))
+    assert code == 0 and out.strip() == "INTEGRITY OK", out
+    ms = head(repo)
+    commit(repo, {"src/api/a.ts": "y\n"})
+    code, out = run(repo, ms, str(repo / PLAN_PATH), "--task", "M1a-gap1", "--approved", appr(repo))
+    assert code == 0, out
+    code, out = run(repo, ms, str(repo / PLAN_PATH), "--task", "M1a-gap2", "--approved", appr(repo))
+    assert code == 1 and "outside task M1a-gap2: src/api/a.ts" in out
+    # a line for M1 must not be read as one for M1a, nor the reverse
+    repo = gap_repo(tmp_path / "x", "GAP-FIX M1 round=1 files=src/api/a.ts", edits={"src/api/a.ts": "x\n"}, plan=plan)
+    code, out = run(repo, "main", str(repo / PLAN_PATH), "--milestone", "M1a", "--approved", appr(repo))
+    assert code == 1 and "outside milestone M1a: src/api/a.ts" in out
 
 
 def test_gap_log_line_without_may_touch_widens_nothing(tmp_path):

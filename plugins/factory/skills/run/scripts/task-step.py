@@ -7,7 +7,7 @@
        task-step.py status <plan.md> <M> --approved <sha>
 The coordinator's routine per-task mechanics, run from the milestone worktree (branch milestone/<slug>-<M>); <plan.md> is
 repo-relative (changes/<slug>/plan.md), never absolute and never outside the repo. <T> is a plan task (T3) or the milestone's
-gap fix task (M2-gap). The plan, and so `change`, the target branch and `setup`, is read from the approved commit, never from the working file.
+gap fix task of round n (M2-gap<n>; M2-gap is round 1). The plan, and so `change`, the target branch and `setup`, is read from the approved commit, never from the working file.
   target   fetch origin and record the head of the integration (else base) branch as the target SHA; --resume records
            `git merge-base HEAD origin/<target>` instead
   start    create the task branch and worktree (`git worktree add <repo>/.worktrees/<slug>-<M>-<T>`) at the milestone head, run the
@@ -34,7 +34,7 @@ check_plan = importlib.util.module_from_spec(spec)
 spec.loader.exec_module(check_plan)
 
 MERGE_PREFIX = "factory-merge: "
-TASK_ID = r"T\d+|M\d+[a-z]?-gap"
+TASK_ID = r"T\d+|M\d+[a-z]?-gap[1-5]?"
 
 
 def git(cwd, *args):
@@ -101,7 +101,7 @@ class Ctx:
         self.state_file.write_text(json.dumps(st, indent=1) + "\n")
 
     def name(self, task):
-        return f"{self.change}-{task}" if task.endswith("-gap") else f"{self.change}-{self.ms}-{task}"
+        return f"{self.change}-{task}" if re.search(r"-gap\d*$", task) else f"{self.change}-{self.ms}-{task}"
 
     def worktree(self, task):
         path = self.root / ".worktrees" / self.name(task)
@@ -242,7 +242,7 @@ def main():
         print("usage: task-step.py target|start|pin|finish|gate|status <plan.md> <M> [<T>|<sha>] --approved <sha> (see the header)", file=sys.stderr)
         return 2
     if a[0] in ("start", "finish") and not re.fullmatch(TASK_ID, a[3]):
-        print(f"{a[3]!r} is not a task id (T<n> or M<n>-gap)", file=sys.stderr)
+        print(f"{a[3]!r} is not a task id (T<n> or M<n>-gap<n>)", file=sys.stderr)
         return 2
     try:
         c = Ctx(a[1], a[2], approved)

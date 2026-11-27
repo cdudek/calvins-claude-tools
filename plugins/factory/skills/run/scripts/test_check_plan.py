@@ -633,3 +633,11 @@ def test_milestone_id_may_carry_one_letter_suffix(tmp_path):
     for i, bad in enumerate(("M2A", "M2ab", "M", "Ma", "M2-a", "m2a")):
         code, out = run(tmp_path / f"bad{i}", mutated(lambda p: p["milestones"][0].update(id=bad)))
         assert code == 1 and "must look like M<n>" in out, bad
+
+
+def test_gap_rounds_shape(tmp_path):
+    for i, good in enumerate((1, 3, 5)):
+        assert run(tmp_path / f"g{i}", mutated(lambda p: p["milestones"][0].update(mayTouch=["src/api/*"], gapRounds=good)))[0] == 0, good
+    for i, bad in enumerate((0, 6, -1, 2.5, "3", True, None, [])):
+        code, out = run(tmp_path / f"b{i}", mutated(lambda p: p["milestones"][0].update(gapRounds=bad)))
+        assert code == 1 and "M1 gapRounds must be a whole number from 1 to 5" in out, bad

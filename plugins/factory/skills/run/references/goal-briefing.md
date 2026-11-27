@@ -42,10 +42,11 @@ It starts "Met when any one of these is true." and lists numbered end states, in
 
 ## Plan gaps (the gap lane)
 - **Label:** the verifier marks each FAIL `bug` (the code misses an approved requirement; back to the builder) or `gap` (the fix needs files no task owns, or an existing test asserts the old behaviour).
-- **Approval:** a milestone may carry `mayTouch`, path globs the owner approves with the plan. It is the only widening of scope an unattended run gets.
-- **A `gap` inside an approved requirement, every file matching `mayTouch`:** the coordinator appends `GAP-FIX <M> files=<a,b> tests=<c,d>` to the plan's progress log and commits it, then runs one fix task `<M>-gap` with exactly those files like any task, then reruns integrity and the verifier.
-- **Integrity:** `test-integrity.sh --milestone <M>` and `--task <M>-gap` read the `GAP-FIX` line from the plan at HEAD and keep only paths that match the approved `mayTouch`; a line cannot widen scope beyond it. Two `GAP-FIX` lines for one milestone fail the check: one round per milestone.
-- **Everything else** (second gap, file outside `mayTouch`, gap outside an approved requirement, no `mayTouch`) ends `BLOCKED` naming the files.
+- **Approval:** a milestone may carry `mayTouch`, path globs the owner approves with the plan, and `gapRounds`, how many rounds it may use (1 to 5, default 3). Together they are the only widening of scope an unattended run gets.
+- **A `gap` inside an approved requirement, every file matching `mayTouch`:** the coordinator appends `GAP-FIX <M> round=<n> files=<a,b> tests=<c,d>` to the plan's progress log and commits it, then runs one fix task `<M>-gap<n>` with exactly that round's files like any task, then reruns integrity and the verifier. `<M>-gap` is an alias of round 1.
+- **Rounds:** numbered 1 to n, each once. A legacy line without `round=` counts as round 1. More rounds than `gapRounds` fail the check.
+- **Integrity:** `test-integrity.sh --milestone <M>` reads every `GAP-FIX` line from the plan at HEAD and keeps only paths that match the approved `mayTouch`; `--task <M>-gap<n>` is scoped to exactly that round's line. A line cannot widen scope beyond `mayTouch`.
+- **Everything else** (a gap past `gapRounds`, file outside `mayTouch`, gap outside an approved requirement, no `mayTouch`) ends `BLOCKED` naming the files.
 
 ## Bug flow (`kind: bug`)
 1. The builder's first commit holds only the failing test.

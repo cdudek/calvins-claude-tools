@@ -523,8 +523,8 @@ def test_gap_lane_names_the_may_touch_globs_and_the_log_line(tmp_path):
     code, out, kick = run(tmp_path, "M1", plan_text(ms))
     k = kick.read_text()
     assert code == 0 and "labels every FAIL `bug` or `gap`" in k
-    assert "matches M1's mayTouch (`src/api/*`, `tests/api/`)" in k and "`GAP-FIX M1 files=<a,b> tests=<c,d>`" in k
-    assert "one fix task `M1-gap`" in k and "`--task M1-gap` integrity" in k and "A second gap" in k
+    assert "matches M1's mayTouch (`src/api/*`, `tests/api/`)" in k and "`GAP-FIX M1 round=<n> files=<a,b> tests=<c,d>`" in k
+    assert "one fix task `M1-gap<n>`" in k and "`--task M1-gap<n>` integrity" in k and "up to 3 rounds" in k and "A gap after round 3" in k
     assert "a `gap` FAIL to the gap lane" in k
 
 
@@ -545,4 +545,13 @@ def test_milestone_id_with_a_letter_suffix_gets_a_brief(tmp_path):
     ms = [{**M1, "id": "M2a", "mayTouch": ["src/api/*"]}, M2_OPEN, M3_OPEN]
     code, out, kick = run(tmp_path, "M2a", plan_text(ms))
     k = kick.read_text()
-    assert code == 0 and "milestone/2026-11-24-saved-searches-M2a" in k and "`M2a-gap`" in k
+    assert code == 0 and "milestone/2026-11-24-saved-searches-M2a" in k and "`M2a-gap<n>`" in k
+
+
+def test_gap_rounds_key_sets_the_cap_in_the_kickoff(tmp_path):
+    ms = [{**M1, "mayTouch": ["src/api/*"], "gapRounds": 5}, M2_OPEN, M3_OPEN]
+    code, out, kick = run(tmp_path, "M1", plan_text(ms))
+    k = kick.read_text()
+    assert code == 0 and "up to 5 rounds per milestone" in k and "A gap after round 5" in k and "worktree `2026-11-24-saved-searches-M1-gap<n>`" in k
+    code, out, kick = run(tmp_path / "bad", "M1", plan_text([{**ms[0], "gapRounds": 6}, M2_OPEN, M3_OPEN]))
+    assert code == 1 and "BRIEF FAIL M1 gapRounds must be a whole number from 1 to 5" in out

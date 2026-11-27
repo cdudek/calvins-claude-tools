@@ -6,7 +6,7 @@ Validates the first fenced block with info string `json factory`, delta.md and i
 (intent ids are list items `- outcome-1: ...` / `- constraint-1: ...`; every delta requirement line `- req-<n>: ...` cites one as `[outcome-1]`).
 Old ids (`I1`, `C1`, `<spec>/R<n>`) fail with a one-line rewrite hint. In the plan (through its json block) and in intent.md,
 an id written in prose must sit in parentheses after at least two words: `guests see their items (req-12)` (the 8-word cap in SKILL.md is guidance, not checked).
-A task's prose bullet that names an effort or model must match the task's json. A milestone's optional `mayTouch` is a non-empty list of narrow relative path globs.
+A task's prose bullet that names an effort or model must match the task's json. A milestone's optional `mayTouch` is a non-empty list of narrow relative path globs; its optional `gapRounds` is a whole number 1 to 5 (default 3).
 Prints `PLAN OK <n> milestones <m> tasks` (exit 0) or one `PLAN FAIL <reason>` per problem (exit 1).
 """
 import json
@@ -312,17 +312,19 @@ def guards_errs(plan, plan_path, notes):
 
 
 def may_touch_errs(m, mid):
-    """`mayTouch`: path globs the owner approves with the plan, for the one plan-gap fix round. Narrow, relative, no spaces or commas (the log line is comma-separated)."""
+    """`mayTouch`: path globs the owner approves with the plan, for the plan-gap fix rounds (at most `gapRounds`, a whole number 1 to 5, default 3). Narrow, relative, no spaces or commas (the log line is comma-separated)."""
+    rounds = m.get("gapRounds", 3)
+    errs = [] if type(rounds) is int and 1 <= rounds <= 5 else [f"{mid} gapRounds must be a whole number from 1 to 5"]
     if "mayTouch" not in m:
-        return []
+        return errs
     g = m["mayTouch"]
     if not (is_strs(g) and g):
-        return [f"{mid} mayTouch must be a non-empty list of path globs"]
+        return errs + [f"{mid} mayTouch must be a non-empty list of path globs"]
     def bad(x):  # `*` stays inside one path segment; the first segment is static; a trailing `/` is a plain directory prefix; no `**`
         segs = x.split("/")
         return (not x or x.startswith("/") or ".." in segs or "**" in x or re.search(r"[\s,]", x) is not None or re.search(r"[*?\[]", segs[0]) is not None
                 or (x.endswith("/") and re.search(r"[*?\[]", x) is not None))
-    return [f"{mid} mayTouch {x!r} must be a relative path under a static directory (`src/api/*`, `tests/api/`): `*` stays in one path segment, no `**`, no spaces or commas" for x in g if bad(x)]
+    return errs + [f"{mid} mayTouch {x!r} must be a relative path under a static directory (`src/api/*`, `tests/api/`): `*` stays in one path segment, no `**`, no spaces or commas" for x in g if bad(x)]
 
 
 def surface_errs(m, mid):
