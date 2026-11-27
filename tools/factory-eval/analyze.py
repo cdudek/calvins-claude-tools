@@ -46,6 +46,7 @@ def load_rows(root):
             "verifier_verdict": g.get("verifier_verdict"), "verifier_false_pass": g.get("verifier_false_pass"),
             "terminal_reason": g.get("terminal_reason"), "harness_violation": g.get("harness_violation"), "goal_met": g.get("goal_met"), "goal_met_not_solved": g.get("goal_met_not_solved"),
             "claimed_done_not_solved": g.get("claimed_done_not_solved"), "visible_hidden_gap": g.get("visible_hidden_gap"),
+            "outside_fixed": sum(map(bool, (g.get("outside_fixed") or {}).values())) if g.get("outside_fixed") else None,
             "cache_hit": g.get("cache_hit"), "diff_ratio": g.get("diff_ratio"), "permission_denials": g.get("permission_denials"),
             "cost_by_role": g.get("cost_by_role") or {}, "evaluator_models": g.get("goal_evaluator_models") or [],
             "unexpected_models": g.get("unexpected_models") or [], "files_outside_plan": len(g.get("files_outside_plan") or []),

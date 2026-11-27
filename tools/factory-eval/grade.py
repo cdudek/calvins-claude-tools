@@ -8,6 +8,8 @@ Grades one run the same way for every arm. The arm's own verifier never decides 
   2. prose scenarios graded by one fixed grader (default Codex gpt-6.2-astra, read-only, blind to the arm).
   hidden_frac = passing fail_to_pass files / fail_to_pass files. scenario_frac = passing scenarios / scenarios (null without any),
   never mixed into hidden_frac. regression = the suite or a pass_to_pass_hidden file fails. solved = hidden_frac 1 and no regression.
+  `out_of_scope` files test a real bug next to the ticket that the ticket never asks for: run and reported as outside:<file>
+  (outside_fixed), never in hidden_frac, solved or the false-pass counts.
 Plus metrics read from stream.jsonl and the repo. Writes grade.json next to run.json. Heavy test steps hold the
 global heavy lock (see heavy.py), so parallel runs never run E2E at the same time.
 """
@@ -261,7 +263,8 @@ def task_env(task, run_id, db, port):
 
 def grade_tests(repo, task, task_dir, run, retries, failures=None):
     """Units: p2p:suite, p2p:hidden:<file> (passed at start), f2p:<file> (fail_to_pass; every hidden file when the task has no list),
-    coupled:<file> (implementation_coupled: run and reported, never in hidden_frac or regression).
+    coupled:<file> (implementation_coupled: run and reported, never in hidden_frac or regression),
+    outside:<file> (out_of_scope: a bug the ticket never asks for, run and reported, never scored).
     Runs under the heavy lock, in a fresh database and the run's port."""
     db = run.get("db")
     env = {**os.environ, "FACTORY_EVAL": "1", **task_env(task, run.get("run_id"), db, run.get("port"))}
@@ -291,12 +294,9 @@ def grade_tests(repo, task, task_dir, run, retries, failures=None):
                 shutil.copytree(hidden, repo, dirs_exist_ok=True)
             tmpl = task.get("hidden_cmd") or (task.get("suite_cmd", "") + " {files}")
             hidden_files = task.get("hidden_tests", [])
-            p2p = set(task.get("pass_to_pass_hidden") or [])
-            coupled = set(task.get("implementation_coupled") or [])  # tests that import a symbol the ticket never names: reported, never scored
-            f2p = set(task["fail_to_pass"]) if "fail_to_pass" in task else set(hidden_files) - p2p - coupled
             for f in hidden_files:
                 cmd = tmpl.format(files=shlex.quote(f))
-                key = f"coupled:{f}" if f in coupled else f"f2p:{f}" if f in f2p else f"p2p:hidden:{f}"
+                key = unit_key(task, f)
                 units[key] = attempt(key, cmd, retries)
         finally:
             if db and task.get("dbDrop"):
@@ -383,9 +383,30 @@ def grade_run(run_dir, grader=None, retries=3, task_dir=None):
         g["scenarios"] = sc
         units.update({k: v["pass"] for k, v in sc.items()})
     g["units"] = units
+    score(g, task)
+    (run_dir / "grade.json").write_text(json.dumps(g, indent=1, default=str) + "\n")
+    return g
+
+
+def unit_key(task, f):
+    """The unit key of hidden file f under the task's lists; out_of_scope wins over every other list."""
+    if f in (task.get("out_of_scope") or []):
+        return f"outside:{f}"
+    if f in (task.get("implementation_coupled") or []):
+        return f"coupled:{f}"
+    p2p = set(task.get("pass_to_pass_hidden") or [])
+    f2p = set(task["fail_to_pass"]) if "fail_to_pass" in task else set(task.get("hidden_tests", [])) - p2p
+    return f"f2p:{f}" if f in f2p else f"p2p:hidden:{f}"
+
+
+def score(g, task):
+    """Derives every quality field of grade.json from g["units"]; rescore.py reuses it on graded runs without rerunning tests."""
+    units = g["units"]
     f2p = [v for k, v in units.items() if k.startswith("f2p:")]
     g["hidden_frac"] = sum(f2p) / len(f2p) if f2p else None
     g["hidden_basis"] = "fail_to_pass" if "fail_to_pass" in task else "all hidden files (task.json has no fail_to_pass list)"
+    out = {k[len("outside:"):]: v for k, v in units.items() if k.startswith("outside:")}
+    g["outside_fixed"] = out or None
     sc = [v["pass"] for v in g.get("scenarios", {}).values()]
     g["scenario_frac"] = sum(sc) / len(sc) if sc else None
     g["visible_pass"] = units.get("p2p:suite")
@@ -396,8 +417,6 @@ def grade_run(run_dir, grader=None, retries=3, task_dir=None):
     g["verifier_false_pass"] = g["verifier_verdict"] == "PASS" and hf is not None and hf < 1
     g["goal_met_not_solved"] = bool(g["goal_met"]) and hf is not None and hf < 1
     g["claimed_done_not_solved"] = g["end_state"] in ("SHIPPED", "HOLD") and hf is not None and hf < 1
-    (run_dir / "grade.json").write_text(json.dumps(g, indent=1, default=str) + "\n")
-    return g
 
 
 def main(argv=None):
