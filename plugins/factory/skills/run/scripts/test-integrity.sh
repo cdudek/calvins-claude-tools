@@ -250,7 +250,9 @@ addonly_py() {
   python3 - "$@" <<'PY'
 import os, re, subprocess, sys
 repo, base = sys.argv[1:3]
-JS_START = re.compile(r"""^\s*x?(?:it|test|describe)(?:\.\w+)*\s*\(\s*(["'`])(.*?)\1""")
+JS_HEAD = re.compile(r"^\s*x?(?:it|test|describe)\b")
+MODIFIER = re.compile(r"\.\w+")
+NAME = re.compile(r"\s*\(\s*([\"'`])((?:\\.|(?!\1).)*)\1", re.S)
 PY_START = re.compile(r"\s*(?:async\s+)?def (test_\w*)")
 SKIP = re.compile(r"\.(?:skip|only|todo|fixme)\b|\.(?:skipIf|runIf)\(|\bthis\.skip\(|\btest\.fixme\(|\b(?:xit|xdescribe|xtest)\(|pytest\.(?:skip|importorskip)\(|@pytest\.mark\.(?:skip|xfail)|@unittest\.skip(?:If|Unless)?\b")
 STRICT = re.compile(r"\.(?:toBe|toEqual|toStrictEqual|toHaveLength)\(|\.toThrow\(\s*[^)\s]|\bassertEqual\b|\bassert\.(?:equal|strictEqual|deepStrictEqual)\(")
@@ -293,6 +295,37 @@ def scan(lines, py):
         out.append(("".join(clean), fresh))
     return out
 
+def skip_group(t, i):
+    """t[i] opens a group (or a tagged template): the index after its balanced close, string-aware; -1 when unbalanced."""
+    depth = 0
+    while i < len(t):
+        c = t[i]
+        if c in "\"'`":
+            j = i + 1
+            while j < len(t) and t[j] != c: j += 2 if t[j] == "\\" else 1
+            i = j + 1
+            if depth == 0: return i
+            continue
+        depth += c in "([{"
+        depth -= c in ")]}"
+        i += 1
+        if depth == 0: return i
+    return -1
+
+def block_name(text):
+    """The normalised name of the JS block that starts `text`: it/test/describe, then `.modifier` and `.modifier(args)` parts (each, concurrent, skipIf(...), runIf(...), only, skip),
+    then `(` and a string literal. For `.each` the table is skipped, so the name is the first string literal after it. None for a dynamic name."""
+    i = JS_HEAD.match(text).end()
+    while True:
+        m = MODIFIER.match(text, i)
+        if not m: break
+        i = m.end()
+        if m.group(0) in (".each", ".skipIf", ".runIf") and text.startswith(("(", "`"), i):  # these take arguments before the call; for the rest `(` is the call
+            i = skip_group(text, i)
+            if i < 0: return None
+    m = NAME.match(text, i)
+    return " ".join(m.group(2).split()) if m else None
+
 def num(tok):
     t = tok.replace("_", "")
     try: return float(int(t, 16)) if t[:2].lower() == "0x" else float(t)
@@ -304,11 +337,15 @@ def parse(text, py):
     sc = scan(lines, py)
     starts = []
     for i, l in enumerate(lines):
-        m = (PY_START if py else JS_START).match(l) if sc[i][1] else None
-        if m:
+        if py:
+            m = PY_START.match(l) if sc[i][1] else None
+            nm = m.group(1) if m else None
+        else:
+            nm = block_name("\n".join(lines[i:i + 40])) if sc[i][1] and JS_HEAD.match(l) else None
+        if nm:
             while py and i > 0 and lines[i - 1].strip().startswith("@") and (not starts or starts[-1][0] < i - 1):
                 i -= 1  # decorators belong to the test below them
-            starts.append((i, m.group(1) if py else m.group(2)))
+            starts.append((i, nm))
     cuts = [(0, "<top of file>")] + starts + [(len(lines), None)]
     out = {}
     for (a, name), (b, _) in zip(cuts, cuts[1:]):
@@ -324,7 +361,7 @@ def parse(text, py):
             c["strict"] += len(STRICT.findall(l)) + (1 if bare and "==" in l else 0)
             c["loose"] += len(LOOSE.findall(l)) + (1 if bare and "==" not in l else 0)
             if not py:
-                pats = TIMEOUT + ([TIMEOUT_ON_TEST_LINE] if JS_START.match(lines[i]) else [])
+                pats = TIMEOUT + ([TIMEOUT_ON_TEST_LINE] if JS_HEAD.match(lines[i]) else [])
                 for tok in set(tok.strip() for t in pats for tok in t.findall(l)):  # one count per token per line, whichever pattern saw it
                     c["ntimeouts"] += 1
                     v = num(tok)

@@ -935,3 +935,42 @@ def test_kickoff_exemption_needs_the_md_extension_and_one_segment(tmp_path):
     commit(repo, {"src/a.ts": "export const a = 2\n", "changes/2026-11-24-x/kickoff-M1.md": "k\n", "changes/2026-11-24-x/kickoff-all.md": "k\n"})
     code, out = run(repo, "main", str(repo / PLAN_PATH), "--milestone", "M1", "--approved", appr(repo))
     assert code == 0 and out.strip() == "INTEGRITY OK", out
+
+
+# ---- parameterised and modified blocks are blocks ----
+SEARCH_DOORS = """describe('search server door', () => {
+  it.each([
+    ['a', 1],
+    ['b', 2],
+  ])('search server door compatibility %s', (k, v) => {
+    expect(door(k)).toBe(v)
+    expect(door(k)).toEqual(v)
+    expect(door(k)).toBeDefined()
+    expect(door(k, true)).toBe(v)
+  })
+})
+"""
+
+
+def test_add_only_a_new_it_before_an_it_each_block_passes(tmp_path):
+    new = SEARCH_DOORS.replace("  it.each([", "  it('a new door test', () => {\n    expect(1).toBe(1)\n  })\n  it.each([")
+    code, out = addonly(tmp_path / "ok", "src/a.test.ts", SEARCH_DOORS, new)
+    assert code == 0 and out.strip() == "INTEGRITY OK", out
+
+
+def test_add_only_it_each_assertions_still_cannot_drop(tmp_path):
+    new = SEARCH_DOORS.replace("    expect(door(k, true)).toBe(v)\n", "").replace("  it.each([", "  it('a new door test', () => {\n    expect(1).toBe(1)\n  })\n  it.each([")
+    ao_fail(tmp_path / "bad", "src/a.test.ts", SEARCH_DOORS, new, "block search server door compatibility %s: assertions dropped from 4 to 3")
+
+
+@pytest.mark.parametrize("head", [
+    "it.each([[1]])('n', (x) => {", "test.each([[1]])('n', (x) => {", "describe.each([[1]])('n', (x) => {", "it.concurrent('n', () => {",
+    "test.concurrent('n', () => {", "it.skipIf(win)('n', () => {", "it.runIf(ci)('n', () => {", "it.concurrent.each([[1]])('n', (x) => {",
+    "it.each`\n a\n ${1}\n`('n', (x) => {", "it.each([\n  [1],\n  ['it(\"x\")'],\n])(\n  'n',\n  (x) => {",
+])
+def test_add_only_modified_and_parameterised_forms_are_blocks(tmp_path, head):
+    old = head + "\n  expect(f()).toBe(1)\n})\nit('after', () => {\n  expect(g()).toBe(2)\n})\n"
+    ao_fail(tmp_path / "gone", "src/a.test.ts", old, old.replace(head + "\n  expect(f()).toBe(1)\n})\n", ""), "block n: test block removed or renamed")
+    new = "it('first', () => { expect(0).toBe(0) })\n" + old
+    assert addonly(tmp_path / "ok", "src/a.test.ts", old, new)[0] == 0
+    ao_fail(tmp_path / "weak", "src/a.test.ts", old, old.replace("expect(f()).toBe(1)", "f()"), "block n: assertions dropped from 1 to 0")
