@@ -635,3 +635,116 @@ def test_uncommitted_gap_log_line_grants_no_scope(tmp_path):
     (repo / PLAN_PATH).write_text(plan_text(MAY_PLAN, "GAP-FIX M1 files=src/api/list.ts\n"))  # in the working file only
     code, out = run(repo, "main", str(repo / PLAN_PATH), "--milestone", "M1", "--approved", appr(repo))
     assert code == 1 and "outside milestone M1: src/api/list.ts" in out
+
+
+# ---- add-only gate for the existing tests a task may edit ----
+AO_PLAN = {**PLAN, "milestones": [{**PLAN["milestones"][0], "tasks": [
+    {**PLAN["milestones"][0]["tasks"][0], "allowTestEdits": ["src/a.test.ts", "tests/test_a.py", "src/b.test.ts"]}, PLAN["milestones"][0]["tasks"][1]]}, PLAN["milestones"][1]]}
+JS_OLD = """describe('x', () => {
+  it('adds', () => {
+    expect(add(1, 2)).toBe(3)
+    expect(add(2, 2)).toEqual(4)
+  })
+  it('lists', () => {
+    expect(list()).toHaveLength(2)
+  }, 5000)
+})
+"""
+PY_OLD = """import pytest
+
+
+def test_add():
+    assert add(1, 2) == 3
+    assert add(2, 2) == 4
+
+
+def test_flag():
+    assert flag()
+"""
+
+
+def addonly(tmp_path, path, old, new):
+    """`old` is the existing test at the branch the task is cut from; `new` is what the task commits."""
+    tmp_path.mkdir(parents=True, exist_ok=True)
+    repo = plan_repo(tmp_path, AO_PLAN)
+    commit(repo, {path: old}, "existing test")
+    ms = head(repo)
+    git(repo, "switch", "-qc", "t1")
+    if new is None:
+        (repo / path).unlink()
+        git(repo, "add", "-A")
+        git(repo, "commit", "-qm", "delete")
+    else:
+        commit(repo, {path: new} if new != old else {"src/a.ts": "export const a = 2\n"})  # same text: the allowed file is not touched
+    return run(repo, ms, str(repo / PLAN_PATH), "--task", "T1", "--approved", appr(repo))
+
+
+def ao_fail(tmp_path, path, old, new, *reasons):
+    code, out = addonly(tmp_path, path, old, new)
+    assert code == 1 and all(f"INTEGRITY FAIL add-only gate: {path}: " in out and r in out for r in reasons), (reasons, out)
+
+
+def test_add_only_accepts_more_tests_more_assertions_and_a_renamed_symbol(tmp_path):
+    grown = JS_OLD.replace("add(", "sum(") + "it('new', () => { expect(1).toBe(1) })\n"  # every `add` renamed, one test added
+    grown = grown.replace("expect(list()).toHaveLength(2)", "expect(list()).toHaveLength(2)\n    expect(list()).toBeTruthy()")
+    code, out = addonly(tmp_path / "js", "src/a.test.ts", JS_OLD, grown)
+    assert code == 0 and out.strip() == "INTEGRITY OK", out
+    code, out = addonly(tmp_path / "py", "tests/test_a.py", PY_OLD, PY_OLD.replace("add(1", "plus(1").replace("add(2", "plus(2") + "\n\ndef test_more():\n    assert 1 == 1\n")
+    assert code == 0 and out.strip() == "INTEGRITY OK", out
+    code, out = addonly(tmp_path / "same", "src/a.test.ts", JS_OLD, JS_OLD)  # the allowed file is not touched
+    assert code == 0, out
+
+
+def test_add_only_refuses_a_removed_or_renamed_block(tmp_path):
+    ao_fail(tmp_path / "a", "src/a.test.ts", JS_OLD, JS_OLD.replace("it('lists'", "it('lists the rows'"), "block lists: test block removed or renamed")
+    ao_fail(tmp_path / "b", "src/a.test.ts", JS_OLD, JS_OLD.split("  it('lists'")[0] + "})\n", "block lists: test block removed or renamed")
+    ao_fail(tmp_path / "c", "tests/test_a.py", PY_OLD, PY_OLD.split("def test_flag")[0], "block test_flag: test block removed or renamed")
+    ao_fail(tmp_path / "d", "src/a.test.ts", JS_OLD, "", "block adds: test block removed or renamed", "block x: test block removed or renamed")
+    ao_fail(tmp_path / "e", "src/a.test.ts", JS_OLD, None, "the file is deleted")
+
+
+def test_add_only_refuses_fewer_assertions_in_a_surviving_block(tmp_path):
+    ao_fail(tmp_path / "a", "src/a.test.ts", JS_OLD, JS_OLD.replace("    expect(add(2, 2)).toEqual(4)\n", ""), "block adds: assertions dropped from 2 to 1")
+    ao_fail(tmp_path / "b", "tests/test_a.py", PY_OLD, PY_OLD.replace("    assert add(2, 2) == 4\n", ""), "block test_add: assertions dropped from 2 to 1")
+    ao_fail(tmp_path / "c", "tests/test_a.py", PY_OLD, PY_OLD.replace("    assert flag()\n", "    flag()\n"), "block test_flag: assertions dropped from 1 to 0")
+    # another test's assertions do not pay for it
+    ao_fail(tmp_path / "d", "src/a.test.ts", JS_OLD, JS_OLD.replace("    expect(add(2, 2)).toEqual(4)\n", "").replace("it('lists', () => {\n", "it('lists', () => {\n    expect(1).toBe(1)\n"), "block adds: assertions dropped")
+
+
+def test_add_only_refuses_a_skip_or_focus_marker(tmp_path):
+    for i, (old, new) in enumerate((("it('adds'", "it.skip('adds'"), ("it('adds'", "it.only('adds'"), ("it('adds'", "it.todo('adds'"), ("it('adds'", "it.fixme('adds'"),
+                                    ("it('adds'", "xit('adds'"), ("describe('x'", "xdescribe('x'"))):
+        ao_fail(tmp_path / f"js{i}", "src/a.test.ts", JS_OLD, JS_OLD.replace(old, new), "skip or focus marker added")
+    ao_fail(tmp_path / "new", "src/a.test.ts", JS_OLD, JS_OLD + "xtest('later', () => {})\n", "block later: skip or focus marker added")
+    for i, (old, new) in enumerate((("def test_add", "@pytest.mark.skip(reason='x')\ndef test_add"), ("def test_add", "@pytest.mark.xfail\ndef test_add"),
+                                    ("    assert flag()", "    pytest.skip('x')\n    assert flag()"))):
+        ao_fail(tmp_path / f"py{i}", "tests/test_a.py", PY_OLD, PY_OLD.replace(old, new), "skip or focus marker added")
+    ao_fail(tmp_path / "pytop", "tests/test_a.py", PY_OLD, PY_OLD.replace("import pytest\n", "import pytest\npytest.skip('all', allow_module_level=True)\n"), "block <top of file>: skip or focus marker added")
+
+
+def test_add_only_refuses_strict_matchers_traded_for_loose_ones(tmp_path):
+    loose = JS_OLD.replace("expect(add(1, 2)).toBe(3)", "expect(add(1, 2)).toBeTruthy()")
+    ao_fail(tmp_path / "a", "src/a.test.ts", JS_OLD, loose, "block adds: strict matchers replaced by loose ones")
+    ao_fail(tmp_path / "b", "src/a.test.ts", JS_OLD, JS_OLD.replace(".toEqual(4)", ".toContain(4)").replace(".toBe(3)", ".toMatch(3)"), "strict matchers replaced by loose ones")
+    ao_fail(tmp_path / "c", "tests/test_a.py", PY_OLD, PY_OLD.replace("assert add(1, 2) == 3", "assert add(1, 2)"), "block test_add: strict matchers replaced by loose ones")
+    # a strict matcher that goes without a loose one coming in is not this rule (the assertion count still guards it)
+    ok_ = JS_OLD.replace("expect(add(1, 2)).toBe(3)", "expect(add(1, 2)).toBe(3)\n    expect(add(1, 2)).toBeDefined()").replace(".toEqual(4)", ".toEqual(4)")
+    assert addonly(tmp_path / "ok", "src/a.test.ts", JS_OLD, ok_)[0] == 0
+
+
+def test_add_only_refuses_a_raised_timeout(tmp_path):
+    ao_fail(tmp_path / "a", "src/a.test.ts", JS_OLD, JS_OLD.replace("}, 5000)", "}, 30000)"), "block lists: timeout raised from 5000 to 30000")
+    ao_fail(tmp_path / "b", "src/a.test.ts", JS_OLD, JS_OLD.replace("it('adds', () => {", "it('adds', () => {\n    jest.setTimeout(9000)"), "block adds: timeout raised from 0 to 9000")
+    ao_fail(tmp_path / "c", "src/a.test.ts", JS_OLD.replace("}, 5000)", "}, { timeout: 1000 })"), JS_OLD.replace("}, 5000)", "}, { timeout: 8000 })"), "timeout raised from 1000 to 8000")
+    ao_fail(tmp_path / "d", "src/a.test.ts", JS_OLD, JS_OLD.replace("it('adds', () => {", "it('adds', async () => {", 1).replace("  })\n  it('lists'", "  }, 60_000)\n  it('lists'"), "block adds: timeout raised from 0 to 60000")
+    assert addonly(tmp_path / "ok", "src/a.test.ts", JS_OLD, JS_OLD.replace("}, 5000)", "}, 3000)"))[0] == 0  # a lower timeout is fine
+
+
+def test_add_only_also_guards_the_tests_of_a_gap_round(tmp_path):
+    repo = gap_repo(tmp_path, "GAP-FIX M1 round=1 files=src/api/list.ts tests=src/b.test.ts")
+    ms = head(repo)
+    commit(repo, {"src/api/list.ts": "x\n", "src/b.test.ts": "it('b2', () => {})\n"})  # block b is gone
+    code, out = run(repo, ms, str(repo / PLAN_PATH), "--task", "M1-gap", "--approved", appr(repo))
+    assert code == 1 and "INTEGRITY FAIL add-only gate: src/b.test.ts: block b: test block removed or renamed" in out, out
+    code, out = run(repo, "main", str(repo / PLAN_PATH), "--milestone", "M1", "--approved", appr(repo))
+    assert code == 1 and "add-only gate: src/b.test.ts: block b:" in out

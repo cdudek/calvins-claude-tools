@@ -232,6 +232,85 @@ while IFS=$'\t' read -r status path _; do
   esac
 done <<< "$names"
 
+# Add-only gate: an existing test file a task or gap round may edit (allowTestEdits, tests=) may only grow. Input: the allowed paths in $ALLOW, argv: repo, base commit.
+# shortcut: a line-based parser, not a language parser: a block runs from its `it(`/`test(`/`describe(`/`def test_` line to the next one, `it.each` and dynamic names are not
+# seen, comments and strings count as code, and an assertion moved between blocks looks like a drop; upgrade to a real parser when a real edit trips it.
+addonly_py() {
+  python3 - "$@" <<'PY'
+import os, re, subprocess, sys
+repo, base = sys.argv[1:3]
+JS_START = re.compile(r"""^\s*x?(?:it|test|describe)(?:\.\w+)*\s*\(\s*(["'`])(.*?)\1""")
+PY_START = re.compile(r"\s*(?:async\s+)?def (test_\w*)")
+ASSERT = re.compile(r"\bexpect\(|\bassert\w*")
+SKIP = re.compile(r"\.(?:skip|only|todo|fixme)\b|\b(?:xit|xdescribe|xtest)\(|pytest\.skip\(|@pytest\.mark\.(?:skip|xfail)")
+STRICT = re.compile(r"\.(?:toBe|toEqual|toStrictEqual|toHaveLength)\(|\.toThrow\(\s*[^)\s]|\bassertEqual\b")
+LOOSE = re.compile(r"\.(?:toBeTruthy|toBeDefined|toContain|toMatch|toBeGreaterThan)\(")
+TIMEOUT = [re.compile(r"\btimeout:\s*(\d[\d_]*)"), re.compile(r"\b(?:jest|test|vitest)\.setTimeout\(\s*(\d[\d_]*)"),
+           re.compile(r"^\s*\}\s*,\s*(\d[\d_]*)\s*\)"), re.compile(r",\s*(\d[\d_]*)\s*\)\s*;?\s*$")]
+
+def show(ref, path):
+    p = subprocess.run(["git", "-C", repo, "show", ref + ":" + path], capture_output=True, text=True)
+    return p.stdout if p.returncode == 0 else None
+
+def parse(text, py):
+    """{(name, occurrence): counts} per block; the lines before the first block are the block <top of file>."""
+    lines = text.split("\n")
+    starts = []
+    for i, l in enumerate(lines):
+        m = (PY_START if py else JS_START).match(l)
+        if m:
+            while py and i > 0 and lines[i - 1].strip().startswith("@") and (not starts or starts[-1][0] < i - 1):
+                i -= 1  # decorators belong to the test below them
+            starts.append((i, m.group(1) if py else m.group(2)))
+    cuts = [(0, "<top of file>")] + starts + [(len(lines), None)]
+    out, seen = {}, {}
+    for (a, name), (b, _) in zip(cuts, cuts[1:]):
+        body = lines[a:b]
+        n = seen[name] = seen.get(name, 0) + 1
+        c = dict(assertions=0, skips=0, strict=0, loose=0, timeout=0)
+        for l in body:
+            c["assertions"] += len(ASSERT.findall(l))
+            c["skips"] += len(SKIP.findall(l))
+            bare = re.match(r"\s*assert\b", l) is not None
+            c["strict"] += len(STRICT.findall(l)) + (1 if bare and "==" in l else 0)
+            c["loose"] += len(LOOSE.findall(l)) + (1 if bare and "==" not in l else 0)
+            for t in TIMEOUT:
+                c["timeout"] = max([c["timeout"]] + [int(x.replace("_", "")) for x in t.findall(l)])
+        out[(name, n)] = c
+    return out
+
+for path in sorted(set(p for p in os.environ.get("ALLOW", "").split("\n") if p)):
+    ext = path.rsplit(".", 1)[-1]
+    py = ext == "py"
+    if not py and ext not in ("js", "jsx", "ts", "tsx", "mjs", "cjs", "mts", "cts"):
+        continue
+    old, new = show(base, path), show("HEAD", path)
+    if old is None or new == old:
+        continue  # a new file has nothing to keep
+    if new is None:
+        print("add-only gate: " + path + ": the file is deleted")
+        continue
+    ob, nb = parse(old, py), parse(new, py)
+    def bad(name, why): print("add-only gate: " + path + ": block " + name + ": " + why)
+    for key, o in ob.items():
+        if key not in nb:
+            bad(key[0], "test block removed or renamed")
+            continue
+        n = nb[key]
+        if n["assertions"] < o["assertions"]: bad(key[0], "assertions dropped from %d to %d" % (o["assertions"], n["assertions"]))
+        if n["skips"] > o["skips"]: bad(key[0], "skip or focus marker added")
+        if n["strict"] < o["strict"] and n["loose"] > o["loose"]: bad(key[0], "strict matchers replaced by loose ones")
+        if n["timeout"] > o["timeout"]: bad(key[0], "timeout raised from %d to %d" % (o["timeout"], n["timeout"]))
+    for key, n in nb.items():
+        if key not in ob and n["skips"]: bad(key[0], "skip or focus marker added")
+PY
+}
+if [ -n "$allow" ]; then
+  mb=$(git -C "$repo" merge-base "$base" HEAD 2>/dev/null || echo "$base")
+  addonly=$(ALLOW="$allow" addonly_py "$repo" "$mb") || { say "add-only gate could not run"; exit 1; }
+  while IFS= read -r line; do if [ -n "$line" ]; then say "$line"; fi; done <<< "$addonly"
+fi
+
 if [ -n "$pin" ]; then  # the bug flow's failing test must reach HEAD untouched
   pinned=$(git -C "$repo" diff-tree --root --no-commit-id --no-renames --name-only -r "$pin") || { say "cannot read pin $pin"; exit 1; }
   while IFS= read -r path; do
