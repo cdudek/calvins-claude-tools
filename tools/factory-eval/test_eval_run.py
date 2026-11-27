@@ -116,6 +116,19 @@ class Run(unittest.TestCase):
         self.assertEqual(run_eval.copy_user_memory(cfg, home), ["CLAUDE.md", "RTK.md"])
         self.assertFalse((cfg / "outside.md").exists())
 
+    def test_apply_sizing_sets_json_and_prose(self):
+        p = Path(self.tmp.name) / "plan.md"
+        p.write_text("# Plan\n- **T1 setup (medium effort).** x\n- **T2 rule (high effort).** y\n\n```json factory\n"
+                     + json.dumps({"milestones": [{"id": "M1", "tasks": [{"id": "T1", "effort": "medium"}, {"id": "T2", "effort": "high"}]}]})
+                     + "\n```\n## Log\nT1 medium effort stays here\n")
+        run_eval.apply_sizing(p, {"T1": ("haiku", "high"), "T2": ("sonnet", "high"), "T9": ("opus", "low")})
+        text = p.read_text()
+        self.assertIn("**T1 setup (high effort).**", text)
+        self.assertIn("T1 medium effort stays here", text)
+        tasks = {t["id"]: t for t in run_eval.grade.plan_json(text)["milestones"][0]["tasks"]}
+        self.assertEqual((tasks["T1"]["model"], tasks["T1"]["effort"]), ("haiku", "high"))
+        self.assertNotIn("model", tasks["T2"])
+
     def test_arm_without_verifier_gets_a_goal_it_can_meet(self):
         out = self.dry("--arms", "ablate_verifier,default", "--parallel", "1")
         cmds = [l for l in out.splitlines() if l.startswith("  claude ")]

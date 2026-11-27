@@ -158,6 +158,28 @@ def ensure_hold(plan_path):
     plan_path.write_text(text[:m.start(1)] + json.dumps(data, indent=1) + "\n" + text[m.end(1):], encoding="utf-8")
 
 
+def apply_sizing(plan_path, sizing):
+    """Write the arm's per-task model and effort into the replay plan: the json block and the task's prose bullet, so the
+    plan check (prose must match json) passes. Tasks the plan does not have are skipped."""
+    text = plan_path.read_text(encoding="utf-8")
+    m = grade.BLOCK.search(text)
+    data = json.loads(m.group(1))
+    head, tail = text[:m.start(1)], text[m.end(1):]
+    for ms in data.get("milestones", []):
+        for t in ms.get("tasks", []):
+            if t["id"] not in sizing:
+                continue
+            model, effort = sizing[t["id"]]
+            t["effort"] = effort
+            if model == "sonnet":
+                t.pop("model", None)
+            else:
+                t["model"] = model
+            bullet = re.compile(r"^(\s*[-*]\s*\**" + re.escape(t["id"]) + r"\b.*)$", re.M)
+            head = bullet.sub(lambda b: re.sub(r"\b(low|medium|high) effort\b", f"{effort} effort", b.group(1), count=1), head, count=1)
+    plan_path.write_text(head + json.dumps(data, indent=1) + "\n" + tail, encoding="utf-8")
+
+
 def parse_brief(out):
     sec = {}
     parts = re.split(r"-#-#- (.+?) -#-#-\n", out)
@@ -191,6 +213,8 @@ def prepare_run(task_dir, task, arm, run_dir, run_id, args, slot):
             raise SystemExit(f"arm {arm['name']} has context=raw but {ticket} is missing")
         shutil.copy(ticket, plan.parent / "ticket.md")
     ensure_hold(plan)
+    if arm.get("sizing"):
+        apply_sizing(plan, arm["sizing"])
     if "integrity" in arm["ablate"] or arm["enforcement"] == "prompt":
         (cf / "test-integrity.sh").write_text("#!/usr/bin/env bash\necho 'INTEGRITY OK (disabled by the eval arm)'\n")
     pj = grade.plan_json(plan.read_text(encoding="utf-8"))
