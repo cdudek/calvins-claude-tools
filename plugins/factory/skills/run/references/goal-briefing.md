@@ -29,6 +29,10 @@ It starts "Met when any one of these is true." and lists numbered end states, in
 - **No stop for a gallery.** The ux-verifier checks UI milestones against the boards approved at the single approval, and writes `evidence/<M>/gallery.md`. The person reviews the gallery once, from the release PR.
 - **After BLOCKED or INCOMPLETE:** fix the cause, then run the same command again in a fresh session. The kickoff's resume rule reads the progress log and git state first.
 
+## Standing approval
+- **File:** `changes/<slug>/standing.md`, optional, written by the owner's decision. When it exists in the approved commit, `goal-brief.py` puts it in the kickoff verbatim as `## Standing approval (owner)`. Nobody re-appends it by hand after a regeneration.
+- **Source:** read from the approved commit, never from the working file. `check-plan.py --approved` fails when `standing.md` changed, appeared or vanished since that commit, like intent and delta.
+
 ## Preflight and the kickoff's stance
 - **Integration branch:** when the plan has `integration` and origin lacks it, `goal-brief.py` creates it from the approved SHA and pushes it, but only if that SHA is on the base branch. Otherwise it fails with the one `git push` command the owner runs. It prints a `PREFLIGHT` section saying which case it was.
 - **Stance:** every kickoff says "Do reversible steps yourself and keep going: create a missing branch, rerun a check, recreate a worktree. Stop only for a decision the plan does not cover or an irreversible step." The run does not depend on any user's global instructions.

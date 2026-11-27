@@ -565,3 +565,42 @@ def test_a_builder_reported_gap_opens_the_lane_too(tmp_path):
     assert "write and commit the line yourself" in k and "`tests=` entry still has to pass the add-only gate" in k and "independent check on test edits" in k
     k = run(tmp_path / "n", "M1")[2].read_text()  # no mayTouch: the same text, the same BLOCKED
     assert "A builder that meets the same need" in k and "ends `BLOCKED" in k
+
+
+STANDING = "Owner standing approval (2026-11-26):\n- Test edits that only add cases are fine.\n- Handover files in the change folder are fine.\n"
+
+
+def with_standing(tmp_path, text=STANDING, **kw):
+    """plan.md, delta.md, intent.md and standing.md committed together; returns (plan file, approved sha)."""
+    plan, _ = repo(tmp_path, **kw)
+    (plan.parent / "standing.md").write_text(text)
+    git(tmp_path, "add", "-A")
+    git(tmp_path, "commit", "-q", "-m", "standing")
+    return plan, git(tmp_path, "rev-parse", "HEAD")
+
+
+def test_standing_approval_is_included_verbatim_from_the_approved_commit(tmp_path):
+    plan, sha = with_standing(tmp_path)
+    p = brief(plan, "M1", "--approved", sha)
+    k = (tmp_path / "kickoff-M1.md").read_text()
+    assert p.returncode == 0 and "\n## Standing approval (owner)\n\n" + STANDING.strip() + "\n" in k and "{{" not in k
+    assert k.index("## Standing approval (owner)") < k.index("## Build")
+
+
+def test_no_standing_file_leaves_no_standing_section(tmp_path):
+    code, out, kick = run(tmp_path, "M1")
+    assert code == 0 and "Standing approval" not in kick.read_text() and "{{standing}}" not in kick.read_text()
+
+
+def test_standing_changed_or_added_after_approval_fails_the_brief(tmp_path):
+    plan, sha = with_standing(tmp_path)
+    (plan.parent / "standing.md").write_text(STANDING + "- Anything goes.\n")  # the working file is not what the owner approved
+    p = brief(plan, "M1", "--approved", sha)
+    assert p.returncode == 1 and f"BRIEF FAIL standing.md changed since approved {sha}" in p.stdout
+    (plan.parent / "standing.md").write_text(STANDING)
+    assert brief(plan, "M1", "--approved", sha).returncode == 0
+    plan2, sha2 = repo(tmp_path / "late")  # no standing.md at the approved commit
+    (plan2.parent / "standing.md").write_text("Everything is allowed.\n")
+    p = brief(plan2, "M1", "--approved", sha2)
+    assert p.returncode == 1 and "standing.md changed since approved" in p.stdout
+    assert not (tmp_path / "late" / "kickoff-M1.md").exists()

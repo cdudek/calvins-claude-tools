@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 """Usage: check-plan.py <plan.md> [--all] [--approved <sha>]
 With --all every milestone must have tasks and the plan must have no `hold` (what goal-brief.py --all needs).
-With --approved plan.md through its json block, delta.md and intent.md must equal revision <sha> (only the text after the block may differ).
+With --approved plan.md through its json block, delta.md, intent.md and standing.md (the owner's standing approval, optional) must equal revision <sha> (only the text after the block may differ).
 Validates the first fenced block with info string `json factory`, delta.md and intent.md next to it
 (intent ids are list items `- outcome-1: ...` / `- constraint-1: ...`; every delta requirement line `- req-<n>: ...` cites one as `[outcome-1]`).
 Old ids (`I1`, `C1`, `<spec>/R<n>`) fail with a one-line rewrite hint. In the plan (through its json block) and in intent.md,
@@ -150,13 +150,13 @@ def at_sha(path, sha):
 
 
 def approved_errs(plan_path, sha):
-    """plan.md from its start through the json block, delta.md and intent.md must equal the approved revision; only the text after the block may differ."""
+    """plan.md from its start through the json block, delta.md, intent.md and standing.md (when there is one) must equal the approved revision; only the text after the block may differ."""
     d = os.path.dirname(os.path.abspath(plan_path))
     ok = subprocess.run(["git", "-C", d, "rev-parse", "--verify", "--quiet", f"{sha}^{{commit}}"], capture_output=True)
     if ok.returncode:
         return [f"approved {sha} is not a commit in this repo"]
     errs = []
-    for name in (os.path.basename(plan_path), "delta.md", "intent.md"):
+    for name in (os.path.basename(plan_path), "delta.md", "intent.md", "standing.md"):
         path = os.path.join(d, name)
         then = at_sha(path, sha)
         now = open(path, encoding="utf-8").read() if os.path.exists(path) else None

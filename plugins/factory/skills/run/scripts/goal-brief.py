@@ -9,8 +9,9 @@ Writes kickoff-<M>.md (kickoff-all.md) next to plan.md, then prints three sectio
   -#-#- GOAL -#-#-           the /goal line (checked against the 4,000-character limit)
   -#-#- RUN -#-#-            the unattended command, and the interactive alternative
 Exit 1 with `BRIEF FAIL <reason>` if the plan fails check_plan.validate (which also fails a plan, delta.md or
-intent.md that changed since <sha>, the commit the owner approved; with --all it also needs every milestone
+intent.md or standing.md that changed since <sha>, the commit the owner approved; with --all it also needs every milestone
 detailed and no hold) or the milestone is not detailed.
+If changes/<slug>/standing.md exists in the approved commit, the kickoff carries it verbatim as `## Standing approval (owner)`.
 The kickoff's fixed prose lives in ../templates/kickoff.md (blocks `@@ name`, {{key}} placeholders); this script fills it and
 generates only the data-dependent lines and the /goal condition. The coordinator calls task-step.py (target, start, finish,
 gate, status, pin) with <sha> and the plan as a repo-relative path (changes/<slug>/plan.md); it runs test-integrity.sh and
@@ -227,6 +228,7 @@ def kickoff(plan, ms, plan_path, root, sha, every=False):
     scope = (f"every milestone in order ({', '.join(x['id'] for x in ms)}), starting from this worktree on branch `{first}`" if every
              else f"milestone {ms[0]['id']} only, from this worktree on branch `{first}`")
     h = "###" if every else "##"
+    stand = check_plan.at_sha(plan_path.parent / "standing.md", sha)  # the approved commit, never the working file
     blocks, secs = template_blocks(), []
     for i, x in enumerate(ms):
         head = f"## Milestone {x['id']} ({x['layer']}), branch `milestone/{change}-{x['id']}`\n" if every else ""
@@ -234,6 +236,7 @@ def kickoff(plan, ms, plan_path, root, sha, every=False):
     return fill(
         blocks["top"], title=f"{change}, " + (f"all {len(ms)} milestones" if every else f"milestone {ms[0]['id']} ({ms[0]['layer']})"),
         change=change, scope=scope, tgt=tgt, P=P, sha=sha,
+        standing=f"## Standing approval (owner)\n\n{stand.strip()}" if stand and stand.strip() else "",
         all_start=fill(blocks["all_start"], P=P, sha=sha, tgt=tgt, change=change, preflight="\n".join(pre)) if every else "",
         milestones="\n\n".join(secs), end_state="HOLD" if hold else "SHIPPED",
         hold_stop=f"HOLD: {hold}. Only once the pushed SHA and the verifier PASS for that SHA are in the transcript." if hold else "") + "\n"
