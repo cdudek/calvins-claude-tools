@@ -777,3 +777,16 @@ def test_may_touch_and_gap_rounds_come_from_the_approved_plan_not_head(tmp_path)
     code, out = run(repo, "main", str(repo / PLAN_PATH), "--task", "M1-gap", "--approved", appr(repo))
     assert code == 1 and "outside task M1-gap: src/secret.ts" in out and "more than 1" not in out, out  # the approved cap is 3, not HEAD's 1
     assert "outside task M1-gap2: src/api/a.ts" not in run(repo, "main", str(repo / PLAN_PATH), "--task", "M1-gap2", "--approved", appr(repo))[1]  # round 2 exists under the approved cap of 3
+
+
+def test_handover_markdown_in_the_change_folder_is_not_flagged(tmp_path):
+    repo = plan_repo(tmp_path)
+    commit(repo, {"src/a.ts": "export const a = 2\n", "changes/2026-11-24-x/handover-2026-11-26.md": "# handover\n", "changes/2026-11-24-x/handover-M1.md": "x\n"})
+    code, out = run(repo, "main", str(repo / PLAN_PATH), "--milestone", "M1", "--approved", appr(repo))
+    assert code == 0 and out.strip() == "INTEGRITY OK", out
+    for name in ("changes/2026-11-24-x/handover-x.txt", "changes/2026-11-24-x/handover.md", "changes/2026-11-24-x/notes/handover-a.md", "changes/other/handover-a.md"):
+        (tmp_path / name.replace("/", "_")).mkdir()
+        repo = plan_repo(tmp_path / name.replace("/", "_"))
+        commit(repo, {"src/a.ts": "export const a = 2\n", name: "x\n"})
+        code, out = run(repo, "main", str(repo / PLAN_PATH), "--milestone", "M1", "--approved", appr(repo))
+        assert code == 1 and f"outside milestone M1: {name}" in out, name

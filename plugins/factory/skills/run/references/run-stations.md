@@ -15,6 +15,7 @@ The launched run reads its own kickoff (`kickoff-<M>.md`, from `templates/kickof
 - A hook denies `run_in_background` on every Agent call in a factory run, so every agent starts in the foreground.
 - Builders may add tests and edit exactly the existing test files their own task's `allowTestEdits` lists. Those edits are add-only: `test-integrity.sh` fails a removed or renamed test block, fewer assertions in a block, an added skip or focus marker, strict matchers traded for loose ones, or a raised timeout.
 - Builders never touch CI config, `.github/`, `.factory/`, baselines, specs, deltas or the plan, and never add lint suppressions. They never get the `~/.factory/scenarios` path. `test-integrity.sh` enforces this by exit code.
+- A handover file `changes/<slug>/handover-*.md` may be committed on the milestone branch; `test-integrity.sh` does not flag it (it is not a plan, spec or test).
 - The milestone's progress entry (with `firstPass`, `planRevisionsAfterApproval`, `diffMatchesPlan`) is committed and pushed before its PR can merge.
 
 ## 4. Verify

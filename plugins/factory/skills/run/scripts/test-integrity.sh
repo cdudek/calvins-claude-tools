@@ -198,7 +198,7 @@ while IFS=$'\t' read -r status path _; do
           cp_out=$(python3 "$(dirname "$0")/check-plan.py" "$planfile" --approved "$approved") || { echo "$cp_out"; say "plan changed: $path fails check-plan"; }
         fi
         continue ;;
-      "changes/$slug/evidence/"*|"changes/$slug/kickoff-"*) continue ;;
+      "changes/$slug/evidence/"*|"changes/$slug/kickoff-"*|"changes/$slug/handover-"*.md) continue ;;
       specs/adr/*) ;;
       specs/*) [ "$last" -eq 1 ] && continue ;;
     esac
