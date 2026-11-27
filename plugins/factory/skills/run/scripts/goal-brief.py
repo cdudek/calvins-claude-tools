@@ -128,7 +128,8 @@ def gap_line(m, change):
     """The plan-gap lane: up to `gapRounds` fix rounds per milestone (default 3), only inside the milestone's owner-approved `mayTouch` globs."""
     mid, cap = m["id"], m.get("gapRounds", 3)
     head = (f"Gap lane, up to {cap} rounds per milestone: the verifier labels every FAIL `bug` or `gap`. A `bug` goes back to the builder. "
-            "A `gap` needs files no task owns, or an existing test that asserts the old behaviour. ")
+            "A `gap` needs files no task owns, or an existing test that asserts the old behaviour. A builder that reports the same need while delivering "
+            "an approved requirement (a file no task owns, or an edit to an existing test) opens a `gap` too: do not wait for the verifier. ")
     if not m.get("mayTouch"):
         return head + f"{mid} has no `mayTouch`, so every `gap` ends `BLOCKED: owner approves plan revision for <files>`."
     globs = ", ".join(f"`{g}`" for g in m["mayTouch"])

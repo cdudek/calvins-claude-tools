@@ -31,4 +31,4 @@ Input: the plan path, the task id, the milestone branch, and the delta requireme
 - Commit SHA and branch.
 - Requirement ids covered, files changed.
 - Check command, its exit code and last lines of output.
-- Anything blocked, or any file you needed but do not own.
+- Anything blocked, any file you needed but do not own, and any existing test that must change to deliver the requirement. The coordinator may open a gap round for it.

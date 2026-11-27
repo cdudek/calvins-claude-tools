@@ -555,3 +555,11 @@ def test_gap_rounds_key_sets_the_cap_in_the_kickoff(tmp_path):
     assert code == 0 and "up to 5 rounds per milestone" in k and "A gap after round 5" in k and "worktree `2026-11-24-saved-searches-M1-gap<n>`" in k
     code, out, kick = run(tmp_path / "bad", "M1", plan_text([{**ms[0], "gapRounds": 6}, M2_OPEN, M3_OPEN]))
     assert code == 1 and "BRIEF FAIL M1 gapRounds must be a whole number from 1 to 5" in out
+
+
+def test_a_builder_reported_gap_opens_the_lane_too(tmp_path):
+    ms = [{**M1, "mayTouch": ["src/api/*"]}, M2_OPEN, M3_OPEN]
+    k = run(tmp_path, "M1", plan_text(ms))[2].read_text()
+    assert "A builder that reports the same need while delivering an approved requirement" in k and "do not wait for the verifier" in k
+    k = run(tmp_path / "n", "M1")[2].read_text()  # no mayTouch: the same text, the same BLOCKED
+    assert "A builder that reports the same need" in k and "ends `BLOCKED" in k

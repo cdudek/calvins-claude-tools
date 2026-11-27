@@ -42,6 +42,7 @@ It starts "Met when any one of these is true." and lists numbered end states, in
 
 ## Plan gaps (the gap lane)
 - **Label:** the verifier marks each FAIL `bug` (the code misses an approved requirement; back to the builder) or `gap` (the fix needs files no task owns, or an existing test asserts the old behaviour).
+- **Build-time gaps:** the lane also opens when a builder, not only the verifier, reports that delivering an approved requirement needs a file no task owns, or an edit to an existing test. The coordinator does not wait for the verifier. Same rules, same log line, same `gapRounds` cap.
 - **Approval:** a milestone may carry `mayTouch`, path globs the owner approves with the plan, and `gapRounds`, how many rounds it may use (1 to 5, default 3). Together they are the only widening of scope an unattended run gets.
 - **A `gap` inside an approved requirement, every file matching `mayTouch`:** the coordinator appends `GAP-FIX <M> round=<n> files=<a,b> tests=<c,d>` to the plan's progress log and commits it, then runs one fix task `<M>-gap<n>` with exactly that round's files like any task, then reruns integrity and the verifier. `<M>-gap` is an alias of round 1.
 - **Rounds:** numbered 1 to n, each once. A legacy line without `round=` counts as round 1. More rounds than `gapRounds` fail the check.
