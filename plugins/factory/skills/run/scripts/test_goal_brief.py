@@ -560,6 +560,8 @@ def test_gap_rounds_key_sets_the_cap_in_the_kickoff(tmp_path):
 def test_a_builder_reported_gap_opens_the_lane_too(tmp_path):
     ms = [{**M1, "mayTouch": ["src/api/*"]}, M2_OPEN, M3_OPEN]
     k = run(tmp_path, "M1", plan_text(ms))[2].read_text()
-    assert "A builder that reports the same need while delivering an approved requirement" in k and "do not wait for the verifier" in k
+    assert "A builder that meets the same need while delivering an approved requirement" in k and "without waiting for the verifier" in k
+    assert "only reports it" in k and "never writes the log line" in k and "you decide whether it sits inside an approved requirement" in k
+    assert "write and commit the line yourself" in k and "`tests=` entry still has to pass the add-only gate" in k and "independent check on test edits" in k
     k = run(tmp_path / "n", "M1")[2].read_text()  # no mayTouch: the same text, the same BLOCKED
-    assert "A builder that reports the same need" in k and "ends `BLOCKED" in k
+    assert "A builder that meets the same need" in k and "ends `BLOCKED" in k

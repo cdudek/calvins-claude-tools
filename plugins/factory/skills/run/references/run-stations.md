@@ -27,7 +27,7 @@ Run in this order, paste the output into the transcript:
 
 - Failures go back to the builder: at most 3 passes per task. Stop when two consecutive passes fail the same check with the same output.
 - The verifier labels each FAIL `bug` (back to the builder) or `gap` (needs files no task owns, or a test that asserts the old behaviour). A `gap` inside an approved requirement, every file matching the milestone's `mayTouch`, gets one fix task `<M>-gap<n>` per round, logged as `GAP-FIX <M> round=<n> files=<a,b> tests=<c,d>` in the progress log, up to the milestone's `gapRounds` (default 3). Anything else ends `BLOCKED: owner approves plan revision for <finding>`. Details: `references/goal-briefing.md`.
-- A builder that reports a file no task owns, or an existing test the requirement needs edited, opens a `gap` at once, with the same rules, log line and `gapRounds` cap as a verifier `gap`.
+- A builder that reports a file no task owns, or an existing test the requirement needs edited, only reports it. The coordinator decides whether it is inside an approved requirement, then writes and commits the `GAP-FIX` line; the rules, log line and `gapRounds` cap are those of a verifier `gap`. Every `tests=` entry must pass the add-only gate, the independent check on test edits.
 - A fix for a confirmed High stays inside the task's own files and `allowTestEdits`; otherwise it is a `gap`.
 - A bug (`kind: bug`): the builder's first commit holds only the failing test. Show it fails on base and record that SHA with `task-step.py pin`; every later `finish` passes `--pin`.
 
