@@ -70,7 +70,7 @@ if task: sel = [t for m in mss for t in m.get("tasks", []) if t.get("id") == tas
 elif ms: sel = [t for m in mss if m.get("id") == ms for t in m.get("tasks", [])]
 # plan-gap lane: the one fix round the coordinator logs as `GAP-FIX <M> files=<a,b> tests=<c,d>` in the progress log (read at HEAD, not at --approved).
 # Only paths matching the milestone mayTouch globs the owner approved count; the fix task is `<M>-gap`.
-gap = ms or (task[:-4] if re.fullmatch(r"M\d+-gap", task) else "")
+gap = ms or (task[:-4] if re.fullmatch(r"M\d+[a-z]?-gap", task) else "")
 if gap:
     may = next((m.get("mayTouch") or [] for m in mss if m.get("id") == gap), [])
     # The log is read from the committed tree: an uncommitted plan edit must not grant scope. Only a replay copy outside every worktree (loose) is read from disk.

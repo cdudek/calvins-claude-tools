@@ -623,3 +623,13 @@ def test_may_touch_shape(tmp_path):
     for i, bad in enumerate(("src", [], [""], ["/etc/*"], ["../x"], ["a b"], ["a,b"], ["**"], ["*/"], [1], ["*.ts"], ["src/**"], ["src/**/x.ts"], ["src/*/"], ["*/x"])):
         code, out = run(tmp_path / f"b{i}", mutated(lambda p: p["milestones"][0].update(mayTouch=bad)))
         assert code == 1 and "M1 mayTouch" in out, bad
+
+
+def test_milestone_id_may_carry_one_letter_suffix(tmp_path):
+    def rename(p):
+        p["milestones"][0]["id"], p["milestones"][1]["id"] = "M2a", "M6d"
+    code, out = run(tmp_path / "ok", mutated(rename))
+    assert code == 0 and out.strip() == "PLAN OK 3 milestones 2 tasks", out
+    for i, bad in enumerate(("M2A", "M2ab", "M", "Ma", "M2-a", "m2a")):
+        code, out = run(tmp_path / f"bad{i}", mutated(lambda p: p["milestones"][0].update(id=bad)))
+        assert code == 1 and "must look like M<n>" in out, bad

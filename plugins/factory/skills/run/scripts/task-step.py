@@ -34,7 +34,7 @@ check_plan = importlib.util.module_from_spec(spec)
 spec.loader.exec_module(check_plan)
 
 MERGE_PREFIX = "factory-merge: "
-TASK_ID = r"T\d+|M\d+-gap"
+TASK_ID = r"T\d+|M\d+[a-z]?-gap"
 
 
 def git(cwd, *args):
@@ -65,7 +65,7 @@ class Ctx:
         if not top:
             raise Abort("not inside a git repo")
         self.repo = Path(top)
-        if not re.fullmatch(r"M\d+", ms):
+        if not re.fullmatch(check_plan.MS_ID, ms):
             raise Abort(f"{ms!r} is not a milestone id")
         real = os.path.realpath(self.repo)
         if os.path.isabs(plan_arg) or ".." in Path(plan_arg).parts or not os.path.realpath(self.repo / plan_arg).startswith(real + os.sep):

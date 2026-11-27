@@ -539,3 +539,10 @@ def test_kickoff_comes_from_the_template_with_no_placeholder_left(tmp_path):
         code, out, kick = run(tmp_path / name, mid, text)
         assert code == 0 and "{{" not in kick.read_text() and "}}" not in kick.read_text() and "@@" not in kick.read_text(), name
     assert (HERE.parent / "templates" / "kickoff.md").read_text().startswith("@@ top")
+
+
+def test_milestone_id_with_a_letter_suffix_gets_a_brief(tmp_path):
+    ms = [{**M1, "id": "M2a", "mayTouch": ["src/api/*"]}, M2_OPEN, M3_OPEN]
+    code, out, kick = run(tmp_path, "M2a", plan_text(ms))
+    k = kick.read_text()
+    assert code == 0 and "milestone/2026-11-24-saved-searches-M2a" in k and "`M2a-gap`" in k

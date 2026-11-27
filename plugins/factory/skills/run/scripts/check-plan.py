@@ -227,7 +227,7 @@ def filled(v):
 
 TEST_DIR = re.compile(r"(tests?|__tests__|e2e)/")
 TEST_FILE = re.compile(r"[^/]*\.(test|spec)\.[^/]*")
-MS_ID, TASK_ID = r"M\d+", r"T\d+"
+MS_ID, TASK_ID = r"M\d+[a-z]?", r"T\d+"
 
 
 def is_test_path(f):
@@ -237,14 +237,14 @@ def is_test_path(f):
 
 
 def id_errs(plan):
-    """Milestone and task ids go into every message, so they must look like M<n> and T<n> before anything else runs.
+    """Milestone and task ids go into every message, so they must look like M<n> (or M<n><letter>) and T<n> before anything else runs.
     A bad id is shown escaped and cut, never raw."""
     errs = []
     for m in plan.get("milestones", []):
         if not isinstance(m, dict):
             continue
         if not re.fullmatch(MS_ID, str(m.get("id", ""))):
-            errs.append(f"milestone id {ascii(m.get('id'))[:40]} must look like M<n>")
+            errs.append(f"milestone id {ascii(m.get('id'))[:40]} must look like M<n> (or M<n><letter>, like M2a)")
         for t in m.get("tasks", []) if isinstance(m.get("tasks", []), list) else []:
             if isinstance(t, dict) and not re.fullmatch(TASK_ID, str(t.get("id", ""))):
                 errs.append(f"task id {ascii(t.get('id'))[:40]} must look like T<n>")
