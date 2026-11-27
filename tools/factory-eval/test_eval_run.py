@@ -129,6 +129,11 @@ class Run(unittest.TestCase):
         self.assertEqual((tasks["T1"]["model"], tasks["T1"]["effort"]), ("haiku", "high"))
         self.assertNotIn("model", tasks["T2"])
 
+    def test_owner_rulings_reach_the_prompt(self):
+        arm = run_eval.configs.get("default")
+        self.assertIn("Guests see only their own comments.", run_eval.addendum(arm, {"owner_rulings": ["Guests see only their own comments."]}))
+        self.assertNotIn("Owner rulings", run_eval.addendum(arm, {}))
+
     def test_apply_may_touch_sets_only_the_milestone(self):
         p = Path(self.tmp.name) / "plan.md"
         p.write_text("# Plan\n```json factory\n" + json.dumps({"milestones": [{"id": "M1", "tasks": []}, {"id": "M2", "tasks": []}]}) + "\n```\n")

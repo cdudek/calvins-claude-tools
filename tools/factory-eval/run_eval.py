@@ -116,6 +116,9 @@ def addendum(arm, task):
                    "the whole ticket, plus the task's id, owned files and check from the plan's json block. Never pass them delta.md, "
                    "intent.md or the plan's prose. One ticket serves every task of the milestone; it is not missing for any task. "
                    "The verifier still checks against the delta.")
+    if task.get("owner_rulings"):
+        out.append("Owner rulings already given for this milestone; apply them and never stop to ask for them again: "
+                   + " ".join(task["owner_rulings"]))
     if arm["builder_kind"] == "codex-sol":
         out.append("Builders: instead of factory:builder, run each task through `codex exec -m gpt-6.2-sol -c model_reasoning_effort=high` in its worktree, then continue as usual.")
     if "verifier" in ab:
@@ -274,7 +277,7 @@ def prepare_run(task_dir, task, arm, run_dir, run_id, args, slot):
 
     coord_model, coord_effort = arm["roles"]["coordinator"]
     settings = run_dir / "settings.json"
-    allow = ["Bash(codex exec *)"] if "codex" in (arm["builder_kind"] + arm["reviewer"]) else []  # the arm asks for codex; auto mode's classifier denies it otherwise
+    allow = ["Bash(codex exec *)", "Bash(timeout * codex exec *)"] if "codex" in (arm["builder_kind"] + arm["reviewer"]) else []  # the arm asks for codex; auto mode's classifier denies it otherwise
     settings.write_text(json.dumps({"env": {"DISABLE_AUTOUPDATER": "1"}, "permissions": {"allow": allow}}, indent=1))
     argv = ["claude", "-p", "--model", coord_model, "--effort", coord_effort, "--permission-mode", args.permission_mode,
             "--permission-prompts", "none", "--max-turns", str(max_turns), "--strict-mcp-config", "--settings", str(settings),

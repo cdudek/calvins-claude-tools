@@ -639,7 +639,7 @@ def test_uncommitted_gap_log_line_grants_no_scope(tmp_path):
 
 # ---- add-only gate for the existing tests a task may edit ----
 AO_PLAN = {**PLAN, "milestones": [{**PLAN["milestones"][0], "tasks": [
-    {**PLAN["milestones"][0]["tasks"][0], "allowTestEdits": ["src/a.test.ts", "tests/test_a.py", "src/b.test.ts", "e2e/flow.spec.rb"]}, PLAN["milestones"][0]["tasks"][1]]}, PLAN["milestones"][1]]}
+    {**PLAN["milestones"][0]["tasks"][0], "allowTestEdits": ["src/a.test.ts", "tests/test_a.py", "src/b.test.ts", "e2e/flow.spec.rb", "test/fk.json"]}, PLAN["milestones"][0]["tasks"][1]]}, PLAN["milestones"][1]]}
 JS_OLD = """describe('x', () => {
   it('adds', () => {
     expect(add(1, 2)).toBe(3)
@@ -693,6 +693,14 @@ def test_add_only_accepts_more_tests_more_assertions_and_a_renamed_symbol(tmp_pa
     assert code == 0 and out.strip() == "INTEGRITY OK", out
     code, out = addonly(tmp_path / "same", "src/a.test.ts", JS_OLD, JS_OLD)  # the allowed file is not touched
     assert code == 0, out
+
+
+def test_add_only_json_fixture_may_only_grow(tmp_path):
+    old = '{"fks": [{"t": "a", "c": "b"}], "v": 1}\n'
+    code, out = addonly(tmp_path / "grow", "test/fk.json", old, '{"fks": [{"t": "a", "c": "b"}, {"t": "x", "c": "y"}], "v": 1, "w": 2}\n')
+    assert code == 0 and out.strip() == "INTEGRITY OK", out
+    ao_fail(tmp_path / "drop", "test/fk.json", old, '{"fks": [], "v": 1}\n', "a JSON fixture may only gain keys and list items")
+    ao_fail(tmp_path / "edit", "test/fk.json", old, '{"fks": [{"t": "a", "c": "b"}], "v": 2}\n', "a JSON fixture may only gain keys and list items")
 
 
 def test_add_only_refuses_a_removed_or_renamed_block(tmp_path):
