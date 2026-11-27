@@ -748,3 +748,32 @@ def test_add_only_also_guards_the_tests_of_a_gap_round(tmp_path):
     assert code == 1 and "INTEGRITY FAIL add-only gate: src/b.test.ts: block b: test block removed or renamed" in out, out
     code, out = run(repo, "main", str(repo / PLAN_PATH), "--milestone", "M1", "--approved", appr(repo))
     assert code == 1 and "add-only gate: src/b.test.ts: block b:" in out
+
+
+# ---- the gap lane fails closed ----
+def test_invalid_gap_rounds_in_the_approved_plan_is_an_error_not_the_default(tmp_path):
+    for i, bad in enumerate((0, 6, -1, "3", 2.5, True, None)):
+        plan = {**MAY_PLAN, "milestones": [{**MAY_PLAN["milestones"][0], "gapRounds": bad}, PLAN["milestones"][1]]}
+        repo = gap_repo(tmp_path / str(i), "GAP-FIX M1 round=1 files=src/api/a.ts", edits={"src/api/a.ts": "x\n"}, plan=plan)
+        for mode, arg in (("--milestone", "M1"), ("--task", "M1-gap")):
+            base = "main" if mode == "--milestone" else head(repo)
+            code, out = run(repo, base, str(repo / PLAN_PATH), mode, arg, "--approved", appr(repo))
+            assert code == 1 and "gapRounds for M1 must be a whole number from 1 to 5" in out, (bad, mode, out)
+
+
+def test_a_gap_task_requires_approved(tmp_path):
+    repo = gap_repo(tmp_path, "GAP-FIX M1 round=1 files=src/api/a.ts", edits={"src/api/a.ts": "x\n"})
+    for t in ("M1-gap", "M1-gap2", "M1a-gap3"):
+        code, out = run(repo, "main", str(repo / PLAN_PATH), "--task", t)
+        assert code == 2 and out == "", t
+    code, out = run(repo, "main", str(repo / PLAN_PATH), "--task", "T1")  # a plan task still runs without it
+    assert code in (0, 1) and "requires" not in out
+
+
+def test_may_touch_and_gap_rounds_come_from_the_approved_plan_not_head(tmp_path):
+    repo = gap_repo(tmp_path, "GAP-FIX M1 round=1 files=src/secret.ts", "GAP-FIX M1 round=2 files=src/api/a.ts", edits={"src/secret.ts": "x\n", "src/api/a.ts": "x\n"})
+    wide = {**MAY_PLAN, "milestones": [{**MAY_PLAN["milestones"][0], "mayTouch": ["src/*"], "gapRounds": 1}, PLAN["milestones"][1]]}
+    commit(repo, {PLAN_PATH: plan_text(wide, "GAP-FIX M1 round=1 files=src/secret.ts\nGAP-FIX M1 round=2 files=src/api/a.ts\n")})  # HEAD widens both
+    code, out = run(repo, "main", str(repo / PLAN_PATH), "--task", "M1-gap", "--approved", appr(repo))
+    assert code == 1 and "outside task M1-gap: src/secret.ts" in out and "more than 1" not in out, out  # the approved cap is 3, not HEAD's 1
+    assert "outside task M1-gap2: src/api/a.ts" not in run(repo, "main", str(repo / PLAN_PATH), "--task", "M1-gap2", "--approved", appr(repo))[1]  # round 2 exists under the approved cap of 3

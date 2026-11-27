@@ -9,7 +9,7 @@
 # --milestone) lists the commits the per-task checks passed: every changed implementation path must
 # have its HEAD blob in one of them. Plan-gap lane: `GAP-FIX <M> round=<n> files=<a,b> tests=<c,d>` lines in the plan's progress log (read at HEAD) extend
 # --milestone <M> (all rounds), and are the whole scope of --task <M>-gap<n> (round n; <M>-gap is round 1), but only for paths matching the approved
-# milestone's mayTouch; rounds are numbered 1..n once each (a line without round= is round 1), at most the milestone's gapRounds (default 3).
+# milestone's mayTouch and gapRounds, both read from the plan at --approved (a gap task requires it; an invalid gapRounds fails); rounds are numbered 1..n once each (a line without round= is round 1), at most the milestone's gapRounds (default 3).
 set -euo pipefail
 
 U="usage: test-integrity.sh <repo-or-worktree> <base-ref> [plan.md [--task <id> | --milestone <id>] [--approved <sha>] [--pin <sha>] [--target <sha>] [--checked <sha>[,<sha>...]]]"
@@ -35,6 +35,7 @@ mode=""
 [ -n "$ms" ] && mode=milestone
 if [ -n "$mode" ] && [ -z "$plan" ]; then echo "$U" >&2; exit 2; fi
 if [ "$mode" = milestone ] && [ -z "$approved" ]; then echo "--milestone requires --approved" >&2; echo "$U" >&2; exit 2; fi
+if [[ "$task" =~ ^M[0-9]+[a-z]?-gap[1-9]?[0-9]*$ ]] && [ -z "$approved" ]; then echo "--task $task requires --approved" >&2; echo "$U" >&2; exit 2; fi
 
 fail=0
 say() { echo "INTEGRITY FAIL $1"; fail=1; }
@@ -76,8 +77,8 @@ gm = re.fullmatch(r"(M\d+[a-z]?)-gap([1-9]\d*)?", task)
 gap = ms or (gm.group(1) if gm else "")
 if gap:
     m0 = next((m for m in mss if m.get("id") == gap), {})
-    may, cap = m0.get("mayTouch") or [], m0.get("gapRounds", 3)
-    if not (type(cap) is int and 1 <= cap <= 5): cap = 3
+    may, cap = m0.get("mayTouch") or [], m0.get("gapRounds", 3)  # both from the plan at --approved, never from HEAD
+    if not (type(cap) is int and 1 <= cap <= 5): print("ERR\tgapRounds for " + gap + " must be a whole number from 1 to 5"); cap = 0
     # The log is read from the committed tree: an uncommitted plan edit must not grant scope. Only a replay copy outside every worktree (loose) is read from disk.
     try: cur = open(plan).read() if loose else git("show", "HEAD:" + rel)
     except subprocess.CalledProcessError: cur = ""
