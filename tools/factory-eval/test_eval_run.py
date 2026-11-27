@@ -129,6 +129,14 @@ class Run(unittest.TestCase):
         self.assertEqual((tasks["T1"]["model"], tasks["T1"]["effort"]), ("haiku", "high"))
         self.assertNotIn("model", tasks["T2"])
 
+    def test_apply_may_touch_sets_only_the_milestone(self):
+        p = Path(self.tmp.name) / "plan.md"
+        p.write_text("# Plan\n```json factory\n" + json.dumps({"milestones": [{"id": "M1", "tasks": []}, {"id": "M2", "tasks": []}]}) + "\n```\n")
+        run_eval.apply_may_touch(p, "M1", ["src/features/", "test/"])
+        ms = {m["id"]: m for m in run_eval.grade.plan_json(p.read_text())["milestones"]}
+        self.assertEqual(ms["M1"]["mayTouch"], ["src/features/", "test/"])
+        self.assertNotIn("mayTouch", ms["M2"])
+
     def test_arm_without_verifier_gets_a_goal_it_can_meet(self):
         out = self.dry("--arms", "ablate_verifier,default", "--parallel", "1")
         cmds = [l for l in out.splitlines() if l.startswith("  claude ")]
