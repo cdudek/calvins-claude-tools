@@ -27,7 +27,14 @@ DEFAULT = {
     "enforcement": "gate",         # gate (test-integrity.sh in code) | prompt (the rule as text only)
     "ablate": [],                  # subset of ABLATIONS
     "cascade": None,               # list of arm names, cheapest first (routing stage)
+    "sizing": None,                # {task id: (model, effort)} written into the replay plan, prose and json (adaptive arm)
 }
+
+# The planner's sizing rules (SKILL.md "Models and effort") applied by hand to the replayed milestone (HeyDiff M1):
+# T1 is a migration, T2 an access and billing rule, T3 and T5 guest read scope (privacy): sonnet high. T4 is a 4-file
+# repair that covers no requirement: haiku high. Not every task is small, so the milestone verifier stays Opus high.
+ADAPTIVE_SIZING = {"T1": ("sonnet", "high"), "T2": ("sonnet", "high"), "T3": ("sonnet", "high"),
+                   "T4": ("haiku", "high"), "T5": ("sonnet", "high")}
 
 
 def make(name, roles=None, **kw):
@@ -106,6 +113,7 @@ def _arms():
         make("ablate_security", ablate=["security"]),
         make("ablate_worktrees", ablate=["worktrees"]),
         make("enforce_prompt", enforcement="prompt"),
+        make("adaptive", sizing=ADAPTIVE_SIZING),
     ]
     return arms + routing_arms()
 
