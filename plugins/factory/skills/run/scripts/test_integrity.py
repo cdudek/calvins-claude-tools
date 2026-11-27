@@ -639,7 +639,7 @@ def test_uncommitted_gap_log_line_grants_no_scope(tmp_path):
 
 # ---- add-only gate for the existing tests a task may edit ----
 AO_PLAN = {**PLAN, "milestones": [{**PLAN["milestones"][0], "tasks": [
-    {**PLAN["milestones"][0]["tasks"][0], "allowTestEdits": ["src/a.test.ts", "tests/test_a.py", "src/b.test.ts"]}, PLAN["milestones"][0]["tasks"][1]]}, PLAN["milestones"][1]]}
+    {**PLAN["milestones"][0]["tasks"][0], "allowTestEdits": ["src/a.test.ts", "tests/test_a.py", "src/b.test.ts", "e2e/flow.spec.rb"]}, PLAN["milestones"][0]["tasks"][1]]}, PLAN["milestones"][1]]}
 JS_OLD = """describe('x', () => {
   it('adds', () => {
     expect(add(1, 2)).toBe(3)
@@ -790,3 +790,76 @@ def test_handover_markdown_in_the_change_folder_is_not_flagged(tmp_path):
         commit(repo, {"src/a.ts": "export const a = 2\n", name: "x\n"})
         code, out = run(repo, "main", str(repo / PLAN_PATH), "--milestone", "M1", "--approved", appr(repo))
         assert code == 1 and f"outside milestone M1: {name}" in out, name
+
+
+DUP_OLD = """it('dup', () => {
+  expect(a()).toBe(1)
+  expect(b()).toBe(2)
+})
+it('dup', () => {
+  expect(c()).toBe(3)
+  expect(d()).toBe(4)
+}, 5000)
+"""
+
+
+def test_add_only_sums_blocks_that_share_a_name(tmp_path):
+    ao_fail(tmp_path / "a", "src/a.test.ts", DUP_OLD, DUP_OLD.split("it('dup', () => {\n  expect(c")[0], "block dup: assertions dropped from 4 to 2")  # one copy deleted
+    ao_fail(tmp_path / "b", "src/a.test.ts", DUP_OLD, DUP_OLD.replace("  expect(b()).toBe(2)\n", "").replace("}, 5000)", "}, 9000)"), "block dup: assertions dropped", "block dup: timeout raised from 5000 to 9000")
+    ao_fail(tmp_path / "c", "src/a.test.ts", DUP_OLD, DUP_OLD.replace("}, 5000)", "}, 4000)").replace("it('dup', () => {\n  expect(a", "it.skip('dup', () => {\n  expect(a", 1), "block dup: skip or focus marker added")
+    ao_fail(tmp_path / "d", "src/a.test.ts", DUP_OLD, DUP_OLD.replace("it('dup'", "it('dup2'"), "block dup: test block removed or renamed")
+    # the same assertions spread over the two copies in another way stay equal in total
+    spread = DUP_OLD.replace("  expect(b()).toBe(2)\n", "").replace("  expect(c()).toBe(3)\n", "  expect(c()).toBe(3)\n  expect(b()).toBe(2)\n")
+    assert addonly(tmp_path / "ok", "src/a.test.ts", DUP_OLD, spread)[0] == 0
+
+
+def test_add_only_does_not_count_comments_or_strings_as_assertions(tmp_path):
+    base = "it('x', () => {\n  expect(a()).toBe(1)\n})\n"
+    for i, new in enumerate(("it('x', () => {\n  // expect(a()).toBe(1)\n})\n", "it('x', () => {\n  const s = 'expect(a()).toBe(1)'\n})\n",
+                             "it('x', () => {\n  /* expect(a()).toBe(1) */\n})\n", "it('x', () => {\n  log(`expect(a())`) // expect(b())\n})\n")):
+        ao_fail(tmp_path / f"js{i}", "src/a.test.ts", base, new, "block x: assertions dropped from 1 to 0")
+    pbase = "def test_x():\n    assert a() == 1\n    self.assertEqual(a(), 1)\n"
+    for i, new in enumerate(("def test_x():\n    # assert a() == 1\n    # self.assertEqual(a(), 1)\n", "def test_x():\n    s = 'assert a() == 1'\n    t = \"self.assertEqual(a(), 1)\"\n",
+                             "def test_x():\n    r = assert_ok(1)\n    q = x.assert_called(1)\n")):
+        ao_fail(tmp_path / f"py{i}", "tests/test_a.py", pbase, new, "block test_x: assertions dropped from 2 to 0")
+    # `expect (` with a space and a `self.assert*(` call still count
+    assert addonly(tmp_path / "ok", "src/a.test.ts", base, "it('x', () => {\n  expect (a()).toBe(1)\n  // expect(b())\n})\n")[0] == 0
+    assert addonly(tmp_path / "okp", "tests/test_a.py", pbase, pbase.replace("assert a() == 1", "assert a() == 1  # fine") + "    self.assertTrue(a())\n")[0] == 0
+
+
+def test_add_only_parses_timeout_literals_and_fails_closed_on_the_rest(tmp_path):
+    base = "it('t', async () => {\n  expect(a()).toBe(1)\n}, 5000)\n"
+    for i, big in enumerate(("0x7530", "30_000", "3e4", "2.5e4", "0X9C40")):
+        ao_fail(tmp_path / f"lit{i}", "src/a.test.ts", base, base.replace("5000", big), "block t: timeout raised from 5000 to ")
+    assert addonly(tmp_path / "low", "src/a.test.ts", base, base.replace("5000", "0x1388"))[0] == 0  # 0x1388 is 5000
+    assert addonly(tmp_path / "same", "src/a.test.ts", base, base.replace("5000", "5_000"))[0] == 0
+    ao_fail(tmp_path / "var", "src/a.test.ts", base, base.replace("5000", "LIMIT"), "block t: timeout LIMIT is not a literal and changed")
+    ao_fail(tmp_path / "expr", "src/a.test.ts", "it('t', () => {\n  expect(1).toBe(1)\n  page.go(u, { timeout: 100 })\n})\n",
+            "it('t', () => {\n  expect(1).toBe(1)\n  page.go(u, { timeout: BASE * 2 })\n})\n", "is not a literal and changed")
+    ao_fail(tmp_path / "set", "src/a.test.ts", base, base.replace("  expect", "  jest.setTimeout(LIMIT + 1)\n  expect"), "is not a literal and changed")
+    unchanged = "it('t', () => {\n  expect(1).toBe(1)\n  page.go(u, { timeout: LIMIT })\n})\n"
+    assert addonly(tmp_path / "ok", "src/a.test.ts", unchanged, unchanged.replace("expect(1)", "expect(2)") + "it('n', () => { expect(1).toBe(1) })\n")[0] == 0
+
+
+def test_add_only_never_skips_an_unsupported_file_type(tmp_path):
+    ao_fail(tmp_path / "a", "e2e/flow.spec.rb", "it 'a' do\nend\n", "it 'a' do\n  skip\nend\n", "unsupported file type, cannot verify")
+    ao_fail(tmp_path / "b", "e2e/flow.spec.rb", "it 'a' do\nend\n", None, "unsupported file type, cannot verify")
+    assert addonly(tmp_path / "c", "e2e/flow.spec.rb", "it 'a' do\nend\n", "it 'a' do\nend\n")[0] == 0  # not edited: nothing to verify
+
+
+def test_add_only_knows_more_skip_markers_and_early_exits(tmp_path):
+    base = "it('x', () => {\n  expect(a()).toBe(1)\n})\n"
+    for i, line in enumerate(("  test.fixme(true)", "  this.skip()", "  it.skipIf(ci)('y', () => {})", "  it.runIf(ci)('y', () => {})", "  test.fixme()")):
+        ao_fail(tmp_path / f"js{i}", "src/a.test.ts", base, base.replace("  expect", line + "\n  expect"), "skip or focus marker added")
+    pbase = "def test_x():\n    assert a() == 1\n"
+    for i, (old, new) in enumerate((("def test_x", "@unittest.skip('x')\ndef test_x"), ("def test_x", "@unittest.skipIf(ci, 'x')\ndef test_x"), ("def test_x", "@unittest.skipUnless(ci, 'x')\ndef test_x"),
+                                    ("    assert", "    pytest.importorskip('numpy')\n    assert"))):
+        ao_fail(tmp_path / f"py{i}", "tests/test_a.py", pbase, pbase.replace(old, new), "skip or focus marker added")
+    for i, line in enumerate(("  return", "  return;", "  if (false) { expect(1) }")):
+        ao_fail(tmp_path / f"early{i}", "src/a.test.ts", base, base.replace("  expect", line + "\n  expect"), "block x: early exit added before the first assertion")
+    for i, line in enumerate(("    return", "    if 0:\n        pass", "    if False:\n        pass")):
+        ao_fail(tmp_path / f"pyearly{i}", "tests/test_a.py", pbase, pbase.replace("    assert", line + "\n    assert"), "block test_x: early exit added before the first assertion")
+    # a return after the first assertion, or one that was already there, is fine
+    assert addonly(tmp_path / "ok", "src/a.test.ts", base, base.replace("})", "  return\n})"))[0] == 0
+    early = "it('x', () => {\n  return\n  expect(a()).toBe(1)\n})\n"
+    assert addonly(tmp_path / "okold", "src/a.test.ts", early, early.replace("toBe(1)", "toBe(2)"))[0] == 0
