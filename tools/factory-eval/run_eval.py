@@ -112,8 +112,10 @@ def addendum(arm, task):
     out = []
     ab = set(arm["ablate"])
     if arm["context"] == "raw" and arm["harness"] == "factory":
-        out.append(f"Builders get only the ticket in changes/{task['slug']}/ticket.md as their task description: never pass them "
-                   "delta.md, intent.md or the plan's requirement text. The verifier still checks against the delta.")
+        out.append(f"Builders get the ticket in changes/{task['slug']}/ticket.md in place of the requirement text: every task's builder gets "
+                   "the whole ticket, plus the task's id, owned files and check from the plan's json block. Never pass them delta.md, "
+                   "intent.md or the plan's prose. One ticket serves every task of the milestone; it is not missing for any task. "
+                   "The verifier still checks against the delta.")
     if arm["builder_kind"] == "codex-sol":
         out.append("Builders: instead of factory:builder, run each task through `codex exec -m gpt-6.2-sol -c model_reasoning_effort=high` in its worktree, then continue as usual.")
     if "verifier" in ab:
