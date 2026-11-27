@@ -176,6 +176,22 @@ class EndToEnd(unittest.TestCase):
         self.assertFalse(g["units"]["coupled:tests/test_coupled.py"])
         self.assertEqual((g["hidden_frac"], g["regression"], g["solved"]), (1.0, False, True))
 
+    def test_out_of_scope_test_is_reported_but_never_scored(self):
+        fx.write(self.task / "hidden-tests", "tests/test_nearby.py", "def test_nearby():\n    assert False\n")
+        self.edit_task(hidden_cmd=f"{sys.executable} -m pytest -q -p no:cacheprovider {{files}}", hidden_tests=["tests/test_double.py", "tests/test_nearby.py"],
+                       fail_to_pass=["tests/test_double.py", "tests/test_nearby.py"], out_of_scope=["tests/test_nearby.py"])
+        g = grade.grade_run(self.make_run(True, "o1"), grader=None)
+        self.assertEqual(g["outside_fixed"], {"tests/test_nearby.py": False})
+        self.assertNotIn("f2p:tests/test_nearby.py", g["units"])
+        self.assertEqual((g["hidden_frac"], g["solved"], g["claimed_done_not_solved"]), (1.0, True, False))
+
+    def test_score_rescores_saved_units_when_a_file_moves_out_of_scope(self):
+        task = {"fail_to_pass": ["a.py", "b.py"], "out_of_scope": ["b.py"], "hidden_tests": ["a.py", "b.py"]}
+        g = {"units": {"p2p:suite": True, "f2p:a.py": True, "outside:b.py": False}, "verifier_verdict": "PASS", "goal_met": True, "end_state": "HOLD"}
+        grade.score(g, task)
+        self.assertEqual((g["hidden_frac"], g["solved"], g["verifier_false_pass"], g["outside_fixed"]), (1.0, True, False, {"b.py": False}))
+        self.assertEqual(grade.unit_key(task, "b.py"), "outside:b.py")
+
     def test_task_env_reaches_the_grading_commands(self):
         self.edit_task(env={"CHECK_ENV": "run-{run}-{port}"}, hidden_cmd='test "$CHECK_ENV" = run-f4-77 && ' + fx.SUITE + " {files}")
         run = self.make_run(True, "f4")
