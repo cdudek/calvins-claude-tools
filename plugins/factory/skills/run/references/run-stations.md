@@ -5,6 +5,7 @@ The launched run reads its own kickoff (`kickoff-<M>.md`, from `templates/kickof
 ## 3. Build
 - Stations 0 to 2 run in a normal session, never under `/goal`. They end at the approval. The launched run is a separate process.
 - Optional integration branch: when the plan sets `"integration": "<branch>"`, milestone branches are cut from it and their PRs target it. `goal-brief.py` creates it on origin from the approved SHA when it is missing and that SHA is on `base`.
+- **File refresh at each milestone cut.** Before `goal-brief.py` runs for a milestone, a read-only agent checks each task's `files` and `allowTestEdits` against the current tree: moved or renamed files, files the requirement obviously needs, existing tests the change will break. The coordinator records the result as a plan revision under the standing approval, then cuts the milestone.
 - Per milestone: `wt switch -c milestone/<slug>-<M>` from a fresh base (the integration branch when set). Inside it run `python3 .factory/goal-brief.py changes/<slug>/plan.md <M> --approved <sha>`, or `--all --approved <sha>` for the whole plan.
 - `goal-brief.py` refuses a plan that fails the check, changed since `<sha>`, or a milestone without tasks. It writes `kickoff-<M>.md` and prints the `/goal` line and the run command. Never hand-write a goal line.
 - **Launch.** The session-start hook keeps `.factory/` current; regenerate the kickoff when `.factory/` changed or the kickoff names agents that no longer exist (an old plugin prefix), and commit both.
@@ -13,8 +14,9 @@ The launched run reads its own kickoff (`kickoff-<M>.md`, from `templates/kickof
 - The coordinator creates each task worktree with `task-step.py start`, never with the Agent tool's worktree isolation.
 - Spawn builders 2 or 3 at a time, in the foreground, each with its worktree path. Each owns disjoint files. Unfinished work stays in its worktree; never patch files.
 - A hook denies `run_in_background` on every Agent call in a factory run, so every agent starts in the foreground.
-- Builders may add tests and edit exactly the existing test files their own task's `allowTestEdits` lists.
+- Builders may add tests and edit exactly the existing test files their own task's `allowTestEdits` lists. Those edits are add-only: `test-integrity.sh` fails a removed or renamed test block, fewer assertions in a block, an added skip, focus marker or early exit, strict matchers traded for loose ones, or a raised timeout (totals are summed per test name; comments and strings do not count as assertions). An edited test file of a type it cannot read fails. It is line-based, a floor: the verifier and the Codex pass are the independent checks behind it.
 - Builders never touch CI config, `.github/`, `.factory/`, baselines, specs, deltas or the plan, and never add lint suppressions. They never get the `~/.factory/scenarios` path. `test-integrity.sh` enforces this by exit code.
+- A handover file `changes/<slug>/handover-*.md` may be committed on the milestone branch; `test-integrity.sh` does not flag it (it is not a plan, spec or test).
 - The milestone's progress entry (with `firstPass`, `planRevisionsAfterApproval`, `diffMatchesPlan`) is committed and pushed before its PR can merge.
 
 ## 4. Verify
@@ -26,7 +28,8 @@ Run in this order, paste the output into the transcript:
 5. UI milestone: `factory:ux-verifier` against the approved boards, per `references/ux-checks.md`. It writes `evidence/<M>/gallery.md`. No owner stop.
 
 - Failures go back to the builder: at most 3 passes per task. Stop when two consecutive passes fail the same check with the same output.
-- The verifier labels each FAIL `bug` (back to the builder) or `gap` (needs files no task owns, or a test that asserts the old behaviour). A `gap` inside an approved requirement, every file matching the milestone's `mayTouch`, gets one fix task `<M>-gap`, logged as `GAP-FIX <M> files=<a,b> tests=<c,d>` in the progress log, one round per milestone. Anything else ends `BLOCKED: owner approves plan revision for <finding>`. Details: `references/goal-briefing.md`.
+- The verifier labels each FAIL `bug` (back to the builder) or `gap` (needs files no task owns, or a test that asserts the old behaviour). A `gap` inside an approved requirement, every file matching the milestone's `mayTouch`, gets one fix task `<M>-gap<n>` per round, logged as `GAP-FIX <M> round=<n> files=<a,b> tests=<c,d>` in the progress log, up to the milestone's `gapRounds` (default 3). Anything else ends `BLOCKED: owner approves plan revision for <finding>`. Details: `references/goal-briefing.md`.
+- A builder that reports a file no task owns, or an existing test the requirement needs edited, only reports it. The coordinator decides whether it is inside an approved requirement, then writes and commits the `GAP-FIX` line; the rules, log line and `gapRounds` cap are those of a verifier `gap`. Every `tests=` entry must pass the add-only gate, the independent check on test edits.
 - A fix for a confirmed High stays inside the task's own files and `allowTestEdits`; otherwise it is a `gap`.
 - A bug (`kind: bug`): the builder's first commit holds only the failing test. Show it fails on base and record that SHA with `task-step.py pin`; every later `finish` passes `--pin`.
 

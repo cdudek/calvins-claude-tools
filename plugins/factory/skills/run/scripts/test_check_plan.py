@@ -623,3 +623,41 @@ def test_may_touch_shape(tmp_path):
     for i, bad in enumerate(("src", [], [""], ["/etc/*"], ["../x"], ["a b"], ["a,b"], ["**"], ["*/"], [1], ["*.ts"], ["src/**"], ["src/**/x.ts"], ["src/*/"], ["*/x"])):
         code, out = run(tmp_path / f"b{i}", mutated(lambda p: p["milestones"][0].update(mayTouch=bad)))
         assert code == 1 and "M1 mayTouch" in out, bad
+
+
+def test_milestone_id_may_carry_one_letter_suffix(tmp_path):
+    def rename(p):
+        p["milestones"][0]["id"], p["milestones"][1]["id"] = "M2a", "M6d"
+    code, out = run(tmp_path / "ok", mutated(rename))
+    assert code == 0 and out.strip() == "PLAN OK 3 milestones 2 tasks", out
+    for i, bad in enumerate(("M2A", "M2ab", "M", "Ma", "M2-a", "m2a")):
+        code, out = run(tmp_path / f"bad{i}", mutated(lambda p: p["milestones"][0].update(id=bad)))
+        assert code == 1 and "must look like M<n>" in out, bad
+
+
+def test_gap_rounds_shape(tmp_path):
+    for i, good in enumerate((1, 3, 5)):
+        assert run(tmp_path / f"g{i}", mutated(lambda p: p["milestones"][0].update(mayTouch=["src/api/*"], gapRounds=good)))[0] == 0, good
+    for i, bad in enumerate((0, 6, -1, 2.5, "3", True, None, [])):
+        code, out = run(tmp_path / f"b{i}", mutated(lambda p: p["milestones"][0].update(gapRounds=bad)))
+        assert code == 1 and "M1 gapRounds must be a whole number from 1 to 5" in out, bad
+
+
+def test_standing_md_must_be_unchanged_since_approval(tmp_path):
+    f, sha = committed(tmp_path)
+    assert approved(f, sha)[0] == 0  # no standing.md at all is fine
+    standing = f.parent / "standing.md"
+    standing.write_text("Everything is allowed.\n")  # added after the approved commit
+    code, out = approved(f, sha)
+    assert code == 1 and f"standing.md changed since approved {sha}" in out
+    standing.write_text("Everything is allowed.\n")
+    git(tmp_path, "add", "-A")
+    git(tmp_path, "commit", "-q", "-m", "standing")
+    sha2 = git(tmp_path, "rev-parse", "HEAD")
+    assert approved(f, sha2)[0] == 0
+    standing.write_text("Everything is allowed, and more.\n")
+    code, out = approved(f, sha2)
+    assert code == 1 and f"standing.md changed since approved {sha2}" in out
+    standing.unlink()
+    code, out = approved(f, sha2)
+    assert code == 1 and "standing.md changed since approved" in out

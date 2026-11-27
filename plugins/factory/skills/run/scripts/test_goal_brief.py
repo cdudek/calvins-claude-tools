@@ -523,8 +523,8 @@ def test_gap_lane_names_the_may_touch_globs_and_the_log_line(tmp_path):
     code, out, kick = run(tmp_path, "M1", plan_text(ms))
     k = kick.read_text()
     assert code == 0 and "labels every FAIL `bug` or `gap`" in k
-    assert "matches M1's mayTouch (`src/api/*`, `tests/api/`)" in k and "`GAP-FIX M1 files=<a,b> tests=<c,d>`" in k
-    assert "one fix task `M1-gap`" in k and "`--task M1-gap` integrity" in k and "A second gap" in k
+    assert "matches M1's mayTouch (`src/api/*`, `tests/api/`)" in k and "`GAP-FIX M1 round=<n> files=<a,b> tests=<c,d>`" in k
+    assert "one fix task `M1-gap<n>`" in k and "`--task M1-gap<n>` integrity" in k and "up to 3 rounds" in k and "A gap after round 3" in k
     assert "a `gap` FAIL to the gap lane" in k
 
 
@@ -539,3 +539,68 @@ def test_kickoff_comes_from_the_template_with_no_placeholder_left(tmp_path):
         code, out, kick = run(tmp_path / name, mid, text)
         assert code == 0 and "{{" not in kick.read_text() and "}}" not in kick.read_text() and "@@" not in kick.read_text(), name
     assert (HERE.parent / "templates" / "kickoff.md").read_text().startswith("@@ top")
+
+
+def test_milestone_id_with_a_letter_suffix_gets_a_brief(tmp_path):
+    ms = [{**M1, "id": "M2a", "mayTouch": ["src/api/*"]}, M2_OPEN, M3_OPEN]
+    code, out, kick = run(tmp_path, "M2a", plan_text(ms))
+    k = kick.read_text()
+    assert code == 0 and "milestone/2026-11-24-saved-searches-M2a" in k and "`M2a-gap<n>`" in k
+
+
+def test_gap_rounds_key_sets_the_cap_in_the_kickoff(tmp_path):
+    ms = [{**M1, "mayTouch": ["src/api/*"], "gapRounds": 5}, M2_OPEN, M3_OPEN]
+    code, out, kick = run(tmp_path, "M1", plan_text(ms))
+    k = kick.read_text()
+    assert code == 0 and "up to 5 rounds per milestone" in k and "A gap after round 5" in k and "worktree `2026-11-24-saved-searches-M1-gap<n>`" in k
+    code, out, kick = run(tmp_path / "bad", "M1", plan_text([{**ms[0], "gapRounds": 6}, M2_OPEN, M3_OPEN]))
+    assert code == 1 and "BRIEF FAIL M1 gapRounds must be a whole number from 1 to 5" in out
+
+
+def test_a_builder_reported_gap_opens_the_lane_too(tmp_path):
+    ms = [{**M1, "mayTouch": ["src/api/*"]}, M2_OPEN, M3_OPEN]
+    k = run(tmp_path, "M1", plan_text(ms))[2].read_text()
+    assert "A builder that meets the same need while delivering an approved requirement" in k and "without waiting for the verifier" in k
+    assert "only reports it" in k and "never writes the log line" in k and "you decide whether it sits inside an approved requirement" in k
+    assert "write and commit the line yourself" in k and "`tests=` entry still has to pass the add-only gate" in k and "independent check on test edits" in k
+    k = run(tmp_path / "n", "M1")[2].read_text()  # no mayTouch: the same text, the same BLOCKED
+    assert "A builder that meets the same need" in k and "ends `BLOCKED" in k
+
+
+STANDING = "Owner standing approval (2026-11-26):\n- Test edits that only add cases are fine.\n- Handover files in the change folder are fine.\n"
+
+
+def with_standing(tmp_path, text=STANDING, **kw):
+    """plan.md, delta.md, intent.md and standing.md committed together; returns (plan file, approved sha)."""
+    plan, _ = repo(tmp_path, **kw)
+    (plan.parent / "standing.md").write_text(text)
+    git(tmp_path, "add", "-A")
+    git(tmp_path, "commit", "-q", "-m", "standing")
+    return plan, git(tmp_path, "rev-parse", "HEAD")
+
+
+def test_standing_approval_is_included_verbatim_from_the_approved_commit(tmp_path):
+    plan, sha = with_standing(tmp_path)
+    p = brief(plan, "M1", "--approved", sha)
+    k = (tmp_path / "kickoff-M1.md").read_text()
+    assert p.returncode == 0 and "\n## Standing approval (owner)\n\n" + STANDING.strip() + "\n" in k and "{{" not in k
+    assert k.index("## Standing approval (owner)") < k.index("## Build")
+
+
+def test_no_standing_file_leaves_no_standing_section(tmp_path):
+    code, out, kick = run(tmp_path, "M1")
+    assert code == 0 and "Standing approval" not in kick.read_text() and "{{standing}}" not in kick.read_text()
+
+
+def test_standing_changed_or_added_after_approval_fails_the_brief(tmp_path):
+    plan, sha = with_standing(tmp_path)
+    (plan.parent / "standing.md").write_text(STANDING + "- Anything goes.\n")  # the working file is not what the owner approved
+    p = brief(plan, "M1", "--approved", sha)
+    assert p.returncode == 1 and f"BRIEF FAIL standing.md changed since approved {sha}" in p.stdout
+    (plan.parent / "standing.md").write_text(STANDING)
+    assert brief(plan, "M1", "--approved", sha).returncode == 0
+    plan2, sha2 = repo(tmp_path / "late")  # no standing.md at the approved commit
+    (plan2.parent / "standing.md").write_text("Everything is allowed.\n")
+    p = brief(plan2, "M1", "--approved", sha2)
+    assert p.returncode == 1 and "standing.md changed since approved" in p.stdout
+    assert not (tmp_path / "late" / "kickoff-M1.md").exists()

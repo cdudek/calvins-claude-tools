@@ -9,8 +9,9 @@ Writes kickoff-<M>.md (kickoff-all.md) next to plan.md, then prints three sectio
   -#-#- GOAL -#-#-           the /goal line (checked against the 4,000-character limit)
   -#-#- RUN -#-#-            the unattended command, and the interactive alternative
 Exit 1 with `BRIEF FAIL <reason>` if the plan fails check_plan.validate (which also fails a plan, delta.md or
-intent.md that changed since <sha>, the commit the owner approved; with --all it also needs every milestone
+intent.md or standing.md that changed since <sha>, the commit the owner approved; with --all it also needs every milestone
 detailed and no hold) or the milestone is not detailed.
+If changes/<slug>/standing.md exists in the approved commit, the kickoff carries it verbatim as `## Standing approval (owner)`.
 The kickoff's fixed prose lives in ../templates/kickoff.md (blocks `@@ name`, {{key}} placeholders); this script fills it and
 generates only the data-dependent lines and the /goal condition. The coordinator calls task-step.py (target, start, finish,
 gate, status, pin) with <sha> and the plan as a repo-relative path (changes/<slug>/plan.md); it runs test-integrity.sh and
@@ -125,18 +126,22 @@ def verifier_tier(m):
 
 
 def gap_line(m, change):
-    """The plan-gap lane: one fix round per milestone, only inside the milestone's owner-approved `mayTouch` globs."""
-    mid = m["id"]
-    head = ("Gap lane, one round per milestone: the verifier labels every FAIL `bug` or `gap`. A `bug` goes back to the builder. "
-            "A `gap` needs files no task owns, or an existing test that asserts the old behaviour. ")
+    """The plan-gap lane: up to `gapRounds` fix rounds per milestone (default 3), only inside the milestone's owner-approved `mayTouch` globs."""
+    mid, cap = m["id"], m.get("gapRounds", 3)
+    head = (f"Gap lane, up to {cap} rounds per milestone: the verifier labels every FAIL `bug` or `gap`. A `bug` goes back to the builder. "
+            "A `gap` needs files no task owns, or an existing test that asserts the old behaviour. A builder that meets the same need while delivering "
+            "an approved requirement (a file no task owns, or an edit to an existing test) only reports it, with the files and why, and never writes the log line: "
+            "you decide whether it sits inside an approved requirement, then write and commit the line yourself, without waiting for the verifier. "
+            "Every `tests=` entry still has to pass the add-only gate in test-integrity, the independent check on test edits. ")
     if not m.get("mayTouch"):
         return head + f"{mid} has no `mayTouch`, so every `gap` ends `BLOCKED: owner approves plan revision for <files>`."
     globs = ", ".join(f"`{g}`" for g in m["mayTouch"])
     return (head + f"When a gap sits inside an approved requirement and every file it needs matches {mid}'s mayTouch ({globs}), append one line "
-            f"`GAP-FIX {mid} files=<a,b> tests=<c,d>` (comma-separated, no spaces; tests= only for existing tests to edit) to the progress log "
-            f"in plan.md and commit it. Then run one fix task `{mid}-gap` with exactly those files like any task: worktree `{change}-{mid}-gap` "
-            f"cut from the milestone head, a factory:builder, `--task {mid}-gap` integrity, record its <checked SHA>, merge it, then repeat Ship from step 1. "
-            "A second gap, a file outside mayTouch or a gap outside an approved requirement ends `BLOCKED: owner approves plan revision for <files>`.")
+            f"`GAP-FIX {mid} round=<n> files=<a,b> tests=<c,d>` (n counts rounds from 1, each once; comma-separated, no spaces; tests= only for existing tests to edit) "
+            f"to the progress log in plan.md and commit it. Then run one fix task `{mid}-gap<n>` with exactly that round's files like any task: worktree "
+            f"`{change}-{mid}-gap<n>` cut from the milestone head, a factory:builder, `--task {mid}-gap<n>` integrity, record its <checked SHA>, merge it, "
+            f"then repeat Ship from step 1. A gap after round {cap}, a file outside mayTouch or a gap outside an approved requirement "
+            "ends `BLOCKED: owner approves plan revision for <files>`.")
 
 
 def template_blocks():
@@ -223,6 +228,7 @@ def kickoff(plan, ms, plan_path, root, sha, every=False):
     scope = (f"every milestone in order ({', '.join(x['id'] for x in ms)}), starting from this worktree on branch `{first}`" if every
              else f"milestone {ms[0]['id']} only, from this worktree on branch `{first}`")
     h = "###" if every else "##"
+    stand = check_plan.at_sha(plan_path.parent / "standing.md", sha)  # the approved commit, never the working file
     blocks, secs = template_blocks(), []
     for i, x in enumerate(ms):
         head = f"## Milestone {x['id']} ({x['layer']}), branch `milestone/{change}-{x['id']}`\n" if every else ""
@@ -230,6 +236,7 @@ def kickoff(plan, ms, plan_path, root, sha, every=False):
     return fill(
         blocks["top"], title=f"{change}, " + (f"all {len(ms)} milestones" if every else f"milestone {ms[0]['id']} ({ms[0]['layer']})"),
         change=change, scope=scope, tgt=tgt, P=P, sha=sha,
+        standing=f"## Standing approval (owner)\n\n{stand.strip()}" if stand and stand.strip() else "",
         all_start=fill(blocks["all_start"], P=P, sha=sha, tgt=tgt, change=change, preflight="\n".join(pre)) if every else "",
         milestones="\n\n".join(secs), end_state="HOLD" if hold else "SHIPPED",
         hold_stop=f"HOLD: {hold}. Only once the pushed SHA and the verifier PASS for that SHA are in the transcript." if hold else "") + "\n"

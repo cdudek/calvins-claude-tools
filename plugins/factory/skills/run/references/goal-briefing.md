@@ -21,6 +21,7 @@ It starts "Met when any one of these is true." and lists numbered end states, in
 3. **INCOMPLETE:** after `goalTurns` turns, the last message starts with INCOMPLETE and names the next step.
 
 ## Starting the run
+- **File refresh first:** before `goal-brief.py` runs for a milestone, a read-only agent checks each task's `files` and `allowTestEdits` against the current tree (moved or renamed files, files the requirement obviously needs, existing tests the change will break). The coordinator records the result as a plan revision under the standing approval before cutting the milestone.
 - **Where:** the milestone worktree on `milestone/<slug>-<M>`, cut from a base that already holds the approved plan (or on milestone 1's branch where the plan lives there).
 - **One milestone:** `goal-brief.py <plan.md> <M> --approved <sha>`.
 - **Whole plan:** `goal-brief.py <plan.md> --all --approved <sha>`. Every milestone must already have tasks. It prints one kickoff and one goal. The coordinator runs the milestones in order and, at each milestone start, re-reads the pinned plan and the progress log. `--max-turns` is the sum of each milestone's own value.
@@ -28,6 +29,10 @@ It starts "Met when any one of these is true." and lists numbered end states, in
 - **Interactive:** start `claude`, paste the kickoff file, then paste the `/goal` line. The same turn clause bounds it.
 - **No stop for a gallery.** The ux-verifier checks UI milestones against the boards approved at the single approval, and writes `evidence/<M>/gallery.md`. The person reviews the gallery once, from the release PR.
 - **After BLOCKED or INCOMPLETE:** fix the cause, then run the same command again in a fresh session. The kickoff's resume rule reads the progress log and git state first.
+
+## Standing approval
+- **File:** `changes/<slug>/standing.md`, optional, written by the owner's decision. When it exists in the approved commit, `goal-brief.py` puts it in the kickoff verbatim as `## Standing approval (owner)`. Nobody re-appends it by hand after a regeneration.
+- **Source:** read from the approved commit, never from the working file. `check-plan.py --approved` fails when `standing.md` changed, appeared or vanished since that commit, like intent and delta.
 
 ## Preflight and the kickoff's stance
 - **Integration branch:** when the plan has `integration` and origin lacks it, `goal-brief.py` creates it from the approved SHA and pushes it, but only if that SHA is on the base branch. Otherwise it fails with the one `git push` command the owner runs. It prints a `PREFLIGHT` section saying which case it was.
@@ -42,10 +47,12 @@ It starts "Met when any one of these is true." and lists numbered end states, in
 
 ## Plan gaps (the gap lane)
 - **Label:** the verifier marks each FAIL `bug` (the code misses an approved requirement; back to the builder) or `gap` (the fix needs files no task owns, or an existing test asserts the old behaviour).
-- **Approval:** a milestone may carry `mayTouch`, path globs the owner approves with the plan. It is the only widening of scope an unattended run gets.
-- **A `gap` inside an approved requirement, every file matching `mayTouch`:** the coordinator appends `GAP-FIX <M> files=<a,b> tests=<c,d>` to the plan's progress log and commits it, then runs one fix task `<M>-gap` with exactly those files like any task, then reruns integrity and the verifier.
-- **Integrity:** `test-integrity.sh --milestone <M>` and `--task <M>-gap` read the `GAP-FIX` line from the plan at HEAD and keep only paths that match the approved `mayTouch`; a line cannot widen scope beyond it. Two `GAP-FIX` lines for one milestone fail the check: one round per milestone.
-- **Everything else** (second gap, file outside `mayTouch`, gap outside an approved requirement, no `mayTouch`) ends `BLOCKED` naming the files.
+- **Build-time gaps:** the lane also opens when a builder, not only the verifier, reports that delivering an approved requirement needs a file no task owns, or an edit to an existing test. The builder only reports the need; it never writes the log line. The coordinator decides whether the need is inside an approved requirement and `mayTouch`, then writes and commits the `GAP-FIX` line itself, without waiting for the verifier. Same rules, same log line, same `gapRounds` cap. `tests=` stays allowed for build-time gaps, and every `tests=` entry, from any source, must pass the add-only gate in `test-integrity.sh`: that gate is the independent check on test edits.
+- **Approval:** a milestone may carry `mayTouch`, path globs the owner approves with the plan, and `gapRounds`, how many rounds it may use (1 to 5, default 3). Together they are the only widening of scope an unattended run gets.
+- **A `gap` inside an approved requirement, every file matching `mayTouch`:** the coordinator appends `GAP-FIX <M> round=<n> files=<a,b> tests=<c,d>` to the plan's progress log and commits it, then runs one fix task `<M>-gap<n>` with exactly that round's files like any task, then reruns integrity and the verifier. `<M>-gap` is an alias of round 1.
+- **Rounds:** numbered 1 to n, each once. A legacy line without `round=` counts as round 1. More rounds than `gapRounds` fail the check.
+- **Integrity:** `test-integrity.sh --milestone <M>` reads every `GAP-FIX` line from the plan at HEAD and keeps only paths that match the approved `mayTouch`. `mayTouch` and `gapRounds` come only from the plan at the approved commit, never from HEAD or the working file, so `--task <M>-gap<n>` requires `--approved` like `--milestone`. An invalid `gapRounds` is an error, not the default; `--task <M>-gap<n>` is scoped to exactly that round's line. A line cannot widen scope beyond `mayTouch`.
+- **Everything else** (a gap past `gapRounds`, file outside `mayTouch`, gap outside an approved requirement, no `mayTouch`) ends `BLOCKED` naming the files.
 
 ## Bug flow (`kind: bug`)
 1. The builder's first commit holds only the failing test.

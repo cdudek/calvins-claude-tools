@@ -68,7 +68,7 @@ Never hand-write a goal line. Start the printed RUN command with the Bash tool a
 
 The run, in short:
 - The coordinator calls `task-step.py` for worktrees, integrity and merges; every task runs in a `factory:builder` subagent, in the foreground (a hook denies background agents).
-- Verify: fast checks, per-task integrity, `factory:verifier`, a security review on a risky milestone, `factory:ux-verifier` on a UI milestone. Each FAIL is labelled `bug` or `gap`; one gap round per milestone, inside the owner-approved `mayTouch`.
+- Verify: fast checks, per-task integrity, `factory:verifier`, a security review on a risky milestone, `factory:ux-verifier` on a UI milestone. Each FAIL is labelled `bug` or `gap`, and a builder's report of a file no task owns or a test edit lets the coordinator open a `gap` too (the builder never writes the log line); up to `gapRounds` gap rounds per milestone (default 3), inside the owner-approved `mayTouch`.
 - Ship: commit, verify that SHA, push it, one PR per milestone. The release PR waits for a human only when a milestone is `risky`, `deployOnMerge` is true or the plan sets `merge: owner`.
 
 Every rule, with the merge matrix, the bug flow and the learn loop: `references/run-stations.md` and `references/goal-briefing.md`.
@@ -82,7 +82,7 @@ One approval, one SHA. The person sees four short things: intent, requirements, 
 
 ## Stop and ask
 - An owner decision, credential, approval or destructive migration blocks the work: write BLOCKED with the exact action needed, and stop.
-- Scope grows beyond the approved intent and delta, or a fix needs files or tests outside the milestone's `mayTouch` (or a second gap round): `BLOCKED: owner approves plan revision for <finding>`.
+- Scope grows beyond the approved intent and delta, or a fix needs files or tests outside the milestone's `mayTouch` (or a gap past `gapRounds`): `BLOCKED: owner approves plan revision for <finding>`.
 - The merge gate is missing or unreadable: the owner merges by hand.
 - A CI file, spec, ADR or scenario must change: only the owner decides, and the coordinator makes the change, never a builder.
 - Verifier and builder disagree after 3 passes.
@@ -104,6 +104,6 @@ Run from `<repo>/.factory/`, where the SessionStart hook keeps them equal to the
 - `check-plan.py <plan.md> [--all] [--approved <sha>]`: validates the plan, delta and intent, and that the approved files did not change (only appended progress entries may differ).
 - `goal-brief.py <plan.md> <M> --approved <sha>` or `<plan.md> --all --approved <sha>`: kickoff file (from `kickoff.md`), `/goal` line, run command. The plan path is repo-relative.
 - `task-step.py target|start|pin|finish|gate|status <plan.md> <M> [<T>] --approved <sha>`: the coordinator's per-task mechanics; reads the approved plan and derives checked commits from git.
-- `test-integrity.sh <worktree> <base-ref> [plan.md [--task <id> | --milestone <id>] [flags]]`: touched tests, paths outside the task (plus the logged gap round inside `mayTouch`), CI, `.github/`, `.factory/`, plan, baselines, spec, skips and added lint suppressions. The flags are in its header.
+- `test-integrity.sh <worktree> <base-ref> [plan.md [--task <id> | --milestone <id>] [flags]]`: touched tests, paths outside the task (plus the logged gap rounds inside `mayTouch`), CI, `.github/`, `.factory/`, plan, baselines, spec, skips and added lint suppressions, and for every existing test a task may edit, anything but add-only changes (no test block removed, no fewer assertions, no new skip, no looser matcher, no longer timeout). The flags are in its header.
   Flags are documented in its header.
 - `migrate-name.py <repo> | --home`: one-shot rename of a pre-0.3.0 repo or home folder; commits nothing.

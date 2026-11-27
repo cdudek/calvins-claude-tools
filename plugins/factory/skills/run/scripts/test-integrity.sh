@@ -7,8 +7,9 @@
 # plan's integration (else base) branch; --task/--milestone limit changed paths to the task(s) files,
 # new tests (inside a task file's directory) and allowTestEdits; --milestone requires --approved; --pin <sha> keeps that commit's tests as is; --checked (with
 # --milestone) lists the commits the per-task checks passed: every changed implementation path must
-# have its HEAD blob in one of them. Plan-gap lane: `GAP-FIX <M> files=<a,b> tests=<c,d>` lines in the plan's progress log (read at HEAD) extend
-# --milestone <M>, and are the whole scope of --task <M>-gap, but only for paths matching the approved milestone's mayTouch; one line per milestone.
+# have its HEAD blob in one of them. Plan-gap lane: `GAP-FIX <M> round=<n> files=<a,b> tests=<c,d>` lines in the plan's progress log (read at HEAD) extend
+# --milestone <M> (all rounds), and are the whole scope of --task <M>-gap<n> (round n; <M>-gap is round 1), but only for paths matching the approved
+# milestone's mayTouch and gapRounds, both read from the plan at --approved (a gap task requires it; an invalid gapRounds fails); rounds are numbered 1..n once each (a line without round= is round 1), at most the milestone's gapRounds (default 3).
 set -euo pipefail
 
 U="usage: test-integrity.sh <repo-or-worktree> <base-ref> [plan.md [--task <id> | --milestone <id>] [--approved <sha>] [--pin <sha>] [--target <sha>] [--checked <sha>[,<sha>...]]]"
@@ -34,6 +35,7 @@ mode=""
 [ -n "$ms" ] && mode=milestone
 if [ -n "$mode" ] && [ -z "$plan" ]; then echo "$U" >&2; exit 2; fi
 if [ "$mode" = milestone ] && [ -z "$approved" ]; then echo "--milestone requires --approved" >&2; echo "$U" >&2; exit 2; fi
+if [[ "$task" =~ ^M[0-9]+[a-z]?-gap[1-9]?[0-9]*$ ]] && [ -z "$approved" ]; then echo "--task $task requires --approved" >&2; echo "$U" >&2; exit 2; fi
 
 fail=0
 say() { echo "INTEGRITY FAIL $1"; fail=1; }
@@ -68,15 +70,19 @@ if ms and mss and mss[-1].get("id") == ms: print("LAST\t1")
 sel = None
 if task: sel = [t for m in mss for t in m.get("tasks", []) if t.get("id") == task]
 elif ms: sel = [t for m in mss if m.get("id") == ms for t in m.get("tasks", [])]
-# plan-gap lane: the one fix round the coordinator logs as `GAP-FIX <M> files=<a,b> tests=<c,d>` in the progress log (read at HEAD, not at --approved).
-# Only paths matching the milestone mayTouch globs the owner approved count; the fix task is `<M>-gap`.
-gap = ms or (task[:-4] if re.fullmatch(r"M\d+-gap", task) else "")
+# plan-gap lane: the fix rounds the coordinator logs as `GAP-FIX <M> round=<n> files=<a,b> tests=<c,d>` in the progress log (read at HEAD, not at --approved);
+# a legacy line without `round=` is round 1. At most the milestone gapRounds (default 3), numbered 1..n once each.
+# Only paths matching the milestone mayTouch globs the owner approved count; the fix task of round n is `<M>-gap<n>` (`<M>-gap` is round 1).
+gm = re.fullmatch(r"(M\d+[a-z]?)-gap([1-9]\d*)?", task)
+gap = ms or (gm.group(1) if gm else "")
 if gap:
-    may = next((m.get("mayTouch") or [] for m in mss if m.get("id") == gap), [])
+    m0 = next((m for m in mss if m.get("id") == gap), {})
+    may, cap = m0.get("mayTouch") or [], m0.get("gapRounds", 3)  # both from the plan at --approved, never from HEAD
+    if not (type(cap) is int and 1 <= cap <= 5): print("ERR\tgapRounds for " + gap + " must be a whole number from 1 to 5"); cap = 0
     # The log is read from the committed tree: an uncommitted plan edit must not grant scope. Only a replay copy outside every worktree (loose) is read from disk.
     try: cur = open(plan).read() if loose else git("show", "HEAD:" + rel)
     except subprocess.CalledProcessError: cur = ""
-    rounds = re.findall(r"^GAP-FIX " + gap + r" files=(\S*)(?: tests=(\S*))?[ \t]*$", cur, re.M)
+    rounds = [(int(r or 1), a, b) for r, a, b in re.findall(r"^GAP-FIX " + gap + r"(?: round=(\d+))? files=(\S*)(?: tests=(\S*))?[ \t]*$", cur, re.M)]
     # `*` never crosses `/`: a glob matches a path with the same number of segments, each by fnmatchcase; a trailing `/` is a directory prefix.
     # A glob needs a static first segment and no `**`, else it matches nothing (check-plan rejects it at approval too).
     static = lambda g: g != "" and not g.startswith("/") and ".." not in g.split("/") and "**" not in g and not re.search(r"[*?\[]", g.split("/")[0])
@@ -84,9 +90,11 @@ if gap:
         fs = f.split("/")
         return any(static(g) and ((g.endswith("/") and f.startswith(g)) or (not g.endswith("/") and len(g.split("/")) == len(fs)
                    and all(fnmatch.fnmatchcase(a, b) for a, b in zip(fs, g.split("/"))))) for g in may)
-    if len(rounds) > 1: print("ERR\tmore than one gap round for " + gap + ": one per milestone")
-    if rounds and (ms or task == gap + "-gap"):
-        extra = {"files": [f for a, _ in rounds for f in a.split(",") if f and ok(f)], "allowTestEdits": [t for _, b in rounds for t in b.split(",") if t and ok(t)]}
+    if sorted(r for r, _, _ in rounds) != list(range(1, len(rounds) + 1)): print("ERR\tgap rounds for " + gap + " must be numbered 1..n, each round once")
+    if len(rounds) > cap: print("ERR\tmore than " + str(cap) + " gap rounds for " + gap + " (gapRounds " + str(cap) + ")")
+    want = rounds if ms else [x for x in rounds if x[0] == int(gm.group(2) or 1)]
+    if want:
+        extra = {"files": [f for _, a, _ in want for f in a.split(",") if f and ok(f)], "allowTestEdits": [t for _, _, b in want for t in b.split(",") if t and ok(t)]}
         if task: sel = [extra]
         else: sel.append(extra)
 if sel is None: sel = [{"allowTestEdits": p.get("allowTestEdits", [])}]  # old plans: top-level list
@@ -190,7 +198,9 @@ while IFS=$'\t' read -r status path _; do
           cp_out=$(python3 "$(dirname "$0")/check-plan.py" "$planfile" --approved "$approved") || { echo "$cp_out"; say "plan changed: $path fails check-plan"; }
         fi
         continue ;;
-      "changes/$slug/evidence/"*|"changes/$slug/kickoff-"*) continue ;;
+      "changes/$slug/evidence/"*) continue ;;
+      # one path segment only (a case `*` also matches `/`): kickoff-a/plan.md or handover-x/delta.md fall through to the checks below, the plan, delta and spec rules among them
+      "changes/$slug/kickoff-"*.md|"changes/$slug/handover-"*.md) case "${path#changes/$slug/}" in */*) ;; *) continue ;; esac ;;
       specs/adr/*) ;;
       specs/*) [ "$last" -eq 1 ] && continue ;;
     esac
@@ -224,6 +234,138 @@ while IFS=$'\t' read -r status path _; do
       if ! printf '%s\n' "$allow" | grep -qxF -- "$path"; then say "existing test changed or deleted: $path"; fi ;;
   esac
 done <<< "$names"
+
+# Add-only gate: an existing test file a task or gap round may edit (allowTestEdits, tests=) may only grow. Input: the allowed paths in $ALLOW, argv: repo, base commit.
+# shortcut: a line-based parser, not a language parser: a block runs from its `it(`/`test(`/`describe(`/`def test_` line to the next one, totals and block counts are summed per
+# block name, comments and strings (also multi-line ones) are stripped by a small scanner. It is a floor, not the proof: the independent checks behind it are the verifier and the
+# Codex pass. Known limits, not fixed: `it.each` and dynamic names, an aliased `test`, assertions moved into helpers or between blocks, `expect.assertions`, snapshot matchers, regex
+# literals holding quotes, Python line continuations and nested describe scopes. Upgrade to a real parser when a real edit trips it.
+addonly_py() {
+  python3 - "$@" <<'PY'
+import os, re, subprocess, sys
+repo, base = sys.argv[1:3]
+JS_START = re.compile(r"""^\s*x?(?:it|test|describe)(?:\.\w+)*\s*\(\s*(["'`])(.*?)\1""")
+PY_START = re.compile(r"\s*(?:async\s+)?def (test_\w*)")
+SKIP = re.compile(r"\.(?:skip|only|todo|fixme)\b|\.(?:skipIf|runIf)\(|\bthis\.skip\(|\btest\.fixme\(|\b(?:xit|xdescribe|xtest)\(|pytest\.(?:skip|importorskip)\(|@pytest\.mark\.(?:skip|xfail)|@unittest\.skip(?:If|Unless)?\b")
+STRICT = re.compile(r"\.(?:toBe|toEqual|toStrictEqual|toHaveLength)\(|\.toThrow\(\s*[^)\s]|\bassertEqual\b|\bassert\.(?:equal|strictEqual|deepStrictEqual)\(")
+LOOSE = re.compile(r"\.(?:toBeTruthy|toBeDefined|toContain|toMatch|toBeGreaterThan)\(")
+JS_ASSERT = re.compile(r"\bexpect\s*\(|\bassert\b\s*(?:\.\w+\s*)?\(")
+NUM = r"0[xX][0-9a-fA-F_]+|\d[\d_]*(?:\.\d+)?(?:[eE][+-]?\d+)?"
+# a timeout: `timeout: X`, `jest|test|vitest.setTimeout(X)`, and the whole third argument of it/test (`}, X)` on its own closing line, or on a test line). X that is not a literal is unverifiable.
+TIMEOUT = [re.compile(r"\btimeout:\s*([^,})\s]+)"), re.compile(r"\b(?:jest|test|vitest)\.setTimeout\(\s*([^,)]+)"), re.compile(r"^\s*\}\s*,\s*([^)]+?)\s*\)\s*;?\s*$")]
+TIMEOUT_ON_TEST_LINE = re.compile(r",\s*([^,()]+?)\s*\)\s*;?\s*$")
+EARLY = [re.compile(r"^\s*return\s*;?\s*$"), re.compile(r"\bif\s*\(\s*false\s*\)"), re.compile(r"^\s*if\s+(?:0|False)\s*:")]
+INF = float("inf")
+
+def show(ref, path):
+    p = subprocess.run(["git", "-C", repo, "show", ref + ":" + path], capture_output=True, text=True)
+    return p.stdout if p.returncode == 0 else None
+
+def scan(lines, py):
+    """[(cleaned line, started outside a comment or string)]: comments dropped, string literals reduced to "". A /* */ comment, a template literal or a Python
+    triple-quoted string carries over to the next lines; a plain quote ends with its line."""
+    out, q, blk = [], None, False
+    for l in lines:
+        clean, fresh, i = [], q is None and not blk, 0
+        while i < len(l):
+            c = l[i]
+            if blk:
+                j = l.find("*/", i)
+                if j < 0: i = len(l); continue
+                blk, i = False, j + 2; continue
+            if q:
+                if c == "\\": i += 2; continue
+                if l.startswith(q, i): i += len(q); q = None; clean.append('""'); continue
+                i += 1; continue
+            tri = next((t for t in ('"""', "\'\'\'") if py and l.startswith(t, i)), None)
+            if tri: q = tri; i += 3; continue
+            if c in ("\"'" if py else "\"'`"): q = c; i += 1; continue
+            if (py and c == "#") or (not py and l.startswith("//", i)): break
+            if not py and l.startswith("/*", i): blk = True; i += 2; continue
+            clean.append(c); i += 1
+        if q in ('"', "'"): q = None
+        out.append(("".join(clean), fresh))
+    return out
+
+def num(tok):
+    t = tok.replace("_", "")
+    try: return float(int(t, 16)) if t[:2].lower() == "0x" else float(t)
+    except ValueError: return INF
+
+def parse(text, py):
+    """{block name: totals summed over every block with that name}; the lines before the first block are <top of file>."""
+    lines = text.split("\n")
+    sc = scan(lines, py)
+    starts = []
+    for i, l in enumerate(lines):
+        m = (PY_START if py else JS_START).match(l) if sc[i][1] else None
+        if m:
+            while py and i > 0 and lines[i - 1].strip().startswith("@") and (not starts or starts[-1][0] < i - 1):
+                i -= 1  # decorators belong to the test below them
+            starts.append((i, m.group(1) if py else m.group(2)))
+    cuts = [(0, "<top of file>")] + starts + [(len(lines), None)]
+    out = {}
+    for (a, name), (b, _) in zip(cuts, cuts[1:]):
+        c = out.setdefault(name, dict(blocks=0, assertions=0, skips=0, strict=0, loose=0, timeout=0.0, ntimeouts=0, odd=[], early=0))
+        c["blocks"] += 1
+        seen = False
+        for i in range(a, b):
+            l = sc[i][0]
+            n = len(re.findall(r"^\s*assert\b|\bself\.assert\w*\(", l)) if py else len(JS_ASSERT.findall(l))
+            c["assertions"] += n
+            c["skips"] += len(SKIP.findall(l))
+            bare = py and re.match(r"\s*assert\b", l) is not None
+            c["strict"] += len(STRICT.findall(l)) + (1 if bare and "==" in l else 0)
+            c["loose"] += len(LOOSE.findall(l)) + (1 if bare and "==" not in l else 0)
+            if not py:
+                pats = TIMEOUT + ([TIMEOUT_ON_TEST_LINE] if JS_START.match(lines[i]) else [])
+                for tok in set(tok.strip() for t in pats for tok in t.findall(l)):  # one count per token per line, whichever pattern saw it
+                    c["ntimeouts"] += 1
+                    v = num(tok)
+                    if v == INF: c["odd"].append(tok)
+                    else: c["timeout"] += v
+            if not seen and not name.startswith("<"):
+                c["early"] += sum(1 for e in EARLY if e.search(l))
+            if n: seen = True
+    return out
+
+for path in sorted(set(p for p in os.environ.get("ALLOW", "").split("\n") if p)):
+    ext = path.rsplit(".", 1)[-1]
+    py = ext == "py"
+    old, new = show(base, path), show("HEAD", path)
+    if old is None or new == old:
+        continue  # a new file has nothing to keep, an untouched one nothing to verify
+    if not py and ext not in ("js", "jsx", "ts", "tsx", "mjs", "cjs", "mts", "cts"):
+        print("add-only gate: " + path + ": unsupported file type, cannot verify")
+        continue
+    if new is None:
+        print("add-only gate: " + path + ": the file is deleted")
+        continue
+    ob, nb = parse(old, py), parse(new, py)
+    def bad(name, why): print("add-only gate: " + path + ": block " + name + ": " + why)
+    for name, o in ob.items():
+        if name not in nb:
+            bad(name, "test block removed or renamed")
+            continue
+        n = nb[name]
+        if n["blocks"] < o["blocks"]: bad(name, "block count dropped from %d to %d" % (o["blocks"], n["blocks"]))
+        if n["assertions"] < o["assertions"]: bad(name, "assertions dropped from %d to %d" % (o["assertions"], n["assertions"]))
+        if n["skips"] > o["skips"]: bad(name, "skip or focus marker added")
+        if n["strict"] < o["strict"] and n["loose"] > o["loose"]: bad(name, "strict matchers replaced by loose ones")
+        if n["timeout"] > o["timeout"]: bad(name, "timeout raised from %d to %d" % (o["timeout"], n["timeout"]))
+        if o["ntimeouts"] and n["ntimeouts"] < o["ntimeouts"]: bad(name, "timeout removed, cannot verify")
+        for tok in n["odd"]:
+            if n["odd"].count(tok) > o["odd"].count(tok): bad(name, "timeout " + tok + " is not a literal and changed"); break
+        if n["early"] > o["early"]: bad(name, "early exit added before the first assertion")
+    for name, n in nb.items():
+        if name not in ob and n["skips"]: bad(name, "skip or focus marker added")
+PY
+}
+if [ -n "$allow" ]; then
+  mb=$(git -C "$repo" merge-base "$base" HEAD 2>/dev/null || echo "$base")
+  addonly=$(ALLOW="$allow" addonly_py "$repo" "$mb") || { say "add-only gate could not run"; exit 1; }
+  while IFS= read -r line; do if [ -n "$line" ]; then say "$line"; fi; done <<< "$addonly"
+fi
 
 if [ -n "$pin" ]; then  # the bug flow's failing test must reach HEAD untouched
   pinned=$(git -C "$repo" diff-tree --root --no-commit-id --no-renames --name-only -r "$pin") || { say "cannot read pin $pin"; exit 1; }

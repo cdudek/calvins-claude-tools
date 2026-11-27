@@ -477,11 +477,11 @@ def test_approved_must_be_an_ancestor_of_head(tmp_path):
 MAY_PLAN = {**PLAN, "milestones": [{**PLAN["milestones"][0], "mayTouch": ["src/api/*", "src/b.test.ts"]}, PLAN["milestones"][1]]}
 
 
-def gap_repo(tmp_path, *log, edits=None):
+def gap_repo(tmp_path, *log, edits=None, plan=MAY_PLAN):
     """MAY_PLAN is approved; the fix round's files are committed with the log lines under the plan's json block."""
     tmp_path.mkdir(parents=True, exist_ok=True)
-    repo = plan_repo(tmp_path, MAY_PLAN)
-    commit(repo, {**(edits or {}), PLAN_PATH: plan_text(MAY_PLAN, "".join(f"{l}\n" for l in log))})
+    repo = plan_repo(tmp_path, plan)
+    commit(repo, {**(edits or {}), PLAN_PATH: plan_text(plan, "".join(f"{l}\n" for l in log))})
     return repo
 
 
@@ -514,13 +514,99 @@ def test_gap_fix_task_scope_and_test_edit(tmp_path):
     assert code == 1 and "existing test changed or deleted: src/b.test.ts" in out  # not named in tests=
 
 
-def test_second_gap_round_and_unlogged_fix_task_fail(tmp_path):
-    repo = gap_repo(tmp_path, "GAP-FIX M1 files=src/api/a.ts", "GAP-FIX M1 files=src/api/b.ts", edits={"src/api/a.ts": "x\n"})
-    code, out = run(repo, "main", str(repo / PLAN_PATH), "--milestone", "M1", "--approved", appr(repo))
-    assert code == 1 and "more than one gap round for M1" in out
-    repo = gap_repo(tmp_path / "n", edits={"src/api/a.ts": "x\n"})
+def test_unlogged_fix_task_fails(tmp_path):
+    repo = gap_repo(tmp_path, edits={"src/api/a.ts": "x\n"})
     code, out = run(repo, "main", str(repo / PLAN_PATH), "--task", "M1-gap", "--approved", appr(repo))
     assert code == 1 and "no task or milestone M1-gap" in out
+
+
+def ms_run(repo, *args):
+    return run(repo, "main", str(repo / PLAN_PATH), "--milestone", "M1", "--approved", appr(repo), *args)
+
+
+def test_milestone_unions_every_logged_round(tmp_path):
+    log = ("GAP-FIX M1 round=1 files=src/api/a.ts", "GAP-FIX M1 round=2 files=src/api/b.ts tests=src/b.test.ts")
+    repo = gap_repo(tmp_path, *log, edits={"src/api/a.ts": "x\n", "src/api/b.ts": "x\n", "src/b.test.ts": "it('b', () => { /* r2 */ })\n"})
+    code, out = ms_run(repo)
+    assert code == 0 and out.strip() == "INTEGRITY OK", out
+    repo = gap_repo(tmp_path / "n", *log[:1], edits={"src/api/a.ts": "x\n", "src/api/b.ts": "x\n"})  # round 2 not logged
+    code, out = ms_run(repo)
+    assert code == 1 and "outside milestone M1: src/api/b.ts" in out and "outside milestone M1: src/api/a.ts" not in out
+
+
+def test_legacy_line_without_round_counts_as_round_one(tmp_path):
+    repo = gap_repo(tmp_path, "GAP-FIX M1 files=src/api/a.ts", "GAP-FIX M1 round=2 files=src/api/b.ts", edits={"src/api/a.ts": "x\n", "src/api/b.ts": "x\n"})
+    assert ms_run(repo)[0] == 0
+    repo = gap_repo(tmp_path / "d", "GAP-FIX M1 files=src/api/a.ts", "GAP-FIX M1 round=1 files=src/api/b.ts", edits={"src/api/a.ts": "x\n"})
+    code, out = ms_run(repo)
+    assert code == 1 and "gap rounds for M1 must be numbered 1..n, each round once" in out
+    repo = gap_repo(tmp_path / "t", "GAP-FIX M1 files=src/api/a.ts", "GAP-FIX M1 files=src/api/b.ts", edits={"src/api/a.ts": "x\n"})
+    assert "each round once" in ms_run(repo)[1]  # two legacy lines are a duplicate round 1
+
+
+def test_rounds_must_be_consecutive_and_unique(tmp_path):
+    for i, log in enumerate((("GAP-FIX M1 round=2 files=src/api/a.ts",), ("GAP-FIX M1 round=1 files=src/api/a.ts", "GAP-FIX M1 round=3 files=src/api/b.ts"),
+                             ("GAP-FIX M1 round=1 files=src/api/a.ts", "GAP-FIX M1 round=1 files=src/api/b.ts"), ("GAP-FIX M1 round=0 files=src/api/a.ts",))):
+        code, out = ms_run(gap_repo(tmp_path / str(i), *log, edits={"src/api/a.ts": "x\n"}))
+        assert code == 1 and "each round once" in out, log
+    # the same check guards the fix task, so a bad log cannot be run round by round
+    repo = gap_repo(tmp_path / "t", "GAP-FIX M1 round=2 files=src/api/a.ts")
+    code, out = run(repo, "main", str(repo / PLAN_PATH), "--task", "M1-gap2", "--approved", appr(repo))
+    assert code == 1 and "each round once" in out
+
+
+def test_more_rounds_than_the_cap_fail(tmp_path):
+    four = tuple(f"GAP-FIX M1 round={n} files=src/api/a.ts" for n in (1, 2, 3, 4))  # the default cap is 3
+    code, out = ms_run(gap_repo(tmp_path / "d", *four, edits={"src/api/a.ts": "x\n"}))
+    assert code == 1 and "more than 3 gap rounds for M1" in out
+    one = {**MAY_PLAN, "milestones": [{**MAY_PLAN["milestones"][0], "gapRounds": 1}, PLAN["milestones"][1]]}
+    code, out = ms_run(gap_repo(tmp_path / "o", *four[:2], edits={"src/api/a.ts": "x\n"}, plan=one))
+    assert code == 1 and "more than 1 gap rounds for M1" in out
+    five = {**MAY_PLAN, "milestones": [{**MAY_PLAN["milestones"][0], "gapRounds": 5}, PLAN["milestones"][1]]}
+    code, out = ms_run(gap_repo(tmp_path / "f", *four, edits={"src/api/a.ts": "x\n"}, plan=five))
+    assert code == 0 and out.strip() == "INTEGRITY OK", out
+
+
+def test_fix_task_is_scoped_to_exactly_its_round(tmp_path):
+    repo = gap_repo(tmp_path, "GAP-FIX M1 round=1 files=src/api/a.ts", "GAP-FIX M1 round=2 files=src/api/b.ts tests=src/b.test.ts")
+    ms = head(repo)
+    commit(repo, {"src/api/b.ts": "x\n", "src/b.test.ts": "it('b', () => { /* r2 */ })\n"})
+    task = lambda t: run(repo, ms, str(repo / PLAN_PATH), "--task", t, "--approved", appr(repo))
+    code, out = task("M1-gap2")
+    assert code == 0 and out.strip() == "INTEGRITY OK", out
+    code, out = task("M1-gap")  # alias of round 1, which owns only src/api/a.ts
+    assert code == 1 and "outside task M1-gap: src/api/b.ts" in out and "existing test changed or deleted: src/b.test.ts" in out
+    code, out = task("M1-gap1")
+    assert code == 1 and "outside task M1-gap1: src/api/b.ts" in out
+    code, out = task("M1-gap3")
+    assert code == 1 and "no task or milestone M1-gap3" in out
+    commit(repo, {"src/api/a.ts": "x\n"})  # round 1's file is not round 2's
+    assert "outside task M1-gap2: src/api/a.ts" in task("M1-gap2")[1]
+
+
+def test_every_round_stays_inside_the_approved_may_touch(tmp_path):
+    log = ("GAP-FIX M1 round=1 files=src/api/a.ts", "GAP-FIX M1 round=2 files=src/secret.ts,src/api/deep/x.ts")
+    code, out = ms_run(gap_repo(tmp_path, *log, edits={"src/api/a.ts": "x\n", "src/secret.ts": "x\n", "src/api/deep/x.ts": "x\n"}))
+    assert code == 1 and "outside milestone M1: src/secret.ts" in out and "outside milestone M1: src/api/deep/x.ts" in out
+    assert "outside milestone M1: src/api/a.ts" not in out
+
+
+def test_gap_rounds_work_for_a_milestone_with_a_letter_suffix(tmp_path):
+    first = {**MAY_PLAN["milestones"][0], "id": "M1a"}
+    plan = {**MAY_PLAN, "milestones": [first, PLAN["milestones"][1]]}
+    repo = gap_repo(tmp_path, "GAP-FIX M1a round=1 files=src/api/a.ts", "GAP-FIX M1a round=2 files=src/api/b.ts", edits={"src/api/a.ts": "x\n", "src/api/b.ts": "x\n"}, plan=plan)
+    code, out = run(repo, "main", str(repo / PLAN_PATH), "--milestone", "M1a", "--approved", appr(repo))
+    assert code == 0 and out.strip() == "INTEGRITY OK", out
+    ms = head(repo)
+    commit(repo, {"src/api/a.ts": "y\n"})
+    code, out = run(repo, ms, str(repo / PLAN_PATH), "--task", "M1a-gap1", "--approved", appr(repo))
+    assert code == 0, out
+    code, out = run(repo, ms, str(repo / PLAN_PATH), "--task", "M1a-gap2", "--approved", appr(repo))
+    assert code == 1 and "outside task M1a-gap2: src/api/a.ts" in out
+    # a line for M1 must not be read as one for M1a, nor the reverse
+    repo = gap_repo(tmp_path / "x", "GAP-FIX M1 round=1 files=src/api/a.ts", edits={"src/api/a.ts": "x\n"}, plan=plan)
+    code, out = run(repo, "main", str(repo / PLAN_PATH), "--milestone", "M1a", "--approved", appr(repo))
+    assert code == 1 and "outside milestone M1a: src/api/a.ts" in out
 
 
 def test_gap_log_line_without_may_touch_widens_nothing(tmp_path):
@@ -549,3 +635,303 @@ def test_uncommitted_gap_log_line_grants_no_scope(tmp_path):
     (repo / PLAN_PATH).write_text(plan_text(MAY_PLAN, "GAP-FIX M1 files=src/api/list.ts\n"))  # in the working file only
     code, out = run(repo, "main", str(repo / PLAN_PATH), "--milestone", "M1", "--approved", appr(repo))
     assert code == 1 and "outside milestone M1: src/api/list.ts" in out
+
+
+# ---- add-only gate for the existing tests a task may edit ----
+AO_PLAN = {**PLAN, "milestones": [{**PLAN["milestones"][0], "tasks": [
+    {**PLAN["milestones"][0]["tasks"][0], "allowTestEdits": ["src/a.test.ts", "tests/test_a.py", "src/b.test.ts", "e2e/flow.spec.rb"]}, PLAN["milestones"][0]["tasks"][1]]}, PLAN["milestones"][1]]}
+JS_OLD = """describe('x', () => {
+  it('adds', () => {
+    expect(add(1, 2)).toBe(3)
+    expect(add(2, 2)).toEqual(4)
+  })
+  it('lists', () => {
+    expect(list()).toHaveLength(2)
+  }, 5000)
+})
+"""
+PY_OLD = """import pytest
+
+
+def test_add():
+    assert add(1, 2) == 3
+    assert add(2, 2) == 4
+
+
+def test_flag():
+    assert flag()
+"""
+
+
+def addonly(tmp_path, path, old, new):
+    """`old` is the existing test at the branch the task is cut from; `new` is what the task commits."""
+    tmp_path.mkdir(parents=True, exist_ok=True)
+    repo = plan_repo(tmp_path, AO_PLAN)
+    commit(repo, {path: old}, "existing test")
+    ms = head(repo)
+    git(repo, "switch", "-qc", "t1")
+    if new is None:
+        (repo / path).unlink()
+        git(repo, "add", "-A")
+        git(repo, "commit", "-qm", "delete")
+    else:
+        commit(repo, {path: new} if new != old else {"src/a.ts": "export const a = 2\n"})  # same text: the allowed file is not touched
+    return run(repo, ms, str(repo / PLAN_PATH), "--task", "T1", "--approved", appr(repo))
+
+
+def ao_fail(tmp_path, path, old, new, *reasons):
+    code, out = addonly(tmp_path, path, old, new)
+    assert code == 1 and all(f"INTEGRITY FAIL add-only gate: {path}: " in out and r in out for r in reasons), (reasons, out)
+
+
+def test_add_only_accepts_more_tests_more_assertions_and_a_renamed_symbol(tmp_path):
+    grown = JS_OLD.replace("add(", "sum(") + "it('new', () => { expect(1).toBe(1) })\n"  # every `add` renamed, one test added
+    grown = grown.replace("expect(list()).toHaveLength(2)", "expect(list()).toHaveLength(2)\n    expect(list()).toBeTruthy()")
+    code, out = addonly(tmp_path / "js", "src/a.test.ts", JS_OLD, grown)
+    assert code == 0 and out.strip() == "INTEGRITY OK", out
+    code, out = addonly(tmp_path / "py", "tests/test_a.py", PY_OLD, PY_OLD.replace("add(1", "plus(1").replace("add(2", "plus(2") + "\n\ndef test_more():\n    assert 1 == 1\n")
+    assert code == 0 and out.strip() == "INTEGRITY OK", out
+    code, out = addonly(tmp_path / "same", "src/a.test.ts", JS_OLD, JS_OLD)  # the allowed file is not touched
+    assert code == 0, out
+
+
+def test_add_only_refuses_a_removed_or_renamed_block(tmp_path):
+    ao_fail(tmp_path / "a", "src/a.test.ts", JS_OLD, JS_OLD.replace("it('lists'", "it('lists the rows'"), "block lists: test block removed or renamed")
+    ao_fail(tmp_path / "b", "src/a.test.ts", JS_OLD, JS_OLD.split("  it('lists'")[0] + "})\n", "block lists: test block removed or renamed")
+    ao_fail(tmp_path / "c", "tests/test_a.py", PY_OLD, PY_OLD.split("def test_flag")[0], "block test_flag: test block removed or renamed")
+    ao_fail(tmp_path / "d", "src/a.test.ts", JS_OLD, "", "block adds: test block removed or renamed", "block x: test block removed or renamed")
+    ao_fail(tmp_path / "e", "src/a.test.ts", JS_OLD, None, "the file is deleted")
+
+
+def test_add_only_refuses_fewer_assertions_in_a_surviving_block(tmp_path):
+    ao_fail(tmp_path / "a", "src/a.test.ts", JS_OLD, JS_OLD.replace("    expect(add(2, 2)).toEqual(4)\n", ""), "block adds: assertions dropped from 2 to 1")
+    ao_fail(tmp_path / "b", "tests/test_a.py", PY_OLD, PY_OLD.replace("    assert add(2, 2) == 4\n", ""), "block test_add: assertions dropped from 2 to 1")
+    ao_fail(tmp_path / "c", "tests/test_a.py", PY_OLD, PY_OLD.replace("    assert flag()\n", "    flag()\n"), "block test_flag: assertions dropped from 1 to 0")
+    # another test's assertions do not pay for it
+    ao_fail(tmp_path / "d", "src/a.test.ts", JS_OLD, JS_OLD.replace("    expect(add(2, 2)).toEqual(4)\n", "").replace("it('lists', () => {\n", "it('lists', () => {\n    expect(1).toBe(1)\n"), "block adds: assertions dropped")
+
+
+def test_add_only_refuses_a_skip_or_focus_marker(tmp_path):
+    for i, (old, new) in enumerate((("it('adds'", "it.skip('adds'"), ("it('adds'", "it.only('adds'"), ("it('adds'", "it.todo('adds'"), ("it('adds'", "it.fixme('adds'"),
+                                    ("it('adds'", "xit('adds'"), ("describe('x'", "xdescribe('x'"))):
+        ao_fail(tmp_path / f"js{i}", "src/a.test.ts", JS_OLD, JS_OLD.replace(old, new), "skip or focus marker added")
+    ao_fail(tmp_path / "new", "src/a.test.ts", JS_OLD, JS_OLD + "xtest('later', () => {})\n", "block later: skip or focus marker added")
+    for i, (old, new) in enumerate((("def test_add", "@pytest.mark.skip(reason='x')\ndef test_add"), ("def test_add", "@pytest.mark.xfail\ndef test_add"),
+                                    ("    assert flag()", "    pytest.skip('x')\n    assert flag()"))):
+        ao_fail(tmp_path / f"py{i}", "tests/test_a.py", PY_OLD, PY_OLD.replace(old, new), "skip or focus marker added")
+    ao_fail(tmp_path / "pytop", "tests/test_a.py", PY_OLD, PY_OLD.replace("import pytest\n", "import pytest\npytest.skip('all', allow_module_level=True)\n"), "block <top of file>: skip or focus marker added")
+
+
+def test_add_only_refuses_strict_matchers_traded_for_loose_ones(tmp_path):
+    loose = JS_OLD.replace("expect(add(1, 2)).toBe(3)", "expect(add(1, 2)).toBeTruthy()")
+    ao_fail(tmp_path / "a", "src/a.test.ts", JS_OLD, loose, "block adds: strict matchers replaced by loose ones")
+    ao_fail(tmp_path / "b", "src/a.test.ts", JS_OLD, JS_OLD.replace(".toEqual(4)", ".toContain(4)").replace(".toBe(3)", ".toMatch(3)"), "strict matchers replaced by loose ones")
+    ao_fail(tmp_path / "c", "tests/test_a.py", PY_OLD, PY_OLD.replace("assert add(1, 2) == 3", "assert add(1, 2)"), "block test_add: strict matchers replaced by loose ones")
+    # a strict matcher that goes without a loose one coming in is not this rule (the assertion count still guards it)
+    ok_ = JS_OLD.replace("expect(add(1, 2)).toBe(3)", "expect(add(1, 2)).toBe(3)\n    expect(add(1, 2)).toBeDefined()").replace(".toEqual(4)", ".toEqual(4)")
+    assert addonly(tmp_path / "ok", "src/a.test.ts", JS_OLD, ok_)[0] == 0
+
+
+def test_add_only_refuses_a_raised_timeout(tmp_path):
+    ao_fail(tmp_path / "a", "src/a.test.ts", JS_OLD, JS_OLD.replace("}, 5000)", "}, 30000)"), "block lists: timeout raised from 5000 to 30000")
+    ao_fail(tmp_path / "b", "src/a.test.ts", JS_OLD, JS_OLD.replace("it('adds', () => {", "it('adds', () => {\n    jest.setTimeout(9000)"), "block adds: timeout raised from 0 to 9000")
+    ao_fail(tmp_path / "c", "src/a.test.ts", JS_OLD.replace("}, 5000)", "}, { timeout: 1000 })"), JS_OLD.replace("}, 5000)", "}, { timeout: 8000 })"), "timeout raised from 1000 to 8000")
+    ao_fail(tmp_path / "d", "src/a.test.ts", JS_OLD, JS_OLD.replace("it('adds', () => {", "it('adds', async () => {", 1).replace("  })\n  it('lists'", "  }, 60_000)\n  it('lists'"), "block adds: timeout raised from 0 to 60000")
+    assert addonly(tmp_path / "ok", "src/a.test.ts", JS_OLD, JS_OLD.replace("}, 5000)", "}, 3000)"))[0] == 0  # a lower timeout is fine
+
+
+def test_add_only_also_guards_the_tests_of_a_gap_round(tmp_path):
+    repo = gap_repo(tmp_path, "GAP-FIX M1 round=1 files=src/api/list.ts tests=src/b.test.ts")
+    ms = head(repo)
+    commit(repo, {"src/api/list.ts": "x\n", "src/b.test.ts": "it('b2', () => {})\n"})  # block b is gone
+    code, out = run(repo, ms, str(repo / PLAN_PATH), "--task", "M1-gap", "--approved", appr(repo))
+    assert code == 1 and "INTEGRITY FAIL add-only gate: src/b.test.ts: block b: test block removed or renamed" in out, out
+    code, out = run(repo, "main", str(repo / PLAN_PATH), "--milestone", "M1", "--approved", appr(repo))
+    assert code == 1 and "add-only gate: src/b.test.ts: block b:" in out
+
+
+# ---- the gap lane fails closed ----
+def test_invalid_gap_rounds_in_the_approved_plan_is_an_error_not_the_default(tmp_path):
+    for i, bad in enumerate((0, 6, -1, "3", 2.5, True, None)):
+        plan = {**MAY_PLAN, "milestones": [{**MAY_PLAN["milestones"][0], "gapRounds": bad}, PLAN["milestones"][1]]}
+        repo = gap_repo(tmp_path / str(i), "GAP-FIX M1 round=1 files=src/api/a.ts", edits={"src/api/a.ts": "x\n"}, plan=plan)
+        for mode, arg in (("--milestone", "M1"), ("--task", "M1-gap")):
+            base = "main" if mode == "--milestone" else head(repo)
+            code, out = run(repo, base, str(repo / PLAN_PATH), mode, arg, "--approved", appr(repo))
+            assert code == 1 and "gapRounds for M1 must be a whole number from 1 to 5" in out, (bad, mode, out)
+
+
+def test_a_gap_task_requires_approved(tmp_path):
+    repo = gap_repo(tmp_path, "GAP-FIX M1 round=1 files=src/api/a.ts", edits={"src/api/a.ts": "x\n"})
+    for t in ("M1-gap", "M1-gap2", "M1a-gap3"):
+        code, out = run(repo, "main", str(repo / PLAN_PATH), "--task", t)
+        assert code == 2 and out == "", t
+    code, out = run(repo, "main", str(repo / PLAN_PATH), "--task", "T1")  # a plan task still runs without it
+    assert code in (0, 1) and "requires" not in out
+
+
+def test_may_touch_and_gap_rounds_come_from_the_approved_plan_not_head(tmp_path):
+    repo = gap_repo(tmp_path, "GAP-FIX M1 round=1 files=src/secret.ts", "GAP-FIX M1 round=2 files=src/api/a.ts", edits={"src/secret.ts": "x\n", "src/api/a.ts": "x\n"})
+    wide = {**MAY_PLAN, "milestones": [{**MAY_PLAN["milestones"][0], "mayTouch": ["src/*"], "gapRounds": 1}, PLAN["milestones"][1]]}
+    commit(repo, {PLAN_PATH: plan_text(wide, "GAP-FIX M1 round=1 files=src/secret.ts\nGAP-FIX M1 round=2 files=src/api/a.ts\n")})  # HEAD widens both
+    code, out = run(repo, "main", str(repo / PLAN_PATH), "--task", "M1-gap", "--approved", appr(repo))
+    assert code == 1 and "outside task M1-gap: src/secret.ts" in out and "more than 1" not in out, out  # the approved cap is 3, not HEAD's 1
+    assert "outside task M1-gap2: src/api/a.ts" not in run(repo, "main", str(repo / PLAN_PATH), "--task", "M1-gap2", "--approved", appr(repo))[1]  # round 2 exists under the approved cap of 3
+
+
+def test_handover_markdown_in_the_change_folder_is_not_flagged(tmp_path):
+    repo = plan_repo(tmp_path)
+    commit(repo, {"src/a.ts": "export const a = 2\n", "changes/2026-11-24-x/handover-2026-11-26.md": "# handover\n", "changes/2026-11-24-x/handover-M1.md": "x\n"})
+    code, out = run(repo, "main", str(repo / PLAN_PATH), "--milestone", "M1", "--approved", appr(repo))
+    assert code == 0 and out.strip() == "INTEGRITY OK", out
+    for name in ("changes/2026-11-24-x/handover-x.txt", "changes/2026-11-24-x/handover.md", "changes/2026-11-24-x/notes/handover-a.md", "changes/other/handover-a.md"):
+        (tmp_path / name.replace("/", "_")).mkdir()
+        repo = plan_repo(tmp_path / name.replace("/", "_"))
+        commit(repo, {"src/a.ts": "export const a = 2\n", name: "x\n"})
+        code, out = run(repo, "main", str(repo / PLAN_PATH), "--milestone", "M1", "--approved", appr(repo))
+        assert code == 1 and f"outside milestone M1: {name}" in out, name
+
+
+DUP_OLD = """it('dup', () => {
+  expect(a()).toBe(1)
+  expect(b()).toBe(2)
+})
+it('dup', () => {
+  expect(c()).toBe(3)
+  expect(d()).toBe(4)
+}, 5000)
+"""
+
+
+def test_add_only_sums_blocks_that_share_a_name(tmp_path):
+    ao_fail(tmp_path / "a", "src/a.test.ts", DUP_OLD, DUP_OLD.split("it('dup', () => {\n  expect(c")[0], "block dup: assertions dropped from 4 to 2")  # one copy deleted
+    ao_fail(tmp_path / "b", "src/a.test.ts", DUP_OLD, DUP_OLD.replace("  expect(b()).toBe(2)\n", "").replace("}, 5000)", "}, 9000)"), "block dup: assertions dropped", "block dup: timeout raised from 5000 to 9000")
+    ao_fail(tmp_path / "c", "src/a.test.ts", DUP_OLD, DUP_OLD.replace("}, 5000)", "}, 4000)").replace("it('dup', () => {\n  expect(a", "it.skip('dup', () => {\n  expect(a", 1), "block dup: skip or focus marker added")
+    ao_fail(tmp_path / "d", "src/a.test.ts", DUP_OLD, DUP_OLD.replace("it('dup'", "it('dup2'"), "block dup: test block removed or renamed")
+    # the same assertions spread over the two copies in another way stay equal in total
+    spread = DUP_OLD.replace("  expect(b()).toBe(2)\n", "").replace("  expect(c()).toBe(3)\n", "  expect(c()).toBe(3)\n  expect(b()).toBe(2)\n")
+    assert addonly(tmp_path / "ok", "src/a.test.ts", DUP_OLD, spread)[0] == 0
+
+
+def test_add_only_does_not_count_comments_or_strings_as_assertions(tmp_path):
+    base = "it('x', () => {\n  expect(a()).toBe(1)\n})\n"
+    for i, new in enumerate(("it('x', () => {\n  // expect(a()).toBe(1)\n})\n", "it('x', () => {\n  const s = 'expect(a()).toBe(1)'\n})\n",
+                             "it('x', () => {\n  /* expect(a()).toBe(1) */\n})\n", "it('x', () => {\n  log(`expect(a())`) // expect(b())\n})\n")):
+        ao_fail(tmp_path / f"js{i}", "src/a.test.ts", base, new, "block x: assertions dropped from 1 to 0")
+    pbase = "def test_x():\n    assert a() == 1\n    self.assertEqual(a(), 1)\n"
+    for i, new in enumerate(("def test_x():\n    # assert a() == 1\n    # self.assertEqual(a(), 1)\n", "def test_x():\n    s = 'assert a() == 1'\n    t = \"self.assertEqual(a(), 1)\"\n",
+                             "def test_x():\n    r = assert_ok(1)\n    q = x.assert_called(1)\n")):
+        ao_fail(tmp_path / f"py{i}", "tests/test_a.py", pbase, new, "block test_x: assertions dropped from 2 to 0")
+    # `expect (` with a space and a `self.assert*(` call still count
+    assert addonly(tmp_path / "ok", "src/a.test.ts", base, "it('x', () => {\n  expect (a()).toBe(1)\n  // expect(b())\n})\n")[0] == 0
+    assert addonly(tmp_path / "okp", "tests/test_a.py", pbase, pbase.replace("assert a() == 1", "assert a() == 1  # fine") + "    self.assertTrue(a())\n")[0] == 0
+
+
+def test_add_only_parses_timeout_literals_and_fails_closed_on_the_rest(tmp_path):
+    base = "it('t', async () => {\n  expect(a()).toBe(1)\n}, 5000)\n"
+    for i, big in enumerate(("0x7530", "30_000", "3e4", "2.5e4", "0X9C40")):
+        ao_fail(tmp_path / f"lit{i}", "src/a.test.ts", base, base.replace("5000", big), "block t: timeout raised from 5000 to ")
+    assert addonly(tmp_path / "low", "src/a.test.ts", base, base.replace("5000", "0x1388"))[0] == 0  # 0x1388 is 5000
+    assert addonly(tmp_path / "same", "src/a.test.ts", base, base.replace("5000", "5_000"))[0] == 0
+    ao_fail(tmp_path / "var", "src/a.test.ts", base, base.replace("5000", "LIMIT"), "block t: timeout LIMIT is not a literal and changed")
+    ao_fail(tmp_path / "expr", "src/a.test.ts", "it('t', () => {\n  expect(1).toBe(1)\n  page.go(u, { timeout: 100 })\n})\n",
+            "it('t', () => {\n  expect(1).toBe(1)\n  page.go(u, { timeout: BASE * 2 })\n})\n", "is not a literal and changed")
+    ao_fail(tmp_path / "set", "src/a.test.ts", base, base.replace("  expect", "  jest.setTimeout(LIMIT + 1)\n  expect"), "is not a literal and changed")
+    unchanged = "it('t', () => {\n  expect(1).toBe(1)\n  page.go(u, { timeout: LIMIT })\n})\n"
+    assert addonly(tmp_path / "ok", "src/a.test.ts", unchanged, unchanged.replace("expect(1)", "expect(2)") + "it('n', () => { expect(1).toBe(1) })\n")[0] == 0
+
+
+def test_add_only_never_skips_an_unsupported_file_type(tmp_path):
+    ao_fail(tmp_path / "a", "e2e/flow.spec.rb", "it 'a' do\nend\n", "it 'a' do\n  skip\nend\n", "unsupported file type, cannot verify")
+    ao_fail(tmp_path / "b", "e2e/flow.spec.rb", "it 'a' do\nend\n", None, "unsupported file type, cannot verify")
+    assert addonly(tmp_path / "c", "e2e/flow.spec.rb", "it 'a' do\nend\n", "it 'a' do\nend\n")[0] == 0  # not edited: nothing to verify
+
+
+def test_add_only_knows_more_skip_markers_and_early_exits(tmp_path):
+    base = "it('x', () => {\n  expect(a()).toBe(1)\n})\n"
+    for i, line in enumerate(("  test.fixme(true)", "  this.skip()", "  it.skipIf(ci)('y', () => {})", "  it.runIf(ci)('y', () => {})", "  test.fixme()")):
+        ao_fail(tmp_path / f"js{i}", "src/a.test.ts", base, base.replace("  expect", line + "\n  expect"), "skip or focus marker added")
+    pbase = "def test_x():\n    assert a() == 1\n"
+    for i, (old, new) in enumerate((("def test_x", "@unittest.skip('x')\ndef test_x"), ("def test_x", "@unittest.skipIf(ci, 'x')\ndef test_x"), ("def test_x", "@unittest.skipUnless(ci, 'x')\ndef test_x"),
+                                    ("    assert", "    pytest.importorskip('numpy')\n    assert"))):
+        ao_fail(tmp_path / f"py{i}", "tests/test_a.py", pbase, pbase.replace(old, new), "skip or focus marker added")
+    for i, line in enumerate(("  return", "  return;", "  if (false) { expect(1) }")):
+        ao_fail(tmp_path / f"early{i}", "src/a.test.ts", base, base.replace("  expect", line + "\n  expect"), "block x: early exit added before the first assertion")
+    for i, line in enumerate(("    return", "    if 0:\n        pass", "    if False:\n        pass")):
+        ao_fail(tmp_path / f"pyearly{i}", "tests/test_a.py", pbase, pbase.replace("    assert", line + "\n    assert"), "block test_x: early exit added before the first assertion")
+    # a return after the first assertion, or one that was already there, is fine
+    assert addonly(tmp_path / "ok", "src/a.test.ts", base, base.replace("})", "  return\n})"))[0] == 0
+    early = "it('x', () => {\n  return\n  expect(a()).toBe(1)\n})\n"
+    assert addonly(tmp_path / "okold", "src/a.test.ts", early, early.replace("toBe(1)", "toBe(2)"))[0] == 0
+
+
+def test_kickoff_and_handover_exemptions_cover_one_path_segment_only(tmp_path):
+    for i, (name, reason) in enumerate((("changes/2026-11-24-x/handover-x/y.md", "outside milestone M1: changes/2026-11-24-x/handover-x/y.md"),
+                                        ("changes/2026-11-24-x/handover-x/delta.md", "delta changed: changes/2026-11-24-x/handover-x/delta.md"),
+                                        ("changes/2026-11-24-x/kickoff-a/plan.md", "plan changed: changes/2026-11-24-x/kickoff-a/plan.md"),
+                                        ("changes/2026-11-24-x/kickoff-a/b.md", "outside milestone M1: changes/2026-11-24-x/kickoff-a/b.md"))):
+        (tmp_path / str(i)).mkdir()
+        repo = plan_repo(tmp_path / str(i))
+        commit(repo, {"src/a.ts": "export const a = 2\n", name: "x\n"})
+        code, out = run(repo, "main", str(repo / PLAN_PATH), "--milestone", "M1", "--approved", appr(repo))
+        assert code == 1 and reason in out, (name, out)
+    (tmp_path / "ok").mkdir()
+    repo = plan_repo(tmp_path / "ok")
+    commit(repo, {"src/a.ts": "export const a = 2\n", "changes/2026-11-24-x/kickoff-M1.md": "k\n", "changes/2026-11-24-x/handover-a.md": "h\n"})
+    code, out = run(repo, "main", str(repo / PLAN_PATH), "--milestone", "M1", "--approved", appr(repo))
+    assert code == 0 and out.strip() == "INTEGRITY OK", out
+
+
+def test_add_only_counts_node_assert_calls(tmp_path):
+    base = "it('x', () => {\n  assert.strictEqual(a(), 1)\n  assert (b)\n  assert.deepStrictEqual(c(), [1])\n})\n"
+    ao_fail(tmp_path / "a", "src/a.test.ts", base, base.replace("  assert (b)\n", ""), "block x: assertions dropped from 3 to 2")
+    ao_fail(tmp_path / "b", "src/a.test.ts", base, base.replace("  assert.strictEqual(a(), 1)\n", "  expect(a()).toBeTruthy()\n"), "block x: strict matchers replaced by loose ones")
+    ao_fail(tmp_path / "c", "src/a.test.ts", base, base.replace("assert.deepStrictEqual(c(), [1])", "expect(c()).toBeDefined()"), "block x: strict matchers replaced by loose ones")
+    assert addonly(tmp_path / "ok", "src/a.test.ts", base, base.replace("a(), 1", "a(), 2") + "it('y', () => { assert.equal(1, 1) })\n")[0] == 0
+
+
+def test_add_only_fails_closed_on_a_third_argument_that_is_not_a_literal(tmp_path):
+    base = "it('t', async () => {\n  expect(a()).toBe(1)\n}, 5000)\n"
+    ao_fail(tmp_path / "expr", "src/a.test.ts", base, base.replace("5000", "BASE * 2"), "is not a literal and changed")
+    ao_fail(tmp_path / "name", "src/a.test.ts", base, base.replace("5000", "LIMIT"), "block t: timeout LIMIT is not a literal and changed")
+    ao_fail(tmp_path / "gone", "src/a.test.ts", base, base.replace("}, 5000)", "})"), "block t: timeout removed, cannot verify")
+    ao_fail(tmp_path / "opts", "src/a.test.ts", "it('t', () => {\n  expect(a()).toBe(1)\n}, { timeout: 100 })\n", "it('t', () => {\n  expect(a()).toBe(1)\n}, { timeout: LIMIT })\n", "is not a literal and changed")
+    one = "it('t', () => { expect(a()).toBe(1) }, 5000)\n"  # on the test line itself
+    ao_fail(tmp_path / "line", "src/a.test.ts", one, one.replace("5000", "SLOW"), "is not a literal and changed")
+    assert addonly(tmp_path / "ok", "src/a.test.ts", base, base.replace("toBe(1)", "toBe(2)"))[0] == 0  # unchanged argument
+
+
+def test_add_only_fails_when_the_block_count_of_a_name_drops(tmp_path):
+    two = "it('dup', () => {\n  expect(a()).toBe(1)\n})\nit('dup', () => {\n  expect(b()).toBe(2)\n})\n"
+    merged = "it('dup', () => {\n  expect(a()).toBe(1)\n  expect(b()).toBe(2)\n})\n"  # same total, one block fewer
+    ao_fail(tmp_path / "a", "src/a.test.ts", two, merged, "block dup: block count dropped from 2 to 1")
+    ao_fail(tmp_path / "b", "tests/test_a.py", "def test_d():\n    assert a() == 1\n\n\ndef test_d():\n    assert b() == 2\n", "def test_d():\n    assert a() == 1\n    assert b() == 2\n", "block test_d: block count dropped from 2 to 1")
+    assert addonly(tmp_path / "ok", "src/a.test.ts", two, two + "it('dup', () => { expect(1).toBe(1) })\n")[0] == 0
+
+
+def test_add_only_counts_nothing_inside_multi_line_comments_and_literals(tmp_path):
+    base = "it('x', () => {\n  expect(a()).toBe(1)\n})\n"
+    for i, new in enumerate(("it('x', () => {\n  /*\n  expect(a()).toBe(1)\n  */\n})\n", "it('x', () => {\n  /* start\n  expect(a()).toBe(1) */\n})\n",
+                             "it('x', () => {\n  const s = `\n  expect(a()).toBe(1)\n  `\n})\n")):
+        ao_fail(tmp_path / f"js{i}", "src/a.test.ts", base, new, "block x: assertions dropped from 1 to 0")
+    pbase = "def test_x():\n    assert a() == 1\n"
+    ao_fail(tmp_path / "py", "tests/test_a.py", pbase, 'def test_x():\n    """\n    assert a() == 1\n    """\n', "block test_x: assertions dropped from 1 to 0")
+    ghost = "/*\nit('ghost', () => {\n  expect(1).toBe(1)\n})\n*/\n" + base
+    assert addonly(tmp_path / "ok", "src/a.test.ts", ghost, base)[0] == 0  # a test inside a comment is not a block
+    live = "const t = `\nit('ghost', () => {})\n`\n" + base
+    assert addonly(tmp_path / "ok2", "src/a.test.ts", live, base)[0] == 0
+    assert addonly(tmp_path / "ok3", "src/a.test.ts", base, "/* header\n   comment */\n" + base)[0] == 0
+
+
+def test_kickoff_exemption_needs_the_md_extension_and_one_segment(tmp_path):
+    for i, name in enumerate(("changes/2026-11-24-x/kickoff-M1.txt", "changes/2026-11-24-x/kickoff-a/b.md", "changes/2026-11-24-x/kickoff-M1")):
+        (tmp_path / str(i)).mkdir()
+        repo = plan_repo(tmp_path / str(i))
+        commit(repo, {"src/a.ts": "export const a = 2\n", name: "x\n"})
+        code, out = run(repo, "main", str(repo / PLAN_PATH), "--milestone", "M1", "--approved", appr(repo))
+        assert code == 1 and f"outside milestone M1: {name}" in out, (name, out)
+    (tmp_path / "ok").mkdir()
+    repo = plan_repo(tmp_path / "ok")
+    commit(repo, {"src/a.ts": "export const a = 2\n", "changes/2026-11-24-x/kickoff-M1.md": "k\n", "changes/2026-11-24-x/kickoff-all.md": "k\n"})
+    code, out = run(repo, "main", str(repo / PLAN_PATH), "--milestone", "M1", "--approved", appr(repo))
+    assert code == 0 and out.strip() == "INTEGRITY OK", out

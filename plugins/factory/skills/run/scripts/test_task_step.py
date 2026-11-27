@@ -143,7 +143,7 @@ def test_bad_arguments_are_refused(tmp_path):
     repo, sha = milestone_repo(tmp_path)
     assert step(repo, "finish", P, "M1", "T1") [0] == 2  # --approved is required
     assert step(repo, "start", P, "M1", "T1")[0] == 2
-    for bad in ("../evil", "T1;x", "M1-gap2", "-rf"):
+    for bad in ("../evil", "T1;x", "M1-gap9", "M1-gap0", "M1-gapx", "-rf"):
         assert ok(repo, sha, "start", bad)[0] == 2, bad
     assert ok(repo, sha, "bogus")[0] == 2
     code, out = step(repo, "target", P, "x;rm", "--approved", sha)
@@ -172,3 +172,23 @@ def test_pin_is_recorded_and_passed_to_integrity(tmp_path):
     assert ok(repo, sha, "pin", sha) == (0, f"PIN OK {sha}\n")
     assert json.loads((repo / ".factory/state/M1.json").read_text())["pin"] == sha
     assert ok(repo, sha, "pin", "deadbeef")[0] == 1
+
+
+def test_milestone_id_with_a_letter_suffix_and_its_gap_task_are_accepted(tmp_path):
+    repo, sha = milestone_repo(tmp_path)
+    code, out = step(repo, "status", P, "M2a", "--approved", sha)
+    assert code == 0 and "not a milestone id" not in out  # parsed; its state is just empty here
+    for bad in ("M2A", "M2ab", "M"):
+        code, out = step(repo, "status", P, bad, "--approved", sha)
+        assert code == 1 and "not a milestone id" in out, bad
+    assert ok(repo, sha, "start", "M2a-gap")[0] != 2 and ok(repo, sha, "start", "M2A-gap")[0] == 2
+
+
+def test_gap_round_tasks_get_their_own_worktree_and_merge(tmp_path):
+    repo, sha = milestone_repo(tmp_path)
+    ok(repo, sha, "target")
+    for t in ("M1-gap", "M1-gap2"):
+        code, out = ok(repo, sha, "start", t)
+        wt = repo / ".worktrees" / f"{SLUG}-{t}"  # the task id already carries the milestone
+        assert code == 0 and f" {wt} " in out and wt.is_dir(), out
+    assert git(repo, "rev-parse", "--verify", f"{SLUG}-M1-gap2")

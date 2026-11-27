@@ -1,12 +1,12 @@
 #!/usr/bin/env python3
 """Usage: check-plan.py <plan.md> [--all] [--approved <sha>]
 With --all every milestone must have tasks and the plan must have no `hold` (what goal-brief.py --all needs).
-With --approved plan.md through its json block, delta.md and intent.md must equal revision <sha> (only the text after the block may differ).
+With --approved plan.md through its json block, delta.md, intent.md and standing.md (the owner's standing approval, optional) must equal revision <sha> (only the text after the block may differ).
 Validates the first fenced block with info string `json factory`, delta.md and intent.md next to it
 (intent ids are list items `- outcome-1: ...` / `- constraint-1: ...`; every delta requirement line `- req-<n>: ...` cites one as `[outcome-1]`).
 Old ids (`I1`, `C1`, `<spec>/R<n>`) fail with a one-line rewrite hint. In the plan (through its json block) and in intent.md,
 an id written in prose must sit in parentheses after at least two words: `guests see their items (req-12)` (the 8-word cap in SKILL.md is guidance, not checked).
-A task's prose bullet that names an effort or model must match the task's json. A milestone's optional `mayTouch` is a non-empty list of narrow relative path globs.
+A task's prose bullet that names an effort or model must match the task's json. A milestone's optional `mayTouch` is a non-empty list of narrow relative path globs; its optional `gapRounds` is a whole number 1 to 5 (default 3).
 Prints `PLAN OK <n> milestones <m> tasks` (exit 0) or one `PLAN FAIL <reason>` per problem (exit 1).
 """
 import json
@@ -150,13 +150,13 @@ def at_sha(path, sha):
 
 
 def approved_errs(plan_path, sha):
-    """plan.md from its start through the json block, delta.md and intent.md must equal the approved revision; only the text after the block may differ."""
+    """plan.md from its start through the json block, delta.md, intent.md and standing.md (when there is one) must equal the approved revision; only the text after the block may differ."""
     d = os.path.dirname(os.path.abspath(plan_path))
     ok = subprocess.run(["git", "-C", d, "rev-parse", "--verify", "--quiet", f"{sha}^{{commit}}"], capture_output=True)
     if ok.returncode:
         return [f"approved {sha} is not a commit in this repo"]
     errs = []
-    for name in (os.path.basename(plan_path), "delta.md", "intent.md"):
+    for name in (os.path.basename(plan_path), "delta.md", "intent.md", "standing.md"):
         path = os.path.join(d, name)
         then = at_sha(path, sha)
         now = open(path, encoding="utf-8").read() if os.path.exists(path) else None
@@ -227,7 +227,7 @@ def filled(v):
 
 TEST_DIR = re.compile(r"(tests?|__tests__|e2e)/")
 TEST_FILE = re.compile(r"[^/]*\.(test|spec)\.[^/]*")
-MS_ID, TASK_ID = r"M\d+", r"T\d+"
+MS_ID, TASK_ID = r"M\d+[a-z]?", r"T\d+"
 
 
 def is_test_path(f):
@@ -237,14 +237,14 @@ def is_test_path(f):
 
 
 def id_errs(plan):
-    """Milestone and task ids go into every message, so they must look like M<n> and T<n> before anything else runs.
+    """Milestone and task ids go into every message, so they must look like M<n> (or M<n><letter>) and T<n> before anything else runs.
     A bad id is shown escaped and cut, never raw."""
     errs = []
     for m in plan.get("milestones", []):
         if not isinstance(m, dict):
             continue
         if not re.fullmatch(MS_ID, str(m.get("id", ""))):
-            errs.append(f"milestone id {ascii(m.get('id'))[:40]} must look like M<n>")
+            errs.append(f"milestone id {ascii(m.get('id'))[:40]} must look like M<n> (or M<n><letter>, like M2a)")
         for t in m.get("tasks", []) if isinstance(m.get("tasks", []), list) else []:
             if isinstance(t, dict) and not re.fullmatch(TASK_ID, str(t.get("id", ""))):
                 errs.append(f"task id {ascii(t.get('id'))[:40]} must look like T<n>")
@@ -312,17 +312,19 @@ def guards_errs(plan, plan_path, notes):
 
 
 def may_touch_errs(m, mid):
-    """`mayTouch`: path globs the owner approves with the plan, for the one plan-gap fix round. Narrow, relative, no spaces or commas (the log line is comma-separated)."""
+    """`mayTouch`: path globs the owner approves with the plan, for the plan-gap fix rounds (at most `gapRounds`, a whole number 1 to 5, default 3). Narrow, relative, no spaces or commas (the log line is comma-separated)."""
+    rounds = m.get("gapRounds", 3)
+    errs = [] if type(rounds) is int and 1 <= rounds <= 5 else [f"{mid} gapRounds must be a whole number from 1 to 5"]
     if "mayTouch" not in m:
-        return []
+        return errs
     g = m["mayTouch"]
     if not (is_strs(g) and g):
-        return [f"{mid} mayTouch must be a non-empty list of path globs"]
+        return errs + [f"{mid} mayTouch must be a non-empty list of path globs"]
     def bad(x):  # `*` stays inside one path segment; the first segment is static; a trailing `/` is a plain directory prefix; no `**`
         segs = x.split("/")
         return (not x or x.startswith("/") or ".." in segs or "**" in x or re.search(r"[\s,]", x) is not None or re.search(r"[*?\[]", segs[0]) is not None
                 or (x.endswith("/") and re.search(r"[*?\[]", x) is not None))
-    return [f"{mid} mayTouch {x!r} must be a relative path under a static directory (`src/api/*`, `tests/api/`): `*` stays in one path segment, no `**`, no spaces or commas" for x in g if bad(x)]
+    return errs + [f"{mid} mayTouch {x!r} must be a relative path under a static directory (`src/api/*`, `tests/api/`): `*` stays in one path segment, no `**`, no spaces or commas" for x in g if bad(x)]
 
 
 def surface_errs(m, mid):
