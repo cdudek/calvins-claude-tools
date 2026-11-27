@@ -384,7 +384,16 @@ for path in sorted(set(p for p in os.environ.get("ALLOW", "").split("\n") if p))
     old, new = show(base, path), show("HEAD", path)
     if old is None or new == old:
         continue  # a new file has nothing to keep, an untouched one nothing to verify
-    if not py and ext not in ("js", "jsx", "ts", "tsx", "mjs", "cjs", "mts", "cts"):
+    if ext == "json" and new is not None:  # a fixture: every key and list item it had must still be there
+        def kept(o, n):
+            if isinstance(o, dict): return isinstance(n, dict) and all(k in n and kept(v, n[k]) for k, v in o.items())
+            if isinstance(o, list): return isinstance(n, list) and all(any(kept(x, y) for y in n) for x in o)
+            return o == n
+        try: ok = kept(json.loads(old), json.loads(new))
+        except ValueError: ok = False
+        if not ok: print("add-only gate: " + path + ": a JSON fixture may only gain keys and list items")
+        continue
+    if not py and ext not in ("json", "js", "jsx", "ts", "tsx", "mjs", "cjs", "mts", "cts"):
         print("add-only gate: " + path + ": unsupported file type, cannot verify")
         continue
     if new is None:
