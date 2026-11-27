@@ -11,6 +11,7 @@ or `Adds` sentences name must be in the task's `files` or `allowTestEdits`. A mi
 relative path globs; its optional `gapRounds` is a whole number 1 to 5 (default 3); its optional `securityRounds` is a whole number 1 to 3
 (default 1). A milestone with `guards` needs a one-sentence `rule` (who may read or change the guarded data) and exactly one task with
 `"ruleTest": true` (the test of that rule across every read path, built before the other tasks).
+A task's optional `testChanges` lists the existing test blocks it may rename (`{"file", "block", "to", "why"}`) or remove (`{"file", "block", "remove": true, "why"}`); `file` must be in its `allowTestEdits` and `why` non-empty.
 Prints `PLAN OK <n> milestones <m> tasks` (exit 0) or one `PLAN FAIL <reason>` per problem (exit 1).
 """
 import json
@@ -233,6 +234,36 @@ def validate(plan_path, approved=None, every=False):
 
 def is_strs(v):
     return isinstance(v, list) and all(isinstance(x, str) for x in v)
+
+
+def test_changes_errs(t, where):
+    """A task's optional `testChanges`: the renames and removals of existing test blocks the plan approves, each `{file, block, to, why}` (rename) or `{file, block, remove: true, why}` (removal).
+    `file` is one of the task's `allowTestEdits`, `why` is a non-empty reason, and exactly one of `to` and `remove` is given."""
+    tc = t.get("testChanges", [])
+    if not isinstance(tc, list):
+        return [f"{where} testChanges must be a list"]
+    allow = t.get("allowTestEdits", []) if is_strs(t.get("allowTestEdits", [])) else []
+    errs, norm = [], lambda x: " ".join(x.split())
+    for i, e in enumerate(tc):
+        w = f"{where} testChanges[{i}]"
+        if not isinstance(e, dict):
+            errs.append(f"{w} must be an object")
+            continue
+        errs += [f"{w} has unknown key {k}" for k in sorted(set(e) - {"file", "block", "to", "remove", "why"})]
+        if e.get("file") not in allow:
+            errs.append(f"{w} file {e.get('file')!r} is not in the task's allowTestEdits")
+        for k in ("block", "why"):
+            if not (isinstance(e.get(k), str) and e[k].strip()):
+                errs.append(f"{w} {k} must be a non-empty string")
+        if ("to" in e) == ("remove" in e):
+            errs.append(f"{w} needs exactly one of to and remove")
+        elif "remove" in e and e["remove"] is not True:
+            errs.append(f"{w} remove must be true")
+        elif "to" in e and not (isinstance(e["to"], str) and e["to"].strip()):
+            errs.append(f"{w} to must be a non-empty string")
+        elif "to" in e and isinstance(e.get("block"), str) and norm(e["to"]) == norm(e["block"]):
+            errs.append(f"{w} to is the same name as block")
+    return errs
 
 
 def filled(v):
@@ -462,6 +493,7 @@ def check(plan):
                 errs += [f"{mid}/{tid} needs {n}, not a task of an earlier milestone" for n in t.get("needs", []) if n not in earlier]
             if not is_strs(t.get("allowTestEdits", [])):
                 errs.append(f"{mid}/{tid} allowTestEdits must be a list of strings")
+            errs += test_changes_errs(t, f"{mid}/{tid}")
             for f in t.get("files", []):
                 if f in owner and owner[f] != tid:
                     errs.append(f"{mid} tasks {owner[f]} and {tid} both own {f}")

@@ -11,6 +11,8 @@
 # --milestone <M> (all rounds), and are the whole scope of --task <M>-gap<n> (round n; <M>-gap is round 1), but only for paths matching the approved
 # milestone's mayTouch and gapRounds, both read from the plan at --approved (a gap task requires it; an invalid gapRounds fails); rounds are numbered 1..n once each (a line without round= is round 1), at most the milestone's gapRounds (default 3).
 #
+# Test blocks an approved requirement renames or makes obsolete: a task's `testChanges` (read from the plan at --approved only, for files in its allowTestEdits) maps an old block name to a new one, or lets one block go; the counts are then compared as usual.
+#
 # Threat model. Guards against: a builder agent that, by mistake or to make a check go green, edits or deletes an existing test, skips one,
 # adds a lint suppression, or changes files outside its task (CI, .github/, .factory/, the plan, baselines, the spec). It reads committed git
 # state only. Not in scope, listed as known limits: an agent that sets out to defeat the check (renamed or generated test files, tests that
@@ -52,7 +54,7 @@ if [ -n "$approved" ]; then
   git -C "$repo" merge-base --is-ancestor "$approved" HEAD 2>/dev/null || { say "approved $approved is not an ancestor of HEAD"; exit 1; }
 fi
 
-allow="" files="" integ="" pbase="" slug="" last=0 planfile=""
+tchg="" allow="" files="" integ="" pbase="" slug="" last=0 planfile=""
 if [ -n "$plan" ]; then
   out=$(python3 -c '
 import fnmatch, json, os, re, subprocess, sys
@@ -107,11 +109,14 @@ if sel is None: sel = [{"allowTestEdits": p.get("allowTestEdits", [])}]  # old p
 elif not sel: print("ERR\tno task or milestone " + (task or ms) + " in the plan")
 for t in sel:
     for f in t.get("files", []): print("FILE\t" + f)
-    for a in t.get("allowTestEdits", []): print("ALLOW\t" + a)' "$plan" "$repo" "$approved" "$task" "$ms") || { say "cannot read plan $plan"; exit 1; }
+    for a in t.get("allowTestEdits", []): print("ALLOW\t" + a)
+    # testChanges (a listed rename or removal) come from the plan at --approved only, never HEAD or the working file, and only for a file the task may edit
+    for e in (t.get("testChanges", []) if approved and isinstance(t.get("testChanges", []), list) else []):
+        if isinstance(e, dict) and e.get("file") in t.get("allowTestEdits", []): print("TCHG\t" + json.dumps(e))' "$plan" "$repo" "$approved" "$task" "$ms") || { say "cannot read plan $plan"; exit 1; }
   while IFS=$'\t' read -r k v; do
     case "$k" in
       PLANFILE) planfile="$v" ;; BASE) pbase="$v" ;; INTEG) integ="$v" ;; SLUG) slug="$v" ;; LAST) last=1 ;;
-      FILE) files+="$v"$'\n' ;; ALLOW) allow+="$v"$'\n' ;;
+      FILE) files+="$v"$'\n' ;; ALLOW) allow+="$v"$'\n' ;; TCHG) tchg+="$v"$'\n' ;;
       ERR) say "$v"; exit 1 ;;
     esac
   done <<< "$out"
@@ -248,9 +253,11 @@ done <<< "$names"
 # literals holding quotes, Python line continuations and nested describe scopes. Upgrade to a real parser when a real edit trips it.
 addonly_py() {
   python3 - "$@" <<'PY'
-import os, re, subprocess, sys
+import json, os, re, subprocess, sys
 repo, base = sys.argv[1:3]
-JS_START = re.compile(r"""^\s*x?(?:it|test|describe)(?:\.\w+)*\s*\(\s*(["'`])(.*?)\1""")
+JS_HEAD = re.compile(r"^\s*x?(?:it|test|describe)\b")
+MODIFIER = re.compile(r"\.\w+")
+NAME = re.compile(r"\s*\(\s*([\"'`])((?:\\.|(?!\1).)*)\1", re.S)
 PY_START = re.compile(r"\s*(?:async\s+)?def (test_\w*)")
 SKIP = re.compile(r"\.(?:skip|only|todo|fixme)\b|\.(?:skipIf|runIf)\(|\bthis\.skip\(|\btest\.fixme\(|\b(?:xit|xdescribe|xtest)\(|pytest\.(?:skip|importorskip)\(|@pytest\.mark\.(?:skip|xfail)|@unittest\.skip(?:If|Unless)?\b")
 STRICT = re.compile(r"\.(?:toBe|toEqual|toStrictEqual|toHaveLength)\(|\.toThrow\(\s*[^)\s]|\bassertEqual\b|\bassert\.(?:equal|strictEqual|deepStrictEqual)\(")
@@ -262,6 +269,7 @@ TIMEOUT = [re.compile(r"\btimeout:\s*([^,})\s]+)"), re.compile(r"\b(?:jest|test|
 TIMEOUT_ON_TEST_LINE = re.compile(r",\s*([^,()]+?)\s*\)\s*;?\s*$")
 EARLY = [re.compile(r"^\s*return\s*;?\s*$"), re.compile(r"\bif\s*\(\s*false\s*\)"), re.compile(r"^\s*if\s+(?:0|False)\s*:")]
 INF = float("inf")
+TC = [json.loads(l) for l in os.environ.get("TESTCHANGES", "").split("\n") if l]
 
 def show(ref, path):
     p = subprocess.run(["git", "-C", repo, "show", ref + ":" + path], capture_output=True, text=True)
@@ -293,6 +301,37 @@ def scan(lines, py):
         out.append(("".join(clean), fresh))
     return out
 
+def skip_group(t, i):
+    """t[i] opens a group (or a tagged template): the index after its balanced close, string-aware; -1 when unbalanced."""
+    depth = 0
+    while i < len(t):
+        c = t[i]
+        if c in "\"'`":
+            j = i + 1
+            while j < len(t) and t[j] != c: j += 2 if t[j] == "\\" else 1
+            i = j + 1
+            if depth == 0: return i
+            continue
+        depth += c in "([{"
+        depth -= c in ")]}"
+        i += 1
+        if depth == 0: return i
+    return -1
+
+def block_name(text):
+    """The normalised name of the JS block that starts `text`: it/test/describe, then `.modifier` and `.modifier(args)` parts (each, concurrent, skipIf(...), runIf(...), only, skip),
+    then `(` and a string literal. For `.each` the table is skipped, so the name is the first string literal after it. None for a dynamic name."""
+    i = JS_HEAD.match(text).end()
+    while True:
+        m = MODIFIER.match(text, i)
+        if not m: break
+        i = m.end()
+        if m.group(0) in (".each", ".skipIf", ".runIf") and text.startswith(("(", "`"), i):  # these take arguments before the call; for the rest `(` is the call
+            i = skip_group(text, i)
+            if i < 0: return None
+    m = NAME.match(text, i)
+    return " ".join(m.group(2).split()) if m else None
+
 def num(tok):
     t = tok.replace("_", "")
     try: return float(int(t, 16)) if t[:2].lower() == "0x" else float(t)
@@ -304,11 +343,15 @@ def parse(text, py):
     sc = scan(lines, py)
     starts = []
     for i, l in enumerate(lines):
-        m = (PY_START if py else JS_START).match(l) if sc[i][1] else None
-        if m:
+        if py:
+            m = PY_START.match(l) if sc[i][1] else None
+            nm = m.group(1) if m else None
+        else:
+            nm = block_name("\n".join(lines[i:i + 40])) if sc[i][1] and JS_HEAD.match(l) else None
+        if nm:
             while py and i > 0 and lines[i - 1].strip().startswith("@") and (not starts or starts[-1][0] < i - 1):
                 i -= 1  # decorators belong to the test below them
-            starts.append((i, m.group(1) if py else m.group(2)))
+            starts.append((i, nm))
     cuts = [(0, "<top of file>")] + starts + [(len(lines), None)]
     out = {}
     for (a, name), (b, _) in zip(cuts, cuts[1:]):
@@ -324,7 +367,7 @@ def parse(text, py):
             c["strict"] += len(STRICT.findall(l)) + (1 if bare and "==" in l else 0)
             c["loose"] += len(LOOSE.findall(l)) + (1 if bare and "==" not in l else 0)
             if not py:
-                pats = TIMEOUT + ([TIMEOUT_ON_TEST_LINE] if JS_START.match(lines[i]) else [])
+                pats = TIMEOUT + ([TIMEOUT_ON_TEST_LINE] if JS_HEAD.match(lines[i]) else [])
                 for tok in set(tok.strip() for t in pats for tok in t.findall(l)):  # one count per token per line, whichever pattern saw it
                     c["ntimeouts"] += 1
                     v = num(tok)
@@ -349,11 +392,20 @@ for path in sorted(set(p for p in os.environ.get("ALLOW", "").split("\n") if p))
         continue
     ob, nb = parse(old, py), parse(new, py)
     def bad(name, why): print("add-only gate: " + path + ": block " + name + ": " + why)
+    ren, rem = {}, set()  # the plan's testChanges for this file: old name -> new name, and the blocks that may disappear
+    for e in TC:
+        if e.get("file") == path and isinstance(e.get("block"), str):
+            if isinstance(e.get("to"), str) and "remove" not in e: ren[" ".join(e["block"].split())] = " ".join(e["to"].split())
+            elif e.get("remove") is True and "to" not in e: rem.add(" ".join(e["block"].split()))
     for name, o in ob.items():
-        if name not in nb:
-            bad(name, "test block removed or renamed")
+        target = ren.get(name, name)
+        if target != name and target in ob:
+            bad(name, "rename target " + target + " already exists")
             continue
-        n = nb[name]
+        if target not in nb:
+            if name not in rem or name in ren: bad(name, "test block removed or renamed")
+            continue
+        n = nb[target]
         if n["blocks"] < o["blocks"]: bad(name, "block count dropped from %d to %d" % (o["blocks"], n["blocks"]))
         if n["assertions"] < o["assertions"]: bad(name, "assertions dropped from %d to %d" % (o["assertions"], n["assertions"]))
         if n["skips"] > o["skips"]: bad(name, "skip or focus marker added")
@@ -364,12 +416,12 @@ for path in sorted(set(p for p in os.environ.get("ALLOW", "").split("\n") if p))
             if n["odd"].count(tok) > o["odd"].count(tok): bad(name, "timeout " + tok + " is not a literal and changed"); break
         if n["early"] > o["early"]: bad(name, "early exit added before the first assertion")
     for name, n in nb.items():
-        if name not in ob and n["skips"]: bad(name, "skip or focus marker added")
+        if name not in ob and name not in ren.values() and n["skips"]: bad(name, "skip or focus marker added")
 PY
 }
 if [ -n "$allow" ]; then
   mb=$(git -C "$repo" merge-base "$base" HEAD 2>/dev/null || echo "$base")
-  addonly=$(ALLOW="$allow" addonly_py "$repo" "$mb") || { say "add-only gate could not run"; exit 1; }
+  addonly=$(ALLOW="$allow" TESTCHANGES="$tchg" addonly_py "$repo" "$mb") || { say "add-only gate could not run"; exit 1; }
   while IFS= read -r line; do if [ -n "$line" ]; then say "$line"; fi; done <<< "$addonly"
 fi
 

@@ -935,3 +935,118 @@ def test_kickoff_exemption_needs_the_md_extension_and_one_segment(tmp_path):
     commit(repo, {"src/a.ts": "export const a = 2\n", "changes/2026-11-24-x/kickoff-M1.md": "k\n", "changes/2026-11-24-x/kickoff-all.md": "k\n"})
     code, out = run(repo, "main", str(repo / PLAN_PATH), "--milestone", "M1", "--approved", appr(repo))
     assert code == 0 and out.strip() == "INTEGRITY OK", out
+
+
+# ---- parameterised and modified blocks are blocks ----
+SEARCH_DOORS = """describe('search server door', () => {
+  it.each([
+    ['a', 1],
+    ['b', 2],
+  ])('search server door compatibility %s', (k, v) => {
+    expect(door(k)).toBe(v)
+    expect(door(k)).toEqual(v)
+    expect(door(k)).toBeDefined()
+    expect(door(k, true)).toBe(v)
+  })
+})
+"""
+
+
+def test_add_only_a_new_it_before_an_it_each_block_passes(tmp_path):
+    new = SEARCH_DOORS.replace("  it.each([", "  it('a new door test', () => {\n    expect(1).toBe(1)\n  })\n  it.each([")
+    code, out = addonly(tmp_path / "ok", "src/a.test.ts", SEARCH_DOORS, new)
+    assert code == 0 and out.strip() == "INTEGRITY OK", out
+
+
+def test_add_only_it_each_assertions_still_cannot_drop(tmp_path):
+    new = SEARCH_DOORS.replace("    expect(door(k, true)).toBe(v)\n", "").replace("  it.each([", "  it('a new door test', () => {\n    expect(1).toBe(1)\n  })\n  it.each([")
+    ao_fail(tmp_path / "bad", "src/a.test.ts", SEARCH_DOORS, new, "block search server door compatibility %s: assertions dropped from 4 to 3")
+
+
+@pytest.mark.parametrize("head", [
+    "it.each([[1]])('n', (x) => {", "test.each([[1]])('n', (x) => {", "describe.each([[1]])('n', (x) => {", "it.concurrent('n', () => {",
+    "test.concurrent('n', () => {", "it.skipIf(win)('n', () => {", "it.runIf(ci)('n', () => {", "it.concurrent.each([[1]])('n', (x) => {",
+    "it.each`\n a\n ${1}\n`('n', (x) => {", "it.each([\n  [1],\n  ['it(\"x\")'],\n])(\n  'n',\n  (x) => {",
+])
+def test_add_only_modified_and_parameterised_forms_are_blocks(tmp_path, head):
+    old = head + "\n  expect(f()).toBe(1)\n})\nit('after', () => {\n  expect(g()).toBe(2)\n})\n"
+    ao_fail(tmp_path / "gone", "src/a.test.ts", old, old.replace(head + "\n  expect(f()).toBe(1)\n})\n", ""), "block n: test block removed or renamed")
+    new = "it('first', () => { expect(0).toBe(0) })\n" + old
+    assert addonly(tmp_path / "ok", "src/a.test.ts", old, new)[0] == 0
+    ao_fail(tmp_path / "weak", "src/a.test.ts", old, old.replace("expect(f()).toBe(1)", "f()"), "block n: assertions dropped from 1 to 0")
+
+
+# ---- plan-listed renames and removals (testChanges) ----
+def addonly_tc(tmp_path, path, old, new, tc, allow=None, at_head=False):
+    """Like addonly, with `testChanges` on T1 in the plan at --approved (or, at_head, added to the plan only after the approved commit)."""
+    tmp_path.mkdir(parents=True, exist_ok=True)
+    t1 = {**AO_PLAN["milestones"][0]["tasks"][0]}
+    if allow is not None:
+        t1["allowTestEdits"] = allow
+    plan = {**AO_PLAN, "milestones": [{**AO_PLAN["milestones"][0], "tasks": [{**t1, **({} if at_head else {"testChanges": tc})}, AO_PLAN["milestones"][0]["tasks"][1]]}, AO_PLAN["milestones"][1]]}
+    repo = plan_repo(tmp_path, plan)
+    commit(repo, {path: old}, "existing test")
+    ms = head(repo)
+    git(repo, "switch", "-qc", "t1")
+    edits = {path: new}
+    if at_head:
+        edits[PLAN_PATH] = plan_text({**plan, "milestones": [{**plan["milestones"][0], "tasks": [{**t1, "testChanges": tc}, plan["milestones"][0]["tasks"][1]]}, plan["milestones"][1]]})
+    commit(repo, edits)
+    return run(repo, ms, str(repo / PLAN_PATH), "--task", "T1", "--approved", appr(repo))
+
+
+RENAME = {"file": "src/a.test.ts", "block": "lists", "to": "lists the rows", "why": "req-3 changed the title"}
+REMOVE = {"file": "src/a.test.ts", "block": "lists", "remove": True, "why": "owner dropped the list view"}
+
+
+def test_test_changes_a_listed_rename_passes_when_the_counts_hold(tmp_path):
+    code, out = addonly_tc(tmp_path, "src/a.test.ts", JS_OLD, JS_OLD.replace("it('lists'", "it('lists the rows'"), [RENAME])
+    assert code == 0 and out.strip() == "INTEGRITY OK", out
+    spaced = {**RENAME, "block": "  lists ", "to": "lists   the rows"}  # the plan names are normalised like the gate's
+    code, out = addonly_tc(tmp_path / "n", "src/a.test.ts", JS_OLD, JS_OLD.replace("it('lists'", "it('lists the  rows'"), [spaced])
+    assert code == 0, out
+
+
+def test_test_changes_a_listed_rename_still_compares_the_counts(tmp_path):
+    weaker = JS_OLD.replace("it('lists'", "it('lists the rows'").replace("expect(list()).toHaveLength(2)", "list()")
+    code, out = addonly_tc(tmp_path / "a", "src/a.test.ts", JS_OLD, weaker, [RENAME])
+    assert code == 1 and "block lists the rows: assertions dropped from 1 to 0" not in out and "block lists: assertions dropped from 1 to 0" in out, out
+    skipped = JS_OLD.replace("it('lists'", "it.skip('lists the rows'")
+    code, out = addonly_tc(tmp_path / "b", "src/a.test.ts", JS_OLD, skipped, [RENAME])
+    assert code == 1 and "skip or focus marker added" in out, out
+    slower = JS_OLD.replace("it('lists'", "it('lists the rows'").replace("5000", "9000")
+    code, out = addonly_tc(tmp_path / "c", "src/a.test.ts", JS_OLD, slower, [RENAME])
+    assert code == 1 and "timeout raised from 5000 to 9000" in out, out
+
+
+def test_test_changes_only_the_listed_rename_passes(tmp_path):
+    code, out = addonly_tc(tmp_path / "a", "src/a.test.ts", JS_OLD, JS_OLD.replace("it('lists'", "it('lists them'"), [RENAME])
+    assert code == 1 and "block lists: test block removed or renamed" in out, out
+    code, out = addonly_tc(tmp_path / "b", "src/a.test.ts", JS_OLD, JS_OLD.replace("it('lists'", "it('lists the rows'").replace("it('adds'", "it('sums'"), [RENAME])
+    assert code == 1 and "block adds: test block removed or renamed" in out and "block lists:" not in out, out
+    code, out = addonly_tc(tmp_path / "c", "src/a.test.ts", JS_OLD, JS_OLD.replace("it('lists'", "it('adds'"), [{**RENAME, "to": "adds"}])
+    assert code == 1 and "rename target adds already exists" in out, out
+
+
+def test_test_changes_a_listed_removal_lets_that_block_go(tmp_path):
+    gone = JS_OLD.split("  it('lists'")[0] + "})\n"
+    code, out = addonly_tc(tmp_path / "a", "src/a.test.ts", JS_OLD, gone, [REMOVE])
+    assert code == 0 and out.strip() == "INTEGRITY OK", out
+    code, out = addonly_tc(tmp_path / "b", "src/a.test.ts", JS_OLD, "describe('x', () => {\n})\n", [REMOVE])
+    assert code == 1 and "block adds: test block removed or renamed" in out and "block lists:" not in out, out
+    kept = JS_OLD.replace("expect(list()).toHaveLength(2)", "list()")  # a listed removal that stays is compared as usual
+    code, out = addonly_tc(tmp_path / "c", "src/a.test.ts", JS_OLD, kept, [REMOVE])
+    assert code == 1 and "block lists: assertions dropped from 1 to 0" in out, out
+
+
+def test_test_changes_are_ignored_for_a_file_outside_allow_test_edits(tmp_path):
+    other = {**RENAME, "file": "src/b.test.ts"}
+    code, out = addonly_tc(tmp_path / "a", "src/a.test.ts", JS_OLD, JS_OLD.replace("it('lists'", "it('lists the rows'"), [other])
+    assert code == 1 and "block lists: test block removed or renamed" in out, out
+    code, out = addonly_tc(tmp_path / "b", "src/a.test.ts", JS_OLD, JS_OLD.replace("it('lists'", "it('lists the rows'"), [RENAME], allow=["src/b.test.ts"])
+    assert code == 1, out  # the file is not editable at all
+
+
+def test_test_changes_are_read_from_the_approved_plan_only(tmp_path):
+    code, out = addonly_tc(tmp_path, "src/a.test.ts", JS_OLD, JS_OLD.replace("it('lists'", "it('lists the rows'"), [RENAME], at_head=True)
+    assert code == 1 and "block lists: test block removed or renamed" in out, out
