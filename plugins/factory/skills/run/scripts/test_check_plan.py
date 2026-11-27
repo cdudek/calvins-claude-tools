@@ -508,7 +508,11 @@ def guarded(tmp_path, files=None, guards=(PAT,), track=True, **ms):
         (tmp_path / name).parent.mkdir(parents=True, exist_ok=True)
         (tmp_path / name).write_text(body)
     (tmp_path / "changes").mkdir()
-    p = mutated(lambda p: p["milestones"][1].update(guards=list(guards), **ms))
+    def setup(p):
+        if "tasks" not in ms:  # the default milestone's own task is its rule test
+            p["milestones"][1]["tasks"][0]["ruleTest"] = True
+        p["milestones"][1].update(**{"guards": list(guards), "rule": "only members read comments", **ms})
+    p = mutated(setup)
     f = write_plan(tmp_path / "changes" / "x", p)
     git(tmp_path, "add", "-A" if track else "changes")
     r = subprocess.run([sys.executable, str(SCRIPT), str(f)], capture_output=True, text=True)
@@ -516,7 +520,7 @@ def guarded(tmp_path, files=None, guards=(PAT,), track=True, **ms):
 
 
 def task(files=(), edits=()):
-    return [{"id": "T2", "covers": ["req-2"], "files": ["b.py", *files], "check": "pytest", "needs": ["T1"], "allowTestEdits": list(edits)}]
+    return [{"id": "T2", "covers": ["req-2"], "files": ["b.py", *files], "check": "pytest", "needs": ["T1"], "allowTestEdits": list(edits), "ruleTest": True}]
 
 
 def test_guard_pattern_matches_reads_not_bare_name(tmp_path):
@@ -661,3 +665,32 @@ def test_standing_md_must_be_unchanged_since_approval(tmp_path):
     standing.unlink()
     code, out = approved(f, sha2)
     assert code == 1 and "standing.md changed since approved" in out
+
+
+def test_guards_need_a_rule_and_one_rule_test(tmp_path):
+    files = {"api/leak.py": "db.from(comments)\n"}
+    assert guarded(tmp_path / "a", files, tasks=task(files=["api/leak.py"]))[0] == 0
+    no_test = [{**task(files=["api/leak.py"])[0], "ruleTest": False}]
+    code, out = guarded(tmp_path / "b", files, tasks=no_test)
+    assert code == 1 and "M2 has guards and needs exactly one task" in out
+    code, out = guarded(tmp_path / "c", files, tasks=task(files=["api/leak.py"]), rule=" ")
+    assert code == 1 and "M2 has guards but no rule" in out
+
+
+def test_security_rounds_range(tmp_path):
+    assert run(tmp_path / "a", mutated(lambda p: p["milestones"][0].update(securityRounds=2)))[0] == 0
+    code, out = run(tmp_path / "b", mutated(lambda p: p["milestones"][0].update(securityRounds=4)))
+    assert code == 1 and "M1 securityRounds must be a whole number from 1 to 3" in out
+
+
+def test_prose_path_must_be_in_task_files(tmp_path):
+    owned = VALID["milestones"][0]["tasks"][0]["files"][0]
+
+    def check(sub, bullet):
+        f = write_plan(tmp_path / sub, VALID)
+        f.write_text(f.read_text().replace("# Plan\n", "# Plan\n- **T1:** " + bullet + "\n", 1))
+        p = subprocess.run([sys.executable, str(SCRIPT), str(f)], capture_output=True, text=True)
+        return p.returncode, p.stdout
+    assert check("a", f"Owns `{owned}`.") == (0, check("a", f"Owns `{owned}`.")[1])
+    code, out = check("b", "Owns `src/new/guard.ts`, `src/x.test.ts`. Reads `src/other.ts`.")
+    assert code == 1 and "M1/T1 prose names `src/new/guard.ts`" in out and "`src/x.test.ts`" in out and "src/other.ts" not in out

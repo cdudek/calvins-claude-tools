@@ -52,7 +52,7 @@ Ask what the person brings and size it. Check the merge gate, the fast commands 
 - Copy `references/plan-template.md` (or `plan-small-template.md`) to `changes/<slug>/plan.md` and fill it per `references/plan-standard.md`, including the `json factory` block.
   - The planner sizes each task by judgement: effort and model default to Sonnet 5.5 medium and are set only where a task needs more.
 - Run `python3 .factory/check-plan.py changes/<slug>/plan.md`, with `--all` when the run will be `--all`. It must print `PLAN OK`. Run every `preflight` command now. A project run (`--all`) has no `hold`: settle owner actions during grilling.
-- One fresh plan review by Codex `gpt-6.2-astra`, correctness against the intent and delta only. It checks the riskiest step and the options rejected in Risks. Apply `references/review-policy.md`. When `codex` is absent, skip it.
+- One fresh plan review by Codex `gpt-6.2-astra`, correctness against the intent and delta only. It checks the riskiest step and the options rejected in Risks. On a risky milestone it also asks "how can this leak?" against the `rule`: every way found becomes a case in the `ruleTest` task now, not a security finding later. Apply `references/review-policy.md`. When `codex` is absent, skip it.
 - **PRs: one per milestone, nothing else.** Where Actions minutes cost money there is no plan PR: commit intent, delta, plan, `.factory/` and any new ADRs (as `proposed`) on milestone 1's branch, push it without a PR, and they merge with milestone 1's PR.
   - Elsewhere a plan PR on `plan/<slug>` holds them.
 - Check every new ADR number is unused on the base.
@@ -68,7 +68,7 @@ Never hand-write a goal line. Start the printed RUN command with the Bash tool a
 
 The run, in short:
 - The coordinator calls `task-step.py` for worktrees, integrity and merges; every task runs in a `factory:builder` subagent, in the foreground (a hook denies background agents).
-- Verify: fast checks, per-task integrity, `factory:verifier`, a security review on a risky milestone, `factory:ux-verifier` on a UI milestone. Each FAIL is labelled `bug` or `gap`, and a builder's report of a file no task owns or a test edit lets the coordinator open a `gap` too (the builder never writes the log line); up to `gapRounds` gap rounds per milestone (default 3), inside the owner-approved `mayTouch`.
+- Verify: fast checks, per-task integrity, `factory:verifier`, a security review on a risky milestone (logged with `task-step.py review`, at most `securityRounds` fix rounds, default 1), `factory:ux-verifier` on a UI milestone. Each FAIL is labelled `bug` or `gap`, and a builder's report of a file no task owns or a test edit lets the coordinator open a `gap` too (the builder never writes the log line); up to `gapRounds` gap rounds per milestone (default 3), inside the owner-approved `mayTouch`.
 - Ship: commit, verify that SHA, push it, one PR per milestone. The release PR waits for a human only when a milestone is `risky`, `deployOnMerge` is true or the plan sets `merge: owner`.
 
 Every rule, with the merge matrix, the bug flow and the learn loop: `references/run-stations.md` and `references/goal-briefing.md`.

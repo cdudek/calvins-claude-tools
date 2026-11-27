@@ -51,7 +51,7 @@ SAFETY = 2          # a run that spends every allowed pass still ends at half th
 def max_turns(m):
     """Worst-case dispatches: every task uses every pass, the verifier runs once per pass, plus the
     security review (risky) and the UX verifier (UI). Times steps per dispatch, times the safety factor."""
-    dispatches = len(m["tasks"]) * PASSES + PASSES + bool(m.get("risky")) + (m["layer"] in UI_LAYERS)
+    dispatches = len(m["tasks"]) * PASSES + PASSES + risky(m) + (m["layer"] in UI_LAYERS)
     return SAFETY * STEPS_PER_DISPATCH * dispatches
 
 
@@ -73,9 +73,14 @@ def target(plan):
     return plan.get("integration") or plan["base"]
 
 
+def risky(m):
+    """Risky, or guarding data: either way the milestone gets the security review and its release waits for a human."""
+    return bool(m.get("risky") or m.get("guards"))
+
+
 def needs_human(plan):
     """The release PR waits for the owner when a milestone is risky, the merge deploys, or the plan says merge: owner."""
-    return any(x.get("risky") for x in plan["milestones"]) or plan.get("deployOnMerge") is True or plan.get("merge") == "owner"
+    return any(risky(x) for x in plan["milestones"]) or plan.get("deployOnMerge") is True or plan.get("merge") == "owner"
 
 
 def merge_action(plan, tgt):
@@ -94,7 +99,7 @@ def release_line(plan):
             f"(`gh pr create --base {base} --head {integ}`), linking the delta revision, every milestone's "
             "evidence/<M>/gallery.md and the reports. Remote CI runs on it. ")
     if needs_human(plan):
-        why = ("a milestone is risky" if any(x.get("risky") for x in plan["milestones"])
+        why = ("a milestone is risky" if any(risky(x) for x in plan["milestones"])
                else "deployOnMerge is true" if plan.get("deployOnMerge") else "merge is owner")
         return line + (f"Do not arm auto-merge ({why}): wait for its required CI in the foreground (`gh pr checks <n> --watch`), "
                        "then end with SHIPPED, the merge-ready release PR URL and its CI conclusion.")
@@ -115,7 +120,8 @@ def task_lines(m):
         needs = ", ".join(t.get("needs", [])) or "nothing"
         out.append(
             f"- {t['id']} covers {', '.join(t['covers'])}. Owns only: {', '.join(t['files'])}. Uses {needs}. Its check: `{t['check']}`. "
-            f"Builder effort: {t.get('effort', 'medium')}." + (f" Builder model: {t['model']}." if "model" in t else ""))
+            f"Builder effort: {t.get('effort', 'medium')}." + (f" Builder model: {t['model']}." if "model" in t else "")
+            + (f" Rule test of `{m.get('rule', '')}`: build and finish it before every other task." if t.get("ruleTest") else ""))
     return out
 
 
@@ -178,11 +184,14 @@ def section(plan, m, P, root, sha, h, preflight, record=True):
     hold, bug = plan.get("hold"), plan.get("kind") == "bug"
     last = mid == plan["milestones"][-1]["id"]
     risky_step = ui_step = ""
-    if m.get("risky"):
+    if risky(m):
         risky_step = ("3. This milestone is risky (auth, money, consent or data exposure): also run a security review of the diff and delta, "
                       "by one Opus 5.5 high advisory agent or `codex exec -m gpt-6.2-astra -c model_reasoning_effort=high -s read-only --ephemeral`, "
                       "and fix a confirmed High only inside the task's own files and its allowTestEdits. A fix that needs other files "
-                      "or another test edit is a `gap`: see the gap lane under Verify.")
+                      "or another test edit is a `gap`: see the gap lane under Verify. The review names the rule each finding breaks and groups findings by it. "
+                      f"After each review run `python3 .factory/task-step.py review {P}plan.md {mid} PASS|FAIL <rule-in-hyphenated-words> --approved {sha}` and commit "
+                      f"the line it logs. A FAIL is fixed at that rule, starting from the rule test, never one hole at a time; at most {m.get('securityRounds', 1)} "
+                      "fix round(s). When the script prints REVIEW FAIL, end with the BLOCKED line it prints.")
     if ui:
         ui_step = (f"{4 if m.get('risky') else 3}. factory:ux-verifier against the design boards in `{P}design/`, which the owner approved "
                    f"at the single approval, per the factory ux-checks reference. Screenshots go to {P}evidence/{mid}/. Write the gallery to "

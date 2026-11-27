@@ -59,6 +59,15 @@ Everything else that is true but small. Report at most five Nits, the five that 
 - Speculative performance with no measurement.
 - Anything you did not run or read.
 
+### Security findings
+- Each Important security finding names the rule it breaks: the milestone's `rule`, or one sentence of your own when the plan has none.
+- Group findings by rule and lead with the shared cause: "a moved comment keeps its old team's readers (rule: guests read only their own comments)", then its instances. One cause is one fix.
+
+### Reviewing a check
+A check (a script, hook or gate) is reviewed against the threat model in its header, never against an attacker it does not claim to stop.
+- A finding outside the stated model is a Nit, listed for the check's known-limits section. It never fails the change.
+- One review round per change to a check. What a later round finds goes to the known limits, unless it breaks the stated model.
+
 ### What fails
 - The verifier and the security review fail only on Important findings.
 - Nits never fail a run. They go in the report under their own heading.
