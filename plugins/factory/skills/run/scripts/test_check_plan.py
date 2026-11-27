@@ -694,3 +694,32 @@ def test_prose_path_must_be_in_task_files(tmp_path):
     assert check("a", f"Owns `{owned}`.") == (0, check("a", f"Owns `{owned}`.")[1])
     code, out = check("b", "Owns `src/new/guard.ts`, `src/x.test.ts`. Reads `src/other.ts`.")
     assert code == 1 and "M1/T1 prose names `src/new/guard.ts`" in out and "`src/x.test.ts`" in out and "src/other.ts" not in out
+
+
+def test_test_changes(tmp_path):
+    ok_rename = {"file": "a.test.ts", "block": "lists", "to": "lists the rows", "why": "req-1 changed the title"}
+    ok_remove = {"file": "a.test.ts", "block": "lists", "remove": True, "why": "owner dropped the list view"}
+
+    def with_tc(tc, allow=("a.test.ts",)):
+        return mutated(lambda p: p["milestones"][0]["tasks"][0].update(allowTestEdits=list(allow), testChanges=tc))
+
+    code, out = run(tmp_path / "ok", with_tc([ok_rename, ok_remove]))
+    assert code == 0, out
+    for name, tc, allow, why in [
+        ("outside", [{**ok_rename, "file": "b.test.ts"}], ("a.test.ts",), "file 'b.test.ts' is not in the task's allowTestEdits"),
+        ("noallow", [ok_rename], (), "file 'a.test.ts' is not in the task's allowTestEdits"),
+        ("nowhy", [{**ok_rename, "why": " "}], ("a.test.ts",), "why must be a non-empty string"),
+        ("missingwhy", [{k: v for k, v in ok_remove.items() if k != "why"}], ("a.test.ts",), "why must be a non-empty string"),
+        ("both", [{**ok_rename, "remove": True}], ("a.test.ts",), "needs exactly one of to and remove"),
+        ("neither", [{"file": "a.test.ts", "block": "lists", "why": "x y"}], ("a.test.ts",), "needs exactly one of to and remove"),
+        ("removefalse", [{**ok_remove, "remove": False}], ("a.test.ts",), "remove must be true"),
+        ("emptyto", [{**ok_rename, "to": ""}], ("a.test.ts",), "to must be a non-empty string"),
+        ("same", [{**ok_rename, "to": " lists "}], ("a.test.ts",), "to is the same name as block"),
+        ("noblock", [{**ok_remove, "block": ""}], ("a.test.ts",), "block must be a non-empty string"),
+        ("unknownkey", [{**ok_rename, "reason": "x"}], ("a.test.ts",), "unknown key reason"),
+        ("notobject", ["lists"], ("a.test.ts",), "testChanges[0] must be an object"),
+    ]:
+        code, out = run(tmp_path / name, with_tc(tc, allow))
+        assert code == 1 and why in out, (name, out)
+    code, out = run(tmp_path / "list", mutated(lambda p: p["milestones"][0]["tasks"][0].update(testChanges="x")))
+    assert code == 1 and "M1/T1 testChanges must be a list" in out
