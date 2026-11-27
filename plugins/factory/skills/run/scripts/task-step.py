@@ -17,11 +17,12 @@ gap fix task of round n (M2-gap<n>; M2-gap is round 1). The plan, and so `change
   finish   run test-integrity.sh for the task in its worktree and merge exactly the checked commit (message `factory-merge: <name>`)
   gate     the pre-PR calls: test-integrity.sh --milestone with the checked commits, then check-plan.py --approved
   status   print the recorded state
-  review   log one security review of a risky milestone: appends `SECURITY-REVIEW <M> round=<n> result=<PASS|FAIL> rule=<rule>` to the
-           plan's progress log (the coordinator commits it). <rule> names the broken rule in a few words joined by hyphens (`-` on a PASS).
+  review   log one security review of a risky milestone: appends `SECURITY-REVIEW <M> round=<n> sha=<HEAD> result=<PASS|FAIL> rule=<rule>` to the
+           plan's progress log (the coordinator commits it; the next review refuses while it is uncommitted). <rule> names the broken rule in a few words joined by hyphens (`-` on a PASS).
            A FAIL past the milestone's `securityRounds` (default 1) fix rounds prints REVIEW FAIL: the run ends BLOCKED with the owner's choice.
 `start` of a task other than the milestone's `ruleTest` task (or a gap fix) fails until the rule test is merged.
-`gate` on a risky milestone needs the last SECURITY-REVIEW line to be a PASS and at most `securityRounds` FAIL lines before it.
+`finish` refuses the same tasks. `gate` on a risky milestone needs rounds numbered 1..n, at most `securityRounds` FAIL lines and a last PASS whose
+sha has no `factory-merge:` commit after it.
 The checked commits are never taken from the state file: `gate` derives them from git, as the second parents of the `factory-merge:` merges on the
 milestone branch's first-parent chain since the target. The state file (<worktree>/.factory/state/<M>.json, git-ignored by a `*` .gitignore beside it)
 is a convenience log. Prints one `<STEP> OK|FAIL <detail>` line per step, then the failing check's own lines; exit 1 on any FAIL.
@@ -159,11 +160,18 @@ def merged_names(c):
     return set((out(c.repo, "log", "--first-parent", "--format=%s", "HEAD") or "").splitlines())
 
 
-def cmd_start(c, task):
-    path, name = c.worktree(task), c.name(task)
+def rule_test_first(c, task, step):
+    """None when the task may go ahead, else the FAIL line: the milestone's ruleTest task is merged before any other task (gap fixes excepted)."""
     rule_test = next((t["id"] for t in milestone(c).get("tasks", []) if t.get("ruleTest") is True), None)
     if rule_test and task != rule_test and "-gap" not in task and f"{MERGE_PREFIX}{c.name(rule_test)}" not in merged_names(c):
-        return say("START", False, f"build and finish the rule test {rule_test} first: the other tasks build against it")
+        return say(step, False, f"build and finish the rule test {rule_test} first: the other tasks build against it")
+    return None
+
+
+def cmd_start(c, task):
+    path, name = c.worktree(task), c.name(task)
+    if (r := rule_test_first(c, task, "START")) is not None:
+        return r
     head = out(c.repo, "rev-parse", "--verify", f"refs/heads/{c.branch}")
     if not head:
         return say("START", False, f"cannot resolve {c.branch}")
@@ -202,6 +210,8 @@ def cmd_finish(c, task):
         return say("FINISH", False, "no valid target SHA recorded (it must be on origin's target branch and under HEAD): run `target` first")
     if out(c.repo, "branch", "--show-current") != c.branch:
         return say("FINISH", False, f"run it from the milestone worktree on {c.branch}")
+    if (r := rule_test_first(c, task, "FINISH")) is not None:
+        return r
     wt = c.worktree(task)
     if not wt.exists():
         return say("FINISH", False, f"no worktree {wt}")
@@ -233,11 +243,14 @@ def cmd_gate(c):
     bad = say("GATE integrity", p.returncode == 0, "see the lines below" if p.returncode else "")
     if p.returncode:
         print(p.stdout.strip())
-    if milestone(c).get("risky"):
+    if milestone(c).get("risky") or milestone(c).get("guards"):  # guarded data always gets the security review
         rs, cap = reviews(c), milestone(c).get("securityRounds", 1)
-        fails = sum(1 for _, res, _ in rs if res == "FAIL")
-        ok = bool(rs) and rs[-1][1] == "PASS" and fails <= cap
-        bad += say("GATE security", ok, "" if ok else f"needs a last SECURITY-REVIEW PASS and at most {cap} FAIL rounds (log has {len(rs)} rounds, {fails} FAIL)")
+        fails = sum(1 for *_, res, _ in rs if res == "FAIL")
+        numbered = [r[0] for r in rs] == list(range(1, len(rs) + 1))
+        later = rs and git(c.repo, "merge-base", "--is-ancestor", rs[-1][1], "HEAD").returncode == 0 and not any(
+            x.startswith(MERGE_PREFIX) for x in (out(c.repo, "log", "--first-parent", "--format=%s", f"{rs[-1][1]}..HEAD") or "").splitlines())
+        ok = bool(rs) and numbered and rs[-1][2] == "PASS" and fails <= cap and bool(later)
+        bad += say("GATE security", ok, "" if ok else f"needs rounds 1..n, at most {cap} FAIL rounds and a last PASS with no task merged after its sha (log has {len(rs)} rounds, {fails} FAIL)")
     q = subprocess.run([sys.executable, str(HERE / "check-plan.py"), str(c.plan_file), "--approved", c.approved], capture_output=True, text=True)
     bad += say("GATE check-plan", q.returncode == 0, "see the lines below" if q.returncode else "")
     if q.returncode:
@@ -245,26 +258,28 @@ def cmd_gate(c):
     return 1 if bad else 0
 
 
-REVIEW_LINE = re.compile(r"^SECURITY-REVIEW (\S+) round=(\d+) result=(PASS|FAIL) rule=(\S+)$", re.M)
+REVIEW_LINE = re.compile(r"^SECURITY-REVIEW (\S+) round=(\d+) sha=([0-9a-f]{40}) result=(PASS|FAIL) rule=(\S+)$", re.M)
 
 
 def reviews(c):
-    """The milestone's SECURITY-REVIEW lines from the plan's progress log at HEAD, in order: [(round, result, rule)]."""
+    """The milestone's SECURITY-REVIEW lines from the plan's progress log at HEAD, in order: [(round, sha, result, rule)]."""
     text = out(c.repo, "show", f"HEAD:{c.plan_arg}") or ""
     m = check_plan.block_match(text)
     log = text[m.end():] if m else ""
-    return [(int(r), res, rule) for ms, r, res, rule in REVIEW_LINE.findall(log) if ms == c.ms]
+    return [(int(r), sha, res, rule) for ms, r, sha, res, rule in REVIEW_LINE.findall(log) if ms == c.ms]
 
 
 def cmd_review(c, result, rule):
     if result not in ("PASS", "FAIL") or not re.fullmatch(r"[a-z0-9]+(-[a-z0-9]+)*|-", rule):
         return say("REVIEW", False, "usage: review ... PASS|FAIL <rule-in-a-few-hyphenated-words>")
+    if (out(c.repo, "show", f"HEAD:{c.plan_arg}") or "") != c.plan_file.read_text(encoding="utf-8").strip():  # out() strips
+        return say("REVIEW", False, f"{c.plan_arg} has uncommitted changes: commit the previous log line first")
     cap = milestone(c).get("securityRounds", 1)
     done = reviews(c)
     n = len(done) + 1
-    fails = sum(1 for _, res, _ in done if res == "FAIL") + (result == "FAIL")
+    fails = sum(1 for *_, res, _ in done if res == "FAIL") + (result == "FAIL")
     with open(c.plan_file, "a", encoding="utf-8") as f:
-        f.write(f"\nSECURITY-REVIEW {c.ms} round={n} result={result} rule={rule}\n")
+        f.write(f"\nSECURITY-REVIEW {c.ms} round={n} sha={out(c.repo, 'rev-parse', 'HEAD')} result={result} rule={rule}\n")
     if result == "PASS":
         return say("REVIEW", True, f"round={n} PASS: commit the log line")
     if fails > cap:

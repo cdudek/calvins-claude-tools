@@ -54,5 +54,7 @@ Run in this order, paste the output into the transcript:
 ## Known limit
 `hooks/guard-scenarios.py` (only `factory:verifier` may read the scenarios) matches tool-input text, with `~`, `$HOME`, `//` and `/./` expanded and `factory` plus `scenarios` in one input. A path assembled at runtime or reached through a symlink can bypass it. It fails closed on a crash or a non-object input that names the folder, and with `FACTORY_EVAL=1` it denies the main session too. The verifier fails when the approved scenario set is missing.
 
+`task-step.py review` logs the coordinator's own report of a security review as a plan line; nothing proves a review agent ran. It catches a forgotten review, an uncommitted round and a task merged after the PASS, not a coordinator that writes a false line. `check-plan.py` compares only backticked paths that contain a `/` in a task's Owns, Edits, Creates or Adds sentence; a root-level file named in prose is not checked.
+
 ## Not built
 Board, receipts and approval ledgers; local CI; self-policing hooks; one agent per stage; pixel diffs; E2E repeat logic; satisfaction scoring; digital twins; dark no-review mode; a foreman, queue or status page.

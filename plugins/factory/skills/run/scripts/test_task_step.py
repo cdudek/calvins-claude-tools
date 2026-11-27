@@ -208,6 +208,7 @@ def test_rule_test_task_is_built_first(tmp_path):
     code, out = ok(repo, sha, "start", "T1")
     assert code == 1 and "build and finish the rule test T2 first" in out
     assert ok(repo, sha, "start", "T2")[0] == 0
+    assert "rule test T2 first" in ok(repo, sha, "finish", "T1")[1]
     build(repo / ".worktrees" / f"{SLUG}-M1-T2", "src/b.ts")
     assert ok(repo, sha, "finish", "T2")[0] == 0
     assert ok(repo, sha, "start", "T1")[0] == 0
@@ -233,6 +234,12 @@ def test_gate_security_passes_after_one_fix_round(tmp_path):
     ok(repo, sha, "finish", "T1")
     assert "GATE security FAIL" in ok(repo, sha, "gate")[1]  # no review yet
     ok(repo, sha, "review", "FAIL", "guest-reads-moved-comment")
+    assert "commit the previous log line first" in ok(repo, sha, "review", "PASS", "-")[1]
+    git(repo, "commit", "-qam", "log review 1")
     ok(repo, sha, "review", "PASS", "-")
-    git(repo, "commit", "-qam", "log reviews")
+    git(repo, "commit", "-qam", "log review 2")
     assert "GATE security OK" in ok(repo, sha, "gate")[1]
+    ok(repo, sha, "start", "T2")  # a task merged after the PASS needs a new review
+    build(repo / ".worktrees" / f"{SLUG}-M1-T2", "src/b.ts")
+    ok(repo, sha, "finish", "T2")
+    assert "GATE security FAIL" in ok(repo, sha, "gate")[1]

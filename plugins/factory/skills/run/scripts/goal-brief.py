@@ -179,7 +179,7 @@ def section(plan, m, P, root, sha, h, preflight, record=True):
     hold, bug = plan.get("hold"), plan.get("kind") == "bug"
     last = mid == plan["milestones"][-1]["id"]
     risky_step = ui_step = ""
-    if m.get("risky"):
+    if m.get("risky") or m.get("guards"):  # guarded data always gets the security review
         risky_step = ("3. This milestone is risky (auth, money, consent or data exposure): also run a security review of the diff and delta, "
                       "by one Opus 5.5 high advisory agent or `codex exec -m gpt-6.2-astra -c model_reasoning_effort=high -s read-only --ephemeral`, "
                       "and fix a confirmed High only inside the task's own files and its allowTestEdits. A fix that needs other files "
