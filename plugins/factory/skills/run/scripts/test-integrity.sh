@@ -198,7 +198,9 @@ while IFS=$'\t' read -r status path _; do
           cp_out=$(python3 "$(dirname "$0")/check-plan.py" "$planfile" --approved "$approved") || { echo "$cp_out"; say "plan changed: $path fails check-plan"; }
         fi
         continue ;;
-      "changes/$slug/evidence/"*|"changes/$slug/kickoff-"*|"changes/$slug/handover-"*.md) continue ;;
+      "changes/$slug/evidence/"*) continue ;;
+      # one path segment only (a case `*` also matches `/`): kickoff-a/plan.md or handover-x/delta.md fall through to the checks below, the plan, delta and spec rules among them
+      "changes/$slug/kickoff-"*|"changes/$slug/handover-"*.md) case "${path#changes/$slug/}" in */*) ;; *) continue ;; esac ;;
       specs/adr/*) ;;
       specs/*) [ "$last" -eq 1 ] && continue ;;
     esac

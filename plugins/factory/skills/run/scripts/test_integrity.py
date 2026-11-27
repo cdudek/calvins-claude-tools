@@ -863,3 +863,20 @@ def test_add_only_knows_more_skip_markers_and_early_exits(tmp_path):
     assert addonly(tmp_path / "ok", "src/a.test.ts", base, base.replace("})", "  return\n})"))[0] == 0
     early = "it('x', () => {\n  return\n  expect(a()).toBe(1)\n})\n"
     assert addonly(tmp_path / "okold", "src/a.test.ts", early, early.replace("toBe(1)", "toBe(2)"))[0] == 0
+
+
+def test_kickoff_and_handover_exemptions_cover_one_path_segment_only(tmp_path):
+    for i, (name, reason) in enumerate((("changes/2026-11-24-x/handover-x/y.md", "outside milestone M1: changes/2026-11-24-x/handover-x/y.md"),
+                                        ("changes/2026-11-24-x/handover-x/delta.md", "delta changed: changes/2026-11-24-x/handover-x/delta.md"),
+                                        ("changes/2026-11-24-x/kickoff-a/plan.md", "plan changed: changes/2026-11-24-x/kickoff-a/plan.md"),
+                                        ("changes/2026-11-24-x/kickoff-a/b.md", "outside milestone M1: changes/2026-11-24-x/kickoff-a/b.md"))):
+        (tmp_path / str(i)).mkdir()
+        repo = plan_repo(tmp_path / str(i))
+        commit(repo, {"src/a.ts": "export const a = 2\n", name: "x\n"})
+        code, out = run(repo, "main", str(repo / PLAN_PATH), "--milestone", "M1", "--approved", appr(repo))
+        assert code == 1 and reason in out, (name, out)
+    (tmp_path / "ok").mkdir()
+    repo = plan_repo(tmp_path / "ok")
+    commit(repo, {"src/a.ts": "export const a = 2\n", "changes/2026-11-24-x/kickoff-M1.md": "k\n", "changes/2026-11-24-x/handover-a.md": "h\n"})
+    code, out = run(repo, "main", str(repo / PLAN_PATH), "--milestone", "M1", "--approved", appr(repo))
+    assert code == 0 and out.strip() == "INTEGRITY OK", out
