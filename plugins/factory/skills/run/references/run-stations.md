@@ -24,7 +24,7 @@ Run in this order, paste the output into the transcript:
 1. Fast checks: lint, typecheck, unit. No local CI.
 2. Per task, before merging it: `task-step.py finish` (integrity for the task, then the merge of exactly the checked commit) must print `FINISH OK`.
 3. `factory:verifier` with the delta, base, diff and the scenarios for this milestone and earlier ones (all of them on the last milestone). It also runs two neighbouring flows per changed behaviour. Never the builder's reasoning.
-4. Risky milestone: also a security review of the diff and delta. Run one Opus 5.5 high advisory agent; when `codex` exists also run the Codex `gpt-6.2-astra` pass, and its absence never blocks. Both fail only on Important findings (`references/review-policy.md`).
+4. Risky milestone: also a security review of the diff and delta. Run one Opus 5.5 high advisory agent; when `codex` exists also run the Codex `gpt-6.2-astra` pass, and its absence never blocks. Both fail only on Important findings (`references/review-policy.md`). Each finding names the `rule` it breaks; findings that share a rule are one fix, made at the rule and starting from the `ruleTest` task. Log each review with `task-step.py review <plan> <M> PASS|FAIL <rule> --approved <sha>` and commit the line. A FAIL past `securityRounds` (default 1) ends `BLOCKED: owner decides on <rule>: move it to a later milestone, or accept it as a known limit`.
 5. UI milestone: `factory:ux-verifier` against the approved boards, per `references/ux-checks.md`. It writes `evidence/<M>/gallery.md`. No owner stop.
 
 - Failures go back to the builder: at most 3 passes per task. Stop when two consecutive passes fail the same check with the same output.

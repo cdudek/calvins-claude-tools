@@ -115,7 +115,8 @@ def task_lines(m):
         needs = ", ".join(t.get("needs", [])) or "nothing"
         out.append(
             f"- {t['id']} covers {', '.join(t['covers'])}. Owns only: {', '.join(t['files'])}. Uses {needs}. Its check: `{t['check']}`. "
-            f"Builder effort: {t.get('effort', 'medium')}." + (f" Builder model: {t['model']}." if "model" in t else ""))
+            f"Builder effort: {t.get('effort', 'medium')}." + (f" Builder model: {t['model']}." if "model" in t else "")
+            + (f" Rule test of `{m.get('rule', '')}`: build and finish it before every other task." if t.get("ruleTest") else ""))
     return out
 
 
@@ -182,7 +183,10 @@ def section(plan, m, P, root, sha, h, preflight, record=True):
         risky_step = ("3. This milestone is risky (auth, money, consent or data exposure): also run a security review of the diff and delta, "
                       "by one Opus 5.5 high advisory agent or `codex exec -m gpt-6.2-astra -c model_reasoning_effort=high -s read-only --ephemeral`, "
                       "and fix a confirmed High only inside the task's own files and its allowTestEdits. A fix that needs other files "
-                      "or another test edit is a `gap`: see the gap lane under Verify.")
+                      "or another test edit is a `gap`: see the gap lane under Verify. The review names the rule each finding breaks and groups findings by it. "
+                      f"After each review run `python3 .factory/task-step.py review {P}plan.md {mid} PASS|FAIL <rule-in-hyphenated-words> --approved {sha}` and commit "
+                      f"the line it logs. A FAIL is fixed at that rule, starting from the rule test, never one hole at a time; at most {m.get('securityRounds', 1)} "
+                      "fix round(s). When the script prints REVIEW FAIL, end with the BLOCKED line it prints.")
     if ui:
         ui_step = (f"{4 if m.get('risky') else 3}. factory:ux-verifier against the design boards in `{P}design/`, which the owner approved "
                    f"at the single approval, per the factory ux-checks reference. Screenshots go to {P}evidence/{mid}/. Write the gallery to "

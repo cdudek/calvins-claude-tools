@@ -22,12 +22,12 @@ def step(repo, *args):
     return p.returncode, p.stdout
 
 
-def milestone_repo(tmp_path):
+def milestone_repo(tmp_path, plan=PLAN):
     """A repo with an origin holding main (with the approved plan), on branch milestone/<slug>-M1; returns (repo, approved sha)."""
     repo = tmp_path / "repo"
     repo.mkdir()
     git(repo, "init", "-q", "-b", "main")
-    files = {P: "# Plan\n\n```json factory\n" + json.dumps(PLAN, indent=1) + "\n```\n\n## Progress log\n",
+    files = {P: "# Plan\n\n```json factory\n" + json.dumps(plan, indent=1) + "\n```\n\n## Progress log\n",
              f"changes/{SLUG}/delta.md": "### ADDED Requirements\n- req-1: When a, the system shall b [outcome-1]\n",
              f"changes/{SLUG}/intent.md": "- outcome-1: people do x\n", "README.md": "x\n"}
     for name, text in files.items():
@@ -192,3 +192,47 @@ def test_gap_round_tasks_get_their_own_worktree_and_merge(tmp_path):
         wt = repo / ".worktrees" / f"{SLUG}-{t}"  # the task id already carries the milestone
         assert code == 0 and f" {wt} " in out and wt.is_dir(), out
     assert git(repo, "rev-parse", "--verify", f"{SLUG}-M1-gap2")
+
+
+def with_ms(**kw):
+    plan = json.loads(json.dumps(PLAN))
+    plan["milestones"][0].update(kw)
+    return plan
+
+
+def test_rule_test_task_is_built_first(tmp_path):
+    plan = with_ms()
+    plan["milestones"][0]["tasks"][1]["ruleTest"] = True
+    repo, sha = milestone_repo(tmp_path, plan)
+    ok(repo, sha, "target")
+    code, out = ok(repo, sha, "start", "T1")
+    assert code == 1 and "build and finish the rule test T2 first" in out
+    assert ok(repo, sha, "start", "T2")[0] == 0
+    build(repo / ".worktrees" / f"{SLUG}-M1-T2", "src/b.ts")
+    assert ok(repo, sha, "finish", "T2")[0] == 0
+    assert ok(repo, sha, "start", "T1")[0] == 0
+
+
+def test_security_review_rounds_are_capped_and_gated(tmp_path):
+    repo, sha = milestone_repo(tmp_path, with_ms(risky=True))
+    ok(repo, sha, "target")
+    code, out = ok(repo, sha, "review", "FAIL", "guest-reads-moved-comment")
+    assert code == 0 and "round=1 FAIL, fix round 1 of 1" in out
+    git(repo, "commit", "-qam", "log review 1")
+    code, out = ok(repo, sha, "review", "FAIL", "guest-reads-moved-comment")
+    assert code == 1 and "past securityRounds 1" in out and "BLOCKED: owner decides on guest-reads-moved-comment" in out
+    git(repo, "commit", "-qam", "log review 2")
+    assert ok(repo, sha, "review", "FAIL", "two words")[0] == 1  # a rule is hyphenated words
+
+
+def test_gate_security_passes_after_one_fix_round(tmp_path):
+    repo, sha = milestone_repo(tmp_path, with_ms(risky=True))
+    ok(repo, sha, "target")
+    ok(repo, sha, "start", "T1")
+    build(repo / ".worktrees" / f"{SLUG}-M1-T1", "src/a.ts")
+    ok(repo, sha, "finish", "T1")
+    assert "GATE security FAIL" in ok(repo, sha, "gate")[1]  # no review yet
+    ok(repo, sha, "review", "FAIL", "guest-reads-moved-comment")
+    ok(repo, sha, "review", "PASS", "-")
+    git(repo, "commit", "-qam", "log reviews")
+    assert "GATE security OK" in ok(repo, sha, "gate")[1]

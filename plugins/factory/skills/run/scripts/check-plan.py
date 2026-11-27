@@ -6,7 +6,11 @@ Validates the first fenced block with info string `json factory`, delta.md and i
 (intent ids are list items `- outcome-1: ...` / `- constraint-1: ...`; every delta requirement line `- req-<n>: ...` cites one as `[outcome-1]`).
 Old ids (`I1`, `C1`, `<spec>/R<n>`) fail with a one-line rewrite hint. In the plan (through its json block) and in intent.md,
 an id written in prose must sit in parentheses after at least two words: `guests see their items (req-12)` (the 8-word cap in SKILL.md is guidance, not checked).
-A task's prose bullet that names an effort or model must match the task's json. A milestone's optional `mayTouch` is a non-empty list of narrow relative path globs; its optional `gapRounds` is a whole number 1 to 5 (default 3).
+A task's prose bullet that names an effort or model must match the task's json, and every backticked path its `Owns`, `Edits`, `Creates`
+or `Adds` sentences name must be in the task's `files` or `allowTestEdits`. A milestone's optional `mayTouch` is a non-empty list of narrow
+relative path globs; its optional `gapRounds` is a whole number 1 to 5 (default 3); its optional `securityRounds` is a whole number 1 to 3
+(default 1). A milestone with `guards` needs a one-sentence `rule` (who may read or change the guarded data) and exactly one task with
+`"ruleTest": true` (the test of that rule across every read path, built before the other tasks).
 Prints `PLAN OK <n> milestones <m> tasks` (exit 0) or one `PLAN FAIL <reason>` per problem (exit 1).
 """
 import json
@@ -74,8 +78,14 @@ def prose_errs(text, name):
     return errs
 
 
+OWN_SENTENCE = re.compile(r"\b(?:Owns|Edits|Creates|Adds)\b[^.]*(?:\.(?=\S)[^.]*)*", re.S)  # a sentence: dots inside paths do not end it
+PATH = re.compile(r"`([^`\s]+/[^`\s]*)`")
+
+
 def task_prose_errs(text, plan):
-    """A task's prose bullet (starts with its id, like `**T3 ... (high effort).**`) must not name another effort or model than the task's json (no json effort counts as medium, no json model as sonnet)."""
+    """A task's prose bullet (starts with its id, like `**T3 ... (high effort).**`) must not name another effort or model than the task's json
+    (no json effort counts as medium, no json model as sonnet), and every backticked path in its Owns/Edits/Creates/Adds sentences must be one of
+    the task's `files` or `allowTestEdits`: the scripts check the json, so a path named only in prose stops the run at `finish`, after the build."""
     errs = []
     for m in plan.get("milestones", []):
         for t in m.get("tasks", []):
@@ -87,6 +97,10 @@ def task_prose_errs(text, plan):
                                           ("model", re.findall(r"\b(haiku|sonnet|opus)\b", line), t.get("model", "sonnet"))):
                     if found and found[0] != want:
                         errs.append(f"{m.get('id')}/{tid} prose says {word} {found[0]} but the json block says {want}: make them agree")
+                owned = set(t.get("files", [])) | set(t.get("allowTestEdits", []))
+                for sentence in OWN_SENTENCE.findall(line):
+                    errs += [f"{m.get('id')}/{tid} prose names `{p}` but the task's files and allowTestEdits do not: add it to the json block"
+                             for p in PATH.findall(sentence) if p not in owned]
     return errs
 
 
@@ -423,7 +437,7 @@ def check(plan):
         v = m.get("verifier", {})
         if not isinstance(v, dict) or v.get("model", "opus") not in ("sonnet", "opus") or v.get("effort", "high") not in ("medium", "high"):
             errs.append(f"{mid} verifier must be {{model: sonnet or opus, effort: medium or high}}")
-        errs += surface_errs(m, mid) + deferred_errs(m, mid) + may_touch_errs(m, mid)
+        errs += surface_errs(m, mid) + deferred_errs(m, mid) + may_touch_errs(m, mid) + rule_errs(m, mid)
         mc = set(m.get("covers", []))
         covered |= mc
         errs += [f"{mid} covers unknown requirement {r}" for r in sorted(mc - reqs)]
@@ -458,6 +472,23 @@ def check(plan):
         earlier |= ids  # only tasks of finished milestones are visible to the next one
     errs += [f"requirement {r} is covered by no milestone" for r in sorted(reqs - covered)]
     return errs, len(ms), len(seen_tasks)
+
+
+def rule_errs(m, mid):
+    """`securityRounds` is 1 to 3 (default 1). A milestone with `guards` states its access `rule` in one sentence and has exactly one
+    `ruleTest` task: the test of that rule across every read path, so a fix starts from the rule and not from one hole at a time."""
+    errs, rounds = [], m.get("securityRounds", 1)
+    if not (type(rounds) is int and 1 <= rounds <= 3):
+        errs.append(f"{mid} securityRounds must be a whole number from 1 to 3")
+    if not m.get("guards"):
+        return errs
+    if not isinstance(m.get("rule"), str) or not m["rule"].strip():
+        errs.append(f"{mid} has guards but no rule: write who may read or change the guarded data in one sentence")
+    tasks = m.get("tasks") or []
+    tests = [t.get("id") for t in tasks if t.get("ruleTest") is True]
+    if tasks and len(tests) != 1:
+        errs.append(f"{mid} has guards and needs exactly one task with \"ruleTest\": true (it has {len(tests)}): the test of the rule across every read path")
+    return errs
 
 
 def main():

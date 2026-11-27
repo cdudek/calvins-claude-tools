@@ -10,6 +10,12 @@
 # have its HEAD blob in one of them. Plan-gap lane: `GAP-FIX <M> round=<n> files=<a,b> tests=<c,d>` lines in the plan's progress log (read at HEAD) extend
 # --milestone <M> (all rounds), and are the whole scope of --task <M>-gap<n> (round n; <M>-gap is round 1), but only for paths matching the approved
 # milestone's mayTouch and gapRounds, both read from the plan at --approved (a gap task requires it; an invalid gapRounds fails); rounds are numbered 1..n once each (a line without round= is round 1), at most the milestone's gapRounds (default 3).
+#
+# Threat model. Guards against: a builder agent that, by mistake or to make a check go green, edits or deletes an existing test, skips one,
+# adds a lint suppression, or changes files outside its task (CI, .github/, .factory/, the plan, baselines, the spec). It reads committed git
+# state only. Not in scope, listed as known limits: an agent that sets out to defeat the check (renamed or generated test files, tests that
+# pass vacuously, behaviour changed through files a task legitimately owns), and anything outside git. The verifier and the hidden scenarios
+# cover those. A review of this script judges it against this model (references/review-policy.md, "Reviewing a check").
 set -euo pipefail
 
 U="usage: test-integrity.sh <repo-or-worktree> <base-ref> [plan.md [--task <id> | --milestone <id>] [--approved <sha>] [--pin <sha>] [--target <sha>] [--checked <sha>[,<sha>...]]]"
