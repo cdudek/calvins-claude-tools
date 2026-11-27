@@ -27,3 +27,10 @@ def test_reexported_symbol_is_found_and_unnamed_new_symbol_is_coupled(tmp_path):
 def test_symbol_named_in_the_plan_is_not_coupled(tmp_path):
     test = "import { hasTeam } from '../src/teams/rules';\n"
     assert check_coupled.coupled(task(tmp_path, {}, test, plan="T1 exports `hasTeam` from src/teams/rules.ts\n")) == []
+
+
+def test_alias_reexport_from_an_index_module(tmp_path):
+    files = {"src/db/schema/index.ts": "export * from '@/teams/teams.tables';\nexport * from './common';\n",
+             "src/teams/teams.tables.ts": "export const teams = 1;\n", "src/db/schema/common.ts": "export const role = 1;\n"}
+    test = "import { teams, role } from '../src/db/schema';\n"
+    assert check_coupled.coupled(task(tmp_path, files, test)) == []

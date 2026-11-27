@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 """Usage: check_coupled.py <task dir>... - lists each scored fail_to_pass hidden test whose imports from src/ name a symbol that neither
-exists in the start tree (following `export * from` re-exports) nor appears in the change folder's markdown or the ticket. Such a test can
+exists in the start tree (following `export * from` re-exports, relative or through the `@/` alias for src/) nor appears in the change folder's markdown or the ticket. Such a test can
 only pass when the builder guesses the reference commit's names: add it to task.json `implementation_coupled`. Exit 1 when any is found.
 """
 import json
@@ -21,9 +21,12 @@ def module_text(src, path, seen=None):
         return ""
     seen.add(path)
     text = src.get(path + ".ts") or src.get(path + "/index.ts") or ""
+    here = path if (path + "/index.ts") in src else posixpath.dirname(path)  # an index module resolves relative to its own folder
     for rel in REEXPORT.findall(text):
-        if rel.startswith("."):
-            text += module_text(src, posixpath.normpath(posixpath.join(posixpath.dirname(path), rel)), seen)
+        if rel.startswith("@/"):  # the usual tsconfig alias for src/
+            text += module_text(src, "src/" + rel[2:], seen)
+        elif rel.startswith("."):
+            text += module_text(src, posixpath.normpath(posixpath.join(here, rel)), seen)
     return text
 
 
