@@ -28,7 +28,7 @@ Unfinished work stays in its task worktree and the next pass gets the same path.
 {{bug_flow}}
 
 {{h}} Verify, in this order, pasting each output into the transcript
-1. The plan's `tests`, run by `python3 .factory/task-step.py gate {{P}}plan.md {{mid}} --approved {{sha}}` (it prints `GATE tests OK|FAIL <suite>`); a plan without `tests`: the repo's fast checks (lint, typecheck, unit). No local CI.
+1. The plan's `tests`: the suites run once in the Ship gate below (`GATE tests OK|FAIL <suite>`), the hand-back tests in step 2. A plan without `tests`: the repo's fast checks (lint, typecheck, unit). No local CI.
 2. Per task, before merging it into `{{branch}}`: `python3 .factory/task-step.py finish {{P}}plan.md {{mid}} <task id> --approved {{sha}}` runs the task's integrity check and the plan's hand-back `tests` in its worktree, records its HEAD as a <checked SHA> (every INTEGRITY OK commit, also an earlier pass's) and merges exactly that commit into `{{branch}}`. It must print `FINISH OK`.
 {{risky_step}}
 {{ux_step}}

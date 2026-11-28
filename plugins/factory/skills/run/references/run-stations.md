@@ -21,7 +21,7 @@ The launched run reads its own kickoff (`kickoff-<M>.md`, from `templates/kickof
 
 ## 4. Verify
 Run in this order, paste the output into the transcript:
-1. `task-step.py gate`: with `tests` in the plan it runs the suites (`GATE tests OK|FAIL <name>`); otherwise the fast checks: lint, typecheck, unit. No local CI.
+1. With `tests` in the plan, the suites run once in `task-step.py gate` (`GATE tests OK|FAIL <name>`); otherwise the fast checks: lint, typecheck, unit. No local CI.
 2. Per task, before merging it: `task-step.py finish` (integrity for the task, the plan's hand-back `tests` in its worktree, then the merge of exactly the checked commit) must print `FINISH OK`.
 3. `factory:verifier` with the delta, base, diff and the scenarios for this milestone and earlier ones (all of them on the last milestone). It also runs two neighbouring flows per changed behaviour. Never the builder's reasoning.
 4. Risky milestone: also a security review of the diff and delta. Run one Opus 5.5 high advisory agent; when `codex` exists also run the Codex `gpt-6.2-astra` pass, and its absence never blocks. Both fail only on Important findings (`references/review-policy.md`). Each finding names the `rule` it breaks; findings that share a rule are one fix, made at the rule and starting from the `ruleTest` task. Log each review with `task-step.py review <plan> <M> PASS|FAIL <rule> --approved <sha>` and commit the line. A FAIL past `securityRounds` (default 1) ends `BLOCKED: owner decides on <rule>: move it to a later milestone, or accept it as a known limit`.
