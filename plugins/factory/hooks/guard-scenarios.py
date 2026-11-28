@@ -5,6 +5,8 @@ The main session (the coordinator) has no agent_type and is allowed: it drafts t
 FACTORY_EVAL=1 (the eval harness), which denies it too so a coordinator cannot read them.
 It also denies an Agent/Task call with run_in_background in a factory run (FACTORY_EVAL=1, or a cwd inside a repo
 with .factory/ whose branch is milestone/*): /goal skips its evaluation while background work runs.
+It also denies a Bash command that switches test parallelism off (--runInBand, -j1, --maxWorkers=1, --fileParallelism=false ...) in a factory run:
+serial runs take minutes where parallel ones take seconds, and the project isolates its own suites.
 Fails closed: a crash or a non-object input is denied when the text names the folder; only unreadable JSON passes.
 shortcut: matches the path as text (with ~, $HOME, // and /./ expanded), so a command that assembles the path at
 runtime gets through; upgrade to an OS-level read restriction if a builder is ever seen doing that.
@@ -28,6 +30,14 @@ BG_DENY = {"hookSpecificOutput": {
     "permissionDecision": "deny",
     "permissionDecisionReason": "factory runs start every agent in the foreground: run it again without run_in_background",
 }}
+SERIAL_DENY = {"hookSpecificOutput": {
+    "hookEventName": "PreToolUse",
+    "permissionDecision": "deny",
+    "permissionDecisionReason": "factory runs keep test parallelism on: run the plan's test commands as written, without a serial flag "
+                                "(--runInBand, -j1, --maxWorkers=1, --fileParallelism=false)",
+}}
+# the same flags check-plan.py bans in the plan's `tests`
+SERIAL = re.compile(r"(?<![\w-])(?:--no-file-parallelism|--fileParallelism(?:=|\s+)false|--runInBand|--(?:maxWorkers|workers)(?:=|\s+)1|-p\s*1|-j\s*1)(?![\w-])")
 
 
 def factory_run(event):
@@ -57,6 +67,8 @@ def decide(event):
     ti = event.get("tool_input")
     if event.get("tool_name") in ("Agent", "Task") and isinstance(ti, dict) and ti.get("run_in_background") not in (None, False, 0, "", "false", "False") and factory_run(event):
         return BG_DENY
+    if event.get("tool_name") == "Bash" and isinstance(ti, dict) and SERIAL.search(str(ti.get("command") or "")) and factory_run(event):
+        return SERIAL_DENY
     agent = str(event.get("agent_type") or "")
     if not agent and os.environ.get("FACTORY_EVAL") != "1":
         return None
