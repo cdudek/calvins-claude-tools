@@ -155,7 +155,7 @@ def task_lines(m, plan=None):
         needs = ", ".join(t.get("needs", [])) or "nothing"
         out.append(
             f"- {t['id']} covers {', '.join(t['covers'])}. Owns only: {', '.join(t['files'])}. Uses {needs}. Its check: `{t['check']}`. "
-            f"Builder effort: {t.get('effort', 'medium')}." + (f" Builder model: {t['model']}." if "model" in t else "")
+            f"Builder effort: {t.get('effort', 'high')}." + (f" Builder model: {t['model']}." if "model" in t else "")
             + (f" Trigger tests to grow with your change (exact files, existing tests the plan lets you edit): {', '.join(edits)}." if (edits := trigger_edits(plan or {}, t)) else "")
             + (f" Rule test of `{m.get('rule', '')}`: build and finish it before every other task." if t.get("ruleTest") else ""))
     return out
@@ -223,7 +223,7 @@ def section(plan, m, P, root, sha, h, preflight, record=True):
     review = ""
     if risky(m):
         review = ("a security review of the diff and delta, "
-                  "by one Opus 5.5 high advisory agent or `codex exec -m gpt-6.2-astra -c model_reasoning_effort=high -s read-only --ephemeral`, "
+                  "by one Opus 5.5 high advisory agent or `codex exec -m gpt-6.2-astra -c model_reasoning_effort=high -s read-only --ephemeral '<prompt>' </dev/null` (codex waits forever on an open stdin, so keep `</dev/null`; if codex fails or is killed, run the Opus agent instead), "
                   "and fix a confirmed High only inside the task's own files and its allowTestEdits. A fix that needs other files "
                   "or another test edit is a `gap`: see the gap lane under Verify. The review names the rule each finding breaks and groups findings by it. "
                   f"After the review run `python3 .factory/task-step.py review {P}plan.md {mid} PASS|FAIL <rule-in-hyphenated-words> --approved {sha}`; it records the round without a commit. "

@@ -14,7 +14,7 @@ DEFAULT = {
     "harness": "factory",          # factory | plain (one agent, same /goal condition, no factory agents)
     "roles": {
         "coordinator": ("sonnet", "medium"),
-        "builder": ("sonnet", "medium"),
+        "builder": ("sonnet", "high"),
         "verifier": ("opus", "high"),
         "security": ("opus", "high"),
         "ux_verifier": ("sonnet", "medium"),
@@ -54,7 +54,7 @@ def make(name, roles=None, **kw):
 # reads "what changes when I move away from the default".
 FACTORS = {
     "A": ("verifier model", "opus", "sonnet", lambda a: a["roles"].__setitem__("verifier", ("sonnet", a["roles"]["verifier"][1]))),
-    "B": ("builder effort", "medium", "high", lambda a: a["roles"].__setitem__("builder", (a["roles"]["builder"][0], "high"))),
+    "B": ("builder effort", "high", "medium", lambda a: a["roles"].__setitem__("builder", (a["roles"]["builder"][0], "medium"))),
     "C": ("advisor", "off", "opus", lambda a: a.__setitem__("advisor", "opus")),
     "D": ("context", "spec", "raw", lambda a: a.__setitem__("context", "raw")),
     "E": ("parallel builders", 3, 1, lambda a: a.__setitem__("parallel", 1)),

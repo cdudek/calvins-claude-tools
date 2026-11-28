@@ -93,7 +93,7 @@ def test_ui_milestone_brief(tmp_path):
     assert "Arm auto-merge." in k and "ux-verifier" in k
     assert "never from the log" in k
     assert "after 12 turns" in goal
-    assert "Builder effort: medium." in k and "gpt-6.2-astra" not in k  # M1 is not risky
+    assert "Builder effort: high." in k and "gpt-6.2-astra" not in k  # M1 is not risky
     assert "--model sonnet --effort medium" in out
     run_line = out.split("-#-#- RUN -#-#-\n")[1].split("\n")[1]
     assert "--max-budget-usd" not in run_line
@@ -416,11 +416,11 @@ def test_every_agent_runs_in_the_foreground(tmp_path):
 
 def test_sized_plan_names_model_effort_and_verifier(tmp_path):
     m = copy.deepcopy(M1)
-    m["tasks"][0].update(model="haiku", effort="high")
+    m["tasks"][0].update(model="haiku", effort="low")
     m["verifier"] = {"model": "sonnet", "effort": "high"}
     _, out, kick = run(tmp_path, "M1", plan_text([m, M2_OPEN, M3_OPEN]))
     k = kick.read_text()
-    assert "Builder effort: high. Builder model: haiku." in k and "Builder effort: medium." in k
+    assert "Builder effort: low. Builder model: haiku." in k and "Builder effort: high." in k
     assert "Pass each task's builder model and effort to its Agent call" in k
     assert "factory:verifier (pass model sonnet and effort high to the Agent call) on the final commit" in k
 
