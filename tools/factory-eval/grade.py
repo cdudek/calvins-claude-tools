@@ -33,6 +33,7 @@ EDIT_TOOLS = {"Edit", "Write", "MultiEdit", "NotebookEdit"}
 AGENT_TOOLS = {"Agent", "Task"}
 TEST_CMD = re.compile(r"\b(pytest|vitest|jest|rspec|mocha|(npm|pnpm|yarn|bun)( run)? test|go test|cargo test|make test|playwright test|bin/rspec)\b")
 WEIGHT = {"in": 1.0, "out": 5.0, "cr": 0.1, "cc": 1.25}  # relative token prices, used only to split a model's cost between roles
+EST_USD_PER_MWEIGHT = {"opus": 2.7, "sonnet": 1.45, "haiku": 0.3}  # fitted on runs with a result event; prices a run that has none
 EXCLUDED = (".factory/", "changes/", "specs/")
 COMPONENTS = (("input_tokens", "inputTokens", "in"), ("output_tokens", "outputTokens", "out"),
               ("cache_read_input_tokens", "cacheReadInputTokens", "cr"), ("cache_creation_input_tokens", "cacheCreationInputTokens", "cc"))
@@ -84,6 +85,15 @@ def subagent_role(info):
     if re.search(r"security|astra", f"{info.get('description', '')} {info.get('prompt', '')}"[:600], re.I):
         return "security"
     return f"other:{st}" if st else "other"
+
+
+def estimate_cost(stream_tok):
+    """A run killed by the timeout has no result event, so its cost comes from the messages' own token counts."""
+    usd = 0.0
+    for model, comp in stream_tok.items():
+        rate = next((v for k, v in EST_USD_PER_MWEIGHT.items() if k in (model or "")), EST_USD_PER_MWEIGHT["sonnet"])
+        usd += sum(n * WEIGHT[name] for name, n in comp.items()) * rate / 1e6
+    return round(usd, 2)
 
 
 def parse_stream(events, suite_cmd=""):
@@ -177,7 +187,8 @@ def parse_stream(events, suite_cmd=""):
     killed, refused = sum((sa.get("killed") or {}).values()), sum((sa.get("refused") or {}).values())
     bg = sa.get("started_in_background", 0)
     return {
-        "has_result": result is not None, "cost_total": r.get("total_cost_usd", 0.0), "cost_by_model": cost_by_model,
+        "has_result": result is not None, "cost_total": r["total_cost_usd"] if "total_cost_usd" in r else estimate_cost(stream_tok),
+        "cost_estimated": "total_cost_usd" not in r, "cost_by_model": cost_by_model,
         "cost_by_role": dict(cost_by_role), "tokens": {"input": tokens["in"], "output": tokens["out"], "cache_read": tokens["cr"], "cache_creation": tokens["cc"]},
         "cache_hit": tokens["cr"] / denom if denom else None, "coordinator_turns": r.get("num_turns"),
         "coordinator_messages": sum(1 for x in msgs.values() if not x["parent"]),
@@ -359,11 +370,12 @@ def grade_run(run_dir, grader=None, retries=3, task_dir=None):
     reasons = []
     if run.get("infra_failure"):
         reasons.append(f"infrastructure: {run['infra_failure']}")
-    if not g["has_result"]:
+    timed_out = bool(run.get("timeout"))  # a timeout is a failed run, not an infrastructure one: the stream just has no result
+    if not g["has_result"] and not timed_out:
         reasons.append("no result event in the stream")
     if not g["goal_set"]:
         reasons.append("the goal was never set")
-    elif not g["goal_evaluated"]:
+    elif not g["goal_evaluated"] and not timed_out:
         if g["errored"]:
             reasons.append("infrastructure: the run errored before its first turn ended")
             g["infra_suspect"] = True
