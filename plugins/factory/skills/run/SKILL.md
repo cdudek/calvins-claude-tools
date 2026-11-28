@@ -75,7 +75,7 @@ Every rule, with the merge matrix, the bug flow and the learn loop: `references/
 
 ## Models and effort
 One default: Sonnet 5.5 medium for the coordinator and builders; stations 0 to 2 run at high effort. Verifier, advisor and second opinions: Opus 5.5 high. Codex doing work: `gpt-6.2-sol` high; Codex advisory:
-`gpt-6.2-astra` high, run as `codex exec -m <model> -c model_reasoning_effort=high -s read-only --ephemeral`. A task's `effort` or `model` and a milestone's `verifier` in the plan override the default.
+`gpt-6.2-astra` high, run as `codex exec -m <model> -c model_reasoning_effort=high -s read-only --ephemeral '<prompt>' </dev/null`: codex reads an open stdin and waits forever; a failed or killed codex run falls back to the Opus agent. A task's `effort` or `model` and a milestone's `verifier` in the plan override the default.
 
 ## The approval
 One approval, one SHA. The person sees four short things: intent, requirements, boards, a plain plan summary. Everything else is an exit code or the platform. The gallery is reviewed once, from the release PR, and stops nothing.

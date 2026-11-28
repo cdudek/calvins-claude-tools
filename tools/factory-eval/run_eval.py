@@ -120,14 +120,14 @@ def addendum(arm, task):
         out.append("Owner rulings already given for this milestone; apply them and never stop to ask for them again: "
                    + " ".join(task["owner_rulings"]))
     if arm["builder_kind"] == "codex-sol":
-        out.append("Builders: instead of factory:builder, run each task through `codex exec -m gpt-6.2-sol -c model_reasoning_effort=high` in its worktree, then continue as usual.")
+        out.append("Builders: instead of factory:builder, run each task through `codex exec -m gpt-6.2-sol -c model_reasoning_effort=high '<brief>' </dev/null` in its worktree, then continue as usual.")
     if "verifier" in ab:
         out.append("Skip the verifier step: do not dispatch factory:verifier and do not run holdout scenarios yourself. The goal accepts the skip line in place of "
                    f"a verifier PASS: once the pushed SHA is in the transcript, write {SKIP_LINE} for that SHA yourself. Everything else stays.")
     if "security" in ab or arm["reviewer"] == "off":
         out.append("Skip the security review even for a risky milestone.")
     elif arm["reviewer"] == "codex-astra":
-        out.append("For the risky-milestone review use `codex exec -m gpt-6.2-astra -c model_reasoning_effort=high -s read-only --ephemeral`, never a Claude agent.")
+        out.append("For the risky-milestone review use `codex exec -m gpt-6.2-astra -c model_reasoning_effort=high -s read-only --ephemeral '<prompt>' </dev/null`, never a Claude agent unless codex fails.")
     else:
         m, e = arm["roles"]["security"]
         out.append(f"For the risky-milestone security review use one {m} agent at {e} effort.")
