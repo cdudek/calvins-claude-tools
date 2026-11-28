@@ -220,10 +220,15 @@ def section(plan, m, P, root, sha, h, preflight, record=True):
                 "It checks behaviour only: it starts the app only when a scenario needs it. A `bug` FAIL goes back to the builder of that task, a `gap` FAIL to the gap lane; "
                 "the new commit goes through Verify step 2 (per-task integrity, a new <checked SHA>, merge that commit), then repeat Ship from step 1.")
     if review:
-        gate_verify = ("2. This milestone is risky (auth, money, consent or data exposure): in ONE message start two foreground Agent calls on the same <final SHA>: "
-                       f"{verifier} And {review}\n"
-                       f"3. Log the review as above (no commit), then run {gate} The `gate` needs that PASS, so it comes after the two agents; "
-                       "nothing is committed after them. Copy the printed SECURITY-REVIEW line(s) into your next progress entry or the HOLD/SHIPPED message. A FAIL of either: fix, then both agents run again on the new SHA.")
+        gate_verify = ("2. One message, two Agent calls, both on the <final SHA> (`git rev-parse HEAD`); start them together, never one after the other. "
+                       "This milestone is risky (auth, money, consent or data exposure):\n"
+                       f"   - Run {verifier}\n"
+                       f"   - Run {review}\n"
+                       "   - A FAIL of either: fix, then both run again on the new SHA.\n"
+                       "3. Log the review as above (no commit).\n"
+                       f"   - Then run {gate}\n"
+                       "   - The `gate` needs that PASS, so it comes after the two agents; nothing is committed after them.\n"
+                       "   - Copy the printed SECURITY-REVIEW line(s) into your next progress entry or the HOLD/SHIPPED message.")
     else:
         gate_verify = f"2. Run {gate}\n3. {verifier}"
     if ui:

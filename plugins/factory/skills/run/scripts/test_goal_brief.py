@@ -224,7 +224,9 @@ def test_risky_milestone_gets_security_review(tmp_path):
 def test_risky_milestone_runs_review_and_verifier_together_before_gate(tmp_path):
     code, out, kick = run(tmp_path, "M2", risky_text())
     s = ship_of(kick.read_text())
-    assert code == 0 and "in ONE message start two foreground Agent calls on the same <final SHA>" in s
+    assert code == 0 and "One message, two Agent calls, both on the <final SHA>" in s and "start them together, never one after the other" in s
+    two = s.split("2. One message")[1].split("3. Log the review")[0]
+    assert "together" in two and "- Run factory:verifier" in two and "- Run a security review" in two  # both calls under the one step
     order = [s.index(x) for x in ("1. Commit on", "factory:verifier", "a security review", "3. Log the review", "task-step.py gate", "4. ")]
     assert order == sorted(order) and "`GATE`/`FINISH` lines verbatim" in s
     assert "Log the review as above (no commit)" in s and "nothing is committed after them" in s and "commit the line" not in s
