@@ -14,8 +14,10 @@ gap fix task of round n (M2-gap<n>; M2-gap is round 1). The plan, and so `change
   start    create the task branch and worktree (`git worktree add <repo>/.worktrees/<slug>-<M>-<T>`) at the milestone head, run the
            approved plan's `setup` in it
   pin      record the bug flow's failing-test SHA
-  finish   run test-integrity.sh for the task in its worktree and merge exactly the checked commit (message `factory-merge: <name>`)
-  gate     the pre-PR calls: test-integrity.sh --milestone with the checked commits, then check-plan.py --approved
+  finish   run test-integrity.sh for the task in its worktree, then the plan's hand-back `tests` there (`related` on the changed files, every
+           trigger whose glob matches one), and merge exactly the checked commit (message `factory-merge: <name>`)
+  gate     the pre-PR calls: test-integrity.sh --milestone with the checked commits, the plan's `tests.suites` (each once, prefixed `heavy `
+           when `lock` is true and `heavy` is on PATH), then check-plan.py --approved
   status   print the recorded state
   review   log one security review of a risky milestone: appends `SECURITY-REVIEW <M> round=<n> sha=<HEAD> result=<PASS|FAIL> rule=<rule>` to the
            plan's progress log (the coordinator commits it; the next review refuses while it is uncommitted). <rule> names the broken rule in a few words joined by hyphens (`-` on a PASS).
@@ -31,6 +33,8 @@ import importlib.util
 import json
 import os
 import re
+import shlex
+import shutil
 import subprocess
 import sys
 from pathlib import Path
@@ -204,6 +208,47 @@ def integrity(*args):
     return subprocess.run(["bash", str(HERE / "test-integrity.sh"), *args], capture_output=True, text=True)
 
 
+TEST_TIMEOUT = 900
+
+
+def glob_re(g):
+    """A path glob as a regex: `*` and `?` stay inside one segment, `**/` is any number of directories, a trailing `**` is anything."""
+    out, i = "", 0
+    while i < len(g):
+        if g.startswith("**/", i):
+            out, i = out + "(?:.*/)?", i + 3
+        elif g.startswith("**", i):
+            out, i = out + ".*", i + 2
+        else:
+            out += "[^/]*" if g[i] == "*" else "[^/]" if g[i] == "?" else re.escape(g[i])
+            i += 1
+    return re.compile(out)
+
+
+def run_cmd(cmd, cwd):
+    """(ok, last 40 lines of output) of one plan test command: shell=True, as `setup`, since it comes from the owner-approved plan."""
+    try:
+        p = subprocess.run(str(cmd), shell=True, cwd=cwd, capture_output=True, text=True, timeout=TEST_TIMEOUT)
+    except subprocess.TimeoutExpired:
+        return False, [f"timed out after {TEST_TIMEOUT} s"]
+    return p.returncode == 0, (p.stdout + p.stderr).strip().splitlines()[-40:]
+
+
+def hand_back_cmds(c, wt):
+    """The plan's `tests.related` on the files the task changed, plus every trigger whose glob matches one of them; each command once."""
+    tests = c.plan.get("tests") or {}
+    base = out(wt, "merge-base", "HEAD", f"refs/heads/{c.branch}")
+    changed = [f for f in (out(wt, "diff", "--name-only", f"{base}...HEAD") or "").splitlines() if f] if base else []
+    cmds = []
+    if changed and tests.get("related"):
+        cmds.append(tests["related"].replace("{files}", " ".join(shlex.quote(f) for f in changed)))
+    for t in tests.get("triggers", []):
+        res = [glob_re(g) for g in t["paths"]]
+        if any(r.fullmatch(f) for r in res for f in changed) and t["run"] not in cmds:
+            cmds.append(t["run"])
+    return cmds
+
+
 def cmd_finish(c, task):
     st = c.state()
     if not c.target_ok(st.get("target")):
@@ -222,6 +267,15 @@ def cmd_finish(c, task):
         say("FINISH", False, f"{task} integrity")
         print(p.stdout.strip())
         return 1
+    cmds = hand_back_cmds(c, wt)  # before the merge: the worktree goes after it
+    for cmd in cmds:
+        good, tail = run_cmd(cmd, wt)
+        if not good:
+            say("FINISH", False, f"{task} tests: {cmd}")
+            print("\n".join(tail))
+            return 1
+    if cmds:
+        print(f"FINISH tests OK {len(cmds)} commands")
     built = out(wt, "rev-parse", "HEAD")
     m = git(c.repo, "merge", "--no-ff", "-q", "-m", f"{MERGE_PREFIX}{c.name(task)}", built)
     if m.returncode:
@@ -250,6 +304,12 @@ def cmd_gate(c):
     bad = say("GATE integrity", p.returncode == 0, "see the lines below" if p.returncode else "")
     if p.returncode:
         print(p.stdout.strip())
+    for suite in (c.plan.get("tests") or {}).get("suites", []):  # each once, in the milestone worktree
+        cmd = f"heavy {suite['cmd']}" if suite.get("lock") is True and shutil.which("heavy") else suite["cmd"]
+        good, tail = run_cmd(cmd, c.repo)
+        bad += say("GATE tests", good, suite["name"])
+        if not good:
+            print("\n".join(tail))
     if milestone(c).get("risky") or milestone(c).get("guards"):  # guarded data always gets the security review
         rs, cap = reviews(c), milestone(c).get("securityRounds", 1)
         fails = sum(1 for *_, res, _ in rs if res == "FAIL")

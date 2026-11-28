@@ -12,6 +12,8 @@ relative path globs; its optional `gapRounds` is a whole number 1 to 5 (default 
 (default 1). A milestone with `guards` needs a one-sentence `rule` (who may read or change the guarded data) and exactly one task with
 `"ruleTest": true` (the test of that rule across every read path, built before the other tasks).
 A task's optional `testChanges` lists the existing test blocks it may rename (`{"file", "block", "to", "why"}`) or remove (`{"file", "block", "remove": true, "why"}`); `file` must be in its `allowTestEdits` and `why` non-empty.
+The plan's optional `tests` is `{related, triggers, suites}` (see plan-standard.md): `related` a command with `{files}`, `triggers` a list of `{paths, run, why}`,
+`suites` a list of `{name, cmd, lock?}`; no command may switch parallelism off (`--runInBand`, `-j1`, `--maxWorkers=1` ...).
 Prints `PLAN OK <n> milestones <m> tasks` (exit 0) or one `PLAN FAIL <reason>` per problem (exit 1).
 """
 import json
@@ -409,8 +411,45 @@ def deferred_errs(m, mid):
             for i, x in enumerate(d) if not (isinstance(x, dict) and all(filled(x.get(k)) for k in ("item", "reason", "probe")))]
 
 
+SERIAL = re.compile(r"(?<![\w-])(?:--no-file-parallelism|--fileParallelism(?:=|\s+)false|--runInBand|--(?:maxWorkers|workers)(?:=|\s+)1|-p\s*1|-j\s*1)(?![\w-])")
+
+
+def tests_errs(tests):
+    """The optional `tests` key: `related` (a command with `{files}`), `triggers` (`{paths, run, why}`), `suites` (`{name, cmd, lock?}`).
+    No command may switch parallelism off: the project isolates its own suites, and serial runs cost minutes."""
+    if not isinstance(tests, dict):
+        return ["tests must be an object with related, triggers and suites"]
+    errs = [f"tests has unknown key {k}" for k in sorted(set(tests) - {"related", "triggers", "suites"})]
+    cmds = []
+    if "related" in tests:
+        r = tests["related"]
+        if not filled(r) or "{files}" not in r:
+            errs.append("tests.related must be a command containing {files}")
+        else:
+            cmds.append(("related", r))
+    for key, need in (("triggers", ("run", "why")), ("suites", ("name", "cmd"))):
+        v = tests.get(key, [])
+        if not isinstance(v, list):
+            errs.append(f"tests.{key} must be a list")
+            continue
+        for i, e in enumerate(v):
+            w = f"tests.{key}[{i}]"
+            if not isinstance(e, dict):
+                errs.append(f"{w} must be an object")
+                continue
+            errs += [f"{w} needs a non-empty {k}" for k in need if not filled(e.get(k))]
+            if key == "triggers" and not (is_strs(e.get("paths")) and e["paths"] and all(x.strip() for x in e["paths"])):
+                errs.append(f"{w} needs paths: a non-empty list of globs")
+            if key == "suites" and "lock" in e and not isinstance(e["lock"], bool):
+                errs.append(f"{w} lock must be true or false")
+            cmds += [(f"{w}.{k}", e[k]) for k in ("run", "cmd") if filled(e.get(k))]
+    return errs + [f"{w} switches parallelism off ({SERIAL.search(c).group(0)}): remove the flag, the project isolates its own suites" for w, c in cmds if SERIAL.search(c)]
+
+
 def keys_errs(plan):
     errs = []
+    if "tests" in plan:
+        errs += tests_errs(plan["tests"])
     if "allowTestEdits" in plan:
         errs.append("move allowTestEdits into the task that edits them")
     for k in ("hold", "setup"):
