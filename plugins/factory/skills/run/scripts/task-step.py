@@ -27,7 +27,7 @@ gap fix task of round n (M2-gap<n>; M2-gap is round 1). The plan, and so `change
            A FAIL past the milestone's `securityRounds` (default 1) fix rounds prints REVIEW FAIL: the run ends BLOCKED with the owner's choice.
 `start` of a task other than the milestone's `ruleTest` task (or a gap fix) fails until the rule test is merged.
 `finish` refuses the same tasks. `gate` on a risky milestone needs rounds numbered 1..n, at most `securityRounds` FAIL lines and a last PASS whose
-sha has no `factory-merge:` commit after it.
+sha is the HEAD being gated.
 The checked commits are never taken from the state file: `gate` derives them from git, as the second parents of the `factory-merge:` merges on the
 milestone branch's first-parent chain since the target. The state file (<worktree>/.factory/state/<M>.json, git-ignored by a `*` .gitignore beside it)
 is a convenience log, and holds the `reviews` rounds `gate` reads. Prints one `<STEP> OK|FAIL <detail>` line per step, then the failing check's own lines; exit 1 on any FAIL.
@@ -192,6 +192,20 @@ def baseline_worktree(c, target):
     return path, None if run_setup(c, path) else f"setup `{c.plan['setup']}` failed in the baseline worktree {path}"
 
 
+def untracked_and_tracked(wt):
+    """The `git status --porcelain` lines of a worktree, untracked files included."""
+    return [x for x in (out(wt, "status", "--porcelain", "--untracked-files=all") or "").splitlines() if x]
+
+
+def setup_in(c, st, task, path):
+    """Run `setup` in path and record in the state what it left, so a reuse knows setup finished; False when it fails."""
+    if not run_setup(c, path):
+        return False
+    st.setdefault("setup", {})[task] = untracked_and_tracked(path)
+    c.save(st)
+    return True
+
+
 def cmd_start(c, task):
     path, name = c.worktree(task), c.name(task)
     if (r := rule_test_first(c, task, "START")) is not None:
@@ -199,18 +213,25 @@ def cmd_start(c, task):
     head = out(c.repo, "rev-parse", "--verify", f"refs/heads/{c.branch}")
     if not head:
         return say("START", False, f"cannot resolve {c.branch}")
+    st = c.state()
     if not path.exists():
         if out(c.repo, "rev-parse", "--verify", "--quiet", f"refs/heads/{name}") is None:
             if git(c.repo, "branch", "--", name, head).returncode:
                 return say("START", False, f"git branch {name} failed")
+        elif git(c.repo, "merge-base", "--is-ancestor", name, head).returncode:
+            return say("START", False, f"branch {name} has commits the milestone branch does not: finish it, or delete the branch if the work is abandoned")
+        elif git(c.repo, "branch", "-f", "--", name, head).returncode:  # an earlier round's merged branch: restart at the milestone head
+            return say("START", False, f"git branch -f {name} failed")
         made = git(c.repo, "worktree", "add", "--", str(path), name)
         if made.returncode:
             return say("START", False, f"could not create the worktree {path}: {(made.stderr or made.stdout).strip()[:200]}")
         if out(path, "rev-parse", "HEAD") != head:
             return say("START", False, f"{path} HEAD is not the milestone head {head}")
-        if not run_setup(c, path):
+        if not setup_in(c, st, task, path):
             return say("START", False, f"setup `{c.plan['setup']}` failed in {path}")
         return say("START", True, f"{task} {path} {head}")
+    if task not in st.get("setup", {}) and not setup_in(c, st, task, path):  # an earlier start left the worktree behind with a failed setup
+        return say("START", False, f"setup `{c.plan['setup']}` failed in the existing worktree {path}")
     return say("START", True, f"{task} {path} reused, its HEAD is {out(path, 'rev-parse', 'HEAD')}, the milestone head is {head}")
 
 
@@ -310,6 +331,8 @@ def cmd_finish(c, task):
     if not wt.exists():
         return say("FINISH", False, f"no worktree {wt}")
     if out(wt, "rev-parse", "HEAD") == out(wt, "merge-base", "HEAD", c.branch):  # no commit past the milestone head: the work is already on base
+        if dirty := set(untracked_and_tracked(wt)) - set(st.get("setup", {}).get(task, [])):  # only what `setup` left may remain
+            return say("FINISH", False, f"{task} uncommitted changes in an empty task: {', '.join(sorted(dirty)[:5])}")
         st["tasks"][task] = {"builder": None, "merged": None, "empty": True}
         c.save(st)
         git(c.repo, "worktree", "remove", "--force", "--", str(wt))
@@ -358,12 +381,17 @@ def cmd_gate(c):
     if not c.target_ok(st.get("target")):
         return say("GATE", False, "no valid target SHA recorded (it must be on origin's target branch and under HEAD): run `target` first")
     checked = c.checked(st["target"])
-    if not checked:
+    planned = [t["id"] for t in milestone(c).get("tasks", [])]
+    if not checked and not (planned and all(st["tasks"].get(t, {}).get("empty") for t in planned)):
         return say("GATE", False, "no task has passed `finish` yet: git shows no factory-merge commit on the milestone branch")
-    p = integrity(str(c.repo), st["target"], c.plan_arg, "--milestone", c.ms, *c.flags(st), "--checked", ",".join(checked))
-    bad = say("GATE integrity", p.returncode == 0, "see the lines below" if p.returncode else "")
-    if p.returncode:
-        print(p.stdout.strip())
+    bad = 0
+    if checked:  # every planned task empty: nothing was built, so there is nothing to check
+        p = integrity(str(c.repo), st["target"], c.plan_arg, "--milestone", c.ms, *c.flags(st), "--checked", ",".join(checked))
+        bad = say("GATE integrity", p.returncode == 0, "see the lines below" if p.returncode else "")
+        if p.returncode:
+            print(p.stdout.strip())
+    else:
+        say("GATE integrity", True, "every task is empty, nothing to check")
     base = None  # (path, why not) of the one baseline worktree, made at the first red suite
     for suite in (c.plan.get("tests") or {}).get("suites", []):  # each once, in the milestone worktree
         cand = run_full(suite_cmd(suite), c.repo)
@@ -389,10 +417,8 @@ def cmd_gate(c):
         rs, cap = reviews(c), milestone(c).get("securityRounds", 1)
         fails = sum(1 for *_, res, _ in rs if res == "FAIL")
         numbered = [r[0] for r in rs] == list(range(1, len(rs) + 1))
-        later = rs and git(c.repo, "merge-base", "--is-ancestor", rs[-1][1], "HEAD").returncode == 0 and not any(
-            x.startswith(MERGE_PREFIX) for x in (out(c.repo, "log", "--first-parent", "--format=%s", f"{rs[-1][1]}..HEAD") or "").splitlines())
-        ok = bool(rs) and numbered and rs[-1][2] == "PASS" and fails <= cap and bool(later)
-        bad += say("GATE security", ok, "" if ok else f"needs rounds 1..n, at most {cap} FAIL rounds and a last PASS with no task merged after its sha (log has {len(rs)} rounds, {fails} FAIL)")
+        ok = bool(rs) and numbered and rs[-1][2] == "PASS" and fails <= cap and rs[-1][1] == out(c.repo, "rev-parse", "HEAD")
+        bad += say("GATE security", ok, "" if ok else f"needs rounds 1..n, at most {cap} FAIL rounds and a last PASS reviewed at exactly this HEAD (log has {len(rs)} rounds, {fails} FAIL)")
     q = subprocess.run([sys.executable, str(HERE / "check-plan.py"), str(c.plan_file), "--approved", c.approved], capture_output=True, text=True)
     bad += say("GATE check-plan", q.returncode == 0, "see the lines below" if q.returncode else "")
     if q.returncode:
@@ -434,11 +460,15 @@ def cmd_status(c):
 
 def main():
     a = sys.argv[1:]
-    approved = None
-    if "--approved" in a and a.index("--approved") == len(a) - 2:
-        a, approved = a[:-2], a[-1]
-    resume = "--resume" in a
-    a = [x for x in a if x != "--resume"]
+    approved, resume, rest, i = None, False, [], 0
+    while i < len(a):  # --approved <sha> and --resume may stand anywhere
+        if a[i] == "--approved" and i + 1 < len(a):
+            approved, i = a[i + 1], i + 2
+        elif a[i] == "--resume":
+            resume, i = True, i + 1
+        else:
+            rest, i = rest + [a[i]], i + 1
+    a = rest
     n = {"target": 3, "start": 4, "pin": 4, "finish": 4, "gate": 3, "status": 3, "review": 5}
     if not a or a[0] not in n or len(a) != n[a[0]] or not approved or not re.fullmatch(r"[0-9a-f]{7,40}", approved):
         print("usage: task-step.py target|start|pin|finish|gate|status|review <plan.md> <M> [<T>|<sha>|PASS|FAIL <rule>] --approved <sha> (see the header)", file=sys.stderr)

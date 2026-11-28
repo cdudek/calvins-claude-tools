@@ -414,3 +414,84 @@ def test_gate_fails_a_suite_with_a_new_failure_beside_a_pre_existing_one(tmp_pat
     assert ok(repo, sha, "finish", "T1")[0] == 0
     code, out = ok(repo, sha, "gate")
     assert code == 1 and "GATE tests FAIL mix (new failing tests: t::b)" in out and "PRE-EXISTING" not in out, out
+
+
+def test_finish_of_an_empty_task_refuses_uncommitted_work(tmp_path):
+    repo, sha = milestone_repo(tmp_path)
+    ok(repo, sha, "target")
+    ok(repo, sha, "start", "T1")
+    wt = repo / ".worktrees" / f"{SLUG}-M1-T1"
+    (wt / "src").mkdir()
+    (wt / "src/a.ts").write_text("unsaved\n")
+    code, out = ok(repo, sha, "finish", "T1")
+    assert code == 1 and "uncommitted changes in an empty task" in out and wt.exists(), out
+    (wt / "src/a.ts").unlink()  # the setup marker alone is fine
+    assert "no changes" in ok(repo, sha, "finish", "T1")[1]
+
+
+def test_gate_skips_integrity_when_every_planned_task_is_empty(tmp_path):
+    repo, sha = milestone_repo(tmp_path)
+    ok(repo, sha, "target")
+    for t in ("T1", "T2"):
+        ok(repo, sha, "start", t)
+        assert "no changes" in ok(repo, sha, "finish", t)[1]
+    code, out = ok(repo, sha, "gate")
+    assert code == 0 and "GATE integrity OK every task is empty" in out and "GATE check-plan OK" in out, out
+
+
+def test_gate_still_fails_when_a_planned_task_was_never_finished(tmp_path):
+    repo, sha = milestone_repo(tmp_path)
+    ok(repo, sha, "target")
+    ok(repo, sha, "start", "T1")
+    ok(repo, sha, "finish", "T1")
+    assert "no task has passed `finish` yet" in ok(repo, sha, "gate")[1]
+
+
+def test_approved_and_resume_are_accepted_in_any_position(tmp_path):
+    repo, sha = milestone_repo(tmp_path)
+    code, out = step(repo, "target", P, "M1", "--approved", sha, "--resume")
+    assert code == 0 and out.startswith("TARGET OK"), out
+    code, out = step(repo, "--resume", "target", "--approved", sha, P, "M1")
+    assert code == 0 and out.startswith("TARGET OK"), out
+    assert step(repo, "target", P, "M1", "--approved")[0] == 2  # a value is required
+
+
+def test_start_reruns_setup_in_a_reused_worktree_whose_setup_failed(tmp_path):
+    plan = json.loads(json.dumps(PLAN))
+    plan["setup"] = f"test -e {tmp_path}/ready && touch .setup-ran"
+    repo, sha = milestone_repo(tmp_path, plan)
+    ok(repo, sha, "target")
+    code, out = ok(repo, sha, "start", "T1")
+    wt = repo / ".worktrees" / f"{SLUG}-M1-T1"
+    assert code == 1 and "setup" in out and wt.exists()
+    assert ok(repo, sha, "start", "T1")[0] == 1  # still failing, never "reused"
+    (tmp_path / "ready").write_text("")
+    code, out = ok(repo, sha, "start", "T1")
+    assert code == 0 and "reused" in out and (wt / ".setup-ran").exists(), out
+
+
+def test_start_recreates_a_merged_task_branch_and_refuses_an_unmerged_one(tmp_path):
+    repo, sha = milestone_repo(tmp_path)
+    ok(repo, sha, "target")
+    ok(repo, sha, "start", "T1")
+    build(repo / ".worktrees" / f"{SLUG}-M1-T1", "src/a.ts")
+    assert ok(repo, sha, "finish", "T1")[0] == 0  # worktree gone, branch merged
+    git(repo, "commit", "-q", "--allow-empty", "-m", "later work")
+    code, out = ok(repo, sha, "start", "T1")
+    assert code == 0 and git(repo, "rev-parse", f"{SLUG}-M1-T1") == git(repo, "rev-parse", "HEAD"), out
+    wt = repo / ".worktrees" / f"{SLUG}-M1-T1"
+    build(wt, "src/a2.ts")  # unmerged work, then the checkout is lost
+    git(repo, "worktree", "remove", "--force", str(wt))
+    code, out = ok(repo, sha, "start", "T1")
+    assert code == 1 and "commits the milestone branch does not" in out, out
+
+
+def test_gate_security_needs_the_pass_at_exactly_the_gated_head(tmp_path):
+    repo, sha = milestone_repo(tmp_path, with_ms(risky=True))
+    ok(repo, sha, "target")
+    ok(repo, sha, "start", "T1")
+    build(repo / ".worktrees" / f"{SLUG}-M1-T1", "src/a.ts")
+    ok(repo, sha, "finish", "T1")
+    ok(repo, sha, "review", "PASS", "-")
+    git(repo, "commit", "-q", "--allow-empty", "-m", "after the review")  # not a factory-merge, but HEAD moved
+    assert "GATE security FAIL" in ok(repo, sha, "gate")[1]
