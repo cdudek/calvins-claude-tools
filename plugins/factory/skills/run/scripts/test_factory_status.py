@@ -252,6 +252,14 @@ def test_cli_json_and_line(tmp_path, monkeypatch):
         assert re.fullmatch(r"M3 \(3/20\) · T2/2 building · gap 0/3 · \d+m", p.stdout.strip()), p.stdout
 
 
+def test_line_names_a_gap_task_without_a_count(tmp_path):
+    repo = make_repo(tmp_path, log=f"approved: {SHA}\n")
+    add_worktree(repo, f"milestone/{SLUG}-M1")
+    add_worktree(repo, f"{SLUG}-M1-gap3")
+    p = run_cli("--repo", str(repo), "--line", env={"FACTORY_HOME": str(tmp_path / "fh")})
+    assert re.fullmatch(r"M1 \(1/\d+\) · gap fix building · gap \d+/3", p.stdout.strip()), p.stdout
+
+
 def test_line_is_empty_when_nothing_runs(tmp_path):
     repo = make_repo(tmp_path, log=f"approved: {SHA}\n")
     p = run_cli("--repo", str(repo), "--line", env={"FACTORY_HOME": str(tmp_path / "fh")})
@@ -353,6 +361,7 @@ def test_untrusted_gap_rounds_and_ids_render_escaped(tmp_path, monkeypatch):
     assert "<img" not in page and "<b>" not in page
 
 
-def test_bundled_status_copy_in_the_mod_is_identical():
-    bundled = HERE.parents[3] / "factory-status" / "bin" / "factory-status.py"
-    assert bundled.read_bytes() == SCRIPT.read_bytes(), "cp plugins/factory/skills/run/scripts/factory-status.py plugins/factory-status/bin/"
+def test_bundled_copies_in_the_mod_are_identical():
+    for name in ("factory-status.py", "factory-board.py"):
+        bundled = HERE.parents[3] / "factory-status" / "bin" / name
+        assert bundled.read_bytes() == (HERE / name).read_bytes(), f"cp plugins/factory/skills/run/scripts/{name} plugins/factory-status/bin/"
