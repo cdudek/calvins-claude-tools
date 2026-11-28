@@ -10,14 +10,17 @@ The coordinator's routine per-task mechanics, run from the milestone worktree (b
 repo-relative (changes/<slug>/plan.md), never absolute and never outside the repo. <T> is a plan task (T3) or the milestone's
 gap fix task of round n (M2-gap<n>; M2-gap is round 1). The plan, and so `change`, the target branch and `setup`, is read from the approved commit, never from the working file.
   target   fetch origin and record the head of the integration (else base) branch as the target SHA; --resume records
-           `git merge-base HEAD origin/<target>` instead
+           `git merge-base HEAD origin/<target>` instead. Runs each `tests.suites` command once and records the red ones (`baseline_red`;
+           --resume keeps an existing record)
   start    create the task branch and worktree (`git worktree add <repo>/.worktrees/<slug>-<M>-<T>`) at the milestone head, run the
            approved plan's `setup` in it
   pin      record the bug flow's failing-test SHA
   finish   run test-integrity.sh for the task in its worktree, then the plan's hand-back `tests` there (`related` on the changed files, every
-           trigger whose glob matches one), and merge exactly the checked commit (message `factory-merge: <name>`)
+           trigger whose glob matches one), and merge exactly the checked commit (message `factory-merge: <name>`). A command that also fails
+           in the milestone worktree was red before the task: `FINISH tests PRE-EXISTING <cmd>`, recorded in `preexisting`, never blocking
   gate     the pre-PR calls: test-integrity.sh --milestone with the checked commits, the plan's `tests.suites` (each once, prefixed `heavy `
-           when `lock` is true and `heavy` is on PATH), then check-plan.py --approved
+           when `lock` is true and `heavy` is on PATH), then check-plan.py --approved. A suite red at `target` prints
+           `GATE tests PRE-EXISTING <name>` and does not fail the gate
   status   print the recorded state
   review   log one security review of a risky milestone: appends `SECURITY-REVIEW <M> round=<n> sha=<HEAD> result=<PASS|FAIL> rule=<rule>` to the
            plan's progress log (the coordinator commits it; the next review refuses while it is uncommitted). <rule> names the broken rule in a few words joined by hyphens (`-` on a PASS).
@@ -152,8 +155,10 @@ def cmd_target(c, resume):
         return say("TARGET", False, f"cannot resolve origin/{c.tgt}")
     st = c.state()
     st["target"] = sha
+    if not (resume and "baseline_red" in st):
+        st["baseline_red"] = [s["name"] for s in (c.plan.get("tests") or {}).get("suites", []) if not run_cmd(suite_cmd(s), c.repo)[0]]
     c.save(st)
-    return say("TARGET", True, sha)
+    return say("TARGET", True, sha + (f" baseline red: {', '.join(st['baseline_red'])}" if st["baseline_red"] else ""))
 
 
 def milestone(c):
@@ -234,6 +239,10 @@ def run_cmd(cmd, cwd):
     return p.returncode == 0, (p.stdout + p.stderr).strip().splitlines()[-40:]
 
 
+def suite_cmd(suite):
+    return f"heavy {suite['cmd']}" if suite.get("lock") is True and shutil.which("heavy") else suite["cmd"]
+
+
 def hand_back_cmds(c, wt):
     """The plan's `tests.related` on the files the task changed, plus every trigger whose glob matches one of them; each command once."""
     tests = c.plan.get("tests") or {}
@@ -271,6 +280,12 @@ def cmd_finish(c, task):
     for cmd in cmds:
         good, tail = run_cmd(cmd, wt)
         if not good:
+            # shortcut: exit codes, not per-test diffs, so a command already red on base hides new failures in it; upgrade if misses show up
+            if not run_cmd(cmd, c.repo)[0]:
+                print(f"FINISH tests PRE-EXISTING {cmd}")
+                print("\n".join(tail[-10:]))
+                st.setdefault("preexisting", []).append(cmd)
+                continue
             say("FINISH", False, f"{task} tests: {cmd}")
             print("\n".join(tail))
             return 1
@@ -305,8 +320,10 @@ def cmd_gate(c):
     if p.returncode:
         print(p.stdout.strip())
     for suite in (c.plan.get("tests") or {}).get("suites", []):  # each once, in the milestone worktree
-        cmd = f"heavy {suite['cmd']}" if suite.get("lock") is True and shutil.which("heavy") else suite["cmd"]
-        good, tail = run_cmd(cmd, c.repo)
+        good, tail = run_cmd(suite_cmd(suite), c.repo)
+        if not good and suite["name"] in st.get("baseline_red", []):
+            print(f"GATE tests PRE-EXISTING {suite['name']}")
+            continue
         bad += say("GATE tests", good, suite["name"])
         if not good:
             print("\n".join(tail))

@@ -279,7 +279,7 @@ def test_finish_runs_related_and_matching_triggers_before_the_merge(tmp_path):
 
 
 def test_finish_blocks_the_merge_when_a_hand_back_test_fails(tmp_path):
-    plan = plan_with_tests(triggers=[{"paths": ["src/*.ts"], "run": "echo boom-line; exit 3", "why": "w"}])
+    plan = plan_with_tests(triggers=[{"paths": ["src/*.ts"], "run": "test ! -e src/a.ts || { echo boom-line; exit 3; }", "why": "w"}])
     repo, sha = milestone_repo(tmp_path, plan)
     ok(repo, sha, "target")
     ok(repo, sha, "start", "T1")
@@ -287,7 +287,7 @@ def test_finish_blocks_the_merge_when_a_hand_back_test_fails(tmp_path):
     build(wt, "src/a.ts")
     before = git(repo, "rev-parse", "HEAD")
     code, out = ok(repo, sha, "finish", "T1")
-    assert code == 1 and "FINISH FAIL T1 tests: echo boom-line; exit 3" in out and "boom-line" in out, out
+    assert code == 1 and "FINISH FAIL T1 tests: test ! -e src/a.ts" in out and "boom-line" in out, out
     assert git(repo, "rev-parse", "HEAD") == before and wt.exists()
     assert json.loads((repo / ".factory/state/M1.json").read_text())["checked"] == []
 
@@ -303,7 +303,7 @@ def test_finish_skips_triggers_that_match_no_changed_file(tmp_path):
 
 
 def test_gate_runs_each_suite_once_and_fails_on_a_red_one(tmp_path):
-    plan = plan_with_tests(suites=[{"name": "unit", "cmd": "echo u >> ../suite-count"}, {"name": "arch", "cmd": "echo arch-broke; exit 1", "lock": True}])
+    plan = plan_with_tests(suites=[{"name": "unit", "cmd": "echo u >> ../suite-count"}, {"name": "arch", "cmd": "test ! -e src/a.ts || { echo arch-broke; exit 1; }", "lock": True}])
     repo, sha = milestone_repo(tmp_path, plan)
     ok(repo, sha, "target")
     ok(repo, sha, "start", "T1")
@@ -311,4 +311,28 @@ def test_gate_runs_each_suite_once_and_fails_on_a_red_one(tmp_path):
     assert ok(repo, sha, "finish", "T1")[0] == 0
     code, out = ok(repo, sha, "gate")
     assert code == 1 and "GATE tests OK unit" in out and "GATE tests FAIL arch" in out and "arch-broke" in out, out
-    assert (tmp_path / "suite-count").read_text() == "u\n"
+    assert (tmp_path / "suite-count").read_text() == "u\nu\n"  # once at target (baseline), once at gate
+
+
+def test_finish_does_not_block_on_a_command_already_red_on_the_milestone(tmp_path):
+    plan = plan_with_tests(triggers=[{"paths": ["src/*.ts"], "run": "echo old-red; exit 3", "why": "w"}])
+    repo, sha = milestone_repo(tmp_path, plan)
+    ok(repo, sha, "target")
+    ok(repo, sha, "start", "T1")
+    build(repo / ".worktrees" / f"{SLUG}-M1-T1", "src/a.ts")
+    code, out = ok(repo, sha, "finish", "T1")
+    assert code == 0 and "FINISH tests PRE-EXISTING echo old-red; exit 3" in out and "old-red" in out and "FINISH FAIL" not in out, out
+    st = json.loads((repo / ".factory/state/M1.json").read_text())
+    assert st["preexisting"] == ["echo old-red; exit 3"] and "T1" in st["tasks"]
+
+
+def test_gate_reports_a_suite_red_at_target_as_pre_existing(tmp_path):
+    plan = plan_with_tests(suites=[{"name": "old", "cmd": "exit 1"}, {"name": "unit", "cmd": "true"}])
+    repo, sha = milestone_repo(tmp_path, plan)
+    ok(repo, sha, "target")
+    assert json.loads((repo / ".factory/state/M1.json").read_text())["baseline_red"] == ["old"]
+    ok(repo, sha, "start", "T1")
+    build(repo / ".worktrees" / f"{SLUG}-M1-T1", "src/a.ts")
+    assert ok(repo, sha, "finish", "T1")[0] == 0
+    code, out = ok(repo, sha, "gate")
+    assert "GATE tests PRE-EXISTING old" in out and "GATE tests OK unit" in out and "GATE tests FAIL" not in out, out
