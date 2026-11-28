@@ -20,8 +20,8 @@ Unverified entries are marked. `discover-tests.py` proposes these from the manif
 
 | Stack | `related` | Suite |
 |---|---|---|
-| vitest | `npx vitest related --run {files}` | `npx vitest run` |
-| jest | `npx jest --findRelatedTests {files}` | `npx jest` |
+| vitest | `npx vitest related --run --passWithNoTests {files}` | `npx vitest run` |
+| jest | `npx jest --passWithNoTests --findRelatedTests {files}` | `npx jest` |
 | pytest | none yet (`pytest --testmon` takes no `{files}`, so `related` cannot express it; unverified) | `pytest -n auto` if xdist, else `pytest` |
 | go | none (fallback; `go test` takes packages, not files) | `go test ./...` |
 | cargo | none (fallback) | `cargo nextest run` if installed, else `cargo test` |

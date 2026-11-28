@@ -278,7 +278,7 @@ def vt_files(n=2):
 @pytest.fixture
 def vt_block(tmp_path):
     block = discover(tmp_path, vt_files())
-    assert block["related"] == "npx vitest related --run {files}"
+    assert block["related"] == "npx vitest related --run --passWithNoTests {files}"
     assert {s["name"] for s in block["suites"]} == {"unit", "typecheck"}
     trig = [t for t in block["triggers"] if t["paths"] == ["schema/**"]]
     if not trig:  # discovery cannot see a test reading schema/ through a URL
@@ -297,12 +297,20 @@ def test_vitest_change_runs_only_the_related_test_and_merges(tmp_path, marks, no
     assert "b + a" in (repo / "src/add.ts").read_text()  # merged
 
 
+def test_vitest_change_to_a_file_no_test_imports_merges(tmp_path, marks, node_modules, vt_block):
+    # vitest related exits 1 when it finds no test; --passWithNoTests in discover's template keeps finish from blocking
+    repo, sha, wt = task_repo(tmp_path, vt_files(), vt_block, ["src/orphan.ts"], node_modules)
+    T.build(wt, "src/orphan.ts", "export const orphan = 1;\n")
+    code, out = T.ok(repo, sha, "finish", "T1")
+    assert code == 0 and "FINISH OK T1" in out, out
+
+
 def test_vitest_break_in_a_transitive_import_is_blocked(tmp_path, marks, node_modules, vt_block):
     repo, sha, wt = task_repo(tmp_path, vt_files(), vt_block, ["src/util/format.ts"], node_modules)  # mul.test.ts reaches format.ts only through mul.ts
     T.build(wt, "src/util/format.ts", "export const format = (n: number): string => `${n + 1}`;\n")
     before = T.git(repo, "rev-parse", "HEAD")
     code, out = T.ok(repo, sha, "finish", "T1")
-    assert code == 1 and "FINISH FAIL T1 tests: npx vitest related --run src/util/format.ts" in out and "mul" in out, out
+    assert code == 1 and "FINISH FAIL T1 tests: npx vitest related --run --passWithNoTests src/util/format.ts" in out and "mul" in out, out
     assert "x" in lines(marks / "mul-ran") and T.git(repo, "rev-parse", "HEAD") == before
 
 
@@ -348,7 +356,7 @@ JEST = {
 @pytest.fixture
 def jest_block(tmp_path):
     block = discover(tmp_path, JEST)
-    assert block["related"] == "npx jest --findRelatedTests {files}"
+    assert block["related"] == "npx jest --passWithNoTests --findRelatedTests {files}"
     return mark_suites(block)
 
 
@@ -366,5 +374,5 @@ def test_jest_break_is_blocked(tmp_path, node_modules, jest_block):
     T.build(wt, "src/mul.ts", "export const mul = (a: number, b: number): number => a + b;\n")
     before = T.git(repo, "rev-parse", "HEAD")
     code, out = T.ok(repo, sha, "finish", "T1")
-    assert code == 1 and "FINISH FAIL T1 tests: npx jest --findRelatedTests src/mul.ts" in out, out
+    assert code == 1 and "FINISH FAIL T1 tests: npx jest --passWithNoTests --findRelatedTests src/mul.ts" in out, out
     assert T.git(repo, "rev-parse", "HEAD") == before

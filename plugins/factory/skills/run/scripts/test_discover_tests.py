@@ -36,7 +36,7 @@ def test_vitest_repo_with_arch_config_and_playwright(tmp_path):
     put(tmp_path, "tests/migrate.test.ts", "import x from 'y'\n// reads db/migrations\nconst d = 'migrations'\n")
     block, notes = discover(tmp_path)
     by = {s["name"]: s for s in block["suites"]}
-    assert block["related"] == "npx vitest related --run {files}"
+    assert block["related"] == "npx vitest related --run --passWithNoTests {files}"
     assert by["unit"]["cmd"] == "npm run test"
     assert by["e2e"]["lock"] is True
     assert by["vitest-arch"]["cmd"] == "npx vitest run --config vitest.arch.config.ts"

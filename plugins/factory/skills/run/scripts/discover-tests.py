@@ -124,9 +124,9 @@ def node(repo, pr):
     run, exe = next((v for f, v in lock.items() if (repo / f).exists()), ("npm run", "npx"))
     stack = "vitest" if "vitest" in deps else "jest" if "jest" in deps else None
     if stack == "vitest":
-        pr.set_related(f"{exe} vitest related --run {{files}}")
+        pr.set_related(f"{exe} vitest related --run --passWithNoTests {{files}}")
     elif stack == "jest":
-        pr.set_related(f"{exe} jest --findRelatedTests {{files}}")
+        pr.set_related(f"{exe} jest --passWithNoTests --findRelatedTests {{files}}")
     if stack and not pr.related:
         pr.fallback(f"{exe} {stack} {'run ' if stack == 'vitest' else ''}{{tests}}", substring_filter=True)
     bodies = " ".join(str(v) for v in scripts.values())
