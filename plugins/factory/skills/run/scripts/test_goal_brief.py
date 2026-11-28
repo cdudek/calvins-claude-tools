@@ -221,6 +221,15 @@ def test_risky_milestone_gets_security_review(tmp_path):
     assert "is a `gap`: see the gap lane under Verify" in k
 
 
+def test_risky_milestone_runs_review_and_verifier_together_before_gate(tmp_path):
+    code, out, kick = run(tmp_path, "M2", risky_text())
+    s = ship_of(kick.read_text())
+    assert code == 0 and "in ONE message start two foreground Agent calls on the same <final SHA>" in s
+    order = [s.index(x) for x in ("1. Commit on", "factory:verifier", "a security review", "task-step.py review", "task-step.py gate", "4. ")]
+    assert order == sorted(order) and "`GATE`/`FINISH` lines verbatim" in s
+    assert "security review" not in kick.read_text().split("Ship, in this order")[0]  # not in Verify any more
+
+
 def test_goal_lists_end_states_in_order(tmp_path):
     code, out, _ = run(tmp_path, "M2", risky_text())
     goal = goal_of(out)

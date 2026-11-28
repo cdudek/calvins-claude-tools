@@ -31,7 +31,6 @@ Unfinished work stays in its task worktree and the next pass gets the same path.
 {{h}} Verify, in this order, pasting each output into the transcript
 1. The plan's `tests`: the suites run once in the Ship gate below (`GATE tests OK|FAIL <suite>`), the hand-back tests in step 2. A plan without `tests`: the repo's fast checks (lint, typecheck, unit). No local CI.
 2. Per task, before merging it into `{{branch}}`: `python3 .factory/task-step.py finish {{P}}plan.md {{mid}} <task id> --approved {{sha}}` runs the task's integrity check and the plan's hand-back `tests` in its worktree, records its HEAD as a <checked SHA> (every INTEGRITY OK commit, also an earlier pass's) and merges exactly that commit into `{{branch}}`. It must print `FINISH OK`.
-{{risky_step}}
 {{ux_step}}
 Failures go back to the builder of that task, at most 3 passes. Stop after 2 attempts at the same failure with no new evidence.
 {{gap_line}}
@@ -39,6 +38,5 @@ Failures go back to the builder of that task, at most 3 passes. Stop after 2 att
 {{h}} Ship, in this order
 Commit first, verify that final commit, push that same SHA. Nothing is committed after the verifier: a later commit is a different SHA and needs the verifier again.
 1. Commit on `{{branch}}`: {{commit_what}}the progress entry to plan.md (time, milestone, requirement ids, done and remaining, check result, next action; no PR number or merge SHA, they are not known yet and `gh pr view` has them).
-2. Run `python3 .factory/task-step.py gate {{P}}plan.md {{mid}} --approved {{sha}}`: the pre-PR integrity call (every <checked SHA>, the recorded target) and the plan check; both must print OK.
-3. factory:verifier{{verifier_tier}} on the final commit (`git rev-parse HEAD` is the <final SHA>), with the delta, base, diff and the holdout scenarios in `~/.factory/scenarios/{{repo}}/{{change}}/` for {{covers}}. Never the builders' reasoning. A `bug` FAIL goes back to the builder of that task, a `gap` FAIL to the gap lane; the new commit goes through Verify step 2 (per-task integrity, a new <checked SHA>, merge that commit), then repeat Ship from step 1.
+{{gate_verify}}
 {{ship_tail}}

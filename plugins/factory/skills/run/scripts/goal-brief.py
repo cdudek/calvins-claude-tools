@@ -204,17 +204,30 @@ def section(plan, m, P, root, sha, h, preflight, record=True):
     tgt = target(plan)
     hold, bug = plan.get("hold"), plan.get("kind") == "bug"
     last = mid == plan["milestones"][-1]["id"]
-    risky_step = ui_step = ""
+    ui_step = ""
+    review = ""
     if risky(m):
-        risky_step = ("3. This milestone is risky (auth, money, consent or data exposure): also run a security review of the diff and delta, "
-                      "by one Opus 5.5 high advisory agent or `codex exec -m gpt-6.2-astra -c model_reasoning_effort=high -s read-only --ephemeral`, "
-                      "and fix a confirmed High only inside the task's own files and its allowTestEdits. A fix that needs other files "
-                      "or another test edit is a `gap`: see the gap lane under Verify. The review names the rule each finding breaks and groups findings by it. "
-                      f"After each review run `python3 .factory/task-step.py review {P}plan.md {mid} PASS|FAIL <rule-in-hyphenated-words> --approved {sha}` and commit "
-                      f"the line it logs. A FAIL is fixed at that rule, starting from the rule test, never one hole at a time; at most {m.get('securityRounds', 1)} "
-                      "fix round(s). When the script prints REVIEW FAIL, end with the BLOCKED line it prints.")
+        review = ("a security review of the diff and delta, "
+                  "by one Opus 5.5 high advisory agent or `codex exec -m gpt-6.2-astra -c model_reasoning_effort=high -s read-only --ephemeral`, "
+                  "and fix a confirmed High only inside the task's own files and its allowTestEdits. A fix that needs other files "
+                  "or another test edit is a `gap`: see the gap lane under Verify. The review names the rule each finding breaks and groups findings by it. "
+                  f"After the review run `python3 .factory/task-step.py review {P}plan.md {mid} PASS|FAIL <rule-in-hyphenated-words> --approved {sha}` and commit "
+                  f"the line it logs. A FAIL is fixed at that rule, starting from the rule test, never one hole at a time; at most {m.get('securityRounds', 1)} "
+                  "fix round(s). When the script prints REVIEW FAIL, end with the BLOCKED line it prints.")
+    gate = f"`python3 .factory/task-step.py gate {P}plan.md {mid} --approved {sha}`: the pre-PR integrity call (every <checked SHA>, the recorded target) and the plan check; both must print OK."
+    verifier = (f"factory:verifier{verifier_tier(m)} on the final commit (`git rev-parse HEAD` is the <final SHA>), with the delta, base, diff and the holdout scenarios in "
+                f"`~/.factory/scenarios/{root.name}/{change}/` for {', '.join(m['covers'])}, and the `GATE`/`FINISH` lines verbatim to cite, never to re-run. Never the builders' reasoning. "
+                "It checks behaviour only: it starts the app only when a scenario needs it. A `bug` FAIL goes back to the builder of that task, a `gap` FAIL to the gap lane; "
+                "the new commit goes through Verify step 2 (per-task integrity, a new <checked SHA>, merge that commit), then repeat Ship from step 1.")
+    if review:
+        gate_verify = ("2. This milestone is risky (auth, money, consent or data exposure): in ONE message start two foreground Agent calls on the same <final SHA>: "
+                       f"{verifier} And {review}\n"
+                       f"3. Log the review as above, commit the line, then run {gate} The `gate` needs that PASS, so it comes after the two agents; "
+                       "the review line is the only commit allowed after the verifier, it touches only the progress log. A FAIL of either: fix, then both agents run again on the new SHA.")
+    else:
+        gate_verify = f"2. Run {gate}\n3. {verifier}"
     if ui:
-        ui_step = (f"{4 if m.get('risky') else 3}. factory:ux-verifier against the design boards in `{P}design/`, which the owner approved "
+        ui_step = (f"3. factory:ux-verifier against the design boards in `{P}design/`, which the owner approved "
                    f"at the single approval, per the factory ux-checks reference. Screenshots go to {P}evidence/{mid}/. Write the gallery to "
                    f"{P}evidence/{mid}/gallery.md; Ship commits it with the progress entry. It is evidence, not a stop: the milestone merges like any other.")
     commit_what = ""
@@ -235,7 +248,7 @@ def section(plan, m, P, root, sha, h, preflight, record=True):
         ship_tail = "\n".join(tail)
     return fill(
         template_blocks()["milestone"], h=h, P=P, mid=mid, sha=sha, branch=branch, change=change, repo=root.name, covers=", ".join(m["covers"]),
-        preflight="\n".join(preflight), task_lines="\n".join(task_lines(m, plan)), risky_step=risky_step, ux_step=ui_step, gap_line=gap_line(m, change),
+        preflight="\n".join(preflight), task_lines="\n".join(task_lines(m, plan)), gate_verify=gate_verify, ux_step=ui_step, gap_line=gap_line(m, change),
         target_step=(f"Target: run `python3 .factory/task-step.py target {P}plan.md {mid} --approved {sha}`. It fetches origin and records the head of `{tgt}` as the "
                      f"<target SHA>, which every integrity call the scripts make passes, so a local `{tgt}` that lags origin never decides what "
                      "counts as this milestone's change.") if record else "",
