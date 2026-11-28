@@ -360,7 +360,8 @@ def line(repo_arg):
         if c["column"] == "building" and cur:
             parts = [f"{cur['milestone']} ({cur['milestoneIndex']}/{cur['milestoneCount']})"]
             if cur["task"]:
-                parts.append(f"{cur['task']}/{cur['taskCount']} building")
+                # a gap task is not one of the milestone's planned tasks, so it has no n/total
+                parts.append("gap fix building" if "gap" in cur["task"] else f"{cur['task']}/{cur['taskCount']} building")
             parts.append(f"gap {cur['gapRound']}/{cur['gapRounds']}")
             if cur["since"]:
                 parts.append(fmt_age(time.time() - datetime.strptime(cur["since"], "%Y-%m-%dT%H:%M:%SZ").replace(tzinfo=timezone.utc).timestamp()))

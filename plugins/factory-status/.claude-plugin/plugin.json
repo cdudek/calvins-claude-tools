@@ -1,7 +1,7 @@
 {
   "name": "factory-status",
-  "version": "0.1.1",
-  "description": "A Claude Code mod: a status line and a /factory-status pane that show where the factory run in this repo stands (milestone, task, gap loop, needs-you). It only reads; it runs its own bundled factory-status.py, never a script from the repo.",
+  "version": "0.2.0",
+  "description": "A Claude Code mod: a band above the prompt (with pane and board buttons) and a /factory-status pane that show where the factory run in this repo stands (milestone, task, gap loop, needs-you). It only reads; it runs its own bundled factory-status.py, never a script from the repo.",
   "author": {
     "name": "Calvin Dudek"
   },

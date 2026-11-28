@@ -22,6 +22,8 @@ declare module 'claude-code' {
       root: string
       /** The last status line, '' when no run is active. */
       line: string
+      /** The band is hidden ([–] button); persisted in $.store. */
+      hidden: boolean
       board: Shaped<FactoryStatusBoard | null>
     }
   }

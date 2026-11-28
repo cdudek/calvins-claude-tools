@@ -73,3 +73,17 @@ export function parseBoard(stdout: string): FactoryStatusBoard | null {
     where: needs ? String(needs.where ?? '') : '',
   }
 }
+
+export const BOARD_URL = 'http://127.0.0.1:8765/'
+
+/** The bundled board script: a byte copy of the factory plugin's, which installs a launchd agent. */
+export const boardPath = (pluginRoot: string) => join(pluginRoot, 'bin/factory-board.py')
+
+export const installArgv = (pluginRoot: string) => ['python3', '-I', boardPath(pluginRoot), 'install']
+
+/** HTTP status of the board, printed alone; with `wait`, retries a refused connection for a few seconds. */
+export const probeArgv = (wait = false) => [
+  'curl', '-s', '-o', '/dev/null', '-w', '%{http_code}', '--max-time', '2',
+  ...(wait ? ['--retry', '8', '--retry-delay', '1', '--retry-connrefused'] : []),
+  BOARD_URL,
+]
