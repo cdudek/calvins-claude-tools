@@ -207,9 +207,13 @@ def golang(repo, pr):
 def rust(repo, pr):
     if not (repo / "Cargo.toml").is_file():
         return None
-    pr.suite("unit", "cargo nextest run" if (repo / ".config" / "nextest.toml").exists() else "cargo test")
+    unit = "cargo nextest run" if (repo / ".config" / "nextest.toml").exists() else "cargo test"
+    pr.suite("unit", unit)
     pr.suite("clippy", "cargo clippy --all-targets")
-    pr.notes.append("cargo: `related` and `unit` are not set (tests are not files); finish relies on triggers")
+    # cargo selects tests by crate, not file: the crate's own tests are the hand-back set
+    pr.triggers.append({"paths": ["src/**", "tests/**", "Cargo.toml"], "run": unit,
+                        "why": "cargo has no per-file test selection, so a source change runs the crate's tests at hand-back"})
+    pr.notes.append("cargo: `related` and `unit` are not set (tests are not files); a catch-all trigger runs the crate's tests at finish")
     return "cargo"
 
 

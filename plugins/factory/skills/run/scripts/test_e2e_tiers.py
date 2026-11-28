@@ -173,17 +173,16 @@ def test_rust_change_passes_finish_and_gate(tmp_path, marks, rs_block):
     repo, sha, wt = task_repo(tmp_path, RS, rs_block, ["src/add.rs"])
     T.build(wt, "src/add.rs", RS["src/add.rs"].replace("a + b", "b + a"))
     code, out = T.ok(repo, sha, "finish", "T1")
-    assert code == 0 and "FINISH tests" not in out and "FINISH OK T1" in out, out  # discover proposes no hand-back command for cargo
+    assert code == 0 and "FINISH tests OK 1 commands (triggers)" in out and "FINISH OK T1" in out, out  # discover's catch-all crate trigger
     code, out = T.ok(repo, sha, "gate")
     assert code == 0 and "GATE tests OK unit" in out and lines(marks / "unit") == ["x"], out
 
 
-def test_rust_breaking_change_is_caught_at_the_gate_with_discovers_block(tmp_path, rs_block):
+def test_rust_breaking_change_is_caught_at_finish_with_discovers_block(tmp_path, rs_block):
     repo, sha, wt = task_repo(tmp_path, RS, rs_block, ["src/mul.rs"])
     T.build(wt, "src/mul.rs", BROKEN_MUL)
-    assert T.ok(repo, sha, "finish", "T1")[0] == 0  # gap: nothing ran at hand-back
-    code, out = T.ok(repo, sha, "gate")
-    assert code == 1 and "GATE tests FAIL unit" in out and "muls" in out, out
+    code, out = T.ok(repo, sha, "finish", "T1")
+    assert code == 1 and "FINISH FAIL T1 tests: cargo test" in out and "muls" in out, out
 
 
 def test_rust_breaking_change_is_caught_at_finish_with_a_src_trigger(tmp_path, rs_block):
