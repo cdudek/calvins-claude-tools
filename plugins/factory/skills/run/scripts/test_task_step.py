@@ -347,3 +347,30 @@ def test_gate_fails_a_suite_that_is_green_at_target(tmp_path):
     code, out = ok(repo, sha, "gate")
     assert code == 1 and "GATE tests FAIL arch" in out and "PRE-EXISTING" not in out, out
     assert not (repo / ".worktrees" / f"{SLUG}-M1-baseline").exists()
+
+
+def test_finish_of_a_task_with_no_new_commits_is_recorded_empty_and_the_gate_still_passes(tmp_path):
+    repo, sha = milestone_repo(tmp_path)
+    ok(repo, sha, "target")
+    ok(repo, sha, "start", "T1")
+    wt = repo / ".worktrees" / f"{SLUG}-M1-T1"
+    code, out = ok(repo, sha, "finish", "T1")
+    assert code == 0 and "FINISH OK T1 no changes (nothing to merge)" in out and not wt.exists()
+    st = json.loads((repo / ".factory/state/M1.json").read_text())
+    assert st["tasks"]["T1"] == {"builder": None, "merged": None, "empty": True} and st["checked"] == []
+    ok(repo, sha, "start", "T2")
+    build(repo / ".worktrees" / f"{SLUG}-M1-T2", "src/b.ts")
+    assert ok(repo, sha, "finish", "T2")[0] == 0
+    code, out = ok(repo, sha, "gate")
+    assert code == 0 and "GATE integrity OK" in out, out
+    assert ok(repo, sha, "status")[0] == 0
+
+
+def test_an_empty_rule_test_task_counts_as_done(tmp_path):
+    plan = with_ms()
+    plan["milestones"][0]["tasks"][1]["ruleTest"] = True
+    repo, sha = milestone_repo(tmp_path, plan)
+    ok(repo, sha, "target")
+    ok(repo, sha, "start", "T2")
+    assert "no changes" in ok(repo, sha, "finish", "T2")[1]
+    assert ok(repo, sha, "start", "T1")[0] == 0

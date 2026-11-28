@@ -170,7 +170,8 @@ def merged_names(c):
 def rule_test_first(c, task, step):
     """None when the task may go ahead, else the FAIL line: the milestone's ruleTest task is merged before any other task (gap fixes excepted)."""
     rule_test = next((t["id"] for t in milestone(c).get("tasks", []) if t.get("ruleTest") is True), None)
-    if rule_test and task != rule_test and "-gap" not in task and f"{MERGE_PREFIX}{c.name(rule_test)}" not in merged_names(c):
+    if rule_test and task != rule_test and "-gap" not in task and f"{MERGE_PREFIX}{c.name(rule_test)}" not in merged_names(c) \
+            and not c.state().get("tasks", {}).get(rule_test, {}).get("empty"):  # an empty rule test counts as done
         return say(step, False, f"build and finish the rule test {rule_test} first: the other tasks build against it")
     return None
 
@@ -284,6 +285,11 @@ def cmd_finish(c, task):
         return say("FINISH", True, f"{task} already merged")
     if not wt.exists():
         return say("FINISH", False, f"no worktree {wt}")
+    if out(wt, "rev-parse", "HEAD") == out(wt, "merge-base", "HEAD", c.branch):  # no commit past the milestone head: the work is already on base
+        st["tasks"][task] = {"builder": None, "merged": None, "empty": True}
+        c.save(st)
+        git(c.repo, "worktree", "remove", "--force", "--", str(wt))
+        return say("FINISH", True, f"{task} no changes (nothing to merge)")
     p = integrity(str(wt), c.branch, c.plan_arg, "--task", task, *c.flags(st))
     if p.returncode:
         say("FINISH", False, f"{task} integrity")
@@ -389,7 +395,7 @@ def cmd_review(c, result, rule):
 
 def cmd_status(c):
     st = c.state()
-    merged = ",".join(f"{t}:{v['merged']}" for t, v in st["tasks"].items())
+    merged = ",".join(f"{t}:{v['merged'] or 'empty'}" for t, v in st["tasks"].items())
     derived = ",".join(c.checked(st["target"])) if c.target_ok(st.get("target")) else ""
     return say("STATE", True, f"{c.ms} target={st['target']} pin={st.get('pin')} checked={derived} merged={merged}")
 
