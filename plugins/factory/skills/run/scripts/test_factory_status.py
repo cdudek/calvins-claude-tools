@@ -335,3 +335,24 @@ def test_real_style_log_headings_decide_state(tmp_path, monkeypatch):
     repo = make_repo(tmp_path, log=log)
     c, _ = card_of(tmp_path, monkeypatch, repo)
     assert [m["state"] for m in c["milestones"]] == ["shipped", "pending"] and c["column"] == "ready"
+
+
+def test_untrusted_gap_rounds_and_ids_render_escaped(tmp_path, monkeypatch):
+    evil = "<img src=x onerror=alert(1)>"
+    plan = plan_of()
+    plan["milestones"][0]["gapRounds"] = evil
+    plan["milestones"][1]["id"] = "M2<b>"  # not a milestone id: dropped, never rendered
+    repo = make_repo(tmp_path, plan=plan, log=f"approved: {SHA}\n")
+    add_worktree(repo, f"{SLUG}-M1-T1")
+    c, _ = card_of(tmp_path, monkeypatch, repo)
+    assert c["current"]["gapRounds"] == 3 and all(m["gapRounds"] == 3 for m in c["milestones"])
+    s = importlib.util.spec_from_file_location("fb", HERE / "factory-board.py")
+    fb = importlib.util.module_from_spec(s)
+    s.loader.exec_module(fb)
+    page = fb.render({"generated": "x", "warnings": [], "projects": [{"repo": str(repo), "name": "app", "changes": [c]}]})
+    assert "<img" not in page and "<b>" not in page
+
+
+def test_bundled_status_copy_in_the_mod_is_identical():
+    bundled = HERE.parents[3] / "factory-status" / "bin" / "factory-status.py"
+    assert bundled.read_bytes() == SCRIPT.read_bytes(), "cp plugins/factory/skills/run/scripts/factory-status.py plugins/factory-status/bin/"

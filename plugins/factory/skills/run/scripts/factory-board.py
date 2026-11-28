@@ -4,7 +4,7 @@
        factory-board.py uninstall [--dry-run]
 A small local board of every factory change, read only. It imports factory-status.py from its own folder and shows its JSON.
   serve      http.server on 127.0.0.1 only. GET / is the board (columns: needs you, building, ready, backlog, done; refreshes every 15 s);
-             GET /status.json is the reader's JSON. No POST, no state kept. Every 30 s the needs-you cards are compared with
+             GET /status.json is the reader's JSON. A Host header other than 127.0.0.1:<port> or localhost:<port> gets 403. No POST, no state kept. Every 30 s the needs-you cards are compared with
              ~/.factory/board/seen.json; a card that is new there triggers one macOS notification (osascript, no shell; nothing off macOS).
   install    copies factory-board.py and factory-status.py to ~/.factory/bin/, writes ~/Library/LaunchAgents/dev.factory.board.plist
              (RunAtLoad, KeepAlive, log ~/.factory/board/board.log) and loads it with launchctl (a loaded copy is booted out first).
@@ -104,18 +104,22 @@ a{color:var(--acc)}.empty{color:var(--mut);font-size:13px}.warn{margin-top:20px;
 
 
 def safe_href(url):
-    return html.escape(url, quote=True) if str(url).startswith(("https://", "http://")) else None
+    return e(url) if str(url).startswith(("https://", "http://")) else None
+
+
+def e(v):
+    """Every value that reaches the page goes through here: str() first (plan files are untrusted, numbers may be markup), then escape, quotes included."""
+    return html.escape(str(v), quote=True)
 
 
 def card_html(p, c):
-    e = html.escape
     out = [f'<div class="card{" needs" if c["column"] == "needs-you" else ""}">', f'<div class="proj">{e(p["name"])}</div>', f'<div class="title">{e(c["title"])}</div>']
     if c["milestones"]:
         out.append('<div class="bar">' + "".join(f'<i class="{e(m["state"])}" title="{e(m["id"])}: {e(m["state"])}"></i>' for m in c["milestones"]) + "</div>")
     cur = c["current"]
     if cur:
-        task = f' · {e(str(cur["task"]))}/{cur["taskCount"]}' if cur["task"] else ""
-        out.append(f'<div class="cur">{e(cur["milestone"])} ({cur["milestoneIndex"]}/{cur["milestoneCount"]}){task} · gap {cur["gapRound"]}/{cur["gapRounds"]}</div>')
+        task = f' · {e(cur["task"])}/{e(cur["taskCount"])}' if cur["task"] else ""
+        out.append(f'<div class="cur">{e(cur["milestone"])} ({e(cur["milestoneIndex"])}/{e(cur["milestoneCount"])}){task} · gap {e(cur["gapRound"])}/{e(cur["gapRounds"])}</div>')
     if c["needs"]:
         out.append(f'<div class="need">{e(c["needs"]["text"])}</div><div class="where">{e(c["needs"]["where"])}</div>')
     for pr in c["prs"]:
@@ -127,7 +131,6 @@ def card_html(p, c):
 
 
 def render(data):
-    e = html.escape
     cols = []
     for key, label in COLUMNS:
         cards = [card_html(p, c) for p in data["projects"] for c in p["changes"] if c["column"] == key]
@@ -157,6 +160,10 @@ class Snapshot:
 def make_server(snapshot, port):
     class Handler(BaseHTTPRequestHandler):
         def do_GET(self):
+            port = self.server.server_address[1]  # DNS rebinding: a page on another origin can reach 127.0.0.1 but cannot choose the Host header it sends
+            if self.headers.get("Host") not in (f"127.0.0.1:{port}", f"localhost:{port}"):
+                self.send_error(403)
+                return
             path = urlparse(self.path).path
             if path == "/":
                 body, ctype = render(snapshot.get()).encode(), "text/html; charset=utf-8"

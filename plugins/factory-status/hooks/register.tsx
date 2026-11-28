@@ -2,7 +2,7 @@ import { atom, read, update } from 'claude-code'
 import type { EngineInterface, Register } from 'claude-code'
 
 import type { FactoryStatusBoard } from '../types/index'
-import { ancestors, jsonArgv, lineArgv, parseBoard, parseLine, scriptPath } from './status'
+import { ancestors, join, jsonArgv, lineArgv, parseBoard, parseLine } from './status'
 
 const PANE = 'factory-status'
 const EVERY_MS = 20_000
@@ -16,17 +16,18 @@ const board = atom(
   { shape: 'board-1' },
 )
 
+/** The nearest git root at or above cwd (never past it) that holds `.factory/` or `changes/`; '' otherwise. Only existence is tested, nothing in the repo runs. */
 async function findRoot($: EngineInterface, cwd: string): Promise<string> {
+  const test = async (flag: string, path: string) =>
+    (await $.process.run(['test', flag, path], { timeoutMs: TIMEOUT_MS })).exitCode === 0
   for (const dir of ancestors(cwd)) {
-    const { exitCode } = await $.process.run(['test', '-f', scriptPath(dir)], {
-      timeoutMs: TIMEOUT_MS,
-    })
-    if (exitCode === 0) return dir
+    if (!(await test('-e', join(dir, '.git')))) continue
+    return (await test('-d', join(dir, '.factory'))) || (await test('-d', join(dir, 'changes'))) ? dir : ''
   }
   return ''
 }
 
-/** Runs the repo's script; any failure leaves the status as it was. */
+/** Runs the plugin's own bundled reader on the repo; any failure leaves the status as it was. */
 async function refresh($: EngineInterface, cwd?: string): Promise<void> {
   try {
     let dir = await read($, root)
@@ -36,13 +37,13 @@ async function refresh($: EngineInterface, cwd?: string): Promise<void> {
     }
     if (!dir) return
 
-    const run = await $.process.run(lineArgv(dir), { cwd: dir, timeoutMs: TIMEOUT_MS })
+    const run = await $.process.run(lineArgv($.plugin.root, dir), { timeoutMs: TIMEOUT_MS })
     if (run.exitCode !== 0) return
     const text = parseLine(run.stdout)
     $.ui.status(text || undefined)
     await update($, line, () => text)
 
-    const json = await $.process.run(jsonArgv(dir), { cwd: dir, timeoutMs: TIMEOUT_MS })
+    const json = await $.process.run(jsonArgv($.plugin.root, dir), { timeoutMs: TIMEOUT_MS })
     if (json.exitCode === 0) await update($, board, () => parseBoard(json.stdout))
   } catch {
     // keep the last status

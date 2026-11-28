@@ -66,6 +66,11 @@ def run(cmd, cwd, timeout=10):
     return p.stdout if p.returncode == 0 else None
 
 
+def as_int(v, default):
+    """Plan files are untrusted: a count is an int or the default, never a string that could carry markup."""
+    return v if isinstance(v, int) and not isinstance(v, bool) else default
+
+
 def iso(ts):
     return datetime.fromtimestamp(ts, timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ")
 
@@ -253,7 +258,7 @@ def analyze(repo, slug, wts, now, warns, prs_fn):
         else:
             state = "incomplete" if done else "pending"
         tstate = [{"id": t, "state": "done" if t in done else "building" if t in live else "pending"} for t in tasks]
-        rows.append({"id": mid, "state": state, "tasks": tstate, "gapRound": gaps.get(mid, 0), "gapRounds": ms.get("gapRounds", 3),
+        rows.append({"id": mid, "state": state, "tasks": tstate, "gapRound": gaps.get(mid, 0), "gapRounds": as_int(ms.get("gapRounds"), 3),
                      "_live": live, "_since": (sf[2] if sf else None), "_note": (ls[1] if ls else "")})
     card["milestones"] = [{k: v for k, v in r.items() if not k.startswith("_")} for r in rows]
     states = [r["state"] for r in rows]
