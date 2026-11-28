@@ -12,6 +12,7 @@ Resume rule: read the progress log in plan.md, reconcile it with git and PR stat
 End with exactly one state: {{end_state}}, INCOMPLETE or BLOCKED.
 {{hold_stop}}
 BLOCKED: an owner decision, credential, approval or destructive migration. Write the exact action needed and stop.
+A test already red on the base (`FINISH tests PRE-EXISTING` or `GATE tests PRE-EXISTING` lines) is never a reason for BLOCKED: list those lines as a note in the {{end_state}} or BLOCKED report.
 Scope beyond the delta, or a test, CI file or spec that must change and is not a gap-lane fix: BLOCKED, the owner decides.
 @@ all_start
 At the start of each milestone, re-read the pinned plan (`git show {{sha}}:{{P}}plan.md`, its json block) and the progress log in plan.md, and reconcile with git and PR state. Start a milestone only after the previous one is merged. A later milestone gets its own worktree: `git fetch origin`, record `git rev-parse origin/{{tgt}}` as that milestone's <target SHA>, `git branch milestone/{{change}}-<M> <target SHA>`, `wt switch milestone/{{change}}-<M> --no-cd --yes`, then run `python3 .factory/task-step.py target {{P}}plan.md <M> --approved {{sha}}` inside it.
