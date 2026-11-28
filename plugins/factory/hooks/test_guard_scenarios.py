@@ -128,3 +128,27 @@ def test_background_agent_allowed_outside_a_factory_run(tmp_path):
     (repo / ".factory").mkdir(parents=True)
     subprocess.run(["git", "-C", str(repo), "init", "-q"], check=True)
     assert _bg({}, repo, True) is None  # .factory/ alone, no milestone branch
+
+
+def _bash(env_extra, cwd, cmd):
+    env = {k: v for k, v in os.environ.items() if k != "FACTORY_EVAL"}
+    p = subprocess.run([sys.executable, str(SCRIPT)], input=json.dumps({"tool_name": "Bash", "cwd": str(cwd), "tool_input": {"command": cmd}}),
+                       capture_output=True, text=True, env={**env, **env_extra})
+    return json.loads(p.stdout) if p.stdout.strip() else None
+
+
+def test_serial_test_flags_denied_in_a_factory_run(tmp_path):
+    for cmd in ("npx vitest run --fileParallelism=false", "npx jest --runInBand", "make test -j1", "pytest -p 1", "npx vitest --maxWorkers=1"):
+        out = _bash({"FACTORY_EVAL": "1"}, tmp_path, cmd)
+        assert denied(out) and "parallelism" in out["hookSpecificOutput"]["permissionDecisionReason"], cmd
+    repo = tmp_path / "r"
+    (repo / ".factory").mkdir(parents=True)
+    for cmd in (["init", "-q"], ["checkout", "-q", "-b", "milestone/x-M1"]):
+        subprocess.run(["git", "-C", str(repo), *cmd], check=True)
+    assert denied(_bash({}, repo, "npx jest --runInBand"))
+
+
+def test_parallel_test_commands_and_serial_flags_outside_a_run_pass(tmp_path):
+    for cmd in ("npx vitest run", "npm test -- -p 10 --maxWorkers=4", "mkdir -p packages"):
+        assert _bash({"FACTORY_EVAL": "1"}, tmp_path, cmd) is None, cmd
+    assert _bash({}, tmp_path, "npx jest --runInBand") is None

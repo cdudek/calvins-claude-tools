@@ -26,8 +26,9 @@ Walk every branch. Skip one only when a subagent shows it does not apply.
 7. **Holds.** Is an owner action already known (billing, access, a key)? This becomes `hold`: the run pushes and opens no PR.
 8. **Design boards (UI).** Which boards? Each (`board-<n>`) is a screen in this change or dropped. The person approves the boards now. There is no later gallery stop.
 9. **Preflight tools.** Which tools and logins must exist (linters, cloud login, CLIs)? Check them now. This becomes `preflight`.
-10. **Setup.** What must run in every new worktree (`npm ci`)? This becomes `setup`.
-11. **Scenarios.** Which journeys end to end? Each scenario (`scenario-<n>`) names the first milestone that can run it.
+10. **Test tiers.** Which tests guard repo-wide invariants (schema, migrations, architecture, config), and on which paths? Draft `tests` from the manifests and CI first and ask only what they leave open: the `related` command, the `triggers` with their paths and `why`, the full `suites` and which need `lock`.
+11. **Setup.** What must run in every new worktree (`npm ci`)? This becomes `setup`.
+12. **Scenarios.** Which journeys end to end? Each scenario (`scenario-<n>`) names the first milestone that can run it.
 
 ## Learn: questions added from BLOCKED runs
 Every BLOCKED that grilling could have prevented becomes a new question here, with the date and the run. Keep each to one line.

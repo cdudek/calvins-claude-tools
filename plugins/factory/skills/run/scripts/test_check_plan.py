@@ -723,3 +723,46 @@ def test_test_changes(tmp_path):
         assert code == 1 and why in out, (name, out)
     code, out = run(tmp_path / "list", mutated(lambda p: p["milestones"][0]["tasks"][0].update(testChanges="x")))
     assert code == 1 and "M1/T1 testChanges must be a list" in out
+
+
+GOOD_TESTS = {"related": "npx vitest related --run {files}",
+              "triggers": [{"paths": ["db/**", "architecture.json"], "run": "npm run arch", "why": "schema coupling"}],
+              "suites": [{"name": "unit", "cmd": "npm test"}, {"name": "arch", "cmd": "npm run arch", "lock": True}]}
+
+
+def test_tests_key_is_optional_and_a_good_one_passes(tmp_path):
+    code, out = run(tmp_path, mutated(lambda p: p.update(tests=GOOD_TESTS)))
+    assert code == 0 and out.strip() == "PLAN OK 3 milestones 2 tasks", out
+
+
+def test_tests_shape_errors(tmp_path):
+    def bad(fn, msg):
+        t = copy.deepcopy(GOOD_TESTS)
+        fn(t)
+        code, out = run(tmp_path, mutated(lambda p: p.update(tests=t)))
+        assert code == 1 and msg in out, (msg, out)
+    bad(lambda t: t.update(related="npx vitest related --run"), "tests.related must be a command containing {files}")
+    bad(lambda t: t["triggers"][0].pop("why"), "tests.triggers[0] needs a non-empty why")
+    bad(lambda t: t["triggers"][0].update(paths=[]), "tests.triggers[0] needs paths")
+    bad(lambda t: t["suites"][0].pop("name"), "tests.suites[0] needs a non-empty name")
+    bad(lambda t: t["suites"][1].update(lock="yes"), "lock must be true or false")
+    bad(lambda t: t.update(extra=1), "unknown key extra")
+    code, out = run(tmp_path, mutated(lambda p: p.update(tests=[])))
+    assert code == 1 and "tests must be an object" in out
+
+
+def test_tests_commands_may_not_switch_parallelism_off(tmp_path):
+    for flag in ("--no-file-parallelism", "--fileParallelism=false", "--runInBand", "-p 1", "-j1", "--maxWorkers=1", "--workers=1"):
+        for where in ("related", "trigger", "suite"):
+            t = copy.deepcopy(GOOD_TESTS)
+            if where == "related":
+                t["related"] += f" {flag}"
+            elif where == "trigger":
+                t["triggers"][0]["run"] += f" {flag}"
+            else:
+                t["suites"][0]["cmd"] += f" {flag}"
+            code, out = run(tmp_path, mutated(lambda p: p.update(tests=t)))
+            assert code == 1 and "switches parallelism off" in out, (flag, where, out)
+    t = copy.deepcopy(GOOD_TESTS)
+    t["suites"][0]["cmd"] = "npm test -- -p 10 --maxWorkers=4"
+    assert run(tmp_path, mutated(lambda p: p.update(tests=t)))[0] == 0

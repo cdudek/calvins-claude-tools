@@ -13,7 +13,7 @@ After a reload the saved search opens with its filters. Covers the reload rule (
 ## Inputs
 - **Delta:** `changes/2026-11-25-fix-saved-search-reload/delta.md`, revision 1.
 - **Base branch:** `main`.
-- **Fast checks:** `npm run lint`, `npm run typecheck`, `npm test`.
+- **Fast checks:** `npm run lint`, `npm run typecheck`, `npm test`. A `tests` key replaces the last with the repo's tiers (`plan-standard.md`).
 - **Deploy:** on merge to `main`.
 
 ## Not in scope

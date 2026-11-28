@@ -22,14 +22,14 @@ At the start of each milestone, re-read the pinned plan (`git show {{sha}}:{{P}}
 {{target_step}}
 One worktree per task, created by you with `python3 .factory/task-step.py start {{P}}plan.md {{mid}} <task id> --approved {{sha}}`, never by the Agent tool's worktree isolation. It cuts the task branch and worktree at the milestone head, runs the plan's `setup` in it and prints `START OK <task id> <worktree path> <sha>`; use that path.
 {{task_lines}}
-Every task runs in a factory:builder subagent (Sonnet 5.5, at the task's builder effort), even a one-line fix; you only start worktrees, run checks, merge and log. Run 2 or 3 at a time, in the foreground, each given its worktree path, owned files, requirement ids and check. Never give a builder the scenarios path.{{model_note}}
+Every task runs in a factory:builder subagent (Sonnet 5.5, at the task's builder effort), even a one-line fix; you only start worktrees, run checks, merge and log. Run 2 or 3 at a time, in the foreground, each given its worktree path, owned files, requirement ids and check. Never give a builder the scenarios path. Brief builders with the plan's test commands verbatim and add no test-running advice: never "serial", never a parallelism-off flag.{{model_note}}
 Every agent you start (builders, verifiers, reviews) runs in the foreground, never with run_in_background: a background agent pauses the goal check, and an unattended run exits under it.
 Unfinished work stays in its task worktree and the next pass gets the same path. Never patch files (no `git apply`, no copied diffs). To read a diff: `rtk proxy git diff`.
 {{bug_flow}}
 
 {{h}} Verify, in this order, pasting each output into the transcript
-1. The repo's fast checks: lint, typecheck, unit. No local CI.
-2. Per task, before merging it into `{{branch}}`: `python3 .factory/task-step.py finish {{P}}plan.md {{mid}} <task id> --approved {{sha}}` runs the task's integrity check in its worktree, records its HEAD as a <checked SHA> (every INTEGRITY OK commit, also an earlier pass's) and merges exactly that commit into `{{branch}}`. It must print `FINISH OK`.
+1. The plan's `tests`: the suites run once in the Ship gate below (`GATE tests OK|FAIL <suite>`), the hand-back tests in step 2. A plan without `tests`: the repo's fast checks (lint, typecheck, unit). No local CI.
+2. Per task, before merging it into `{{branch}}`: `python3 .factory/task-step.py finish {{P}}plan.md {{mid}} <task id> --approved {{sha}}` runs the task's integrity check and the plan's hand-back `tests` in its worktree, records its HEAD as a <checked SHA> (every INTEGRITY OK commit, also an earlier pass's) and merges exactly that commit into `{{branch}}`. It must print `FINISH OK`.
 {{risky_step}}
 {{ux_step}}
 Failures go back to the builder of that task, at most 3 passes. Stop after 2 attempts at the same failure with no new evidence.

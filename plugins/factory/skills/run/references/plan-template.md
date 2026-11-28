@@ -11,7 +11,7 @@ A signed-in user saves a search and reopens it from the sidebar with the same fi
 - **Base branch:** `main`.
 - **Run:** `npm run dev` on port 3000; each worktree uses its own port.
 - **Setup and preflight:** `npm ci` in every new worktree; `command -v npm` proves the tool exists.
-- **Fast checks:** `npm run lint`, `npm run typecheck`, `npm test`.
+- **Fast checks:** `npm run lint`, `npm run typecheck`, `npm test`. With `tests` in the block, hand-back runs `related` plus the matching triggers and the gate runs the suites (`plan-standard.md`).
 - **Deploy:** on merge to `main`, ready when `/readyz` answers at the serving SHA. (Or: deploy is disabled, SHIPPED is merge plus CI.) `deployOnMerge` is false here.
 - **Merge and branches:** `merge` is `auto`; no `integration` branch (add `"integration": "integration/<name>"` to the block to route milestone PRs there and release once into `main`). No `hold`; add one when an owner action is known in advance.
 
@@ -59,6 +59,7 @@ A signed-in user saves a search and reopens it from the sidebar with the same fi
 ```json factory
 {"change": "2026-11-24-saved-searches", "base": "main", "goalTurns": 12,
  "setup": "npm ci", "preflight": ["command -v npm"], "deployOnMerge": false,
+ "tests": {"related": "npx vitest related --run {files}", "suites": [{"name": "unit", "cmd": "npm test"}]},
  "requirements": ["req-1", "req-2", "req-3"],
  "milestones": [
    {"id": "M1", "layer": "components", "covers": ["req-1", "req-2"],

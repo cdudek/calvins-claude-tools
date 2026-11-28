@@ -6,7 +6,7 @@ plugin copied from a pinned commit with the arm's agent model/effort written int
 addendum appended to the kickoff, an external wall-clock timeout, stream-json saved to
 <results>/<stage>/<run-id>/stream.jsonl and run.json beside it. Nothing is graded here (grade.py does that).
 Arm order is randomized inside each repeat block; up to --parallel runs go at once, each on a random free slot with its
-own directory, test database and port. Heavy steps (E2E, hidden tests, app servers) share one lock: runs call `heavy <cmd>`.
+own directory, test database and port. Heavy steps (E2E suites, hidden tests, app servers) share one lock: runs call `heavy <cmd>`.
 task.json `env` (name -> template with {db} {port} {run}) is exported into every arm's environment and graded with the same values.
 Auth: CLAUDE_CODE_OAUTH_TOKEN from the environment if set (never printed or stored), else the logged-in config dir
 ~/.factory/eval/claude-config (shared by every run in that mode). Never set CLAUDE_CODE_EFFORT_LEVEL.
@@ -139,7 +139,7 @@ def addendum(arm, task):
         out.append("Rule, enforced by you only: builders never edit, delete, skip or weaken an existing test, CI file, spec or plan. test-integrity.sh is disabled in this run.")
     if arm["advisor"]:
         out.append("An advisor is configured; consult it before committing to an approach and before declaring done.")
-    out.append("Heavy steps (E2E suites, full test runs, starting the app server) must be run as `heavy <command>`; other runs share this machine.")
+    out.append("Heavy steps (E2E suites, starting the app server) must be run as `heavy <command>`; unit and full test runs do not take the lock (the factory gate prefixes `heavy` itself for suites marked lock); other runs share this machine.")
     return "\n".join(f"- {x}" for x in out)
 
 
@@ -264,7 +264,7 @@ def prepare_run(task_dir, task, arm, run_dir, run_id, args, slot):
     kickoff_file = repo / kickoff_file
     kickoff = kickoff_file.read_text(encoding="utf-8") if arm["harness"] == "factory" else plain_kickoff(task, goal)
     sysprompt = run_dir / "system-prompt.md"
-    sysprompt.write_text(kickoff + "\n## Eval arm\n" + (addendum(arm, task) if arm["harness"] == "factory" else "- Heavy steps (E2E, full test runs, app servers) run as `heavy <command>`.") + "\n", encoding="utf-8")
+    sysprompt.write_text(kickoff + "\n## Eval arm\n" + (addendum(arm, task) if arm["harness"] == "factory" else "- Heavy steps (E2E suites, app servers) run as `heavy <command>`; unit and full test runs do not take the lock.") + "\n", encoding="utf-8")
 
     bindir = run_dir / "bin"
     bindir.mkdir()
