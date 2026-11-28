@@ -22,14 +22,14 @@ def step(repo, *args):
     return p.returncode, p.stdout
 
 
-def milestone_repo(tmp_path, plan=PLAN):
+def milestone_repo(tmp_path, plan=PLAN, extra=None):
     """A repo with an origin holding main (with the approved plan), on branch milestone/<slug>-M1; returns (repo, approved sha)."""
     repo = tmp_path / "repo"
     repo.mkdir()
     git(repo, "init", "-q", "-b", "main")
     files = {P: "# Plan\n\n```json factory\n" + json.dumps(plan, indent=1) + "\n```\n\n## Progress log\n",
              f"changes/{SLUG}/delta.md": "### ADDED Requirements\n- req-1: When a, the system shall b [outcome-1]\n",
-             f"changes/{SLUG}/intent.md": "- outcome-1: people do x\n", "README.md": "x\n"}
+             f"changes/{SLUG}/intent.md": "- outcome-1: people do x\n", "README.md": "x\n", **(extra or {})}
     for name, text in files.items():
         f = repo / name
         f.parent.mkdir(parents=True, exist_ok=True)
@@ -495,3 +495,41 @@ def test_gate_security_needs_the_pass_at_exactly_the_gated_head(tmp_path):
     ok(repo, sha, "review", "PASS", "-")
     git(repo, "commit", "-q", "--allow-empty", "-m", "after the review")  # not a factory-merge, but HEAD moved
     assert "GATE security FAIL" in ok(repo, sha, "gate")[1]
+
+
+def nearby_finish(tmp_path, changed, extra, unit="echo UNIT {tests}", **more):
+    plan = plan_with_tests(unit=unit, **more)
+    plan["milestones"][0]["tasks"][0]["files"] = [changed]
+    repo, sha = milestone_repo(tmp_path, plan, extra)
+    ok(repo, sha, "target")
+    ok(repo, sha, "start", "T1")
+    build(repo / ".worktrees" / f"{SLUG}-M1-T1", changed)
+    return ok(repo, sha, "finish", "T1")
+
+
+def test_finish_runs_unit_on_nearby_python_tests(tmp_path):
+    code, out = nearby_finish(tmp_path, "src/pkg/mod.py", {"tests/test_mod.py": "x\n", "tests/test_other.py": "x\n"})
+    assert code == 0 and "FINISH tests OK 1 commands (nearby tests)" in out, out
+
+
+def test_unit_gets_exactly_the_nearby_tests(tmp_path):
+    code, out = nearby_finish(tmp_path, "src/pkg/mod.py", {"tests/test_mod.py": "x\n", "tests/test_other.py": "x\n"},
+                              unit="test \"{tests}\" = tests/test_mod.py")
+    assert code == 0 and "(nearby tests)" in out, out
+
+
+def test_unit_maps_go_tests_to_their_package(tmp_path):
+    code, out = nearby_finish(tmp_path, "pkg/usr/usr.go", {"pkg/usr/usr_test.go": "x\n", "pkg/y/y_test.go": "x\n"},
+                              unit="test \"{tests}\" = ./pkg/usr")
+    assert code == 0 and "(nearby tests)" in out, out
+
+
+def test_unit_without_matching_tests_runs_only_triggers(tmp_path):
+    code, out = nearby_finish(tmp_path, "src/pkg/mod.py", {"tests/test_other.py": "x\n"}, unit="exit 1",
+                              triggers=[{"paths": ["src/**"], "run": "echo trig", "why": "w"}])
+    assert code == 0 and "FINISH tests OK 1 commands (triggers)" in out, out
+
+
+def test_related_wins_over_unit(tmp_path):
+    code, out = nearby_finish(tmp_path, "src/pkg/mod.py", {"tests/test_mod.py": "x\n"}, unit="exit 1", related="true {files}")
+    assert code == 0 and "FINISH tests OK 1 commands (related)" in out, out

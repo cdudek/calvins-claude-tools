@@ -725,7 +725,7 @@ def test_test_changes(tmp_path):
     assert code == 1 and "M1/T1 testChanges must be a list" in out
 
 
-GOOD_TESTS = {"related": "npx vitest related --run {files}",
+GOOD_TESTS = {"related": "npx vitest related --run {files}", "unit": "pytest {tests}",
               "triggers": [{"paths": ["db/**", "architecture.json"], "run": "npm run arch", "why": "schema coupling"}],
               "suites": [{"name": "unit", "cmd": "npm test"}, {"name": "arch", "cmd": "npm run arch", "lock": True}]}
 
@@ -749,6 +749,7 @@ def test_tests_shape_errors(tmp_path):
         code, out = run(tmp_path, mutated(lambda p: p.update(tests=t)))
         assert code == 1 and msg in out, (msg, out)
     bad(lambda t: t.update(related="npx vitest related --run"), "tests.related must be a command containing {files}")
+    bad(lambda t: t.update(unit="pytest"), "tests.unit must be a command containing {tests}")
     bad(lambda t: t["triggers"][0].pop("why"), "tests.triggers[0] needs a non-empty why")
     bad(lambda t: t["triggers"][0].update(paths=[]), "tests.triggers[0] needs paths")
     bad(lambda t: t["triggers"][0].update(edits=[]), "tests.triggers[0] edits must be a non-empty list of exact test file paths")
@@ -762,10 +763,10 @@ def test_tests_shape_errors(tmp_path):
 
 def test_tests_commands_may_not_switch_parallelism_off(tmp_path):
     for flag in ("--no-file-parallelism", "--fileParallelism=false", "--runInBand", "-p 1", "-j1", "--maxWorkers=1", "--workers=1"):
-        for where in ("related", "trigger", "suite"):
+        for where in ("related", "unit", "trigger", "suite"):
             t = copy.deepcopy(GOOD_TESTS)
-            if where == "related":
-                t["related"] += f" {flag}"
+            if where in ("related", "unit"):
+                t[where] += f" {flag}"
             elif where == "trigger":
                 t["triggers"][0]["run"] += f" {flag}"
             else:

@@ -415,11 +415,11 @@ SERIAL = re.compile(r"(?<![\w-])(?:--no-file-parallelism|--fileParallelism(?:=|\
 
 
 def tests_errs(tests):
-    """The optional `tests` key: `related` (a command with `{files}`), `triggers` (`{paths, run, why, edits?}`), `suites` (`{name, cmd, lock?}`).
+    """The optional `tests` key: `related` (a command with `{files}`), `unit` (a command with `{tests}`, the fallback when there is no related tool), `triggers` (`{paths, run, why, edits?}`), `suites` (`{name, cmd, lock?}`).
     No command may switch parallelism off: the project isolates its own suites, and serial runs cost minutes."""
     if not isinstance(tests, dict):
-        return ["tests must be an object with related, triggers and suites"]
-    errs = [f"tests has unknown key {k}" for k in sorted(set(tests) - {"related", "triggers", "suites"})]
+        return ["tests must be an object with related, unit, triggers and suites"]
+    errs = [f"tests has unknown key {k}" for k in sorted(set(tests) - {"related", "unit", "triggers", "suites"})]
     cmds = []
     if "related" in tests:
         r = tests["related"]
@@ -427,6 +427,12 @@ def tests_errs(tests):
             errs.append("tests.related must be a command containing {files}")
         else:
             cmds.append(("related", r))
+    if "unit" in tests:
+        u = tests["unit"]
+        if not filled(u) or "{tests}" not in u:
+            errs.append("tests.unit must be a command containing {tests}")
+        else:
+            cmds.append(("unit", u))
     for key, need in (("triggers", ("run", "why")), ("suites", ("name", "cmd"))):
         v = tests.get(key, [])
         if not isinstance(v, list):

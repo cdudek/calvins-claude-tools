@@ -302,19 +302,40 @@ def suite_cmd(suite):
     return f"heavy {suite['cmd']}" if suite.get("lock") is True and shutil.which("heavy") else suite["cmd"]
 
 
+TEST_FILE = re.compile(r"(?:\.(?:test|spec)\.[^/]+|(?:^|/)test_[^/]+\.py|_test\.(?:py|go)|(?:^|/)(?:tests?|__tests__)/[^/]+)$")
+
+
+def nearby_tests(wt, changed):
+    """Test files for the changed files, for stacks with no related-tests tool: changed tests themselves, plus every tracked test whose
+    basename contains a changed source file's stem. Go tests become their package dir. shortcut: stems under 3 chars are skipped, a long
+    shared stem over-selects, never under-selects."""
+    tracked = [f for f in (out(wt, "ls-files") or "").splitlines() if TEST_FILE.search(f)]
+    picked = {f for f in changed if TEST_FILE.search(f) and (wt / f).exists()}
+    for f in changed:
+        stem = Path(f).stem.split(".")[0]
+        if not TEST_FILE.search(f) and len(stem) >= 3 and (wt / f).exists():
+            picked |= {t for t in tracked if stem in Path(t).name}
+    return sorted({"./" + (str(Path(t).parent) if str(Path(t).parent) != "." else "") if t.endswith("_test.go") else t for t in picked})
+
+
 def hand_back_cmds(c, wt):
-    """The plan's `tests.related` on the files the task changed, plus every trigger whose glob matches one of them; each command once."""
+    """The plan's `tests.related` (or, without it, `tests.unit` on the nearby tests) on the files the task changed, plus every trigger
+    whose glob matches one of them; each command once. Returns (commands, mode)."""
     tests = c.plan.get("tests") or {}
     base = out(wt, "merge-base", "HEAD", f"refs/heads/{c.branch}")
     changed = [f for f in (out(wt, "diff", "--name-only", f"{base}...HEAD") or "").splitlines() if f] if base else []
-    cmds = []
+    cmds, mode = [], "triggers"
     if changed and tests.get("related"):
         cmds.append(tests["related"].replace("{files}", " ".join(shlex.quote(f) for f in changed)))
+        mode = "related"
+    elif changed and tests.get("unit") and (found := nearby_tests(wt, changed)):
+        cmds.append(tests["unit"].replace("{tests}", " ".join(shlex.quote(f) for f in found)))
+        mode = "nearby tests"
     for t in tests.get("triggers", []):
         res = [glob_re(g) for g in t["paths"]]
         if any(r.fullmatch(f) for r in res for f in changed) and t["run"] not in cmds:
             cmds.append(t["run"])
-    return cmds
+    return cmds, mode
 
 
 def cmd_finish(c, task):
@@ -342,7 +363,7 @@ def cmd_finish(c, task):
         say("FINISH", False, f"{task} integrity")
         print(p.stdout.strip())
         return 1
-    cmds = hand_back_cmds(c, wt)  # before the merge: the worktree goes after it
+    cmds, mode = hand_back_cmds(c, wt)  # before the merge: the worktree goes after it
     for cmd in cmds:
         cand = run_full(cmd, wt)
         if not cand[0]:
@@ -358,7 +379,7 @@ def cmd_finish(c, task):
             print("\n".join(tail))
             return 1
     if cmds:
-        print(f"FINISH tests OK {len(cmds)} commands")
+        print(f"FINISH tests OK {len(cmds)} commands ({mode})")
     built = out(wt, "rev-parse", "HEAD")
     m = git(c.repo, "merge", "--no-ff", "-q", "-m", f"{MERGE_PREFIX}{c.name(task)}", built)
     if m.returncode:
