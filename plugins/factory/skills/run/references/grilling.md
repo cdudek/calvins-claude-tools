@@ -26,7 +26,7 @@ Walk every branch. Skip one only when a subagent shows it does not apply.
 7. **Holds.** Is an owner action already known (billing, access, a key)? This becomes `hold`: the run pushes and opens no PR.
 8. **Design boards (UI).** Which boards? Each (`board-<n>`) is a screen in this change or dropped. The person approves the boards now. There is no later gallery stop.
 9. **Preflight tools.** Which tools and logins must exist (linters, cloud login, CLIs)? Check them now. This becomes `preflight`.
-10. **Test tiers.** Which tests guard repo-wide invariants (schema, migrations, architecture, config), and on which paths? Draft `tests` from the manifests and CI first and ask only what they leave open: the `related` command, the `triggers` with their paths and `why`, which existing test files must grow when those paths change (the trigger's `edits`, e.g. a table list or fixture), the full `suites` and which need `lock`.
+10. **Test tiers.** Which tests guard repo-wide invariants (schema, migrations, architecture, config), and on which paths? Start from `discover-tests.py`'s proposal (`test-strategy.md`) and confirm or fix only what it leaves open: the `related` command, the `triggers` with their paths and `why`, which existing test files must grow when those paths change (the trigger's `edits`, e.g. a table list or fixture), the full `suites` and which need `lock`.
 11. **Setup.** What must run in every new worktree (`npm ci`)? This becomes `setup`.
 12. **Scenarios.** Which journeys end to end? Each scenario (`scenario-<n>`) names the first milestone that can run it.
 
