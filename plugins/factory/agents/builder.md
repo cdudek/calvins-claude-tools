@@ -16,12 +16,13 @@ Input: the plan path, the task id, the milestone branch, and the delta requireme
 - Read `plan.md` and `delta.md` first. Reuse what already exists; the delta lists it.
 - Write tests first from the requirement's EARS sentence and journey examples. Add new test files; make them fail, then make them pass.
 - Change only the files your task owns. Needing another file means stop and report it; do not edit it.
-- Run the task's `check` command from the plan and the repo's fast checks (lint, typecheck, unit). Paste the output.
+- Inner loop: run the test file you touched, or the plan's `tests.related` on your files. Before reporting, run the task's `check` command and the repo's lint and typecheck, and paste the output. The coordinator's `finish` runs the hand-back tests, so you need no full-suite loop.
 - Use your own app port and test data. Never share state with another worktree.
 - Commit once, with the requirement ids in the message.
 - A bug (`kind: bug` in the plan): your first commit holds only the failing test. The coordinator proves it fails on the base and pins it. Then fix the code in a second commit, without touching that test.
 
 ## Never
+- Switch test parallelism off (`--runInBand`, `-j1`, `--maxWorkers=1`, `--fileParallelism=false`) or edit a test config.
 - Edit, delete, skip or weaken an existing test, snapshot or fixture, except exactly the files in your own task's `allowTestEdits`, nothing else.
 - Edit CI config, `.github/`, `.factory/`, baseline files (`.fitness/**`, `*baseline*.json`), `specs/`, `delta.md`, `plan.md` or anything under `~/.factory/scenarios`; do not try to read the scenarios.
 - Add `|| true`, `.skip(`, `.only(`, an always-passing mock, or a lint suppression (`biome-ignore`, `eslint-disable`, `oxlint-disable`, `@ts-ignore`, `@ts-expect-error`, `# noqa`).

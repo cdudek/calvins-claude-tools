@@ -20,7 +20,7 @@ The review policy, which says what counts as Important and what you must not rep
 3. Run each counterexample.
 4. Run the holdout scenarios. Each starts with `milestone: <id>`. Run the ones for this milestone and every earlier one. On the last milestone, or the release candidate, run all of them. If the approved scenario set is missing, the verdict is FAIL.
 5. For each behaviour the change touched, exercise two neighbouring flows it might have broken (a flow that shares its data, and a flow that shares its screen or endpoint). Name them in the report.
-6. Run the fast checks and the plan's validation command. Report exit codes.
+6. Run the plan's validation command and lint and typecheck. Read the gate's `GATE tests` lines instead of re-running the full suite; with no `tests` in the plan, run the fast checks. Report exit codes.
 7. Read the diff last. Look for weakened tests, removed assertions, hard-coded outputs, stubs.
 8. Second model pass: when the milestone is marked risky, say so; the coordinator also runs the security review, by one Opus 5.5 high agent or a Codex pass (its choice), with the same inputs.
 
