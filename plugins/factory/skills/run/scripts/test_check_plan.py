@@ -532,7 +532,7 @@ def test_guard_pattern_matches_reads_not_bare_name(tmp_path):
 def test_guard_uncovered_source_file_fails(tmp_path):
     code, out = guarded(tmp_path)
     assert code == 1
-    assert "PLAN FAIL M2 guard (from|join)\\(comments\\b: api/leak.py reads it but no task of M2 or earlier owns it, no surface exposure names it and no deferred item with a probe lists it" in out
+    assert "PLAN FAIL M2 guard (from|join)\\(comments\\b: api/leak.py reads it but no task of M2 or earlier owns it, give it to a task, defer it with a probe, or mark its surface entry `safe` with a reason" in out
 
 
 def test_guard_invalid_pattern(tmp_path):
@@ -543,8 +543,13 @@ def test_guard_invalid_pattern(tmp_path):
 def test_guard_covered_by_task_surface_or_probed_deferral(tmp_path):
     assert guarded(tmp_path / "a", tasks=task(files=["api/leak.py"]))[0] == 0
     assert guarded(tmp_path / "b", tasks=task(files=["api/"]))[0] == 0
-    s = [{"exposure": "api/leak.py", "requirement": "req-2", "scenario": "scenario-1 guest sees own"}]
+    s = [{"exposure": "api/leak.py", "requirement": "req-2", "scenario": "scenario-1 guest sees own", "safe": "already filters by member on base"}]
     assert guarded(tmp_path / "c", risky=True, surface=s)[0] == 0
+    s = [{"exposure": "api/leak.py", "requirement": "req-2", "scenario": "scenario-1 guest sees own"}]
+    code, out = guarded(tmp_path / "e", risky=True, surface=s)
+    assert code == 1 and "api/leak.py reads it but no task of M2 or earlier owns it" in out  # listed in surface only
+    s[0]["safe"] = " "
+    assert "surface[0] safe needs a non-empty" in guarded(tmp_path / "f", risky=True, surface=s)[1]
     d = [{"item": "api/leak.py", "reason": "dead code", "probe": "rg -n leak shows no caller"}]
     assert guarded(tmp_path / "d", deferred=d)[0] == 0
 
@@ -554,7 +559,7 @@ def test_guard_lookalike_path_not_covered(tmp_path):
     code, out = guarded(tmp_path, deferred=d)
     assert code == 1 and "api/leak.py reads it" in out
     d = [{"item": "api/leak.py", "reason": "dead code", "probe": "rg"}]
-    s = [{"exposure": "GET api/leak.py", "requirement": "req-2", "scenario": "s"}]
+    s = [{"exposure": "GET api/leak.py", "requirement": "req-2", "scenario": "s", "safe": "reads only own rows"}]
     assert guarded(tmp_path / "s", risky=True, surface=s)[0] == 1  # prose that merely contains the path
 
 
