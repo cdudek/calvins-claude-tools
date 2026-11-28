@@ -22,6 +22,7 @@ Input: the plan path, the task id, the milestone branch, and the delta requireme
 - A bug (`kind: bug` in the plan): your first commit holds only the failing test. The coordinator proves it fails on the base and pins it. Then fix the code in a second commit, without touching that test.
 
 ## Never
+- Edit an existing test file: put new tests in a new file (test-integrity refuses the edit).
 - Switch test parallelism off (`--runInBand`, `-j1`, `--maxWorkers=1`, `--fileParallelism=false`) or edit a test config.
 - Edit, delete, skip or weaken an existing test, snapshot or fixture, except exactly the files in your own task's `allowTestEdits`, nothing else.
 - Edit CI config, `.github/`, `.factory/`, baseline files (`.fitness/**`, `*baseline*.json`), `specs/`, `delta.md`, `plan.md` or anything under `~/.factory/scenarios`; do not try to read the scenarios.
