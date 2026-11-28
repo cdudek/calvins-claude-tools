@@ -307,7 +307,7 @@ def guards_errs(plan, plan_path, notes):
     """A milestone's `guards` are regexes for how the guarded data is read, e.g. `(from|join)\\(comments\\b`.
     One `git grep -l -P` per guard (PCRE, so `\\b` works on macOS and Linux) (tracked and untracked, gitignore respected, minus the change folder and
     `.factory/`). A source file it finds must be a task `files` or `allowTestEdits` path of this or an earlier
-    milestone, a surface `exposure`, or a deferred `item`. A test file nobody owns is appended to `notes`, which never fail the check."""
+    milestone, a surface `exposure` carrying a `safe` reason (listing a file in `surface` alone does not own it), or a deferred `item`. A test file nobody owns is appended to `notes`, which never fail the check."""
     ms = [m for m in plan.get("milestones", []) if m.get("guards") is not None]
     if not ms:
         return []
@@ -338,7 +338,7 @@ def guards_errs(plan, plan_path, notes):
         for t in m.get("tasks", []):
             owned |= set(t.get("files", [])) | set(t.get("allowTestEdits", []))
         for s in m.get("surface") or []:
-            if isinstance(s, dict) and filled(s.get("exposure")):
+            if isinstance(s, dict) and filled(s.get("exposure")) and filled(s.get("safe")):
                 declared.add(s["exposure"].strip())
         for x in m.get("deferred") or []:
             if isinstance(x, dict) and filled(x.get("item")) and filled(x.get("probe")):
@@ -354,7 +354,7 @@ def guards_errs(plan, plan_path, notes):
                 if is_test_path(f):
                     notes.append(f"{m['id']} guard {g}: {f} reads it; if it asserts the old behaviour, add it to allowTestEdits")
                 elif not covers(declared, f):
-                    errs.append(f"{m['id']} guard {g}: {f} reads it but no task of {m['id']} or earlier owns it, no surface exposure names it and no deferred item with a probe lists it")
+                    errs.append(f"{m['id']} guard {g}: {f} reads it but no task of {m['id']} or earlier owns it, give it to a task, defer it with a probe, or mark its surface entry `safe` with a reason")
     return errs
 
 
@@ -391,6 +391,8 @@ def surface_errs(m, mid):
             errs.append(f"{at} needs a non-empty requirement")
         elif s["requirement"] not in m.get("covers", []):
             errs.append(f"{at} requirement {s['requirement']} is not in {mid} covers")
+        if "safe" in s and not filled(s["safe"]):
+            errs.append(f"{at} safe needs a non-empty one-line reason")
         d = s.get("deferred")
         if d is None:
             if not filled(s.get("scenario")):
@@ -415,11 +417,11 @@ SERIAL = re.compile(r"(?<![\w-])(?:--no-file-parallelism|--fileParallelism(?:=|\
 
 
 def tests_errs(tests):
-    """The optional `tests` key: `related` (a command with `{files}`), `triggers` (`{paths, run, why}`), `suites` (`{name, cmd, lock?}`).
+    """The optional `tests` key: `related` (a command with `{files}`), `unit` (a command with `{tests}`, the fallback when there is no related tool), `triggers` (`{paths, run, why, edits?}`), `suites` (`{name, cmd, lock?}`).
     No command may switch parallelism off: the project isolates its own suites, and serial runs cost minutes."""
     if not isinstance(tests, dict):
-        return ["tests must be an object with related, triggers and suites"]
-    errs = [f"tests has unknown key {k}" for k in sorted(set(tests) - {"related", "triggers", "suites"})]
+        return ["tests must be an object with related, unit, triggers and suites"]
+    errs = [f"tests has unknown key {k}" for k in sorted(set(tests) - {"related", "unit", "triggers", "suites"})]
     cmds = []
     if "related" in tests:
         r = tests["related"]
@@ -427,6 +429,12 @@ def tests_errs(tests):
             errs.append("tests.related must be a command containing {files}")
         else:
             cmds.append(("related", r))
+    if "unit" in tests:
+        u = tests["unit"]
+        if not filled(u) or "{tests}" not in u:
+            errs.append("tests.unit must be a command containing {tests}")
+        else:
+            cmds.append(("unit", u))
     for key, need in (("triggers", ("run", "why")), ("suites", ("name", "cmd"))):
         v = tests.get(key, [])
         if not isinstance(v, list):
@@ -440,6 +448,8 @@ def tests_errs(tests):
             errs += [f"{w} needs a non-empty {k}" for k in need if not filled(e.get(k))]
             if key == "triggers" and not (is_strs(e.get("paths")) and e["paths"] and all(x.strip() for x in e["paths"])):
                 errs.append(f"{w} needs paths: a non-empty list of globs")
+            if key == "triggers" and "edits" in e and not (is_strs(e["edits"]) and e["edits"] and all(x.strip() and not re.search(r"[*?\[]", x) for x in e["edits"])):
+                errs.append(f"{w} edits must be a non-empty list of exact test file paths, no globs")
             if key == "suites" and "lock" in e and not isinstance(e["lock"], bool):
                 errs.append(f"{w} lock must be true or false")
             cmds += [(f"{w}.{k}", e[k]) for k in ("run", "cmd") if filled(e.get(k))]

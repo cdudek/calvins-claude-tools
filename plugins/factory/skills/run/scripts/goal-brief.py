@@ -114,13 +114,49 @@ def wait_line(plan):
     return wait + ("and CI conclusion." if plan.get("merge") == "owner" else "merge SHA and CI conclusion.")
 
 
-def task_lines(m):
+def glob_re(g):  # same semantics as task-step.py's glob_re: `*` inside a segment, `**/` any directories, a trailing `**` anything
+    out, i = "", 0
+    while i < len(g):
+        if g.startswith("**/", i): out, i = out + "(?:.*/)?", i + 3
+        elif g.startswith("**", i): out, i = out + ".*", i + 2
+        else:
+            out += "[^/]*" if g[i] == "*" else "[^/]" if g[i] == "?" else re.escape(g[i])
+            i += 1
+    return re.compile(out)
+
+
+def static_prefix(g):
+    return re.split(r"[*?\[]", g, 1)[0]
+
+
+def covers_trigger(f, g):
+    """A task `files` entry the way test-integrity sees the changed files it will produce: a plain file must match the trigger glob;
+    a directory or a glob may produce a match, so it counts when its static prefix and the trigger glob's are nested either way."""
+    if glob_re(g).fullmatch(f):
+        return True
+    if not (f.endswith("/") or re.search(r"[*?\[]", f)):
+        return False
+    a, b = static_prefix(f), static_prefix(g)
+    return a.startswith(b) or b.startswith(a)
+
+
+def trigger_edits(plan, t):
+    """The `edits` files of every plan trigger one of the task's `files` can match."""
+    out = []
+    for tr in (plan.get("tests") or {}).get("triggers", []):
+        if any(covers_trigger(f, g) for g in tr.get("paths", []) for f in t["files"]):
+            out += [e for e in tr.get("edits", []) if e not in out]
+    return out
+
+
+def task_lines(m, plan=None):
     out = []
     for t in m["tasks"]:
         needs = ", ".join(t.get("needs", [])) or "nothing"
         out.append(
             f"- {t['id']} covers {', '.join(t['covers'])}. Owns only: {', '.join(t['files'])}. Uses {needs}. Its check: `{t['check']}`. "
             f"Builder effort: {t.get('effort', 'medium')}." + (f" Builder model: {t['model']}." if "model" in t else "")
+            + (f" Trigger tests to grow with your change (exact files, existing tests the plan lets you edit): {', '.join(edits)}." if (edits := trigger_edits(plan or {}, t)) else "")
             + (f" Rule test of `{m.get('rule', '')}`: build and finish it before every other task." if t.get("ruleTest") else ""))
     return out
 
@@ -183,17 +219,36 @@ def section(plan, m, P, root, sha, h, preflight, record=True):
     tgt = target(plan)
     hold, bug = plan.get("hold"), plan.get("kind") == "bug"
     last = mid == plan["milestones"][-1]["id"]
-    risky_step = ui_step = ""
+    ui_step = ""
+    review = ""
     if risky(m):
-        risky_step = ("3. This milestone is risky (auth, money, consent or data exposure): also run a security review of the diff and delta, "
-                      "by one Opus 5.5 high advisory agent or `codex exec -m gpt-6.2-astra -c model_reasoning_effort=high -s read-only --ephemeral`, "
-                      "and fix a confirmed High only inside the task's own files and its allowTestEdits. A fix that needs other files "
-                      "or another test edit is a `gap`: see the gap lane under Verify. The review names the rule each finding breaks and groups findings by it. "
-                      f"After each review run `python3 .factory/task-step.py review {P}plan.md {mid} PASS|FAIL <rule-in-hyphenated-words> --approved {sha}` and commit "
-                      f"the line it logs. A FAIL is fixed at that rule, starting from the rule test, never one hole at a time; at most {m.get('securityRounds', 1)} "
-                      "fix round(s). When the script prints REVIEW FAIL, end with the BLOCKED line it prints.")
+        review = ("a security review of the diff and delta, "
+                  "by one Opus 5.5 high advisory agent or `codex exec -m gpt-6.2-astra -c model_reasoning_effort=high -s read-only --ephemeral`, "
+                  "and fix a confirmed High only inside the task's own files and its allowTestEdits. A fix that needs other files "
+                  "or another test edit is a `gap`: see the gap lane under Verify. The review names the rule each finding breaks and groups findings by it. "
+                  f"After the review run `python3 .factory/task-step.py review {P}plan.md {mid} PASS|FAIL <rule-in-hyphenated-words> --approved {sha}`; it records the round without a commit. "
+                  f"A FAIL is fixed at that rule, starting from the rule test, never one hole at a time; at most {m.get('securityRounds', 1)} "
+                  "fix round(s). When the script prints REVIEW FAIL, end with the BLOCKED line it prints.")
+    gate = f"`python3 .factory/task-step.py gate {P}plan.md {mid} --approved {sha}`: the pre-PR integrity call (every <checked SHA>, the recorded target) and the plan check; both must print OK."
+    verifier = (f"factory:verifier{verifier_tier(m)} on the final commit (`git rev-parse HEAD` is the <final SHA>), with the delta, base, diff and the holdout scenarios in "
+                f"`~/.factory/scenarios/{root.name}/{change}/` for {', '.join(m['covers'])}, and the {'`FINISH` lines (the gate runs after this agent, so there are no `GATE` lines yet)' if review else '`GATE`/`FINISH` lines'} verbatim to cite, never to re-run. Never the builders' reasoning. "
+                "It checks behaviour only: it starts the app only when a scenario needs it. A `bug` FAIL goes back to the builder of that task, a `gap` FAIL to the gap lane; "
+                "the new commit goes through Verify step 2 (per-task integrity, a new <checked SHA>, merge that commit), then repeat Ship from step 1.")
+    if review:
+        gate_verify = ("2. One message, two Agent calls, both on the <final SHA> (`git rev-parse HEAD`); start them together, never one after the other. "
+                       "Your next message holds exactly these two Agent tool calls and nothing else; a verifier sent alone doubles the review time "
+                       "(measured: 7 + 7 min instead of 7). This milestone is risky (auth, money, consent or data exposure):\n"
+                       f"   - Run {verifier}\n"
+                       f"   - Run {review}\n"
+                       "   - A FAIL of either: fix, then both run again on the new SHA.\n"
+                       "3. Log the review as above (no commit).\n"
+                       f"   - Then run {gate}\n"
+                       "   - The `gate` needs that PASS, so it comes after the two agents; nothing is committed after them.\n"
+                       "   - Copy the printed SECURITY-REVIEW line(s) into your next progress entry or the HOLD/SHIPPED message.")
+    else:
+        gate_verify = f"2. Run {gate}\n3. {verifier}"
     if ui:
-        ui_step = (f"{4 if m.get('risky') else 3}. factory:ux-verifier against the design boards in `{P}design/`, which the owner approved "
+        ui_step = (f"3. factory:ux-verifier against the design boards in `{P}design/`, which the owner approved "
                    f"at the single approval, per the factory ux-checks reference. Screenshots go to {P}evidence/{mid}/. Write the gallery to "
                    f"{P}evidence/{mid}/gallery.md; Ship commits it with the progress entry. It is evidence, not a stop: the milestone merges like any other.")
     commit_what = ""
@@ -214,7 +269,7 @@ def section(plan, m, P, root, sha, h, preflight, record=True):
         ship_tail = "\n".join(tail)
     return fill(
         template_blocks()["milestone"], h=h, P=P, mid=mid, sha=sha, branch=branch, change=change, repo=root.name, covers=", ".join(m["covers"]),
-        preflight="\n".join(preflight), task_lines="\n".join(task_lines(m)), risky_step=risky_step, ux_step=ui_step, gap_line=gap_line(m, change),
+        preflight="\n".join(preflight), task_lines="\n".join(task_lines(m, plan)), gate_verify=gate_verify, ux_step=ui_step, gap_line=gap_line(m, change),
         target_step=(f"Target: run `python3 .factory/task-step.py target {P}plan.md {mid} --approved {sha}`. It fetches origin and records the head of `{tgt}` as the "
                      f"<target SHA>, which every integrity call the scripts make passes, so a local `{tgt}` that lags origin never decides what "
                      "counts as this milestone's change.") if record else "",

@@ -68,7 +68,7 @@ Never hand-write a goal line. Start the printed RUN command with the Bash tool a
 
 The run, in short:
 - The coordinator calls `task-step.py` for worktrees, integrity and merges; every task runs in a `factory:builder` subagent, in the foreground (a hook denies background agents).
-- Verify: the gate's test suites (`tests` in the plan; else the fast checks), per-task integrity, `factory:verifier`, a security review on a risky milestone (logged with `task-step.py review`, at most `securityRounds` fix rounds, default 1), `factory:ux-verifier` on a UI milestone. Each FAIL is labelled `bug` or `gap`, and a builder's report of a file no task owns or a test edit lets the coordinator open a `gap` too (the builder never writes the log line); up to `gapRounds` gap rounds per milestone (default 3), inside the owner-approved `mayTouch`.
+- Verify: the gate's test suites (`tests` in the plan, rules in `references/test-strategy.md`; else the fast checks), per-task integrity, `factory:verifier`, a security review on a risky milestone (logged with `task-step.py review`, at most `securityRounds` fix rounds, default 1), `factory:ux-verifier` on a UI milestone. Each FAIL is labelled `bug` or `gap`, and a builder's report of a file no task owns or a test edit lets the coordinator open a `gap` too (the builder never writes the log line); up to `gapRounds` gap rounds per milestone (default 3), inside the owner-approved `mayTouch`.
 - Ship: commit, verify that SHA, push it, one PR per milestone. The release PR waits for a human only when a milestone is `risky`, `deployOnMerge` is true or the plan sets `merge: owner`.
 
 Every rule, with the merge matrix, the bug flow and the learn loop: `references/run-stations.md` and `references/goal-briefing.md`.

@@ -22,14 +22,14 @@ def step(repo, *args):
     return p.returncode, p.stdout
 
 
-def milestone_repo(tmp_path, plan=PLAN):
+def milestone_repo(tmp_path, plan=PLAN, extra=None):
     """A repo with an origin holding main (with the approved plan), on branch milestone/<slug>-M1; returns (repo, approved sha)."""
     repo = tmp_path / "repo"
     repo.mkdir()
     git(repo, "init", "-q", "-b", "main")
     files = {P: "# Plan\n\n```json factory\n" + json.dumps(plan, indent=1) + "\n```\n\n## Progress log\n",
              f"changes/{SLUG}/delta.md": "### ADDED Requirements\n- req-1: When a, the system shall b [outcome-1]\n",
-             f"changes/{SLUG}/intent.md": "- outcome-1: people do x\n", "README.md": "x\n"}
+             f"changes/{SLUG}/intent.md": "- outcome-1: people do x\n", "README.md": "x\n", **(extra or {})}
     for name, text in files.items():
         f = repo / name
         f.parent.mkdir(parents=True, exist_ok=True)
@@ -232,10 +232,9 @@ def test_security_review_rounds_are_capped_and_gated(tmp_path):
     ok(repo, sha, "target")
     code, out = ok(repo, sha, "review", "FAIL", "guest-reads-moved-comment")
     assert code == 0 and "round=1 FAIL, fix round 1 of 1" in out
-    git(repo, "commit", "-qam", "log review 1")
     code, out = ok(repo, sha, "review", "FAIL", "guest-reads-moved-comment")
     assert code == 1 and "past securityRounds 1" in out and "BLOCKED: owner decides on guest-reads-moved-comment" in out
-    git(repo, "commit", "-qam", "log review 2")
+    assert "SECURITY-REVIEW M1 round=2 " in out and git(repo, "status", "--porcelain") == ""  # no commit needed
     assert ok(repo, sha, "review", "FAIL", "two words")[0] == 1  # a rule is hyphenated words
 
 
@@ -247,10 +246,8 @@ def test_gate_security_passes_after_one_fix_round(tmp_path):
     ok(repo, sha, "finish", "T1")
     assert "GATE security FAIL" in ok(repo, sha, "gate")[1]  # no review yet
     ok(repo, sha, "review", "FAIL", "guest-reads-moved-comment")
-    assert "commit the previous log line first" in ok(repo, sha, "review", "PASS", "-")[1]
-    git(repo, "commit", "-qam", "log review 1")
     ok(repo, sha, "review", "PASS", "-")
-    git(repo, "commit", "-qam", "log review 2")
+    assert git(repo, "status", "--porcelain") == ""  # review writes state only, never plan.md
     assert "GATE security OK" in ok(repo, sha, "gate")[1]
     ok(repo, sha, "start", "T2")  # a task merged after the PASS needs a new review
     build(repo / ".worktrees" / f"{SLUG}-M1-T2", "src/b.ts")
@@ -279,7 +276,7 @@ def test_finish_runs_related_and_matching_triggers_before_the_merge(tmp_path):
 
 
 def test_finish_blocks_the_merge_when_a_hand_back_test_fails(tmp_path):
-    plan = plan_with_tests(triggers=[{"paths": ["src/*.ts"], "run": "echo boom-line; exit 3", "why": "w"}])
+    plan = plan_with_tests(triggers=[{"paths": ["src/*.ts"], "run": "test ! -e src/a.ts || { echo boom-line; exit 3; }", "why": "w"}])
     repo, sha = milestone_repo(tmp_path, plan)
     ok(repo, sha, "target")
     ok(repo, sha, "start", "T1")
@@ -287,7 +284,7 @@ def test_finish_blocks_the_merge_when_a_hand_back_test_fails(tmp_path):
     build(wt, "src/a.ts")
     before = git(repo, "rev-parse", "HEAD")
     code, out = ok(repo, sha, "finish", "T1")
-    assert code == 1 and "FINISH FAIL T1 tests: echo boom-line; exit 3" in out and "boom-line" in out, out
+    assert code == 1 and "FINISH FAIL T1 tests: test ! -e src/a.ts" in out and "boom-line" in out, out
     assert git(repo, "rev-parse", "HEAD") == before and wt.exists()
     assert json.loads((repo / ".factory/state/M1.json").read_text())["checked"] == []
 
@@ -303,7 +300,7 @@ def test_finish_skips_triggers_that_match_no_changed_file(tmp_path):
 
 
 def test_gate_runs_each_suite_once_and_fails_on_a_red_one(tmp_path):
-    plan = plan_with_tests(suites=[{"name": "unit", "cmd": "echo u >> ../suite-count"}, {"name": "arch", "cmd": "echo arch-broke; exit 1", "lock": True}])
+    plan = plan_with_tests(suites=[{"name": "unit", "cmd": "echo u >> ../suite-count"}, {"name": "arch", "cmd": "test ! -e src/a.ts || { echo arch-broke; exit 1; }", "lock": True}])
     repo, sha = milestone_repo(tmp_path, plan)
     ok(repo, sha, "target")
     ok(repo, sha, "start", "T1")
@@ -311,4 +308,228 @@ def test_gate_runs_each_suite_once_and_fails_on_a_red_one(tmp_path):
     assert ok(repo, sha, "finish", "T1")[0] == 0
     code, out = ok(repo, sha, "gate")
     assert code == 1 and "GATE tests OK unit" in out and "GATE tests FAIL arch" in out and "arch-broke" in out, out
-    assert (tmp_path / "suite-count").read_text() == "u\n"
+    assert (tmp_path / "suite-count").read_text() == "u\n"  # zero at target, once at gate
+
+
+def test_finish_does_not_block_on_a_command_already_red_on_the_milestone(tmp_path):
+    plan = plan_with_tests(triggers=[{"paths": ["src/*.ts"], "run": "echo 'FAILED t::a'; exit 3", "why": "w"}])
+    repo, sha = milestone_repo(tmp_path, plan)
+    ok(repo, sha, "target")
+    ok(repo, sha, "start", "T1")
+    build(repo / ".worktrees" / f"{SLUG}-M1-T1", "src/a.ts")
+    code, out = ok(repo, sha, "finish", "T1")
+    assert code == 0 and "FINISH tests PRE-EXISTING echo 'FAILED t::a'; exit 3" in out and "FAILED t::a" in out and "FINISH FAIL" not in out, out
+    st = json.loads((repo / ".factory/state/M1.json").read_text())
+    assert st["preexisting"] == ["echo 'FAILED t::a'; exit 3"] and "T1" in st["tasks"]
+
+
+def test_gate_reports_a_suite_red_at_target_as_pre_existing(tmp_path):
+    plan = plan_with_tests(suites=[{"name": "old", "cmd": f"echo o >> {tmp_path}/old-count; echo 'FAILED t::a'; exit 1"}, {"name": "unit", "cmd": "true"}])
+    repo, sha = milestone_repo(tmp_path, plan)
+    ok(repo, sha, "target")
+    assert not (tmp_path / "old-count").exists()  # target runs no suite
+    ok(repo, sha, "start", "T1")
+    build(repo / ".worktrees" / f"{SLUG}-M1-T1", "src/a.ts")
+    assert ok(repo, sha, "finish", "T1")[0] == 0
+    code, out = ok(repo, sha, "gate")
+    assert "GATE tests PRE-EXISTING old" in out and "GATE tests OK unit" in out and "GATE tests FAIL" not in out, out
+    assert (tmp_path / "old-count").read_text() == "o\no\n"  # milestone worktree, then the baseline worktree
+    assert not (repo / ".worktrees" / f"{SLUG}-M1-baseline").exists()
+
+
+def test_gate_fails_a_suite_that_is_green_at_target(tmp_path):
+    plan = plan_with_tests(suites=[{"name": "arch", "cmd": "test ! -e src/a.ts || { echo arch-broke; exit 1; }"}])
+    repo, sha = milestone_repo(tmp_path, plan)
+    ok(repo, sha, "target")
+    ok(repo, sha, "start", "T1")
+    build(repo / ".worktrees" / f"{SLUG}-M1-T1", "src/a.ts")
+    assert ok(repo, sha, "finish", "T1")[0] == 0
+    code, out = ok(repo, sha, "gate")
+    assert code == 1 and "GATE tests FAIL arch" in out and "PRE-EXISTING" not in out, out
+    assert not (repo / ".worktrees" / f"{SLUG}-M1-baseline").exists()
+
+
+def test_finish_of_a_task_with_no_new_commits_is_recorded_empty_and_the_gate_still_passes(tmp_path):
+    repo, sha = milestone_repo(tmp_path)
+    ok(repo, sha, "target")
+    ok(repo, sha, "start", "T1")
+    wt = repo / ".worktrees" / f"{SLUG}-M1-T1"
+    code, out = ok(repo, sha, "finish", "T1")
+    assert code == 0 and "FINISH OK T1 no changes (nothing to merge)" in out and not wt.exists()
+    st = json.loads((repo / ".factory/state/M1.json").read_text())
+    assert st["tasks"]["T1"] == {"builder": None, "merged": None, "empty": True} and st["checked"] == []
+    ok(repo, sha, "start", "T2")
+    build(repo / ".worktrees" / f"{SLUG}-M1-T2", "src/b.ts")
+    assert ok(repo, sha, "finish", "T2")[0] == 0
+    code, out = ok(repo, sha, "gate")
+    assert code == 0 and "GATE integrity OK" in out, out
+    assert ok(repo, sha, "status")[0] == 0
+
+
+def test_an_empty_rule_test_task_counts_as_done(tmp_path):
+    plan = with_ms()
+    plan["milestones"][0]["tasks"][1]["ruleTest"] = True
+    repo, sha = milestone_repo(tmp_path, plan)
+    ok(repo, sha, "target")
+    ok(repo, sha, "start", "T2")
+    assert "no changes" in ok(repo, sha, "finish", "T2")[1]
+    assert ok(repo, sha, "start", "T1")[0] == 0
+
+
+def finish_t1_with(tmp_path, cmd):
+    plan = plan_with_tests(triggers=[{"paths": ["src/*.ts"], "run": cmd, "why": "w"}])
+    repo, sha = milestone_repo(tmp_path, plan)
+    ok(repo, sha, "target")
+    ok(repo, sha, "start", "T1")
+    build(repo / ".worktrees" / f"{SLUG}-M1-T1", "src/a.ts")
+    return ok(repo, sha, "finish", "T1")
+
+
+def test_finish_blocks_a_new_failure_next_to_a_pre_existing_one(tmp_path):
+    cmd = "echo 'FAILED t::a'; test ! -e src/a.ts || echo 'FAILED t::b'; exit 1"
+    code, out = finish_t1_with(tmp_path, cmd)
+    assert code == 1 and "FINISH FAIL" in out and "new failing tests: t::b" in out and "PRE-EXISTING" not in out, out
+
+
+def test_finish_blocks_when_failures_cannot_be_compared(tmp_path):
+    code, out = finish_t1_with(tmp_path, "echo no-names; exit 1")
+    assert code == 1 and "cannot be compared" in out and "PRE-EXISTING" not in out, out
+
+
+def test_failing_ids_reads_vitest_pytest_and_go_lines():
+    import importlib.util
+    sp = importlib.util.spec_from_file_location("ts", SCRIPT)
+    ts = importlib.util.module_from_spec(sp)
+    sp.loader.exec_module(ts)
+    text = " FAIL  src/a.test.ts > adds 3ms\n ✗ other 5ms\nFAILED tests/t.py::x - boom\n--- FAIL: TestY (0.00s)\n"
+    assert ts.failing_ids(text) == {"src/a.test.ts > adds", "other", "tests/t.py::x", "TestY"}
+
+
+def test_gate_fails_a_suite_with_a_new_failure_beside_a_pre_existing_one(tmp_path):
+    plan = plan_with_tests(suites=[{"name": "mix", "cmd": "echo 'FAILED t::a'; test ! -e src/a.ts || echo 'FAILED t::b'; exit 1"}])
+    repo, sha = milestone_repo(tmp_path, plan)
+    ok(repo, sha, "target")
+    ok(repo, sha, "start", "T1")
+    build(repo / ".worktrees" / f"{SLUG}-M1-T1", "src/a.ts")
+    assert ok(repo, sha, "finish", "T1")[0] == 0
+    code, out = ok(repo, sha, "gate")
+    assert code == 1 and "GATE tests FAIL mix (new failing tests: t::b)" in out and "PRE-EXISTING" not in out, out
+
+
+def test_finish_of_an_empty_task_refuses_uncommitted_work(tmp_path):
+    repo, sha = milestone_repo(tmp_path)
+    ok(repo, sha, "target")
+    ok(repo, sha, "start", "T1")
+    wt = repo / ".worktrees" / f"{SLUG}-M1-T1"
+    (wt / "src").mkdir()
+    (wt / "src/a.ts").write_text("unsaved\n")
+    code, out = ok(repo, sha, "finish", "T1")
+    assert code == 1 and "uncommitted changes in an empty task" in out and wt.exists(), out
+    (wt / "src/a.ts").unlink()  # the setup marker alone is fine
+    assert "no changes" in ok(repo, sha, "finish", "T1")[1]
+
+
+def test_gate_skips_integrity_when_every_planned_task_is_empty(tmp_path):
+    repo, sha = milestone_repo(tmp_path)
+    ok(repo, sha, "target")
+    for t in ("T1", "T2"):
+        ok(repo, sha, "start", t)
+        assert "no changes" in ok(repo, sha, "finish", t)[1]
+    code, out = ok(repo, sha, "gate")
+    assert code == 0 and "GATE integrity OK every task is empty" in out and "GATE check-plan OK" in out, out
+
+
+def test_gate_still_fails_when_a_planned_task_was_never_finished(tmp_path):
+    repo, sha = milestone_repo(tmp_path)
+    ok(repo, sha, "target")
+    ok(repo, sha, "start", "T1")
+    ok(repo, sha, "finish", "T1")
+    assert "no task has passed `finish` yet" in ok(repo, sha, "gate")[1]
+
+
+def test_approved_and_resume_are_accepted_in_any_position(tmp_path):
+    repo, sha = milestone_repo(tmp_path)
+    code, out = step(repo, "target", P, "M1", "--approved", sha, "--resume")
+    assert code == 0 and out.startswith("TARGET OK"), out
+    code, out = step(repo, "--resume", "target", "--approved", sha, P, "M1")
+    assert code == 0 and out.startswith("TARGET OK"), out
+    assert step(repo, "target", P, "M1", "--approved")[0] == 2  # a value is required
+
+
+def test_start_reruns_setup_in_a_reused_worktree_whose_setup_failed(tmp_path):
+    plan = json.loads(json.dumps(PLAN))
+    plan["setup"] = f"test -e {tmp_path}/ready && touch .setup-ran"
+    repo, sha = milestone_repo(tmp_path, plan)
+    ok(repo, sha, "target")
+    code, out = ok(repo, sha, "start", "T1")
+    wt = repo / ".worktrees" / f"{SLUG}-M1-T1"
+    assert code == 1 and "setup" in out and wt.exists()
+    assert ok(repo, sha, "start", "T1")[0] == 1  # still failing, never "reused"
+    (tmp_path / "ready").write_text("")
+    code, out = ok(repo, sha, "start", "T1")
+    assert code == 0 and "reused" in out and (wt / ".setup-ran").exists(), out
+
+
+def test_start_recreates_a_merged_task_branch_and_refuses_an_unmerged_one(tmp_path):
+    repo, sha = milestone_repo(tmp_path)
+    ok(repo, sha, "target")
+    ok(repo, sha, "start", "T1")
+    build(repo / ".worktrees" / f"{SLUG}-M1-T1", "src/a.ts")
+    assert ok(repo, sha, "finish", "T1")[0] == 0  # worktree gone, branch merged
+    git(repo, "commit", "-q", "--allow-empty", "-m", "later work")
+    code, out = ok(repo, sha, "start", "T1")
+    assert code == 0 and git(repo, "rev-parse", f"{SLUG}-M1-T1") == git(repo, "rev-parse", "HEAD"), out
+    wt = repo / ".worktrees" / f"{SLUG}-M1-T1"
+    build(wt, "src/a2.ts")  # unmerged work, then the checkout is lost
+    git(repo, "worktree", "remove", "--force", str(wt))
+    code, out = ok(repo, sha, "start", "T1")
+    assert code == 1 and "commits the milestone branch does not" in out, out
+
+
+def test_gate_security_needs_the_pass_at_exactly_the_gated_head(tmp_path):
+    repo, sha = milestone_repo(tmp_path, with_ms(risky=True))
+    ok(repo, sha, "target")
+    ok(repo, sha, "start", "T1")
+    build(repo / ".worktrees" / f"{SLUG}-M1-T1", "src/a.ts")
+    ok(repo, sha, "finish", "T1")
+    ok(repo, sha, "review", "PASS", "-")
+    git(repo, "commit", "-q", "--allow-empty", "-m", "after the review")  # not a factory-merge, but HEAD moved
+    assert "GATE security FAIL" in ok(repo, sha, "gate")[1]
+
+
+def nearby_finish(tmp_path, changed, extra, unit="echo UNIT {tests}", **more):
+    plan = plan_with_tests(unit=unit, **more)
+    plan["milestones"][0]["tasks"][0]["files"] = [changed]
+    repo, sha = milestone_repo(tmp_path, plan, extra)
+    ok(repo, sha, "target")
+    ok(repo, sha, "start", "T1")
+    build(repo / ".worktrees" / f"{SLUG}-M1-T1", changed)
+    return ok(repo, sha, "finish", "T1")
+
+
+def test_finish_runs_unit_on_nearby_python_tests(tmp_path):
+    code, out = nearby_finish(tmp_path, "src/pkg/mod.py", {"tests/test_mod.py": "x\n", "tests/test_other.py": "x\n"})
+    assert code == 0 and "FINISH tests OK 1 commands (nearby tests)" in out, out
+
+
+def test_unit_gets_exactly_the_nearby_tests(tmp_path):
+    code, out = nearby_finish(tmp_path, "src/pkg/mod.py", {"tests/test_mod.py": "x\n", "tests/test_other.py": "x\n"},
+                              unit="test \"{tests}\" = tests/test_mod.py")
+    assert code == 0 and "(nearby tests)" in out, out
+
+
+def test_unit_maps_go_tests_to_their_package(tmp_path):
+    code, out = nearby_finish(tmp_path, "pkg/usr/usr.go", {"pkg/usr/usr_test.go": "x\n", "pkg/y/y_test.go": "x\n"},
+                              unit="test \"{tests}\" = ./pkg/usr")
+    assert code == 0 and "(nearby tests)" in out, out
+
+
+def test_unit_without_matching_tests_runs_only_triggers(tmp_path):
+    code, out = nearby_finish(tmp_path, "src/pkg/mod.py", {"tests/test_other.py": "x\n"}, unit="exit 1",
+                              triggers=[{"paths": ["src/**"], "run": "echo trig", "why": "w"}])
+    assert code == 0 and "FINISH tests OK 1 commands (triggers)" in out, out
+
+
+def test_related_wins_over_unit(tmp_path):
+    code, out = nearby_finish(tmp_path, "src/pkg/mod.py", {"tests/test_mod.py": "x\n"}, unit="exit 1", related="true {files}")
+    assert code == 0 and "FINISH tests OK 1 commands (related)" in out, out

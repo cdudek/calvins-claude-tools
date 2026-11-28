@@ -1058,3 +1058,41 @@ def test_test_changes_are_ignored_for_a_file_outside_allow_test_edits(tmp_path):
 def test_test_changes_are_read_from_the_approved_plan_only(tmp_path):
     code, out = addonly_tc(tmp_path, "src/a.test.ts", JS_OLD, JS_OLD.replace("it('lists'", "it('lists the rows'"), [RENAME], at_head=True)
     assert code == 1 and "block lists: test block removed or renamed" in out, out
+
+
+TRIG_PLAN = {**PLAN, "tests": {"triggers": [{"paths": ["db/**"], "run": "true", "why": "schema", "edits": ["tests/migrate.test.ts"]}]}}
+TRIG_PLAN["milestones"] = [{**PLAN["milestones"][0], "tasks": [
+    {"id": "T1", "covers": ["req-1"], "check": "true", "files": ["db/", "src/a.ts"]}]}, PLAN["milestones"][1]]
+
+
+def trig_repo(tmp_path):
+    repo = plan_repo(tmp_path, TRIG_PLAN)
+    commit(repo, {"tests/migrate.test.ts": "it('tables', () => { expect(1).toBe(1) })\n"}, "tests")
+    git(repo, "switch", "-qC", "main")
+    git(repo, "merge", "-q", "ms")
+    git(repo, "branch", "-f", "integ", "main")
+    git(repo, "switch", "-qc", "t1")
+    return repo
+
+
+def test_trigger_edits_file_allowed_when_task_touched_matching_path(tmp_path):
+    repo = trig_repo(tmp_path)
+    commit(repo, {"db/schema.sql": "create table x;\n",
+                  "tests/migrate.test.ts": "it('tables', () => { expect(1).toBe(1); expect(2).toBe(2) })\n"})
+    code, out = run(repo, "main", str(repo / PLAN_PATH), "--task", "T1")
+    assert code == 0 and out.strip() == "INTEGRITY OK", out
+
+
+def test_trigger_edits_file_refused_when_task_did_not_touch_matching_path(tmp_path):
+    repo = trig_repo(tmp_path)
+    commit(repo, {"src/a.ts": "export const a = 3\n",
+                  "tests/migrate.test.ts": "it('tables', () => { expect(1).toBe(1); expect(2).toBe(2) })\n"})
+    code, out = run(repo, "main", str(repo / PLAN_PATH), "--task", "T1")
+    assert code == 1 and "existing test changed or deleted: tests/migrate.test.ts" in out, out
+
+
+def test_trigger_edits_still_add_only(tmp_path):
+    repo = trig_repo(tmp_path)
+    commit(repo, {"db/schema.sql": "create table x;\n", "tests/migrate.test.ts": "it('tables', () => {})\n"})
+    code, out = run(repo, "main", str(repo / PLAN_PATH), "--task", "T1")
+    assert code == 1 and "add-only gate: tests/migrate.test.ts" in out, out

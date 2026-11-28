@@ -197,6 +197,15 @@ def apply_may_touch(plan_path, milestone, globs):
     plan_path.write_text(text[:m.start(1)] + json.dumps(data, indent=1) + "\n" + text[m.end(1):], encoding="utf-8")
 
 
+def apply_tests(plan_path, tests):
+    """Write task.json `tests` over the replay plan's `tests` key, so test tiers can be tuned without rebuilding start.tar.gz."""
+    text = plan_path.read_text(encoding="utf-8")
+    m = grade.BLOCK.search(text)
+    data = json.loads(m.group(1))
+    data["tests"] = tests
+    plan_path.write_text(text[:m.start(1)] + json.dumps(data, indent=1) + "\n" + text[m.end(1):], encoding="utf-8")
+
+
 def parse_brief(out):
     sec = {}
     parts = re.split(r"-#-#- (.+?) -#-#-\n", out)
@@ -234,6 +243,8 @@ def prepare_run(task_dir, task, arm, run_dir, run_id, args, slot):
         apply_sizing(plan, arm["sizing"])
     if task.get("may_touch") and task["milestone"] != "all":
         apply_may_touch(plan, task["milestone"], task["may_touch"])
+    if task.get("tests"):
+        apply_tests(plan, task["tests"])
     if "integrity" in arm["ablate"] or arm["enforcement"] == "prompt":
         (cf / "test-integrity.sh").write_text("#!/usr/bin/env bash\necho 'INTEGRITY OK (disabled by the eval arm)'\n")
     pj = grade.plan_json(plan.read_text(encoding="utf-8"))

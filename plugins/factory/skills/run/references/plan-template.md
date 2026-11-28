@@ -59,7 +59,7 @@ A signed-in user saves a search and reopens it from the sidebar with the same fi
 ```json factory
 {"change": "2026-11-24-saved-searches", "base": "main", "goalTurns": 12,
  "setup": "npm ci", "preflight": ["command -v npm"], "deployOnMerge": false,
- "tests": {"related": "npx vitest related --run {files}", "suites": [{"name": "unit", "cmd": "npm test"}]},
+ "tests": {"related": "npx vitest related --run --passWithNoTests {files}", "suites": [{"name": "unit", "cmd": "npm test"}]},
  "requirements": ["req-1", "req-2", "req-3"],
  "milestones": [
    {"id": "M1", "layer": "components", "covers": ["req-1", "req-2"],

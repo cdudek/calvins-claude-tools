@@ -221,6 +221,19 @@ def test_risky_milestone_gets_security_review(tmp_path):
     assert "is a `gap`: see the gap lane under Verify" in k
 
 
+def test_risky_milestone_runs_review_and_verifier_together_before_gate(tmp_path):
+    code, out, kick = run(tmp_path, "M2", risky_text())
+    s = ship_of(kick.read_text())
+    assert code == 0 and "One message, two Agent calls, both on the <final SHA>" in s and "start them together, never one after the other" in s
+    two = s.split("2. One message")[1].split("3. Log the review")[0]
+    assert "together" in two and "- Run factory:verifier" in two and "- Run a security review" in two  # both calls under the one step
+    order = [s.index(x) for x in ("1. Commit on", "factory:verifier", "a security review", "3. Log the review", "task-step.py gate", "4. ")]
+    assert order == sorted(order) and "`FINISH` lines (the gate runs after this agent" in s
+    assert "`GATE`/`FINISH` lines" not in s  # the verifier cannot cite lines the gate has not printed yet
+    assert "Log the review as above (no commit)" in s and "nothing is committed after them" in s and "commit the line" not in s
+    assert "security review" not in kick.read_text().split("Ship, in this order")[0]  # not in Verify any more
+
+
 def test_goal_lists_end_states_in_order(tmp_path):
     code, out, _ = run(tmp_path, "M2", risky_text())
     goal = goal_of(out)
@@ -604,3 +617,28 @@ def test_standing_changed_or_added_after_approval_fails_the_brief(tmp_path):
     p = brief(plan2, "M1", "--approved", sha2)
     assert p.returncode == 1 and "standing.md changed since approved" in p.stdout
     assert not (tmp_path / "late" / "kickoff-M1.md").exists()
+
+
+def test_non_risky_verifier_is_told_to_cite_gate_lines(tmp_path):
+    code, out, kick = run(tmp_path, "M1")
+    assert code == 0 and "`GATE`/`FINISH` lines verbatim" in ship_of(kick.read_text())
+
+
+def load_goal_brief():
+    sp = importlib.util.spec_from_file_location("gb", SCRIPT)
+    gb = importlib.util.module_from_spec(sp)
+    sp.loader.exec_module(gb)
+    return gb
+
+
+def test_trigger_edits_hint_matches_directories_and_globs_like_integrity():
+    gb = load_goal_brief()
+    plan = {"tests": {"triggers": [{"paths": ["db/**/*.sql"], "run": "x", "why": "w", "edits": ["db/schema.test.ts"]},
+                                   {"paths": ["web/**"], "run": "y", "why": "w", "edits": ["web/a.test.ts"]}]}}
+    assert gb.trigger_edits(plan, {"files": ["db/migrations/"]}) == ["db/schema.test.ts"]  # task directory under the glob's prefix
+    assert gb.trigger_edits(plan, {"files": ["db/migrations/*.sql"]}) == ["db/schema.test.ts"]
+    assert gb.trigger_edits(plan, {"files": ["db/migrations/001.sql"]}) == ["db/schema.test.ts"]
+    assert gb.trigger_edits(plan, {"files": ["db/"]}) == ["db/schema.test.ts"]  # directory above the prefix
+    assert gb.trigger_edits(plan, {"files": ["db/readme.md"]}) == []  # a plain file must match the glob
+    assert gb.trigger_edits(plan, {"files": ["docs/"]}) == []
+    assert gb.trigger_edits(plan, {"files": ["web/x/y.ts", "db/readme.md"]}) == ["web/a.test.ts"]

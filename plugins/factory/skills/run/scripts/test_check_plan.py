@@ -532,7 +532,7 @@ def test_guard_pattern_matches_reads_not_bare_name(tmp_path):
 def test_guard_uncovered_source_file_fails(tmp_path):
     code, out = guarded(tmp_path)
     assert code == 1
-    assert "PLAN FAIL M2 guard (from|join)\\(comments\\b: api/leak.py reads it but no task of M2 or earlier owns it, no surface exposure names it and no deferred item with a probe lists it" in out
+    assert "PLAN FAIL M2 guard (from|join)\\(comments\\b: api/leak.py reads it but no task of M2 or earlier owns it, give it to a task, defer it with a probe, or mark its surface entry `safe` with a reason" in out
 
 
 def test_guard_invalid_pattern(tmp_path):
@@ -543,8 +543,13 @@ def test_guard_invalid_pattern(tmp_path):
 def test_guard_covered_by_task_surface_or_probed_deferral(tmp_path):
     assert guarded(tmp_path / "a", tasks=task(files=["api/leak.py"]))[0] == 0
     assert guarded(tmp_path / "b", tasks=task(files=["api/"]))[0] == 0
-    s = [{"exposure": "api/leak.py", "requirement": "req-2", "scenario": "scenario-1 guest sees own"}]
+    s = [{"exposure": "api/leak.py", "requirement": "req-2", "scenario": "scenario-1 guest sees own", "safe": "already filters by member on base"}]
     assert guarded(tmp_path / "c", risky=True, surface=s)[0] == 0
+    s = [{"exposure": "api/leak.py", "requirement": "req-2", "scenario": "scenario-1 guest sees own"}]
+    code, out = guarded(tmp_path / "e", risky=True, surface=s)
+    assert code == 1 and "api/leak.py reads it but no task of M2 or earlier owns it" in out  # listed in surface only
+    s[0]["safe"] = " "
+    assert "surface[0] safe needs a non-empty" in guarded(tmp_path / "f", risky=True, surface=s)[1]
     d = [{"item": "api/leak.py", "reason": "dead code", "probe": "rg -n leak shows no caller"}]
     assert guarded(tmp_path / "d", deferred=d)[0] == 0
 
@@ -554,7 +559,7 @@ def test_guard_lookalike_path_not_covered(tmp_path):
     code, out = guarded(tmp_path, deferred=d)
     assert code == 1 and "api/leak.py reads it" in out
     d = [{"item": "api/leak.py", "reason": "dead code", "probe": "rg"}]
-    s = [{"exposure": "GET api/leak.py", "requirement": "req-2", "scenario": "s"}]
+    s = [{"exposure": "GET api/leak.py", "requirement": "req-2", "scenario": "s", "safe": "reads only own rows"}]
     assert guarded(tmp_path / "s", risky=True, surface=s)[0] == 1  # prose that merely contains the path
 
 
@@ -725,7 +730,7 @@ def test_test_changes(tmp_path):
     assert code == 1 and "M1/T1 testChanges must be a list" in out
 
 
-GOOD_TESTS = {"related": "npx vitest related --run {files}",
+GOOD_TESTS = {"related": "npx vitest related --run {files}", "unit": "pytest {tests}",
               "triggers": [{"paths": ["db/**", "architecture.json"], "run": "npm run arch", "why": "schema coupling"}],
               "suites": [{"name": "unit", "cmd": "npm test"}, {"name": "arch", "cmd": "npm run arch", "lock": True}]}
 
@@ -735,6 +740,13 @@ def test_tests_key_is_optional_and_a_good_one_passes(tmp_path):
     assert code == 0 and out.strip() == "PLAN OK 3 milestones 2 tasks", out
 
 
+def test_trigger_edits_pass(tmp_path):
+    t = copy.deepcopy(GOOD_TESTS)
+    t["triggers"][0]["edits"] = ["tests/test_migrate.py", "tests/fk.json"]
+    code, out = run(tmp_path, mutated(lambda p: p.update(tests=t)))
+    assert code == 0, out
+
+
 def test_tests_shape_errors(tmp_path):
     def bad(fn, msg):
         t = copy.deepcopy(GOOD_TESTS)
@@ -742,8 +754,11 @@ def test_tests_shape_errors(tmp_path):
         code, out = run(tmp_path, mutated(lambda p: p.update(tests=t)))
         assert code == 1 and msg in out, (msg, out)
     bad(lambda t: t.update(related="npx vitest related --run"), "tests.related must be a command containing {files}")
+    bad(lambda t: t.update(unit="pytest"), "tests.unit must be a command containing {tests}")
     bad(lambda t: t["triggers"][0].pop("why"), "tests.triggers[0] needs a non-empty why")
     bad(lambda t: t["triggers"][0].update(paths=[]), "tests.triggers[0] needs paths")
+    bad(lambda t: t["triggers"][0].update(edits=[]), "tests.triggers[0] edits must be a non-empty list of exact test file paths")
+    bad(lambda t: t["triggers"][0].update(edits=["tests/*.py"]), "no globs")
     bad(lambda t: t["suites"][0].pop("name"), "tests.suites[0] needs a non-empty name")
     bad(lambda t: t["suites"][1].update(lock="yes"), "lock must be true or false")
     bad(lambda t: t.update(extra=1), "unknown key extra")
@@ -753,10 +768,10 @@ def test_tests_shape_errors(tmp_path):
 
 def test_tests_commands_may_not_switch_parallelism_off(tmp_path):
     for flag in ("--no-file-parallelism", "--fileParallelism=false", "--runInBand", "-p 1", "-j1", "--maxWorkers=1", "--workers=1"):
-        for where in ("related", "trigger", "suite"):
+        for where in ("related", "unit", "trigger", "suite"):
             t = copy.deepcopy(GOOD_TESTS)
-            if where == "related":
-                t["related"] += f" {flag}"
+            if where in ("related", "unit"):
+                t[where] += f" {flag}"
             elif where == "trigger":
                 t["triggers"][0]["run"] += f" {flag}"
             else:
