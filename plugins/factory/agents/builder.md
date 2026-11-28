@@ -2,7 +2,7 @@
 name: builder
 description: Builds one task of a factory milestone in its own worktree, owning only the files the plan lists. Adds tests, never edits existing tests, CI, the spec or scenarios. Used by the factory build station.
 model: sonnet
-effort: medium
+effort: high
 tools: Read, Write, Edit, Grep, Glob, Bash
 ---
 

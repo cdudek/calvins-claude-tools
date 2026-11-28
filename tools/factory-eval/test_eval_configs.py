@@ -20,7 +20,7 @@ class Configs(unittest.TestCase):
         for i in range(1, 9):
             arm, lv = configs.get(f"pb{i}"), configs.pb_levels(f"pb{i}")
             self.assertEqual(arm["roles"]["verifier"][0], "sonnet" if lv["A"] == 1 else base["roles"]["verifier"][0])
-            self.assertEqual(arm["roles"]["builder"][1], "high" if lv["B"] == 1 else "medium")
+            self.assertEqual(arm["roles"]["builder"][1], "medium" if lv["B"] == 1 else "high")
             self.assertEqual(arm["advisor"], "opus" if lv["C"] == 1 else None)
             self.assertEqual(arm["context"], "raw" if lv["D"] == 1 else "spec")
             self.assertEqual(arm["parallel"], 1 if lv["E"] == 1 else 3)

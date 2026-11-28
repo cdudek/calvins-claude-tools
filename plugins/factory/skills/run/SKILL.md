@@ -50,7 +50,7 @@ Ask what the person brings and size it. Check the merge gate, the fast commands 
 
 ### 2. Plan and approval
 - Copy `references/plan-template.md` (or `plan-small-template.md`) to `changes/<slug>/plan.md` and fill it per `references/plan-standard.md`, including the `json factory` block.
-  - The planner sizes each task by judgement: effort and model default to Sonnet 5.5 medium and are set only where a task needs more.
+  - The planner sizes each task by judgement: effort and model default to Sonnet 5.5 high and are lowered only for mechanical tasks.
 - Run `python3 .factory/check-plan.py changes/<slug>/plan.md`, with `--all` when the run will be `--all`. It must print `PLAN OK`. Run every `preflight` command now. A project run (`--all`) has no `hold`: settle owner actions during grilling.
 - One fresh plan review by Codex `gpt-6.2-astra`, correctness against the intent and delta only. It checks the riskiest step and the options rejected in Risks. On a risky milestone it also asks "how can this leak?" against the `rule`: every way found becomes a case in the `ruleTest` task now, not a security finding later. Apply `references/review-policy.md`. When `codex` is absent, skip it.
 - **PRs: one per milestone, nothing else.** Where Actions minutes cost money there is no plan PR: commit intent, delta, plan, `.factory/` and any new ADRs (as `proposed`) on milestone 1's branch, push it without a PR, and they merge with milestone 1's PR.
@@ -74,7 +74,7 @@ The run, in short:
 Every rule, with the merge matrix, the bug flow and the learn loop: `references/run-stations.md` and `references/goal-briefing.md`.
 
 ## Models and effort
-One default: Sonnet 5.5 medium for the coordinator and builders; stations 0 to 2 run at high effort. Verifier, advisor and second opinions: Opus 5.5 high. Codex doing work: `gpt-6.2-sol` high; Codex advisory:
+Defaults: Sonnet 5.5 medium for the coordinator, Sonnet 5.5 high for builders (the eval grid: cheaper and faster than medium at the same solve rate); stations 0 to 2 run at high effort. Verifier, advisor and second opinions: Opus 5.5 high. Codex doing work: `gpt-6.2-sol` high; Codex advisory:
 `gpt-6.2-astra` high, run as `codex exec -m <model> -c model_reasoning_effort=high -s read-only --ephemeral '<prompt>' </dev/null`: codex reads an open stdin and waits forever; a failed or killed codex run falls back to the Opus agent. A task's `effort` or `model` and a milestone's `verifier` in the plan override the default.
 
 ## The approval

@@ -155,7 +155,7 @@ def task_lines(m, plan=None):
         needs = ", ".join(t.get("needs", [])) or "nothing"
         out.append(
             f"- {t['id']} covers {', '.join(t['covers'])}. Owns only: {', '.join(t['files'])}. Uses {needs}. Its check: `{t['check']}`. "
-            f"Builder effort: {t.get('effort', 'medium')}." + (f" Builder model: {t['model']}." if "model" in t else "")
+            f"Builder effort: {t.get('effort', 'high')}." + (f" Builder model: {t['model']}." if "model" in t else "")
             + (f" Trigger tests to grow with your change (exact files, existing tests the plan lets you edit): {', '.join(edits)}." if (edits := trigger_edits(plan or {}, t)) else "")
             + (f" Rule test of `{m.get('rule', '')}`: build and finish it before every other task." if t.get("ruleTest") else ""))
     return out

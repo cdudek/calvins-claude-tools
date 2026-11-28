@@ -83,7 +83,7 @@ End the plan body (before the progress log) with one fenced block whose info str
 - `securityRounds` (milestone, optional): how many security fix rounds a risky milestone may use, a whole number 1 to 3, default 1. The coordinator logs every review with `task-step.py review`; a FAIL past the cap ends `BLOCKED: owner decides on <rule>: move it to a later milestone, or accept it as a known limit`, and `gate` needs a last PASS.
 - Task prose and json agree: every backticked path in a task bullet's `Owns`, `Edits`, `Creates` or `Adds` sentence is in that task's `files` or `allowTestEdits`, or `check-plan.py` fails. The scripts read only the json.
 - `deferred` (milestone, optional): `{item, reason, probe}`. `probe` is the command you ran and what it showed. A reason written as a fact without a probe fails.
-- `effort` (task, optional): `low` for mechanical code or text replacement, `high` for complex work, default `medium`. The builder runs on Sonnet 5.5 at this effort.
+- `effort` (task, optional): `low` for mechanical code or text replacement, `medium` for routine work, default `high`. The builder runs on Sonnet 5.5 at this effort.
 - `model` (task, optional): `haiku`, `sonnet` or `opus`, default `sonnet`. The builder dispatch passes it with `effort`.
 - `verifier` (milestone, optional): `{"model": "sonnet" | "opus", "effort": "medium" | "high"}`, default Opus 5.5 high. The verifier dispatch passes it. Security review of a risky milestone is not affected.
 - `allowTestEdits` (task, optional): existing test files this task edits, nothing else. A top-level `allowTestEdits` fails. `test-integrity.sh` reads it per task. An edited test must only add (blocks, assertions); a JSON fixture must keep every key and list item it had.
