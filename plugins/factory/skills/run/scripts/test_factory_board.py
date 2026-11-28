@@ -47,6 +47,15 @@ def test_html_escapes_text_and_refuses_script_urls():
     assert 'href="javascript' not in page
 
 
+def test_html_escapes_every_interpolated_value_including_numbers():
+    x = "<img src=x onerror=alert(1)>"
+    cur = {"milestone": "M<b>", "milestoneIndex": x, "milestoneCount": x, "task": "T<i>", "taskIndex": 1, "taskCount": x, "gapRound": x, "gapRounds": x, "since": None}
+    page = fb.render(data(card("a", "building", current=cur, milestones=[{"id": "M<b>", "state": x}],
+                               prs=[{"number": x, "url": 'https://e.test/"><script>', "title": x, "state": "open"}])))
+    assert "<img" not in page and "<b>" not in page and "<i>" not in page and "<script>" not in page
+    assert page.count("&lt;img src=x onerror=alert(1)&gt;") >= 6
+
+
 def serve_in_thread(snapshot):
     srv = fb.make_server(snapshot, 0)
     threading.Thread(target=srv.serve_forever, daemon=True).start()
@@ -78,6 +87,24 @@ def test_server_serves_board_and_json_read_only():
                 raise AssertionError(f"{method} {path} must fail")
             except urllib.error.HTTPError as e:
                 assert e.code in (404, 501)
+    finally:
+        srv.shutdown()
+        srv.server_close()
+
+
+def test_foreign_host_header_is_refused():
+    srv, port = serve_in_thread(fb.Snapshot(FakeReader(data()), ["x"]))
+    try:
+        def get(path, host):
+            req = urllib.request.Request(f"http://127.0.0.1:{port}{path}", headers={"Host": host})
+            try:
+                return urllib.request.urlopen(req).status
+            except urllib.error.HTTPError as e:
+                return e.code
+        for path in ("/", "/status.json"):
+            assert get(path, f"127.0.0.1:{port}") == 200 and get(path, f"localhost:{port}") == 200
+            for bad in ("evil.example", f"evil.example:{port}", "127.0.0.1", f"127.0.0.1.evil.example:{port}", f"localhost:{port + 1}"):
+                assert get(path, bad) == 403, (path, bad)
     finally:
         srv.shutdown()
         srv.server_close()

@@ -1,6 +1,7 @@
 import type { FactoryStatusBoard, FactoryStatusItem } from '../types/index'
 
-export const SCRIPT = '.factory/factory-status.py'
+/** The reader ships inside this plugin (bin/), a byte copy of the factory plugin's. A repo's own copy is never run: its files are untrusted. */
+export const SCRIPT = 'bin/factory-status.py'
 
 /** The directory and each parent up to the root, nearest first. */
 export function ancestors(cwd: string): string[] {
@@ -13,16 +14,17 @@ export function ancestors(cwd: string): string[] {
   }
 }
 
-const join = (root: string, rel: string) => (root === '/' ? '' : root) + '/' + rel
+export const join = (root: string, rel: string) => (root === '/' ? '' : root) + '/' + rel
 
-export const scriptPath = (root: string) => join(root, SCRIPT)
+export const scriptPath = (pluginRoot: string) => join(pluginRoot, SCRIPT)
 
-export const lineArgv = (root: string) => [
-  'python3', scriptPath(root), '--repo', root, '--line',
+// -I: isolated mode, no PYTHONPATH, no user site, no script directory on sys.path.
+export const lineArgv = (pluginRoot: string, root: string) => [
+  'python3', '-I', scriptPath(pluginRoot), '--repo', root, '--line',
 ]
 
-export const jsonArgv = (root: string) => [
-  'python3', scriptPath(root), '--json', '--roots', root,
+export const jsonArgv = (pluginRoot: string, root: string) => [
+  'python3', '-I', scriptPath(pluginRoot), '--json', '--roots', root,
 ]
 
 /** First non-empty line of the script's output: the status line, or ''. */

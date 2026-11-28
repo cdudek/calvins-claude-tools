@@ -51,7 +51,7 @@ const PANE = {
 
 // `claude plugin test` runs without a process: each hook stands for the engine.
 function engine(on: On, opts: { script: boolean; line: string }) {
-  const seen = { status: [] as (string | undefined)[], opened: 0 }
+  const seen = { status: [] as (string | undefined)[], opened: 0, argvs: [] as string[][] }
   on('command.register', () => ({ value: { command: 'factory-status' } }))
   on('ui.open', () => {
     seen.opened++
@@ -65,10 +65,12 @@ function engine(on: On, opts: { script: boolean; line: string }) {
   on('session.start', (_, e) => ({ cwd: e.cwd }))
   on('process.run', (_, e) => {
     const argv = e.argv
+    seen.argvs.push([...argv])
     const out = (stdout: string, exitCode = 0) => ({
       value: { exitCode, stdout, stderr: '', isStdoutTruncated: false, isStderrTruncated: false },
     })
-    if (argv[0] === 'test') return out('', opts.script && argv[2] === '/repo/.factory/factory-status.py' ? 0 : 1)
+    // a git root at /repo with a changes/ folder; /repo/sub has none
+    if (argv[0] === 'test') return out('', opts.script && ['/repo/.git', '/repo/changes'].includes(argv[2] ?? '') ? 0 : 1)
     if (argv.includes('--line')) return out(opts.line)
     return out(BOARD)
   })
@@ -79,6 +81,26 @@ test('the line is set from the script', async ($, on) => {
   const seen = engine(on, { script: true, line: LINE + '\n' })
   await $.session.start({ cwd: '/repo/sub', surface: 'terminal', isInteractive: true })
   expect(seen.status).toEqual([LINE])
+})
+
+test('only the bundled reader runs, isolated, never the repo script', async ($, on) => {
+  const seen = engine(on, { script: true, line: LINE })
+  await $.session.start({ cwd: '/repo/sub', surface: 'terminal', isInteractive: true })
+  const runs = seen.argvs.filter(a => a[0] === 'python3')
+  expect(runs.length).toBe(2)
+  for (const a of runs) {
+    expect(a[1]).toBe('-I')
+    expect(a[2]).toMatch(/\/bin\/factory-status\.py$/)
+    expect(a[2]).not.toMatch(/^\/repo/)
+    expect(a.join(' ')).not.toContain('.factory')
+  }
+})
+
+test('the root search stops at the git root and runs nothing from the repo', async ($, on) => {
+  const seen = engine(on, { script: true, line: LINE })
+  await $.session.start({ cwd: '/repo/sub', surface: 'terminal', isInteractive: true })
+  const tests = seen.argvs.filter(a => a[0] === 'test').map(a => a[2])
+  expect(tests).toEqual(['/repo/sub/.git', '/repo/.git', '/repo/.factory', '/repo/changes'])
 })
 
 test('an empty line clears the status', async ($, on) => {
