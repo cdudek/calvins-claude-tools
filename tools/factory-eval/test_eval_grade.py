@@ -226,6 +226,19 @@ class EndToEnd(unittest.TestCase):
         g2 = grade.grade_run(self.make_run(True, "r6", evaluator=False))
         self.assertIn("never evaluated", g2["invalid_reason"])
 
+    def test_timeout_is_a_valid_failed_run_with_an_estimated_cost(self):
+        run = self.make_run(True, "r7", evaluator=False)
+        st = run / "stream.jsonl"
+        st.write_text("".join(ln + "\n" for ln in st.read_text().splitlines() if '"type": "result"' not in ln))
+        meta = json.loads((run / "run.json").read_text())
+        meta.update(timeout=True, exit=124)
+        (run / "run.json").write_text(json.dumps(meta))
+        g = grade.grade_run(run, grader=None)
+        self.assertTrue(g["valid"], g["invalid_reason"])
+        self.assertFalse(g.get("infra_suspect", False))
+        self.assertTrue(g["cost_estimated"])
+        self.assertGreater(g["cost_total"], 0)
+
     def test_infra_failure_is_skipped(self):
         run = self.make_run(True, "r4")
         meta = json.loads((run / "run.json").read_text())
