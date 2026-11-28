@@ -415,7 +415,7 @@ SERIAL = re.compile(r"(?<![\w-])(?:--no-file-parallelism|--fileParallelism(?:=|\
 
 
 def tests_errs(tests):
-    """The optional `tests` key: `related` (a command with `{files}`), `triggers` (`{paths, run, why}`), `suites` (`{name, cmd, lock?}`).
+    """The optional `tests` key: `related` (a command with `{files}`), `triggers` (`{paths, run, why, edits?}`), `suites` (`{name, cmd, lock?}`).
     No command may switch parallelism off: the project isolates its own suites, and serial runs cost minutes."""
     if not isinstance(tests, dict):
         return ["tests must be an object with related, triggers and suites"]
@@ -440,6 +440,8 @@ def tests_errs(tests):
             errs += [f"{w} needs a non-empty {k}" for k in need if not filled(e.get(k))]
             if key == "triggers" and not (is_strs(e.get("paths")) and e["paths"] and all(x.strip() for x in e["paths"])):
                 errs.append(f"{w} needs paths: a non-empty list of globs")
+            if key == "triggers" and "edits" in e and not (is_strs(e["edits"]) and e["edits"] and all(x.strip() and not re.search(r"[*?\[]", x) for x in e["edits"])):
+                errs.append(f"{w} edits must be a non-empty list of exact test file paths, no globs")
             if key == "suites" and "lock" in e and not isinstance(e["lock"], bool):
                 errs.append(f"{w} lock must be true or false")
             cmds += [(f"{w}.{k}", e[k]) for k in ("run", "cmd") if filled(e.get(k))]

@@ -735,6 +735,13 @@ def test_tests_key_is_optional_and_a_good_one_passes(tmp_path):
     assert code == 0 and out.strip() == "PLAN OK 3 milestones 2 tasks", out
 
 
+def test_trigger_edits_pass(tmp_path):
+    t = copy.deepcopy(GOOD_TESTS)
+    t["triggers"][0]["edits"] = ["tests/test_migrate.py", "tests/fk.json"]
+    code, out = run(tmp_path, mutated(lambda p: p.update(tests=t)))
+    assert code == 0, out
+
+
 def test_tests_shape_errors(tmp_path):
     def bad(fn, msg):
         t = copy.deepcopy(GOOD_TESTS)
@@ -744,6 +751,8 @@ def test_tests_shape_errors(tmp_path):
     bad(lambda t: t.update(related="npx vitest related --run"), "tests.related must be a command containing {files}")
     bad(lambda t: t["triggers"][0].pop("why"), "tests.triggers[0] needs a non-empty why")
     bad(lambda t: t["triggers"][0].update(paths=[]), "tests.triggers[0] needs paths")
+    bad(lambda t: t["triggers"][0].update(edits=[]), "tests.triggers[0] edits must be a non-empty list of exact test file paths")
+    bad(lambda t: t["triggers"][0].update(edits=["tests/*.py"]), "no globs")
     bad(lambda t: t["suites"][0].pop("name"), "tests.suites[0] needs a non-empty name")
     bad(lambda t: t["suites"][1].update(lock="yes"), "lock must be true or false")
     bad(lambda t: t.update(extra=1), "unknown key extra")
