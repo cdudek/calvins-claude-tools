@@ -54,7 +54,7 @@ if [ -n "$approved" ]; then
   git -C "$repo" merge-base --is-ancestor "$approved" HEAD 2>/dev/null || { say "approved $approved is not an ancestor of HEAD"; exit 1; }
 fi
 
-tchg="" allow="" files="" integ="" pbase="" slug="" last=0 planfile=""
+trig="" tchg="" allow="" files="" integ="" pbase="" slug="" last=0 planfile=""
 if [ -n "$plan" ]; then
   out=$(python3 -c '
 import fnmatch, json, os, re, subprocess, sys
@@ -105,6 +105,9 @@ if gap:
         extra = {"files": [f for _, a, _ in want for f in a.split(",") if f and ok(f)], "allowTestEdits": [t for _, _, b in want for t in b.split(",") if t and ok(t)]}
         if task: sel = [extra]
         else: sel.append(extra)
+if sel is not None:  # tests.triggers[].edits: existing tests a task touching the trigger paths may grow, approved with the plan like allowTestEdits
+    for t in (p.get("tests") or {}).get("triggers", []):
+        if isinstance(t, dict) and t.get("edits") and t.get("paths"): print("TRIG\t" + json.dumps({"paths": t["paths"], "edits": t["edits"]}))
 if sel is None: sel = [{"allowTestEdits": p.get("allowTestEdits", [])}]  # old plans: top-level list
 elif not sel: print("ERR\tno task or milestone " + (task or ms) + " in the plan")
 for t in sel:
@@ -116,7 +119,7 @@ for t in sel:
   while IFS=$'\t' read -r k v; do
     case "$k" in
       PLANFILE) planfile="$v" ;; BASE) pbase="$v" ;; INTEG) integ="$v" ;; SLUG) slug="$v" ;; LAST) last=1 ;;
-      FILE) files+="$v"$'\n' ;; ALLOW) allow+="$v"$'\n' ;; TCHG) tchg+="$v"$'\n' ;;
+      FILE) files+="$v"$'\n' ;; ALLOW) allow+="$v"$'\n' ;; TCHG) tchg+="$v"$'\n' ;; TRIG) trig+="$v"$'\n' ;;
       ERR) say "$v"; exit 1 ;;
     esac
   done <<< "$out"
@@ -143,6 +146,25 @@ if [ "$mode" = milestone ] && [ -n "$checked" ]; then
   done
 fi
 names=$(git -C "$repo" diff --no-renames --name-status "$base...HEAD") || { say "git diff failed"; exit 1; }
+if [ -n "$trig" ]; then  # a trigger whose paths match a changed file lets the task edit that trigger's `edits` files
+  allow+=$(TRIG="$trig" python3 -c '
+import json, os, re, sys
+def glob_re(g):  # same semantics as task-step.py: `*` inside a segment, `**/` any directories, a trailing `**` anything
+    out, i = "", 0
+    while i < len(g):
+        if g.startswith("**/", i): out, i = out + "(?:.*/)?", i + 3
+        elif g.startswith("**", i): out, i = out + ".*", i + 2
+        else:
+            out += "[^/]*" if g[i] == "*" else "[^/]" if g[i] == "?" else re.escape(g[i])
+            i += 1
+    return re.compile(out)
+changed = [l.split("\t")[-1] for l in sys.stdin.read().splitlines() if l]
+for l in os.environ["TRIG"].splitlines():
+    t = json.loads(l)
+    if any(glob_re(g).fullmatch(f) for g in t["paths"] for f in changed):
+        for e in t["edits"]: print(e)' <<< "$names")
+  allow+=$'\n'
+fi
 scan=()  # test files and package.json: the only places a skip or `|| true` weakens a test
 code=()  # non-test source: where a lint suppression hides a defect
 
