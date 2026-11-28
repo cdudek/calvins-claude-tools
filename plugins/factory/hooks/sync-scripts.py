@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 """SessionStart hook: keep <repo>/.factory/ equal to the plugin's own scripts, so the model never reads and rewrites them.
 Runs in the session's cwd repo only when it already uses the factory (a `changes/*/plan.md` or a `.factory/` folder).
-Copies check-plan.py, goal-brief.py, task-step.py, test-integrity.sh and the kickoff template (as kickoff.md) when their bytes differ,
+Copies check-plan.py, goal-brief.py, task-step.py, factory-status.py, test-integrity.sh and the kickoff template (as kickoff.md) when their bytes differ,
 and prints one line when it changed something. A repo that still has the pre-0.3.0 folder (named in migrate-name.py) is left alone and told the one migration command.
 Never fails the session: any error prints nothing and exits 0.
 """
@@ -15,7 +15,8 @@ from pathlib import Path
 ROOT = Path(os.environ.get("CLAUDE_PLUGIN_ROOT") or Path(__file__).resolve().parent.parent)
 RUN = ROOT / "skills" / "run"
 FILES = {"check-plan.py": RUN / "scripts" / "check-plan.py", "goal-brief.py": RUN / "scripts" / "goal-brief.py",
-         "task-step.py": RUN / "scripts" / "task-step.py", "test-integrity.sh": RUN / "scripts" / "test-integrity.sh",
+         "task-step.py": RUN / "scripts" / "task-step.py", "factory-status.py": RUN / "scripts" / "factory-status.py",
+         "test-integrity.sh": RUN / "scripts" / "test-integrity.sh",
          "kickoff.md": RUN / "templates" / "kickoff.md"}
 
 

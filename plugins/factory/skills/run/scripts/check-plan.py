@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 """Usage: check-plan.py <plan.md> [--all] [--approved <sha>]
-With --all every milestone must have tasks and the plan must have no `hold` (what goal-brief.py --all needs).
+With --all every milestone must have tasks, and a plan with a `hold` must have `integration` (what goal-brief.py --all needs).
 With --approved plan.md through its json block, delta.md, intent.md and standing.md (the owner's standing approval, optional) must equal revision <sha> (only the text after the block may differ).
 Validates the first fenced block with info string `json factory`, delta.md and intent.md next to it
 (intent ids are list items `- outcome-1: ...` / `- constraint-1: ...`; every delta requirement line `- req-<n>: ...` cites one as `[outcome-1]`).
@@ -189,17 +189,17 @@ def approved_errs(plan_path, sha):
 
 
 def ready_errs(plan):
-    """What `--all` needs on top: every milestone detailed, and no hold (a held milestone is not merged)."""
+    """What `--all` needs on top: every milestone detailed, and a hold only with `integration` (each held milestone is merged into it)."""
     ms = plan.get("milestones", [])
     errs = [f"{m.get('id')} has no tasks: detail it in plan.md and get the plan revision approved first" for m in ms if not m.get("tasks")]
-    if plan.get("hold") and ms:
-        errs.append(f"--all cannot run with a hold: {ms[0].get('id')} stops at the hold and is not merged, so the next milestone has nothing to build on")
+    if plan.get("hold") and not plan.get("integration") and ms:
+        errs.append(f"--all cannot run with a hold and no `integration`: {ms[0].get('id')} stops at the hold and is not merged, so the next milestone has nothing to build on. Set `integration` or drop the hold")
     return errs
 
 
 def validate(plan_path, approved=None, every=False):
     """One entry point: load the block, check it, require delta.md, compare with the approved revision.
-    every=True (`--all`) also requires every milestone to have tasks and the plan to have no hold."""
+    every=True (`--all`) also requires every milestone to have tasks and a plan with a hold to have `integration`."""
     try:
         text = open(plan_path, encoding="utf-8").read()
         plan = json.loads(block_text(text))

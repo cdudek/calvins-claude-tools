@@ -8,27 +8,29 @@
 | `kickoff-<M>.md` | how to run this milestone: preflight, worktree commands per task, owned files, checks, verify order, PR, progress entry, when to stop | the end state |
 | `/goal` line | the end states first, the proof in the transcript, a turn clause | process text: steps, who builds what, style |
 | `test-integrity.sh` (exit code) | zero-exception rules: builders cannot change existing tests, CI or spec; every path stays inside its task | anything with exceptions |
-| `--max-turns` (print mode) | the hard circuit breaker, computed by goal-brief.py; no spend cap | |
-| Turn clause in the goal | the soft breaker: the run itself ends INCOMPLETE | |
+| `--max-turns` (`--headless`, eval harness only) | the hard circuit breaker, computed by goal-brief.py; no spend cap | |
+| Turn clause in the goal | the bound of an interactive run: the run itself ends INCOMPLETE | |
 | CI and branch protection | the merge | |
 
 Why the goal line stays short: after every turn a small model judges it against what the conversation shows. It does not run commands or read files. Every process clause is one more thing it can misjudge.
 
 ## The goal line
 It starts "Met when any one of these is true." and lists numbered end states, in this order:
-1. **SHIPPED:** the PR number, its merge SHA (or the merge-ready URL), and verifier evidence for the requirement ids (`req-<n>`, listed bare in the goal line, which is a machine place). With a `hold` this is **HOLD:** instead: the last message starts with HOLD: and the transcript shows the pushed SHA of the milestone branch and a verifier PASS for that same SHA. Order: commit the progress entry, gallery and spec changes first, run the verifier on that final SHA, then push that same SHA.
+1. **SHIPPED:** the PR number, its merge SHA (or the merge-ready URL), and verifier evidence for the requirement ids (`req-<n>`, listed bare in the goal line, which is a machine place). With a `hold` this is **HOLD:** instead: the last message starts with HOLD: and the transcript shows the pushed SHA of the milestone branch and a verifier PASS for that same SHA (under `--all`: for each milestone branch). Order: commit the progress entry, gallery and spec changes first, run the verifier on that final SHA, then push that same SHA.
 2. **BLOCKED:** the last message starts with BLOCKED: and names the decision or action the owner must take, whatever the build state. With a `hold`, a BLOCKED that only names the hold does not count: the hold can end only the HOLD state.
 3. **INCOMPLETE:** after `goalTurns` turns, the last message starts with INCOMPLETE and names the next step.
 
 ## Starting the run
 - **File refresh first:** before `goal-brief.py` runs for a milestone, a read-only agent checks each task's `files` and `allowTestEdits` against the current tree (moved or renamed files, files the requirement obviously needs, existing tests the change will break). The coordinator records the result as a plan revision under the standing approval before cutting the milestone.
 - **Where:** the milestone worktree on `milestone/<slug>-<M>`, cut from a base that already holds the approved plan (or on milestone 1's branch where the plan lives there).
-- **One milestone:** `goal-brief.py <plan.md> <M> --approved <sha>`.
-- **Whole plan:** `goal-brief.py <plan.md> --all --approved <sha>`. Every milestone must already have tasks. It prints one kickoff and one goal. The coordinator runs the milestones in order and, at each milestone start, re-reads the pinned plan and the progress log. `--max-turns` is the sum of each milestone's own value.
-- **Unattended (default):** `/factory:run <slug>` starts the RUN command the script prints in the background and reports the end state. `claude -p` runs the goal loop to completion in one call; the kickoff goes in through `--append-system-prompt`, the goal is the prompt, and the turn clause in the goal is the bound. A person can still paste the RUN command, or the kickoff and the `/goal` line, by hand.
-- **Interactive:** start `claude`, paste the kickoff file, then paste the `/goal` line. The same turn clause bounds it.
+- **Whole plan (default):** `goal-brief.py <plan.md> --all --approved <sha>`. Every milestone must already have tasks. It prints one kickoff and one goal. The coordinator runs the milestones in order and, at each milestone start, re-reads the pinned plan and the progress log.
+- **One milestone:** `goal-brief.py <plan.md> <M> --approved <sha>`, only when the owner names one.
+- **Hold under `--all`:** allowed when the plan has `integration`, refused otherwise. Per milestone: verifier PASS on the final SHA, push the milestone branch, `git merge --no-ff` it into the integration branch, push the integration branch, append `HOLD-MERGED <M> <sha>` to the progress log and commit it; the next milestone is cut from the integration branch (the normal `--all` cut). A `HOLD-MERGED` line means a resumed run skips that milestone. The goal ends HOLD after the last milestone, and the transcript shows each milestone's pushed SHA and verifier PASS for that SHA.
+- **Run command (default):** `/factory:run <slug>` ends by printing one command for the owner to paste in a terminal at the worktree: `CLAUDE_CODE_DISABLE_BACKGROUND_TASKS=1 claude --model sonnet --effort medium --permission-mode auto --append-system-prompt-file <kickoff> '/goal ...'`. The kickoff is system prompt, so it survives compaction; the progress log keeps a run resumable. The coordinator never launches it. "Unattended" means the run finishes without needing the owner mid-run, in a session the owner started and watches. The turn clause in the goal is the only bound (no `--max-turns`, no spend cap).
+- **Eval harness:** `goal-brief.py ... --headless` prints the old `claude -p ... --max-turns N ...` command; only `tools/factory-eval/run_eval.py` uses it.
+- **By hand:** start `claude`, paste the kickoff file, then paste the `/goal` line.
 - **No stop for a gallery.** The ux-verifier checks UI milestones against the boards approved at the single approval, and writes `evidence/<M>/gallery.md`. The person reviews the gallery once, from the release PR.
-- **After BLOCKED or INCOMPLETE:** fix the cause, then run the same command again in a fresh session. The kickoff's resume rule reads the progress log and git state first.
+- **After BLOCKED or INCOMPLETE:** fix the cause, then run the same command again in a fresh session (the command is the same for `--all`). The kickoff's resume rule reads the progress log and git state first.
 
 ## Standing approval
 - **File:** `changes/<slug>/standing.md`, optional, written by the owner's decision. When it exists in the approved commit, `goal-brief.py` puts it in the kickoff verbatim as `## Standing approval (owner)`. Nobody re-appends it by hand after a regeneration.
@@ -68,8 +70,8 @@ It starts "Met when any one of these is true." and lists numbered end states, in
 - The condition can be up to 4,000 characters; the script refuses longer and the generated lines are about 400.
 - `--max-turns` counts the coordinator's own tool turns, not goal turns and not subagent steps. A probe with `--max-turns 3` and six one-call steps stopped with `error_max_turns` after 4; a probe with `--max-turns 4` whose one subagent made 8 tool calls ended `success` at 2 turns (both 2026-11-24). The owner rejected a spend cap (`--max-budget-usd`, 2026-11-24).
 
-## The circuit breaker, as math
-`goal-brief.py` prints `--max-turns = SAFETY x STEPS_PER_DISPATCH x D`, where D is the worst-case number of agent dispatches the kickoff allows:
+## The circuit breaker, as math (eval harness only)
+With `--headless`, `goal-brief.py` prints `--max-turns = SAFETY x STEPS_PER_DISPATCH x D`, where D is the worst-case number of agent dispatches the kickoff allows:
 
 - `D = tasks x 3 + 3 + risky + ui`. Every task uses all 3 builder passes, the verifier runs once per pass, then one security review on a risky milestone and one UX verifier on a UI milestone.
 - `STEPS_PER_DISPATCH = 10`, measured on a first beta milestone (2026-11-24): 148 coordinator tool calls for 15 dispatches (brief, integrity check, merge, fast checks, progress log).
@@ -79,6 +81,6 @@ It starts "Met when any one of these is true." and lists numbered end states, in
 - Re-measure `STEPS_PER_DISPATCH` after five milestones, with the progress-log tally (`firstPass`, `planRevisionsAfterApproval`, `diffMatchesPlan`). Raise it only when a healthy run hit the cap.
 
 ## Rules
-- One milestone per goal and per fresh session, except `--all`, which runs the milestones in order under one goal.
-- Run in auto mode with routine actions allowlisted in the user `autoMode` settings. Auto mode asks after three blocks in a row, which stalls an unattended run.
+- `--all` in one session is the default: the milestones run in order under one goal, the kickoff (system prompt) survives compaction and the progress log keeps the run resumable.
+- Run in auto mode with routine actions allowlisted in the user `autoMode` settings. Auto mode asks after three blocks in a row, which stalls a run.
 - Auth failure, exhausted credit or context overflow clears the goal. The progress log is the source of truth for resuming.

@@ -21,7 +21,7 @@ One command, `/factory:run`. The slug starts with the date: `2026-11-24-saved-se
 1. **Grill.** Rounds of at most 5 numbered questions, each with a recommended answer, until no decision is open. Subagents look up facts. Method and question tree: `references/grilling.md` (or `mattpocock-skills:grilling` when installed).
 2. **Write.** `intent.md`, `delta.md`, the holdout scenarios and `plan.md`. A bug or small feature is a plan with `kind` and one milestone with one task, from `references/plan-small-template.md`.
 3. **Approve once.** The person approves all of it together. The approval is the commit SHA at that moment.
-4. **Run one `/goal`.** One milestone, or `--all` for the whole plan. The run stops only for BLOCKED: an owner decision, a credential, money or an irreversible act. A finding inside an approved requirement goes to the gap lane.
+4. **Run one `/goal`.** The whole plan (`--all`) unless the owner names one milestone. The owner starts it: you print the command. The run stops only for BLOCKED: an owner decision, a credential, money or an irreversible act. A finding inside an approved requirement goes to the gap lane.
 5. **Learn.** A BLOCKED that grilling could have prevented becomes a new question in `references/grilling.md`.
 
 ## Who uses it
@@ -51,7 +51,7 @@ Ask what the person brings and size it. Check the merge gate, the fast commands 
 ### 2. Plan and approval
 - Copy `references/plan-template.md` (or `plan-small-template.md`) to `changes/<slug>/plan.md` and fill it per `references/plan-standard.md`, including the `json factory` block.
   - The planner sizes each task by judgement: effort and model default to Sonnet 5.5 high and are lowered only for mechanical tasks.
-- Run `python3 .factory/check-plan.py changes/<slug>/plan.md`, with `--all` when the run will be `--all`. It must print `PLAN OK`. Run every `preflight` command now. A project run (`--all`) has no `hold`: settle owner actions during grilling.
+- Run `python3 .factory/check-plan.py changes/<slug>/plan.md`, with `--all` when the run will be `--all`. It must print `PLAN OK`. Run every `preflight` command now. A `hold` under `--all` needs `integration` (each milestone is merged into it, the run ends HOLD); without `integration` settle owner actions during grilling.
 - One fresh plan review by Codex `gpt-6.2-astra`, correctness against the intent and delta only. It checks the riskiest step and the options rejected in Risks. On a risky milestone it also asks "how can this leak?" against the `rule`: every way found becomes a case in the `ruleTest` task now, not a security finding later. Apply `references/review-policy.md`. When `codex` is absent, skip it.
 - **PRs: one per milestone, nothing else.** Where Actions minutes cost money there is no plan PR: commit intent, delta, plan, `.factory/` and any new ADRs (as `proposed`) on milestone 1's branch, push it without a PR, and they merge with milestone 1's PR.
   - Elsewhere a plan PR on `plan/<slug>` holds them.
@@ -62,9 +62,9 @@ Ask what the person brings and size it. Check the merge gate, the fast commands 
   - Changed scope later means a new revision and a new approval.
 
 ### 3 to 6. Build, verify, ship, learn
-The launched run is a separate process, never under `/goal` in this session. Per milestone:
-`wt switch -c milestone/<slug>-<M>` from a fresh base, then `python3 .factory/goal-brief.py changes/<slug>/plan.md <M> --approved <sha>` (or `--all`). It writes `kickoff-<M>.md` and prints the `/goal` line and the run command.
-Never hand-write a goal line. Start the printed RUN command with the Bash tool and `run_in_background: true`, and report the end state line (SHIPPED, HOLD, BLOCKED or INCOMPLETE) when it finishes.
+The run is a separate session the owner starts and watches, never under `/goal` in this session. Cut the first milestone, then:
+`wt switch -c milestone/<slug>-<first M>` from a fresh base, then `python3 .factory/goal-brief.py changes/<slug>/plan.md --all --approved <sha>`; with `<M>` instead of `--all` only when the owner names one milestone. It writes `kickoff-all.md` (`kickoff-<M>.md`) and prints the `/goal` line and the run command.
+Never hand-write a goal line. END by printing the RUN command for the owner to paste in a terminal at that worktree. Never launch it: no Bash call for it, no `run_in_background`, no `claude -p`. The owner watches the run and reports back.
 
 The run, in short:
 - The coordinator calls `task-step.py` for worktrees, integrity and merges; every task runs in a `factory:builder` subagent, in the foreground (a hook denies background agents).
@@ -95,9 +95,10 @@ One approval, one SHA. The person sees four short things: intent, requirements, 
 - `references/intent-template.md`, `references/spec-standard.md`: intent file; delta format, EARS, journeys, design mapping, holdouts, bug specs. Station 1.
 - `references/plan-standard.md`, `references/plan-template.md`, `references/plan-small-template.md`: every key of the JSON block, a filled plan, a small plan. Station 2.
 - `references/run-stations.md`: build, verify, ship, learn, the gap lane, known limit. Stations 3 to 6.
-- `references/goal-briefing.md`: goal line, merge rules, `--all`, gap lane, bug flow, max-turns math.
+- `references/goal-briefing.md`: goal line, merge rules, `--all`, hold under `--all`, gap lane, bug flow, max-turns math (eval harness only).
 - `references/review-policy.md`, `references/ux-checks.md`: Important versus Nit; per-screen UX checks (the verifier agents carry a copy).
 - `references/research.md`: why each rule exists, with sources. Read before changing a rule.
+- `references/board.md`: where things stand. The `factory-status` mod shows a status line and a pane in the session; `factory-board.py install` runs a local board across projects with a "needs you" column.
 
 ## Scripts
 Run from `<repo>/.factory/`, where the SessionStart hook keeps them equal to the plugin's copies:
@@ -106,4 +107,6 @@ Run from `<repo>/.factory/`, where the SessionStart hook keeps them equal to the
 - `task-step.py target|start|pin|finish|gate|status <plan.md> <M> [<T>] --approved <sha>`: the coordinator's per-task mechanics; reads the approved plan and derives checked commits from git.
 - `test-integrity.sh <worktree> <base-ref> [plan.md [--task <id> | --milestone <id>] [flags]]`: touched tests, paths outside the task (plus the logged gap rounds inside `mayTouch`), CI, `.github/`, `.factory/`, plan, baselines, spec, skips and added lint suppressions, and for every existing test a task may edit, anything but add-only changes (no test block removed, no fewer assertions, no new skip, no looser matcher, no longer timeout). The flags are in its header.
   Flags are documented in its header.
+- `factory-status.py --json [--roots DIR ...]` or `--repo DIR --line`: reads plans, progress logs, state files and open PRs; stores nothing.
+- `factory-board.py serve|install|uninstall [--dry-run]`: the local read-only board on 127.0.0.1, with a macOS notification when something needs you.
 - `migrate-name.py <repo> | --home`: one-shot rename of a pre-0.3.0 repo or home folder; commits nothing.

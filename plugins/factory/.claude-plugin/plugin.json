@@ -1,6 +1,6 @@
 {
   "name": "factory",
-  "version": "0.7.1",
+  "version": "0.8.0",
   "description": "A lit software factory for one owner: spec-anchored SDD in, Claude Code /goal as the line, platform gates deciding the merge. Run it with factory.",
   "author": {
     "name": "Calvin Dudek"

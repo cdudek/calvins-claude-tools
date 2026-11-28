@@ -17,6 +17,12 @@ Scope beyond the delta, or a test, CI file or spec that must change and is not a
 @@ all_start
 At the start of each milestone, re-read the pinned plan (`git show {{sha}}:{{P}}plan.md`, its json block) and the progress log in plan.md, and reconcile with git and PR state. Start a milestone only after the previous one is merged. A later milestone gets its own worktree: `git fetch origin`, record `git rev-parse origin/{{tgt}}` as that milestone's <target SHA>, `git branch milestone/{{change}}-<M> <target SHA>`, `wt switch milestone/{{change}}-<M> --no-cd --yes`, then run `python3 .factory/task-step.py target {{P}}plan.md <M> --approved {{sha}}` inside it.
 {{preflight}}
+{{hold_note}}
+@@ hold_merge
+4. The owner action `{{hold}}` comes after the run: open no PR. Push `{{branch}}`, which is the <final SHA>, and print it with the verifier PASS for that SHA. Then merge it into `{{tgt}}` yourself, committing nothing else on the milestone branch:
+   - `git fetch origin`, `git switch --detach origin/{{tgt}}`, `git merge --no-ff {{branch}} -m "Merge {{branch}}"`, then `git push origin HEAD:refs/heads/{{tgt}}`.
+   - Append `HOLD-MERGED {{mid}} <merge SHA>` to the progress log in plan.md, commit it and push the same way.
+   - {{after}}
 @@ milestone
 {{h}} Build
 {{preflight}}

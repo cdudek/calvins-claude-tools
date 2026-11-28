@@ -262,7 +262,7 @@ def prepare_run(task_dir, task, arm, run_dir, run_id, args, slot):
         git(repo, "push", "-q", "origin", f"HEAD:refs/heads/{integration}")
     git(repo, "switch", "-q", "-c", f"milestone/{task['slug']}-{task['milestone']}")
     which = "--all" if task["milestone"] == "all" else task["milestone"]
-    brief = subprocess.run([sys.executable, ".factory/goal-brief.py", task["plan"], which, "--approved", start_sha],
+    brief = subprocess.run([sys.executable, ".factory/goal-brief.py", task["plan"], which, "--approved", start_sha, "--headless"],
                            cwd=repo, capture_output=True, text=True)
     if brief.returncode:
         raise SystemExit(f"goal-brief failed for {run_id}:\n{brief.stdout}{brief.stderr}")

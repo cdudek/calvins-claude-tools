@@ -413,7 +413,9 @@ def test_all_needs_every_milestone_detailed_and_no_hold(tmp_path):
     code, out = run_all(tmp_path / "b", detailed)
     assert code == 0 and out.startswith("PLAN OK"), out
     code, out = run_all(tmp_path / "c", {**detailed, "hold": "owner restores billing"})
-    assert code == 1 and "PLAN FAIL --all cannot run with a hold: M1 stops at the hold" in out
+    assert code == 1 and "PLAN FAIL --all cannot run with a hold and no `integration`: M1 stops at the hold" in out
+    code, out = run_all(tmp_path / "e", {**detailed, "hold": "owner restores billing", "integration": "integration/x"})
+    assert code == 0 and out.startswith("PLAN OK"), out
     code, out = run(tmp_path / "d", VALID)  # without --all an open milestone is fine
     assert code == 0
 

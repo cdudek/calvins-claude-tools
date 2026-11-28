@@ -27,6 +27,7 @@ def test_copies_the_scripts_and_template_into_a_factory_repo(tmp_path):
     for name, src in sync.FILES.items():
         assert (r / ".factory" / name).read_bytes() == src.read_bytes()
     assert (r / ".factory/kickoff.md").read_text().startswith("@@ top")
+    assert (r / ".factory/factory-status.py").is_file() and "factory-status.py" in msg
 
 
 def test_second_run_is_silent_and_a_drifted_copy_is_restored(tmp_path):
