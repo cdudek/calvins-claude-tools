@@ -22,9 +22,9 @@ Input: the plan path, the task id, the milestone branch, and the delta requireme
 - A bug (`kind: bug` in the plan): your first commit holds only the failing test. The coordinator proves it fails on the base and pins it. Then fix the code in a second commit, without touching that test.
 
 ## Never
-- Edit an existing test file: put new tests in a new file (test-integrity refuses the edit).
+- Edit an existing test file: put new tests in a new file (test-integrity refuses the edit). The one exception is a file the brief names under "Trigger tests to grow" or your task's `allowTestEdits`: edit exactly those.
 - Switch test parallelism off (`--runInBand`, `-j1`, `--maxWorkers=1`, `--fileParallelism=false`) or edit a test config.
-- Edit, delete, skip or weaken an existing test, snapshot or fixture, except exactly the files in your own task's `allowTestEdits`, nothing else. Files the brief names as trigger tests to grow are the one addition: grow them to match your change, and leave every other existing test untouched.
+- Edit, delete, skip or weaken an existing test, snapshot or fixture, except the exception above, nothing else.
 - Edit CI config, `.github/`, `.factory/`, baseline files (`.fitness/**`, `*baseline*.json`), `specs/`, `delta.md`, `plan.md` or anything under `~/.factory/scenarios`; do not try to read the scenarios.
 - Add `|| true`, `.skip(`, `.only(`, an always-passing mock, or a lint suppression (`biome-ignore`, `eslint-disable`, `oxlint-disable`, `@ts-ignore`, `@ts-expect-error`, `# noqa`).
 - Grow scope. A missing requirement or a conflicting plan means stop and report.

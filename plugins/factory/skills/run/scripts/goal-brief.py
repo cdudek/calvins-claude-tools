@@ -125,11 +125,26 @@ def glob_re(g):  # same semantics as task-step.py's glob_re: `*` inside a segmen
     return re.compile(out)
 
 
+def static_prefix(g):
+    return re.split(r"[*?\[]", g, 1)[0]
+
+
+def covers_trigger(f, g):
+    """A task `files` entry the way test-integrity sees the changed files it will produce: a plain file must match the trigger glob;
+    a directory or a glob may produce a match, so it counts when its static prefix and the trigger glob's are nested either way."""
+    if glob_re(g).fullmatch(f):
+        return True
+    if not (f.endswith("/") or re.search(r"[*?\[]", f)):
+        return False
+    a, b = static_prefix(f), static_prefix(g)
+    return a.startswith(b) or b.startswith(a)
+
+
 def trigger_edits(plan, t):
-    """The `edits` files of every plan trigger one of the task's `files` can match: a file against a trigger glob, or a task directory that holds a trigger's static prefix."""
+    """The `edits` files of every plan trigger one of the task's `files` can match."""
     out = []
     for tr in (plan.get("tests") or {}).get("triggers", []):
-        if any(glob_re(g).fullmatch(f) or (f.endswith("/") and g.startswith(f)) for g in tr.get("paths", []) for f in t["files"]):
+        if any(covers_trigger(f, g) for g in tr.get("paths", []) for f in t["files"]):
             out += [e for e in tr.get("edits", []) if e not in out]
     return out
 
@@ -216,7 +231,7 @@ def section(plan, m, P, root, sha, h, preflight, record=True):
                   "fix round(s). When the script prints REVIEW FAIL, end with the BLOCKED line it prints.")
     gate = f"`python3 .factory/task-step.py gate {P}plan.md {mid} --approved {sha}`: the pre-PR integrity call (every <checked SHA>, the recorded target) and the plan check; both must print OK."
     verifier = (f"factory:verifier{verifier_tier(m)} on the final commit (`git rev-parse HEAD` is the <final SHA>), with the delta, base, diff and the holdout scenarios in "
-                f"`~/.factory/scenarios/{root.name}/{change}/` for {', '.join(m['covers'])}, and the `GATE`/`FINISH` lines verbatim to cite, never to re-run. Never the builders' reasoning. "
+                f"`~/.factory/scenarios/{root.name}/{change}/` for {', '.join(m['covers'])}, and the {'`FINISH` lines (the gate runs after this agent, so there are no `GATE` lines yet)' if review else '`GATE`/`FINISH` lines'} verbatim to cite, never to re-run. Never the builders' reasoning. "
                 "It checks behaviour only: it starts the app only when a scenario needs it. A `bug` FAIL goes back to the builder of that task, a `gap` FAIL to the gap lane; "
                 "the new commit goes through Verify step 2 (per-task integrity, a new <checked SHA>, merge that commit), then repeat Ship from step 1.")
     if review:
