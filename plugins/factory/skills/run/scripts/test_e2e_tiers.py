@@ -1,8 +1,10 @@
 """The test strategy end to end on real toolchains: discover-tests.py proposes the `tests` block, task-step.py finish/gate run it.
 No fake commands: pytest and cargo run for real (each case skips when its tool is missing)."""
 import copy
+import hashlib
 import json
 import os
+import shlex
 import shutil
 import subprocess
 import sys
@@ -48,12 +50,17 @@ def mark_suites(block):
     return block
 
 
-def task_repo(tmp_path, files, block, task_files):
+def task_repo(tmp_path, files, block, task_files, node_modules=None):
+    """node_modules: a toolchain cache dir linked into the repo and (through the plan's `setup`) into every worktree."""
     plan = copy.deepcopy(T.PLAN)
     plan["tests"] = block
+    if node_modules:
+        plan["setup"] = f"ln -s {shlex.quote(str(node_modules))} node_modules"
     plan["milestones"][0]["tasks"] = [{"id": "T1", "covers": ["req-1"], "files": task_files, "check": "true"}]
     tmp_path.mkdir(parents=True, exist_ok=True)
     repo, sha = T.milestone_repo(tmp_path, plan, extra=files)
+    if node_modules:
+        (repo / "node_modules").symlink_to(node_modules)  # the gate runs in the repo itself, where `setup` does not
     assert T.ok(repo, sha, "target")[0] == 0
     assert T.ok(repo, sha, "start", "T1")[0] == 0
     return repo, sha, repo / ".worktrees" / f"{T.SLUG}-M1-T1"
@@ -214,3 +221,150 @@ def test_go_change_runs_the_package_and_merges(tmp_path):
     code, out = T.ok(repo, sha, "finish", "T1")
     assert code == 0 and "FINISH tests OK" in out, out
     assert T.ok(repo, sha, "gate")[0] == 0
+
+
+# ---------- TypeScript: vitest and jest (real npm toolchain, cached outside the repo; skips offline or when the install takes > 120 s) ----------
+
+NODE_PINS = {"vitest": "5.1.2", "jest": "30.5.2", "ts-jest": "29.4.15", "typescript": "5.9.3", "@types/jest": "30.0.0", "@types/node": "24.0.0"}
+
+
+@pytest.fixture(scope="session")
+def node_modules():
+    if not shutil.which("npm"):
+        pytest.skip("npm is not installed")
+    key = hashlib.sha256(json.dumps(NODE_PINS, sort_keys=True).encode()).hexdigest()[:12]
+    cache = Path(os.environ.get("XDG_CACHE_HOME") or Path.home() / ".cache") / "factory-e2e-node" / key
+    if (cache / "node_modules/.bin/vitest").exists() and (cache / "node_modules/.bin/jest").exists():
+        return cache / "node_modules"
+    cache.mkdir(parents=True, exist_ok=True)
+    (cache / "package.json").write_text(json.dumps({"name": "factory-e2e-node", "private": True, "devDependencies": NODE_PINS}))
+    try:
+        p = subprocess.run(["npm", "install", "--no-audit", "--no-fund", "--prefer-offline"], cwd=cache, capture_output=True, text=True, timeout=120)
+    except subprocess.TimeoutExpired:
+        pytest.skip("npm install took longer than 120 s")
+    if p.returncode != 0:
+        pytest.skip(f"npm install failed (offline?): {p.stderr[-200:]}")
+    return cache / "node_modules"
+
+
+MARK_TS = "import { appendFileSync } from 'node:fs';\n\nexport const mark = (name: string) => process.env.MARK_DIR && appendFileSync(`${process.env.MARK_DIR}/${name}`, 'x\\n');\n"
+TS_IGNORE = "node_modules\n.vite/\n"
+TSCONFIG = json.dumps({"compilerOptions": {"strict": True, "target": "es2022", "module": "esnext", "moduleResolution": "bundler", "noEmit": True,
+                                           "types": ["node"], "skipLibCheck": True}, "include": ["src", "test"]})
+VT = {
+    ".gitignore": TS_IGNORE,
+    "package.json": json.dumps({"name": "calc", "private": True, "type": "module", "scripts": {"test": "vitest run", "typecheck": "tsc --noEmit"},
+                                "devDependencies": {"vitest": NODE_PINS["vitest"], "typescript": NODE_PINS["typescript"]}}),
+    "tsconfig.json": TSCONFIG,
+    "src/add.ts": "export const add = (a: number, b: number): number => a + b;\n",
+    "src/util/format.ts": "export const format = (n: number): string => `${n}`;\n",
+    "src/mul.ts": "import { format } from './util/format';\n\nexport const mul = (a: number, b: number): number => Number(format(a * b));\n",
+    "test/mark.ts": MARK_TS,
+    "test/add.test.ts": "import { expect, test } from 'vitest';\nimport { add } from '../src/add';\nimport { mark } from './mark';\n\n"
+                        "test('add', () => {\n  mark('add-ran');\n  expect(add(2, 3)).toBe(5);\n});\n",
+    "test/mul.test.ts": "import { expect, test } from 'vitest';\nimport { mul } from '../src/mul';\nimport { mark } from './mark';\n\n"
+                        "test('mul', () => {\n  mark('mul-ran');\n  expect(mul(2, 3)).toBe(6);\n});\n",
+    "test/schema.test.ts": "import { readFileSync } from 'node:fs';\nimport { expect, test } from 'vitest';\nimport { mark } from './mark';\n\n"
+                           "test('tables', () => {\n  mark('schema-ran');\n  const n = readFileSync(new URL('../schema/tables.txt', import.meta.url), 'utf8').split('\\n').filter(Boolean).length;\n  expect(n).toBe({n});\n});\n",
+    "schema/tables.txt": "users\norders\n",
+}
+SCHEMA_TEST = "test/schema.test.ts"
+
+
+def vt_files(n=2):
+    return {**VT, SCHEMA_TEST: VT[SCHEMA_TEST].replace("{n}", str(n))}
+
+
+@pytest.fixture
+def vt_block(tmp_path):
+    block = discover(tmp_path, vt_files())
+    assert block["related"] == "npx vitest related --run {files}"
+    assert {s["name"] for s in block["suites"]} == {"unit", "typecheck"}
+    trig = [t for t in block["triggers"] if t["paths"] == ["schema/**"]]
+    if not trig:  # discovery cannot see a test reading schema/ through a URL
+        block["triggers"].append({"paths": ["schema/**"], "run": f"npx vitest run {SCHEMA_TEST}", "why": "schema.test.ts counts the lines"})
+        trig = block["triggers"][-1:]
+    trig[0]["edits"] = [SCHEMA_TEST]
+    return mark_suites(block)
+
+
+def test_vitest_change_runs_only_the_related_test_and_merges(tmp_path, marks, node_modules, vt_block):
+    repo, sha, wt = task_repo(tmp_path, vt_files(), vt_block, ["src/add.ts"], node_modules)
+    T.build(wt, "src/add.ts", "export const add = (a: number, b: number): number => b + a;\n")
+    code, out = T.ok(repo, sha, "finish", "T1")
+    assert code == 0 and "FINISH tests OK 1 commands (related)" in out and "FINISH OK T1 INTEGRITY OK" in out, out
+    assert lines(marks / "add-ran") == ["x"] and not (marks / "mul-ran").exists() and not (marks / "schema-ran").exists()
+    assert "b + a" in (repo / "src/add.ts").read_text()  # merged
+
+
+def test_vitest_break_in_a_transitive_import_is_blocked(tmp_path, marks, node_modules, vt_block):
+    repo, sha, wt = task_repo(tmp_path, vt_files(), vt_block, ["src/util/format.ts"], node_modules)  # mul.test.ts reaches format.ts only through mul.ts
+    T.build(wt, "src/util/format.ts", "export const format = (n: number): string => `${n + 1}`;\n")
+    before = T.git(repo, "rev-parse", "HEAD")
+    code, out = T.ok(repo, sha, "finish", "T1")
+    assert code == 1 and "FINISH FAIL T1 tests: npx vitest related --run src/util/format.ts" in out and "mul" in out, out
+    assert "x" in lines(marks / "mul-ran") and T.git(repo, "rev-parse", "HEAD") == before
+
+
+def test_vitest_schema_trigger_blocks_until_the_counting_test_grows(tmp_path, node_modules, vt_block):
+    repo, sha, wt = task_repo(tmp_path / "a", vt_files(), copy.deepcopy(vt_block), ["schema/tables.txt"], node_modules)
+    T.build(wt, "schema/tables.txt", "users\norders\ninvoices\n")
+    code, out = T.ok(repo, sha, "finish", "T1")
+    assert code == 1 and f"FINISH FAIL T1 tests: npx vitest run {SCHEMA_TEST}" in out, out
+    repo, sha, wt = task_repo(tmp_path / "b", vt_files(), copy.deepcopy(vt_block), ["schema/tables.txt"], node_modules)
+    T.build(wt, "schema/tables.txt", "users\norders\ninvoices\n")
+    T.build(wt, SCHEMA_TEST, vt_files(3)[SCHEMA_TEST])  # allowed by the trigger's `edits`
+    code, out = T.ok(repo, sha, "finish", "T1")
+    assert code == 0 and "FINISH tests OK" in out and "INTEGRITY OK" in out, out
+
+
+def test_vitest_type_error_passes_finish_by_design_and_fails_the_gates_typecheck(tmp_path, node_modules, vt_block):
+    """Finish runs tests only; types are checked once, at the gate (the `typecheck` suite). Both halves are the design."""
+    repo, sha, wt = task_repo(tmp_path, vt_files(), vt_block, ["src/add.ts"], node_modules)
+    T.build(wt, "src/add.ts", "export const add = (a: number, b: number): number => {\n  const unused: string = 0;\n  return a + b;\n};\n")  # runtime-correct, TS2322
+    code, out = T.ok(repo, sha, "finish", "T1")
+    assert code == 0 and "FINISH tests OK 1 commands (related)" in out and "FINISH OK T1" in out, out
+    code, out = T.ok(repo, sha, "gate")
+    assert code == 1 and "GATE tests OK unit" in out and "GATE tests FAIL typecheck" in out and "TS2322" in out, out
+
+
+# ---------- jest + ts-jest ----------
+
+JEST = {
+    ".gitignore": TS_IGNORE,
+    "package.json": json.dumps({"name": "calc", "private": True, "scripts": {"test": "jest"},
+                                "devDependencies": {"jest": NODE_PINS["jest"], "ts-jest": NODE_PINS["ts-jest"], "typescript": NODE_PINS["typescript"]}}),
+    "jest.config.cjs": "module.exports = { preset: 'ts-jest', testEnvironment: 'node' };\n",
+    "tsconfig.json": json.dumps({"compilerOptions": {"strict": True, "target": "es2022", "module": "commonjs", "esModuleInterop": True,
+                                                      "types": ["node", "jest"], "skipLibCheck": True}, "include": ["src", "test"]}),
+    "src/add.ts": VT["src/add.ts"],
+    "src/mul.ts": "export const mul = (a: number, b: number): number => a * b;\n",
+    "test/mark.ts": MARK_TS,
+    "test/add.test.ts": "import { add } from '../src/add';\nimport { mark } from './mark';\n\ntest('add', () => {\n  mark('add-ran');\n  expect(add(2, 3)).toBe(5);\n});\n",
+    "test/mul.test.ts": "import { mul } from '../src/mul';\nimport { mark } from './mark';\n\ntest('mul', () => {\n  mark('mul-ran');\n  expect(mul(2, 3)).toBe(6);\n});\n",
+}
+
+
+@pytest.fixture
+def jest_block(tmp_path):
+    block = discover(tmp_path, JEST)
+    assert block["related"] == "npx jest --findRelatedTests {files}"
+    return mark_suites(block)
+
+
+def test_jest_change_runs_only_its_related_test_and_merges(tmp_path, marks, node_modules, jest_block):
+    repo, sha, wt = task_repo(tmp_path, JEST, jest_block, ["src/add.ts"], node_modules)
+    T.build(wt, "src/add.ts", "export const add = (a: number, b: number): number => b + a;\n")
+    code, out = T.ok(repo, sha, "finish", "T1")
+    assert code == 0 and "FINISH tests OK 1 commands (related)" in out and "FINISH OK T1" in out, out
+    assert lines(marks / "add-ran") == ["x"] and not (marks / "mul-ran").exists()
+    assert "b + a" in (repo / "src/add.ts").read_text()
+
+
+def test_jest_break_is_blocked(tmp_path, node_modules, jest_block):
+    repo, sha, wt = task_repo(tmp_path, JEST, jest_block, ["src/mul.ts"], node_modules)
+    T.build(wt, "src/mul.ts", "export const mul = (a: number, b: number): number => a + b;\n")
+    before = T.git(repo, "rev-parse", "HEAD")
+    code, out = T.ok(repo, sha, "finish", "T1")
+    assert code == 1 and "FINISH FAIL T1 tests: npx jest --findRelatedTests src/mul.ts" in out, out
+    assert T.git(repo, "rev-parse", "HEAD") == before
