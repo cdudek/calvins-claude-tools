@@ -36,7 +36,7 @@ Failures go back to the builder of that task, at most 3 passes. Stop after 2 att
 {{gap_line}}
 
 {{h}} Ship, in this order
-Commit first, verify that final commit, push that same SHA. Nothing is committed after the verifier: a later commit is a different SHA and needs the verifier again.
+Commit first, verify that final commit, push that same SHA. Nothing is committed after the verifier: a later commit is a different SHA and needs the verifier again. A risky milestone's `task-step.py review` records its round in the git-ignored state file, not in plan.md, so copy its printed `SECURITY-REVIEW` line into the next progress entry or the HOLD/SHIPPED message.
 1. Commit on `{{branch}}`: {{commit_what}}the progress entry to plan.md (time, milestone, requirement ids, done and remaining, check result, next action; no PR number or merge SHA, they are not known yet and `gh pr view` has them).
 {{gate_verify}}
 {{ship_tail}}

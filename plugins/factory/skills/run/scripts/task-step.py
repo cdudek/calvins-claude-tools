@@ -22,15 +22,15 @@ gap fix task of round n (M2-gap<n>; M2-gap is round 1). The plan, and so `change
            worktree at the target SHA (the plan's `setup`, then the same command): red there too prints `GATE tests PRE-EXISTING <name>`
            and does not fail the gate; green there, or no baseline worktree, fails it
   status   print the recorded state
-  review   log one security review of a risky milestone: appends `SECURITY-REVIEW <M> round=<n> sha=<HEAD> result=<PASS|FAIL> rule=<rule>` to the
-           plan's progress log (the coordinator commits it; the next review refuses while it is uncommitted). <rule> names the broken rule in a few words joined by hyphens (`-` on a PASS).
+  review   log one security review of a risky milestone: records round <n> at HEAD in the state file (no commit, so the pushed SHA stays the verified one) and prints
+           `SECURITY-REVIEW <M> round=<n> sha=<HEAD> result=<PASS|FAIL> rule=<rule>`; the coordinator copies that line into the next progress entry or the HOLD/SHIPPED message. <rule> names the broken rule in a few words joined by hyphens (`-` on a PASS).
            A FAIL past the milestone's `securityRounds` (default 1) fix rounds prints REVIEW FAIL: the run ends BLOCKED with the owner's choice.
 `start` of a task other than the milestone's `ruleTest` task (or a gap fix) fails until the rule test is merged.
 `finish` refuses the same tasks. `gate` on a risky milestone needs rounds numbered 1..n, at most `securityRounds` FAIL lines and a last PASS whose
 sha has no `factory-merge:` commit after it.
 The checked commits are never taken from the state file: `gate` derives them from git, as the second parents of the `factory-merge:` merges on the
 milestone branch's first-parent chain since the target. The state file (<worktree>/.factory/state/<M>.json, git-ignored by a `*` .gitignore beside it)
-is a convenience log. Prints one `<STEP> OK|FAIL <detail>` line per step, then the failing check's own lines; exit 1 on any FAIL.
+is a convenience log, and holds the `reviews` rounds `gate` reads. Prints one `<STEP> OK|FAIL <detail>` line per step, then the failing check's own lines; exit 1 on any FAIL.
 """
 import importlib.util
 import json
@@ -362,34 +362,29 @@ def cmd_gate(c):
     return 1 if bad else 0
 
 
-REVIEW_LINE = re.compile(r"^SECURITY-REVIEW (\S+) round=(\d+) sha=([0-9a-f]{40}) result=(PASS|FAIL) rule=(\S+)$", re.M)
-
-
 def reviews(c):
-    """The milestone's SECURITY-REVIEW lines from the plan's progress log at HEAD, in order: [(round, sha, result, rule)]."""
-    text = out(c.repo, "show", f"HEAD:{c.plan_arg}") or ""
-    m = check_plan.block_match(text)
-    log = text[m.end():] if m else ""
-    return [(int(r), sha, res, rule) for ms, r, sha, res, rule in REVIEW_LINE.findall(log) if ms == c.ms]
+    """The milestone's review rounds from the state file, in order: [(round, sha, result, rule)]."""
+    return [(r["round"], r["sha"], r["result"], r["rule"]) for r in c.state().get("reviews", [])]
 
 
 def cmd_review(c, result, rule):
     if result not in ("PASS", "FAIL") or not re.fullmatch(r"[a-z0-9]+(-[a-z0-9]+)*|-", rule):
         return say("REVIEW", False, "usage: review ... PASS|FAIL <rule-in-a-few-hyphenated-words>")
-    if (out(c.repo, "show", f"HEAD:{c.plan_arg}") or "") != c.plan_file.read_text(encoding="utf-8").strip():  # out() strips
-        return say("REVIEW", False, f"{c.plan_arg} has uncommitted changes: commit the previous log line first")
     cap = milestone(c).get("securityRounds", 1)
+    st = c.state()
     done = reviews(c)
     n = len(done) + 1
     fails = sum(1 for *_, res, _ in done if res == "FAIL") + (result == "FAIL")
-    with open(c.plan_file, "a", encoding="utf-8") as f:
-        f.write(f"\nSECURITY-REVIEW {c.ms} round={n} sha={out(c.repo, 'rev-parse', 'HEAD')} result={result} rule={rule}\n")
+    sha = out(c.repo, "rev-parse", "HEAD")
+    st.setdefault("reviews", []).append({"round": n, "sha": sha, "result": result, "rule": rule})
+    c.save(st)  # git-ignored: no commit, so the pushed SHA stays the verified SHA
+    print(f"SECURITY-REVIEW {c.ms} round={n} sha={sha} result={result} rule={rule}")
     if result == "PASS":
-        return say("REVIEW", True, f"round={n} PASS: commit the log line")
+        return say("REVIEW", True, f"round={n} PASS: copy the line into the next progress entry or the HOLD/SHIPPED message")
     if fails > cap:
-        return say("REVIEW", False, f"round={n} FAIL past securityRounds {cap}: commit the log line and end `BLOCKED: owner decides on {rule}: "
+        return say("REVIEW", False, f"round={n} FAIL past securityRounds {cap}: end `BLOCKED: owner decides on {rule}: "
                    "move it to a later milestone, or accept it as a known limit`")
-    return say("REVIEW", True, f"round={n} FAIL, fix round {fails} of {cap}: commit the log line, fix at the rule {rule} starting from the rule test, then review again")
+    return say("REVIEW", True, f"round={n} FAIL, fix round {fails} of {cap}: fix at the rule {rule} starting from the rule test, then review again")
 
 
 def cmd_status(c):

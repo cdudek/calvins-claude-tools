@@ -232,10 +232,9 @@ def test_security_review_rounds_are_capped_and_gated(tmp_path):
     ok(repo, sha, "target")
     code, out = ok(repo, sha, "review", "FAIL", "guest-reads-moved-comment")
     assert code == 0 and "round=1 FAIL, fix round 1 of 1" in out
-    git(repo, "commit", "-qam", "log review 1")
     code, out = ok(repo, sha, "review", "FAIL", "guest-reads-moved-comment")
     assert code == 1 and "past securityRounds 1" in out and "BLOCKED: owner decides on guest-reads-moved-comment" in out
-    git(repo, "commit", "-qam", "log review 2")
+    assert "SECURITY-REVIEW M1 round=2 " in out and git(repo, "status", "--porcelain") == ""  # no commit needed
     assert ok(repo, sha, "review", "FAIL", "two words")[0] == 1  # a rule is hyphenated words
 
 
@@ -247,10 +246,8 @@ def test_gate_security_passes_after_one_fix_round(tmp_path):
     ok(repo, sha, "finish", "T1")
     assert "GATE security FAIL" in ok(repo, sha, "gate")[1]  # no review yet
     ok(repo, sha, "review", "FAIL", "guest-reads-moved-comment")
-    assert "commit the previous log line first" in ok(repo, sha, "review", "PASS", "-")[1]
-    git(repo, "commit", "-qam", "log review 1")
     ok(repo, sha, "review", "PASS", "-")
-    git(repo, "commit", "-qam", "log review 2")
+    assert git(repo, "status", "--porcelain") == ""  # review writes state only, never plan.md
     assert "GATE security OK" in ok(repo, sha, "gate")[1]
     ok(repo, sha, "start", "T2")  # a task merged after the PASS needs a new review
     build(repo / ".worktrees" / f"{SLUG}-M1-T2", "src/b.ts")

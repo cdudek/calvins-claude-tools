@@ -211,8 +211,8 @@ def section(plan, m, P, root, sha, h, preflight, record=True):
                   "by one Opus 5.5 high advisory agent or `codex exec -m gpt-6.2-astra -c model_reasoning_effort=high -s read-only --ephemeral`, "
                   "and fix a confirmed High only inside the task's own files and its allowTestEdits. A fix that needs other files "
                   "or another test edit is a `gap`: see the gap lane under Verify. The review names the rule each finding breaks and groups findings by it. "
-                  f"After the review run `python3 .factory/task-step.py review {P}plan.md {mid} PASS|FAIL <rule-in-hyphenated-words> --approved {sha}` and commit "
-                  f"the line it logs. A FAIL is fixed at that rule, starting from the rule test, never one hole at a time; at most {m.get('securityRounds', 1)} "
+                  f"After the review run `python3 .factory/task-step.py review {P}plan.md {mid} PASS|FAIL <rule-in-hyphenated-words> --approved {sha}`; it records the round without a commit. "
+                  f"A FAIL is fixed at that rule, starting from the rule test, never one hole at a time; at most {m.get('securityRounds', 1)} "
                   "fix round(s). When the script prints REVIEW FAIL, end with the BLOCKED line it prints.")
     gate = f"`python3 .factory/task-step.py gate {P}plan.md {mid} --approved {sha}`: the pre-PR integrity call (every <checked SHA>, the recorded target) and the plan check; both must print OK."
     verifier = (f"factory:verifier{verifier_tier(m)} on the final commit (`git rev-parse HEAD` is the <final SHA>), with the delta, base, diff and the holdout scenarios in "
@@ -222,8 +222,8 @@ def section(plan, m, P, root, sha, h, preflight, record=True):
     if review:
         gate_verify = ("2. This milestone is risky (auth, money, consent or data exposure): in ONE message start two foreground Agent calls on the same <final SHA>: "
                        f"{verifier} And {review}\n"
-                       f"3. Log the review as above, commit the line, then run {gate} The `gate` needs that PASS, so it comes after the two agents; "
-                       "the review line is the only commit allowed after the verifier, it touches only the progress log. A FAIL of either: fix, then both agents run again on the new SHA.")
+                       f"3. Log the review as above (no commit), then run {gate} The `gate` needs that PASS, so it comes after the two agents; "
+                       "nothing is committed after them. Copy the printed SECURITY-REVIEW line(s) into your next progress entry or the HOLD/SHIPPED message. A FAIL of either: fix, then both agents run again on the new SHA.")
     else:
         gate_verify = f"2. Run {gate}\n3. {verifier}"
     if ui:
