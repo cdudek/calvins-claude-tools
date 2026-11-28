@@ -56,9 +56,9 @@ def brief(plan, mid, *extra):
     return subprocess.run([sys.executable, str(SCRIPT), str(plan), mid, *extra], capture_output=True, text=True)
 
 
-def run(tmp_path, mid, text=None, **kw):
+def run(tmp_path, mid, text=None, headless=False, **kw):
     plan, sha = repo(tmp_path, text, **kw)
-    p = brief(plan, mid, "--approved", sha)
+    p = brief(plan, mid, "--approved", sha, *(["--headless"] if headless else []))
     return p.returncode, p.stdout, tmp_path / f"kickoff-{mid.lstrip('-')}.md"
 
 
@@ -69,7 +69,7 @@ def goal_of(out):
 
 
 def turns_of(out):
-    return out.split("--max-turns ")[2].split(" ")[0]
+    return out.split("--max-turns ")[2].split(" ")[0]  # needs --headless: the comment line is the first match
 
 
 def test_template_passes_check_plan(tmp_path):
@@ -96,9 +96,17 @@ def test_ui_milestone_brief(tmp_path):
     assert "Builder effort: high." in k and "gpt-6.2-astra" not in k  # M1 is not risky
     assert "--model sonnet --effort medium" in out
     run_line = out.split("-#-#- RUN -#-#-\n")[1].split("\n")[1]
-    assert "--max-budget-usd" not in run_line
+    assert run_line.startswith("CLAUDE_CODE_DISABLE_BACKGROUND_TASKS=1 claude --model sonnet --effort medium --permission-mode auto --append-system-prompt-file ")
+    assert "claude -p" not in out and "--max-turns" not in out and "--max-budget-usd" not in out
+    assert run_line.endswith(shlex.quote(goal)) and shlex.split(run_line)[-1] == goal
+    assert "--append-system-prompt-file " + shlex.quote(str(kick)) in run_line
+
+
+def test_headless_keeps_the_max_turns_command(tmp_path):
+    code, out, kick = run(tmp_path, "M1", headless=True)
+    run_line = out.split("-#-#- RUN -#-#-\n")[1].split("\n")[1]
     # M1: components layer (UI), not risky, 3 tasks -> 2 x 10 x (3*3 + 3 + 0 + 1) = 260
-    assert "--max-turns 260 " in run_line
+    assert code == 0 and run_line.startswith("claude -p ") and "--max-turns 260 " in run_line and "--max-budget-usd" not in run_line
 
 
 def test_gallery_is_evidence_not_a_stop(tmp_path):
@@ -288,7 +296,7 @@ def test_small_flag_is_gone(tmp_path):
 
 
 def test_all_milestones_one_kickoff_and_one_goal(tmp_path):
-    code, out, kick = run(tmp_path, "--all", plan_text(FULL, integration="integration/v1-beta"))
+    code, out, kick = run(tmp_path, "--all", plan_text(FULL, integration="integration/v1-beta"), headless=True)
     k, goal = kick.read_text(), goal_of(out)
     assert code == 0 and kick.name == "kickoff-all.md" and not (tmp_path / "kickoff-M1.md").exists()
     order = [k.index(f"## Milestone {m} (") for m in ("M1", "M2", "M3")]
@@ -314,7 +322,7 @@ def test_all_needs_every_milestone_detailed_and_no_hold(tmp_path):
     assert code == 1 and "BRIEF FAIL M2 has no tasks" in out and "BRIEF FAIL M3 has no tasks" in out and not kick.exists()
     assert out.count("M2 has no tasks") == 1  # one source: check_plan.validate(..., every=True)
     code, out, kick = run(tmp_path / "b", "--all", plan_text(FULL, hold="owner restores billing"))
-    assert code == 1 and "BRIEF FAIL --all cannot run with a hold" in out and not kick.exists()
+    assert code == 1 and "BRIEF FAIL --all cannot run with a hold and no `integration`" in out and not kick.exists()
     plan, _ = repo(tmp_path / "c", plan_text(FULL))
     p = brief(plan, "--all")
     assert p.returncode == 1 and "BRIEF FAIL pass --approved" in p.stdout
@@ -352,6 +360,23 @@ def test_checked_task_commits_are_recorded_and_passed(tmp_path):
     assert code == 0 and "records its HEAD as a <checked SHA> (every INTEGRITY OK commit" in k
     assert "merges exactly that commit" in k
     assert k.index("<checked SHA>") < k.index("task-step.py gate") and "every <checked SHA>" in k
+
+
+def test_all_with_hold_and_integration_merges_each_milestone_and_ends_hold(tmp_path):
+    hold = "owner restores billing"
+    code, out, kick = run(tmp_path, "--all", plan_text(FULL, integration="integration/v1-beta", hold=hold))
+    k, goal = kick.read_text(), goal_of(out)
+    assert code == 0 and len(goal) < 1500
+    assert goal.startswith("/goal Met when any one of these is true. 1) HOLD: the last message starts with HOLD:")
+    for m in ("M1", "M2", "M3"):
+        assert f"milestone/2026-11-24-saved-searches-{m}" in goal
+    assert "the pushed SHA and a verifier PASS for that same SHA" in goal and "SHIPPED" not in goal and "after 36 turns" in goal
+    assert f"In this run, {hold} is not such an action" in goal
+    assert k.count("git merge --no-ff milestone/") == 3 and k.count("`HOLD-MERGED M") == 3  # one hold-merge step per milestone
+    assert "git push origin HEAD:refs/heads/integration/v1-beta" in k and "gh pr create" not in k and "Release:" not in k
+    assert "end HOLD" in k and k.count("The next milestone is cut from `integration/v1-beta`") == 2
+    assert "skip it" in k and "Open no PR" not in k and "open no PR" in k
+    assert k.count("## Stop") == 1 and "each milestone's pushed SHA and verifier PASS" in k
 
 
 def ship_of(kick_text):
@@ -393,7 +418,7 @@ def test_run_command_quotes_goal_and_kickoff_path(tmp_path):
     assert subprocess.run(["bash", "-n", str(script)], capture_output=True).returncode == 0
     words = shlex.split(cmd)
     assert words[-1] == goal_of(out) and "owner's \"billing\" $HOME" in words[-1]
-    assert words[words.index("--append-system-prompt") + 1] == f"$(cat {shlex.quote(str(kick))})"
+    assert words[words.index("--append-system-prompt-file") + 1] == str(kick)
     assert kick.exists() and " " in str(kick)
 
 

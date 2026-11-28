@@ -1,16 +1,17 @@
 #!/usr/bin/env python3
-"""Usage: goal-brief.py <plan.md> <milestone-id> --approved <sha>
-       goal-brief.py <plan.md> --all --approved <sha>
+"""Usage: goal-brief.py <plan.md> <milestone-id> --approved <sha> [--headless]
+       goal-brief.py <plan.md> --all --approved <sha> [--headless]
 Run inside the milestone worktree (branch milestone/<slug>-<M>, cut from a base that already holds the
 merged plan PR). Turns the approved plan into the run briefing for one milestone, or with --all for every
-milestone in order (every milestone must already have tasks; refused with a `hold`).
+milestone in order (every milestone must already have tasks; a `hold` needs `integration`: each milestone is merged into it).
 Writes kickoff-<M>.md (kickoff-all.md) next to plan.md, then prints three sections:
   -#-#- KICKOFF FILE -#-#-   path of the kickoff written
   -#-#- GOAL -#-#-           the /goal line (checked against the 4,000-character limit)
-  -#-#- RUN -#-#-            the unattended command, and the interactive alternative
+  -#-#- RUN -#-#-            the one command the owner pastes in a terminal at this worktree (interactive, no --max-turns);
+                             --headless prints the old `claude -p ... --max-turns N` command instead (the eval harness only)
 Exit 1 with `BRIEF FAIL <reason>` if the plan fails check_plan.validate (which also fails a plan, delta.md or
 intent.md or standing.md that changed since <sha>, the commit the owner approved; with --all it also needs every milestone
-detailed and no hold) or the milestone is not detailed.
+detailed and, with a hold, `integration`) or the milestone is not detailed.
 If changes/<slug>/standing.md exists in the approved commit, the kickoff carries it verbatim as `## Standing approval (owner)`.
 The kickoff's fixed prose lives in ../templates/kickoff.md (blocks `@@ name`, {{key}} placeholders); this script fills it and
 generates only the data-dependent lines and the /goal condition. The coordinator calls task-step.py (target, start, finish,
@@ -40,7 +41,7 @@ spec.loader.exec_module(check_plan)
 
 UI_LAYERS = {"components", "layouts", "screens"}
 GOAL_LIMIT = 4000
-# Hard circuit breaker for `claude -p --max-turns`. It counts the coordinator's own turns only; builder
+# Hard circuit breaker for `claude -p --max-turns` (--headless only; an interactive run is bounded by the goal's turn clause). It counts the coordinator's own turns only; builder
 # (subagent) steps do not count (probe 2026-11-24). Measured on a first beta milestone: 148 coordinator tool
 # calls for 15 agent dispatches, about 10 per dispatch (brief, integrity, merge, checks, log).
 PASSES = 3          # builder passes allowed per task
@@ -211,7 +212,7 @@ def fill(block, **vals):
     return "\n".join(out)
 
 
-def section(plan, m, P, root, sha, h, preflight, record=True):
+def section(plan, m, P, root, sha, h, preflight, record=True, every=False):
     """One milestone's Build, Verify and Ship, under headings of level h, from the template. P is the plan's repo-relative
     folder prefix; record=False when the milestone is cut later in a --all run, whose cut step records the target SHA."""
     change, mid, ui = plan["change"], m["id"], m["layer"] in UI_LAYERS
@@ -257,7 +258,10 @@ def section(plan, m, P, root, sha, h, preflight, record=True):
                        f"First check that every MODIFIED or REMOVED entry's prior text still matches the spec on `{plan['base']}` and "
                        "every ADDED id is unused; on a mismatch stop `BLOCKED: delta conflicts with base, owner re-approves`. Then ")
     commit_what += "the gallery and " if ui else ""
-    if hold:
+    if hold and every:
+        ship_tail = fill(template_blocks()["hold_merge"], hold=hold, branch=branch, tgt=tgt, mid=mid,
+                         after="This was the last milestone: end HOLD." if last else f"The next milestone is cut from `{tgt}`, which now holds {mid}.")
+    elif hold:
         ship_tail = (f"4. Open no PR and merge nothing: the owner action `{hold}` comes first. Then push `{branch}` once, which is the <final SHA>, "
                      "and print the pushed SHA with the verifier PASS for that SHA.")
     else:
@@ -296,14 +300,16 @@ def kickoff(plan, ms, plan_path, root, sha, every=False):
     blocks, secs = template_blocks(), []
     for i, x in enumerate(ms):
         head = f"## Milestone {x['id']} ({x['layer']}), branch `milestone/{change}-{x['id']}`\n" if every else ""
-        secs.append(head + section(plan, x, P, root, sha, h, [] if every else pre, record=i == 0))
+        secs.append(head + section(plan, x, P, root, sha, h, [] if every else pre, record=i == 0, every=every))
     return fill(
         blocks["top"], title=f"{change}, " + (f"all {len(ms)} milestones" if every else f"milestone {ms[0]['id']} ({ms[0]['layer']})"),
         change=change, scope=scope, tgt=tgt, P=P, sha=sha,
         standing=f"## Standing approval (owner)\n\n{stand.strip()}" if stand and stand.strip() else "",
-        all_start=fill(blocks["all_start"], P=P, sha=sha, tgt=tgt, change=change, preflight="\n".join(pre)) if every else "",
+        all_start=fill(blocks["all_start"], P=P, sha=sha, tgt=tgt, change=change, preflight="\n".join(pre),
+                       hold_note="A `HOLD-MERGED <M> <sha>` line in the progress log means that milestone is verified, pushed and merged into `" + tgt + "`: skip it." if hold else "") if every else "",
         milestones="\n\n".join(secs), end_state="HOLD" if hold else "SHIPPED",
-        hold_stop=f"HOLD: {hold}. Only once the pushed SHA and the verifier PASS for that SHA are in the transcript." if hold else "") + "\n"
+        hold_stop=(f"HOLD: {hold}. Only once " + ("each milestone's pushed SHA and verifier PASS for that SHA are in the transcript and the last is merged into `" + tgt + "`."
+                   if every else "the pushed SHA and the verifier PASS for that SHA are in the transcript.")) if hold else "") + "\n"
 
 
 def goal(plan, m, every=False):
@@ -338,8 +344,13 @@ def goal(plan, m, every=False):
     # "other than" exceptions about half the time (replays 2026-11-25), so the hold rule is a plain sentence of its own
     states = []
     if hold:
-        states.append(f"HOLD: the last message starts with HOLD: and the transcript shows the pushed SHA of branch "
-                      f"milestone/{plan['change']}-{m['id']} and a verifier PASS for that same SHA")
+        if every:
+            branches = ", ".join(f"milestone/{plan['change']}-{x['id']}" for x in ms)
+            states.append(f"HOLD: the last message starts with HOLD: and the transcript shows, for each of the branches {branches}, "
+                          f"the pushed SHA and a verifier PASS for that same SHA")
+        else:
+            states.append(f"HOLD: the last message starts with HOLD: and the transcript shows the pushed SHA of branch "
+                          f"milestone/{plan['change']}-{m['id']} and a verifier PASS for that same SHA")
     else:
         states.append(f"SHIPPED: {done}")
     # "an exact owner action" failed a BLOCKED that offered the owner a choice (real /goal evaluator, 2026-11-25)
@@ -397,24 +408,30 @@ def preflight_integration(plan_path, plan, sha):
     return True, f"created {integ} on origin from {sha}"
 
 
-def print_run(out, g, turns):
+def print_run(out, g, turns, headless=False):
     print("-#-#- KICKOFF FILE -#-#-")
     print(out)
     print("-#-#- GOAL -#-#-")
     print(g)
     print("-#-#- RUN -#-#-")
-    print(f"# unattended, from this milestone worktree; --max-turns {turns} is the hard breaker (coordinator turns only, "
-          "2 x 10 x worst-case dispatches), the goal's turn clause the soft one")
-    print(f"claude -p --model sonnet --effort medium --permission-mode auto --max-turns {turns} "
-          f"--append-system-prompt \"$(cat {shlex.quote(str(out))})\" --output-format stream-json --verbose {shlex.quote(g)}")
-    print("# interactive: start claude here, paste the kickoff file, then paste the /goal line")
+    if headless:
+        print(f"# eval harness only, unattended, from this worktree; --max-turns {turns} is the hard breaker (coordinator turns only, "
+              "2 x 10 x worst-case dispatches), the goal's turn clause the soft one")
+        print(f"claude -p --model sonnet --effort medium --permission-mode auto --max-turns {turns} "
+              f"--append-system-prompt \"$(cat {shlex.quote(str(out))})\" --output-format stream-json --verbose {shlex.quote(g)}")
+        return
+    print(f"# paste in a terminal at {Path.cwd()}; the goal's turn clause is the bound. If the /goal line is not taken from the command line, start claude without it and paste the GOAL line")
+    print(f"CLAUDE_CODE_DISABLE_BACKGROUND_TASKS=1 claude --model sonnet --effort medium --permission-mode auto "
+          f"--append-system-prompt-file {shlex.quote(str(out))} {shlex.quote(g)}")
 
 
 def main():
     args = sys.argv[1:]
+    headless = "--headless" in args
+    args = [a for a in args if a != "--headless"]
     sha = args[3] if len(args) == 4 and args[2] == "--approved" else None
     if len(args) not in (2, 4) or (len(args) == 4 and sha is None):
-        print("usage: goal-brief.py <plan.md> <milestone-id | --all> --approved <sha>", file=sys.stderr)
+        print("usage: goal-brief.py <plan.md> <milestone-id | --all> --approved <sha> [--headless]", file=sys.stderr)
         return 2
     path, mid = Path(args[0]), args[1]
     if sha is None:
@@ -450,7 +467,7 @@ def main():
             print(f"-#-#- PREFLIGHT -#-#-\n{msg}")
     out = path.parent / f"kickoff-{'all' if every else mid}.md"
     out.write_text(kickoff(plan, pick, path, root, sha, every), encoding="utf-8")
-    print_run(out, g, sum(max_turns(x) for x in pick))
+    print_run(out, g, sum(max_turns(x) for x in pick), headless)
     return 0
 
 
