@@ -10,10 +10,10 @@ The single source for how the factory runs tests. `plan-standard.md` holds the `
 ## Rules
 - **Scripts run the tests, not memory.** `finish` and `gate` are the runners. A task that breaks an old test is not merged.
 - **Parallel by default.** Serial flags are banned (`check-plan.py` fails the plan, the guard hook denies the call). Isolation (a database or port per worker) is the project's job. Use `lock: true` only for a truly shared resource: E2E, an app server, a fixed port.
-- **Pre-existing failures** are compared by failing test ids against the base, reported as `PRE-EXISTING`, and never BLOCKED.
+- **Pre-existing failures** are compared by failing test ids against the base, reported as `PRE-EXISTING`, and never BLOCKED. The `PRE-EXISTING` lines are listed as a note in the HOLD or SHIPPED message.
 - **Path triggers** cover tests coupled to files they read: schema, migrations, config, directories loaded by glob. A trigger's `edits` names exact test files (a table list, a fixture) that may grow with those paths. The owner approves them once, with the plan.
 - **The verifier does not rerun repo checks.** It cites the `FINISH` and `GATE` lines.
-- **No related-tests tool on the stack:** the fallback is the test files that sit beside or are named after the changed files, plus the triggers. (Planned in `task-step.py`; until it lands, set `related` by hand or leave it out and rely on triggers.)
+- **No related-tests tool on the stack:** `tests.unit` (a command with `{tests}`) runs the test files that sit beside or are named after the changed files, plus the triggers. `discover-tests.py` proposes it for pytest and go, and for vitest or jest when the app is in a subdirectory.
 
 ## Defaults per ecosystem
 Unverified entries are marked. `discover-tests.py` proposes these from the manifests.
