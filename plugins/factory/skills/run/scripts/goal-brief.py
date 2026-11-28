@@ -236,7 +236,8 @@ def section(plan, m, P, root, sha, h, preflight, record=True):
                 "the new commit goes through Verify step 2 (per-task integrity, a new <checked SHA>, merge that commit), then repeat Ship from step 1.")
     if review:
         gate_verify = ("2. One message, two Agent calls, both on the <final SHA> (`git rev-parse HEAD`); start them together, never one after the other. "
-                       "This milestone is risky (auth, money, consent or data exposure):\n"
+                       "Your next message holds exactly these two Agent tool calls and nothing else; a verifier sent alone doubles the review time "
+                       "(measured: 7 + 7 min instead of 7). This milestone is risky (auth, money, consent or data exposure):\n"
                        f"   - Run {verifier}\n"
                        f"   - Run {review}\n"
                        "   - A FAIL of either: fix, then both run again on the new SHA.\n"
