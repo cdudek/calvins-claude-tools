@@ -311,7 +311,7 @@ def test_gate_runs_each_suite_once_and_fails_on_a_red_one(tmp_path):
     assert ok(repo, sha, "finish", "T1")[0] == 0
     code, out = ok(repo, sha, "gate")
     assert code == 1 and "GATE tests OK unit" in out and "GATE tests FAIL arch" in out and "arch-broke" in out, out
-    assert (tmp_path / "suite-count").read_text() == "u\nu\n"  # once at target (baseline), once at gate
+    assert (tmp_path / "suite-count").read_text() == "u\n"  # zero at target, once at gate
 
 
 def test_finish_does_not_block_on_a_command_already_red_on_the_milestone(tmp_path):
@@ -327,12 +327,26 @@ def test_finish_does_not_block_on_a_command_already_red_on_the_milestone(tmp_pat
 
 
 def test_gate_reports_a_suite_red_at_target_as_pre_existing(tmp_path):
-    plan = plan_with_tests(suites=[{"name": "old", "cmd": "exit 1"}, {"name": "unit", "cmd": "true"}])
+    plan = plan_with_tests(suites=[{"name": "old", "cmd": f"echo o >> {tmp_path}/old-count; exit 1"}, {"name": "unit", "cmd": "true"}])
     repo, sha = milestone_repo(tmp_path, plan)
     ok(repo, sha, "target")
-    assert json.loads((repo / ".factory/state/M1.json").read_text())["baseline_red"] == ["old"]
+    assert not (tmp_path / "old-count").exists()  # target runs no suite
     ok(repo, sha, "start", "T1")
     build(repo / ".worktrees" / f"{SLUG}-M1-T1", "src/a.ts")
     assert ok(repo, sha, "finish", "T1")[0] == 0
     code, out = ok(repo, sha, "gate")
     assert "GATE tests PRE-EXISTING old" in out and "GATE tests OK unit" in out and "GATE tests FAIL" not in out, out
+    assert (tmp_path / "old-count").read_text() == "o\no\n"  # milestone worktree, then the baseline worktree
+    assert not (repo / ".worktrees" / f"{SLUG}-M1-baseline").exists()
+
+
+def test_gate_fails_a_suite_that_is_green_at_target(tmp_path):
+    plan = plan_with_tests(suites=[{"name": "arch", "cmd": "test ! -e src/a.ts || { echo arch-broke; exit 1; }"}])
+    repo, sha = milestone_repo(tmp_path, plan)
+    ok(repo, sha, "target")
+    ok(repo, sha, "start", "T1")
+    build(repo / ".worktrees" / f"{SLUG}-M1-T1", "src/a.ts")
+    assert ok(repo, sha, "finish", "T1")[0] == 0
+    code, out = ok(repo, sha, "gate")
+    assert code == 1 and "GATE tests FAIL arch" in out and "PRE-EXISTING" not in out, out
+    assert not (repo / ".worktrees" / f"{SLUG}-M1-baseline").exists()

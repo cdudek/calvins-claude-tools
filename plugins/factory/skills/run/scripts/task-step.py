@@ -10,8 +10,7 @@ The coordinator's routine per-task mechanics, run from the milestone worktree (b
 repo-relative (changes/<slug>/plan.md), never absolute and never outside the repo. <T> is a plan task (T3) or the milestone's
 gap fix task of round n (M2-gap<n>; M2-gap is round 1). The plan, and so `change`, the target branch and `setup`, is read from the approved commit, never from the working file.
   target   fetch origin and record the head of the integration (else base) branch as the target SHA; --resume records
-           `git merge-base HEAD origin/<target>` instead. Runs each `tests.suites` command once and records the red ones (`baseline_red`;
-           --resume keeps an existing record)
+           `git merge-base HEAD origin/<target>` instead. Runs no suite: a red suite is checked at the target only when `gate` finds it red
   start    create the task branch and worktree (`git worktree add <repo>/.worktrees/<slug>-<M>-<T>`) at the milestone head, run the
            approved plan's `setup` in it
   pin      record the bug flow's failing-test SHA
@@ -19,8 +18,9 @@ gap fix task of round n (M2-gap<n>; M2-gap is round 1). The plan, and so `change
            trigger whose glob matches one), and merge exactly the checked commit (message `factory-merge: <name>`). A command that also fails
            in the milestone worktree was red before the task: `FINISH tests PRE-EXISTING <cmd>`, recorded in `preexisting`, never blocking
   gate     the pre-PR calls: test-integrity.sh --milestone with the checked commits, the plan's `tests.suites` (each once, prefixed `heavy `
-           when `lock` is true and `heavy` is on PATH), then check-plan.py --approved. A suite red at `target` prints
-           `GATE tests PRE-EXISTING <name>` and does not fail the gate
+           when `lock` is true and `heavy` is on PATH), then check-plan.py --approved. A red suite is run again in one temporary
+           worktree at the target SHA (the plan's `setup`, then the same command): red there too prints `GATE tests PRE-EXISTING <name>`
+           and does not fail the gate; green there, or no baseline worktree, fails it
   status   print the recorded state
   review   log one security review of a risky milestone: appends `SECURITY-REVIEW <M> round=<n> sha=<HEAD> result=<PASS|FAIL> rule=<rule>` to the
            plan's progress log (the coordinator commits it; the next review refuses while it is uncommitted). <rule> names the broken rule in a few words joined by hyphens (`-` on a PASS).
@@ -155,10 +155,8 @@ def cmd_target(c, resume):
         return say("TARGET", False, f"cannot resolve origin/{c.tgt}")
     st = c.state()
     st["target"] = sha
-    if not (resume and "baseline_red" in st):
-        st["baseline_red"] = [s["name"] for s in (c.plan.get("tests") or {}).get("suites", []) if not run_cmd(suite_cmd(s), c.repo)[0]]
     c.save(st)
-    return say("TARGET", True, sha + (f" baseline red: {', '.join(st['baseline_red'])}" if st["baseline_red"] else ""))
+    return say("TARGET", True, sha)
 
 
 def milestone(c):
@@ -177,6 +175,22 @@ def rule_test_first(c, task, step):
     return None
 
 
+def run_setup(c, path):
+    """True when the plan has no `setup` or it succeeds in `path`. `setup` comes from the owner-approved plan commit (read in Ctx), so running it through the shell, which its env and pipes need, adds no new trust."""
+    return not c.plan.get("setup") or subprocess.run(str(c.plan["setup"]), shell=True, cwd=path, capture_output=True).returncode == 0
+
+
+def baseline_worktree(c, target):
+    """(path, None) of a detached worktree at the target with `setup` run, else (path, why it failed)."""
+    path = c.worktree("baseline")
+    if path.exists():
+        git(c.repo, "worktree", "remove", "--force", "--", str(path))
+    made = git(c.repo, "worktree", "add", "--detach", "--", str(path), target)
+    if made.returncode:
+        return path, f"could not create the baseline worktree {path}: {(made.stderr or made.stdout).strip()[:200]}"
+    return path, None if run_setup(c, path) else f"setup `{c.plan['setup']}` failed in the baseline worktree {path}"
+
+
 def cmd_start(c, task):
     path, name = c.worktree(task), c.name(task)
     if (r := rule_test_first(c, task, "START")) is not None:
@@ -193,8 +207,7 @@ def cmd_start(c, task):
             return say("START", False, f"could not create the worktree {path}: {(made.stderr or made.stdout).strip()[:200]}")
         if out(path, "rev-parse", "HEAD") != head:
             return say("START", False, f"{path} HEAD is not the milestone head {head}")
-        # `setup` comes from the owner-approved plan commit (read in Ctx), so running it through the shell, which its env and pipes need, adds no new trust.
-        if c.plan.get("setup") and subprocess.run(str(c.plan["setup"]), shell=True, cwd=path, capture_output=True).returncode:
+        if not run_setup(c, path):
             return say("START", False, f"setup `{c.plan['setup']}` failed in {path}")
         return say("START", True, f"{task} {path} {head}")
     return say("START", True, f"{task} {path} reused, its HEAD is {out(path, 'rev-parse', 'HEAD')}, the milestone head is {head}")
@@ -319,14 +332,21 @@ def cmd_gate(c):
     bad = say("GATE integrity", p.returncode == 0, "see the lines below" if p.returncode else "")
     if p.returncode:
         print(p.stdout.strip())
+    base = None  # (path, why not) of the one baseline worktree, made at the first red suite
     for suite in (c.plan.get("tests") or {}).get("suites", []):  # each once, in the milestone worktree
         good, tail = run_cmd(suite_cmd(suite), c.repo)
-        if not good and suite["name"] in st.get("baseline_red", []):
-            print(f"GATE tests PRE-EXISTING {suite['name']}")
-            continue
+        if not good:
+            base = base or baseline_worktree(c, st["target"])
+            if base[1]:
+                tail = [base[1]] + tail
+            elif not run_cmd(suite_cmd(suite), base[0])[0]:
+                print(f"GATE tests PRE-EXISTING {suite['name']}")
+                continue
         bad += say("GATE tests", good, suite["name"])
         if not good:
             print("\n".join(tail))
+    if base:
+        git(c.repo, "worktree", "remove", "--force", "--", str(base[0]))
     if milestone(c).get("risky") or milestone(c).get("guards"):  # guarded data always gets the security review
         rs, cap = reviews(c), milestone(c).get("securityRounds", 1)
         fails = sum(1 for *_, res, _ in rs if res == "FAIL")
