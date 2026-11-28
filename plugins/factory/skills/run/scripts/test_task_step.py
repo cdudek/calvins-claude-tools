@@ -312,19 +312,19 @@ def test_gate_runs_each_suite_once_and_fails_on_a_red_one(tmp_path):
 
 
 def test_finish_does_not_block_on_a_command_already_red_on_the_milestone(tmp_path):
-    plan = plan_with_tests(triggers=[{"paths": ["src/*.ts"], "run": "echo old-red; exit 3", "why": "w"}])
+    plan = plan_with_tests(triggers=[{"paths": ["src/*.ts"], "run": "echo 'FAILED t::a'; exit 3", "why": "w"}])
     repo, sha = milestone_repo(tmp_path, plan)
     ok(repo, sha, "target")
     ok(repo, sha, "start", "T1")
     build(repo / ".worktrees" / f"{SLUG}-M1-T1", "src/a.ts")
     code, out = ok(repo, sha, "finish", "T1")
-    assert code == 0 and "FINISH tests PRE-EXISTING echo old-red; exit 3" in out and "old-red" in out and "FINISH FAIL" not in out, out
+    assert code == 0 and "FINISH tests PRE-EXISTING echo 'FAILED t::a'; exit 3" in out and "FAILED t::a" in out and "FINISH FAIL" not in out, out
     st = json.loads((repo / ".factory/state/M1.json").read_text())
-    assert st["preexisting"] == ["echo old-red; exit 3"] and "T1" in st["tasks"]
+    assert st["preexisting"] == ["echo 'FAILED t::a'; exit 3"] and "T1" in st["tasks"]
 
 
 def test_gate_reports_a_suite_red_at_target_as_pre_existing(tmp_path):
-    plan = plan_with_tests(suites=[{"name": "old", "cmd": f"echo o >> {tmp_path}/old-count; exit 1"}, {"name": "unit", "cmd": "true"}])
+    plan = plan_with_tests(suites=[{"name": "old", "cmd": f"echo o >> {tmp_path}/old-count; echo 'FAILED t::a'; exit 1"}, {"name": "unit", "cmd": "true"}])
     repo, sha = milestone_repo(tmp_path, plan)
     ok(repo, sha, "target")
     assert not (tmp_path / "old-count").exists()  # target runs no suite
@@ -374,3 +374,43 @@ def test_an_empty_rule_test_task_counts_as_done(tmp_path):
     ok(repo, sha, "start", "T2")
     assert "no changes" in ok(repo, sha, "finish", "T2")[1]
     assert ok(repo, sha, "start", "T1")[0] == 0
+
+
+def finish_t1_with(tmp_path, cmd):
+    plan = plan_with_tests(triggers=[{"paths": ["src/*.ts"], "run": cmd, "why": "w"}])
+    repo, sha = milestone_repo(tmp_path, plan)
+    ok(repo, sha, "target")
+    ok(repo, sha, "start", "T1")
+    build(repo / ".worktrees" / f"{SLUG}-M1-T1", "src/a.ts")
+    return ok(repo, sha, "finish", "T1")
+
+
+def test_finish_blocks_a_new_failure_next_to_a_pre_existing_one(tmp_path):
+    cmd = "echo 'FAILED t::a'; test ! -e src/a.ts || echo 'FAILED t::b'; exit 1"
+    code, out = finish_t1_with(tmp_path, cmd)
+    assert code == 1 and "FINISH FAIL" in out and "new failing tests: t::b" in out and "PRE-EXISTING" not in out, out
+
+
+def test_finish_blocks_when_failures_cannot_be_compared(tmp_path):
+    code, out = finish_t1_with(tmp_path, "echo no-names; exit 1")
+    assert code == 1 and "cannot be compared" in out and "PRE-EXISTING" not in out, out
+
+
+def test_failing_ids_reads_vitest_pytest_and_go_lines():
+    import importlib.util
+    sp = importlib.util.spec_from_file_location("ts", SCRIPT)
+    ts = importlib.util.module_from_spec(sp)
+    sp.loader.exec_module(ts)
+    text = " FAIL  src/a.test.ts > adds 3ms\n ✗ other 5ms\nFAILED tests/t.py::x - boom\n--- FAIL: TestY (0.00s)\n"
+    assert ts.failing_ids(text) == {"src/a.test.ts > adds", "other", "tests/t.py::x", "TestY"}
+
+
+def test_gate_fails_a_suite_with_a_new_failure_beside_a_pre_existing_one(tmp_path):
+    plan = plan_with_tests(suites=[{"name": "mix", "cmd": "echo 'FAILED t::a'; test ! -e src/a.ts || echo 'FAILED t::b'; exit 1"}])
+    repo, sha = milestone_repo(tmp_path, plan)
+    ok(repo, sha, "target")
+    ok(repo, sha, "start", "T1")
+    build(repo / ".worktrees" / f"{SLUG}-M1-T1", "src/a.ts")
+    assert ok(repo, sha, "finish", "T1")[0] == 0
+    code, out = ok(repo, sha, "gate")
+    assert code == 1 and "GATE tests FAIL mix (new failing tests: t::b)" in out and "PRE-EXISTING" not in out, out

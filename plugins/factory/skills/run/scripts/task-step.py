@@ -244,13 +244,37 @@ def glob_re(g):
     return re.compile(out)
 
 
-def run_cmd(cmd, cwd):
-    """(ok, last 40 lines of output) of one plan test command: shell=True, as `setup`, since it comes from the owner-approved plan."""
+def run_full(cmd, cwd):
+    """(ok, timed out, full output) of one plan test command: shell=True, as `setup`, since it comes from the owner-approved plan."""
     try:
         p = subprocess.run(str(cmd), shell=True, cwd=cwd, capture_output=True, text=True, timeout=TEST_TIMEOUT)
     except subprocess.TimeoutExpired:
-        return False, [f"timed out after {TEST_TIMEOUT} s"]
-    return p.returncode == 0, (p.stdout + p.stderr).strip().splitlines()[-40:]
+        return False, True, f"timed out after {TEST_TIMEOUT} s"
+    return p.returncode == 0, False, (p.stdout + p.stderr).strip()
+
+
+def run_cmd(cmd, cwd):
+    """(ok, last 40 lines of output) of one plan test command."""
+    good, _, text = run_full(cmd, cwd)
+    return good, text.splitlines()[-40:]
+
+
+# shortcut: a short regex list for vitest/jest, pytest and go; a runner it does not know parses to nothing and the comparison is inconclusive
+FAIL_RES = [re.compile(r"^\s*(?:FAIL|[×✗✕])\s+(.+?)\s*$", re.M), re.compile(r"^FAILED (\S+)", re.M), re.compile(r"--- FAIL: (\S+)")]
+
+
+def failing_ids(text):
+    return {re.sub(r"\s+\d+(?:\.\d+)?m?s$", "", m) for r in FAIL_RES for m in r.findall(text)}
+
+
+def same_failures(cand, base):
+    """None when the candidate's failures are all failures of the base too, else why the red command is not excused. Each side is run_full's (ok, timed out, output)."""
+    if cand[1] or base[1]:
+        return "a run timed out, so the failures cannot be compared"
+    c, b = failing_ids(cand[2]), failing_ids(base[2])
+    if not c or not b:
+        return "no failing test names could be read from the output, so the failures cannot be compared"
+    return None if c <= b else "new failing tests: " + ", ".join(sorted(c - b)[:5])
 
 
 def suite_cmd(suite):
@@ -297,15 +321,17 @@ def cmd_finish(c, task):
         return 1
     cmds = hand_back_cmds(c, wt)  # before the merge: the worktree goes after it
     for cmd in cmds:
-        good, tail = run_cmd(cmd, wt)
-        if not good:
-            # shortcut: exit codes, not per-test diffs, so a command already red on base hides new failures in it; upgrade if misses show up
-            if not run_cmd(cmd, c.repo)[0]:
+        cand = run_full(cmd, wt)
+        if not cand[0]:
+            base = run_full(cmd, c.repo)
+            why = "green on the milestone before the task" if base[0] else same_failures(cand, base)
+            tail = cand[2].splitlines()[-40:]
+            if not base[0] and why is None:
                 print(f"FINISH tests PRE-EXISTING {cmd}")
                 print("\n".join(tail[-10:]))
                 st.setdefault("preexisting", []).append(cmd)
                 continue
-            say("FINISH", False, f"{task} tests: {cmd}")
+            say("FINISH", False, f"{task} tests: {cmd}" + ("" if base[0] else f" ({why})"))
             print("\n".join(tail))
             return 1
     if cmds:
@@ -340,15 +366,21 @@ def cmd_gate(c):
         print(p.stdout.strip())
     base = None  # (path, why not) of the one baseline worktree, made at the first red suite
     for suite in (c.plan.get("tests") or {}).get("suites", []):  # each once, in the milestone worktree
-        good, tail = run_cmd(suite_cmd(suite), c.repo)
+        cand = run_full(suite_cmd(suite), c.repo)
+        good, tail, note = cand[0], cand[2].splitlines()[-40:], ""
         if not good:
             base = base or baseline_worktree(c, st["target"])
             if base[1]:
                 tail = [base[1]] + tail
-            elif not run_cmd(suite_cmd(suite), base[0])[0]:
-                print(f"GATE tests PRE-EXISTING {suite['name']}")
-                continue
-        bad += say("GATE tests", good, suite["name"])
+            else:
+                bres = run_full(suite_cmd(suite), base[0])
+                if not bres[0]:
+                    why = same_failures(cand, bres)
+                    if why is None:
+                        print(f"GATE tests PRE-EXISTING {suite['name']}")
+                        continue
+                    note = f" ({why})"
+        bad += say("GATE tests", good, suite["name"] + note)
         if not good:
             print("\n".join(tail))
     if base:
