@@ -95,7 +95,7 @@ def test_backlog_intent_only(tmp_path, monkeypatch):
 def test_needs_you_approve_plan(tmp_path, monkeypatch):
     repo = make_repo(tmp_path)
     c, _ = card_of(tmp_path, monkeypatch, repo)
-    assert c["column"] == "needs-you" and c["needs"]["kind"] == "approve-plan" and f"/factory:run {SLUG}" in c["needs"]["where"]
+    assert c["column"] == "needs-you" and c["needs"]["kind"] == "approve-plan" and c["needs"]["cmd"] == f"/factory:run {SLUG}"
     assert [m["state"] for m in c["milestones"]] == ["pending", "pending"] and c["current"] is None
 
 
@@ -144,7 +144,7 @@ def test_needs_you_blocked(tmp_path, monkeypatch):
     repo = make_repo(tmp_path, log=log)
     c, _ = card_of(tmp_path, monkeypatch, repo)
     assert c["column"] == "needs-you" and c["needs"]["kind"] == "blocked"
-    assert "retention period" in c["needs"]["text"] and f"/factory:run {SLUG}" in c["needs"]["where"]
+    assert "retention period" in c["needs"]["text"] and c["needs"]["cmd"] == f"/factory:run {SLUG}" and "new Claude session in app" in c["needs"]["where"]
     assert c["current"]["milestone"] == "M1"
 
 
@@ -168,7 +168,7 @@ def test_release_pr_and_gallery(tmp_path, monkeypatch):
     repo = make_repo(tmp_path, plan=plan, log=f"approved: {SHA}\n### M1\nSHIPPED, release PR is merge-ready\n")
     prs = [pr(7, "integration/saved"), pr(8, "someone-elses-branch")]
     c, _ = card_of(tmp_path, monkeypatch, repo, prs)
-    assert c["column"] == "needs-you" and c["needs"]["kind"] == "release-pr" and c["needs"]["where"].endswith("/pull/7")
+    assert c["column"] == "needs-you" and c["needs"]["kind"] == "release-pr" and c["needs"]["cmd"] == "gh pr view https://example.test/acme/app/pull/7 --web"
     assert c["prs"] == [{"number": 7, "url": "https://example.test/acme/app/pull/7", "title": "PR 7", "state": "open"}]
     g = repo / "changes" / SLUG / "evidence" / "M1"
     g.mkdir(parents=True)
@@ -358,7 +358,7 @@ def test_untrusted_gap_rounds_and_ids_render_escaped(tmp_path, monkeypatch):
     fb = importlib.util.module_from_spec(s)
     s.loader.exec_module(fb)
     page = fb.render({"generated": "x", "warnings": [], "projects": [{"repo": str(repo), "name": "app", "changes": [c]}]})
-    assert "<img" not in page and "<b>" not in page
+    assert "<img" not in page and "M2<b>" not in page
 
 
 def test_bundled_copies_in_the_mod_are_identical():

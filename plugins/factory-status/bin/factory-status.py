@@ -6,12 +6,14 @@ the `json factory` block and the progress log in changes/<slug>/plan.md, <worktr
 Needs python3 and git; `gh` is optional (without it `prs` is empty and a waiting release PR is not seen). Env FACTORY_HOME overrides ~/.factory.
 
 --json   every git repo under the roots (default ~/projects, depth 3, dot folders, node_modules and .worktrees skipped) that has a factory change under changes/ (a plan with a `json factory` block, or an intent.md with outcome-<n> ids):
-  {"generated": iso, "warnings": [str], "projects": [{"repo", "name", "changes": [{"slug", "title", "column", "approved": bool,
-     "milestones": [{"id", "state", "tasks": [{"id", "state"}], "gapRound", "gapRounds"}],
-     "current": {"milestone", "milestoneIndex", "milestoneCount", "task", "taskIndex", "taskCount", "gapRound", "gapRounds", "since"} | null,
-     "needs": {"kind", "text", "where"} | null, "prs": [{"number", "url", "title", "state"}]}]}]}
-  column: needs-you | building | ready | backlog | done. needs.kind: approve-plan | blocked | hold-review | gallery | release-pr.
-  milestone state: pending | building | incomplete | blocked | hold | merged | shipped. task state: pending | building | done. pr state: open | draft.
+  {"generated": iso, "warnings": [str], "projects": [{"repo", "name", "changes": [{"slug", "title", "column", "stage", "approved": bool, "approvedSha", "approvedAt", "integration", "doneAt",
+     "outcomes": [{"id", "text"}], "requirementCount", "milestones": [{"id", "title", "layer", "risky", "requirements", "branch", "state", "tasks": [{"id", "state", "title", "model", "effort"}],
+     "gapRound", "gapRounds", "verifier": {"result", "sha", "reqs"}}], "current": {...} | null, "needs": need | null, "needsAll": [need],
+     "questions": [{"id", "milestone", "text", "source", "open", "at"}], "failures": [{"milestone", "text", "sha", "at", "kind", "reqs"}],
+     "run": {"state", "lastActivity", "lastEndState", "worktree", "logLines"}, "prs": [{"number", "url", "title", "state"}]}]}]}
+  need = {"kind", "text", "cmd", "where", "since", "milestone"}. Full contract: references/board.md.
+  column: needs-you | building | ready | backlog | done. stage: intent | plan | ready | building | done. need kind: approve-plan | blocked | hold-review | gallery | release-pr | question.
+  milestone state: pending | building | incomplete | blocked | hold | merged | shipped. task state: pending | building | done | failed. pr state: open | draft. Unknown values are null, never invented.
 --line   one line for the run active in the repo DIR (a worktree is fine): `M3a (4/20) · T2/6 building · gap 0/3 · 38m`; nothing, exit 0, when nothing runs.
 
 How state is read (the log is free text, so these are the rules, most conservative reading wins):
@@ -21,6 +23,7 @@ How state is read (the log is free text, so these are the rules, most conservati
   The freshest copy of plan.md (main checkout or a milestone worktree) wins, older copies fill the gaps.
 - building: the milestone's state file changed in the last 15 minutes, or an unmerged task worktree (branch <slug>-<M>-<T>) of the current milestone exists.
   A task is done when the state file records it merged (or empty) or its `factory-merge: <branch>` commit is on the milestone branch. `since` is when the state file was created (else last changed).
+- board lines (QUESTION, ANSWERED, VERIFY, ERROR) are read one per line, each once; `[NEEDS CLARIFICATION: ...]` in delta.md is an open question.
 - gap rounds: the highest `GAP-FIX <M> round=<n>` line; the cap is the milestone's gapRounds (default 3).
 - Not read: whether an approved revision still matches the files (that needs check-plan.py --approved), a PR's merged state, deploy state.
 """
@@ -29,6 +32,7 @@ import hashlib
 import json
 import os
 import re
+import shlex
 import subprocess
 import sys
 import time
@@ -130,22 +134,66 @@ def open_prs(repo):
     return prs if isinstance(prs, list) else []
 
 
-def log_events(log, ids):
-    """([(milestone, state, note)] in log order, {milestone: highest GAP-FIX round}) from the free-text progress log."""
+ENTRY_START = r"#{1,6}\s|\s*(?:[-*]\s+)?\W*\d{4}-\d{2}-\d{2}"
+TS_RE = re.compile(r"(\d{4}-\d{2}-\d{2})(?:[ T,]+(\d{1,2}:\d{2}))?")
+HM_RE = re.compile(r"^\W*(\d{1,2}:\d{2})\b")
+LEAD_TS = re.compile(r"^(?:\d{4}-\d{2}-\d{2}[ T,]*)?(?:\d{1,2}:\d{2}\s*[-:,]?\s*)?")
+REQS = r"(req-\d+(?:[ ,]+req-\d+)*)"
+LINE_KINDS = (
+    ("question", re.compile(r"QUESTION (" + MS + r") (q\d+):\s*(.+)")),
+    ("answered", re.compile(r"ANSWERED (" + MS + r") (q\d+):\s*(.+)")),
+    ("verify-pass", re.compile(r"VERIFY (" + MS + r") PASS ([0-9a-f]{7,40})\b")),
+    ("verify-fail", re.compile(r"VERIFY (" + MS + r") FAIL ([0-9a-f]{7,40}) " + REQS + r":\s*(.+)")),
+    ("error", re.compile(r"ERROR (" + MS + r"):\s*(.+)")),
+)
+
+
+def to_iso(date, hm=None):
+    """Log times carry no zone: a date with a time is read as this machine's local time and written as UTC; a bare date stays `YYYY-MM-DD`."""
+    if not hm:
+        return date
+    try:
+        return datetime.strptime(f"{date} {hm}", "%Y-%m-%d %H:%M").astimezone(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ")
+    except ValueError:
+        return date
+
+
+def stamp_of(line, head_ts):
+    """The line's own time when it carries one (`2026-11-28 10:05` or `19:44` after the entry's date), else the entry heading's, else None."""
+    m = TS_RE.search(line[:40])
+    if m:
+        return to_iso(m.group(1), m.group(2))
+    h = HM_RE.match(line)
+    if h and head_ts:
+        return to_iso(head_ts[0], h.group(1))
+    return head_ts and to_iso(*head_ts)
+
+
+def log_entries(log):
+    """The progress log as entries (lists of lines): each starts at a heading or dated line, else at each paragraph."""
     log = re.sub(r"<!--.*?-->", "", log, flags=re.S)
     lines = log.splitlines()
-    marked = any(re.match(r"#{1,6}\s|\s*(?:[-*]\s+)?\W*\d{4}-\d{2}-\d{2}", ln) for ln in lines)
+    marked = any(re.match(ENTRY_START, ln) for ln in lines)
     entries, prev_blank = [], True
     for ln in lines:
-        starts = re.match(r"#{1,6}\s|\s*(?:[-*]\s+)?\W*\d{4}-\d{2}-\d{2}", ln) if marked else (prev_blank and ln.strip())
+        starts = re.match(ENTRY_START, ln) if marked else (prev_blank and ln.strip())
         if starts or not entries:
             entries.append([])
         entries[-1].append(ln)
         prev_blank = not ln.strip()
+    return entries
+
+
+def log_events(log, ids):
+    """([(milestone, state, note, at)] in log order, {milestone: highest GAP-FIX round}) from the free-text progress log."""
+    entries = log_entries(log)
     events = []
     for e in entries:
         text = "\n".join(e)
         head = re.sub(r"[*_`]", "", e[0])
+        hm = TS_RE.search(head)
+        head_ts = (hm.group(1), hm.group(2)) if hm else None
+        at = head_ts and to_iso(*head_ts)
         cand = [(i, STATE_RE.findall(head)[-1]) for i in [0] if STATE_RE.search(head)]  # the entry's heading names its state anywhere in the line
         for i, ln in enumerate(e[1:], 1):  # a later line only when it starts with the state word ("BLOCKED: ...", "State: HOLD")
             lm = LINE_STATE.match(re.sub(r"[*_`]", "", ln))
@@ -154,12 +202,52 @@ def log_events(log, ids):
         found = [m for m in re.findall(r"\b(" + MS + r")\b", head) if m in ids] or [m for m in re.findall(r"\b(" + MS + r")\b", text) if m in ids]
         if found and cand:
             i, st = cand[-1]
-            events.append((found[0], STATE_NAME[st], re.sub(r"[*_`#>]+", "", e[i]).strip()[:200]))
-        events += [(m, "merged", "") for m in MERGED_RE.findall(text) if m in ids]
+            events.append((found[0], STATE_NAME[st], re.sub(r"[*_`#>]+", "", e[i]).strip()[:200], stamp_of(re.sub(r"[*_`#>]+", "", e[i]).strip(), head_ts) if i else at))
+        events += [(m, "merged", "", at) for m in MERGED_RE.findall(text) if m in ids]
     gaps = {}
-    for m, r in re.findall(r"^GAP-FIX (" + MS + r")(?: round=(\d+))?", log, re.M):
+    gap_files = {}
+    for m, r, f in re.findall(r"^GAP-FIX (" + MS + r")(?: round=(\d+))?(?: files=(\S*))?", re.sub(r"<!--.*?-->", "", log, flags=re.S), re.M):
         gaps[m] = max(gaps.get(m, 0), int(r or 1))
-    return events, gaps
+        gap_files[(m, int(r or 1))] = f
+    return events, gaps, gap_files
+
+
+def log_records(log, ids):
+    """The board's fixed one-line formats, in log order, each once (plan.md copies repeat the log):
+    {"questions": [{id, milestone, text, at}], "answered": {(milestone, id): text}, "verifies": [{milestone, result, sha, reqs, text, at}], "errors": [{milestone, text, at}]}."""
+    out = {"questions": [], "answered": {}, "verifies": [], "errors": []}
+    seen = set()
+    for e in log_entries(log):
+        hm = TS_RE.search(re.sub(r"[*_`]", "", e[0]))
+        head_ts = (hm.group(1), hm.group(2)) if hm else None
+        for ln in e:
+            plain = re.sub(r"[*_`]", "", ln).strip()
+            plain = re.sub(r"^[-*]\s+", "", plain)
+            body = plain[LEAD_TS.match(plain).end():]
+            for kind, rx in LINE_KINDS:
+                m = rx.match(body)
+                if not m or m.group(1) not in ids:
+                    continue
+                key = (kind,) + m.groups()
+                if key in seen:
+                    break
+                seen.add(key)
+                n = len(seen)
+                at = stamp_of(plain, head_ts)
+                g = m.groups()
+                if kind == "question":
+                    out["questions"].append({"id": g[1], "milestone": g[0], "text": g[2].strip()[:300], "at": at, "n": n})
+                elif kind == "answered":
+                    out["answered"][(g[0], g[1])] = g[2].strip()[:300]
+                elif kind == "verify-pass":
+                    out["verifies"].append({"milestone": g[0], "result": "PASS", "sha": g[1], "reqs": [], "text": f"Verifier PASS on {g[1][:7]}.", "at": at, "n": n})
+                elif kind == "verify-fail":
+                    reqs = re.findall(r"req-\d+", g[2])
+                    out["verifies"].append({"milestone": g[0], "result": "FAIL", "sha": g[1], "reqs": reqs, "text": f"Verifier FAIL {', '.join(reqs)}: {g[3].strip()[:300]}", "at": at, "n": n})
+                else:
+                    out["errors"].append({"milestone": g[0], "text": g[1].strip()[:300], "at": at, "n": n})
+                break
+    return out
 
 
 def fmt_age(secs):
@@ -172,11 +260,50 @@ def _after_block(text):
     return text[m.end():] if m else ""
 
 
+def _blank(slug):
+    return {"slug": slug, "title": slug, "column": "backlog", "stage": "intent", "approved": False, "approvedSha": None, "approvedAt": None,
+            "integration": None, "doneAt": None, "outcomes": [], "requirementCount": 0, "milestones": [], "current": None,
+            "needs": None, "needsAll": [], "questions": [], "failures": [],
+            "run": {"state": "idle", "lastActivity": None, "lastEndState": None, "worktree": None, "logLines": []}, "prs": []}
+
+
+def _short(text, n):
+    text = re.sub(r"[*_`]", "", text or "").strip()
+    return text[:n].rstrip() or None
+
+
+def prose_titles(text):
+    """({milestone: title}, {task: title}) from the plan's prose (before the json block): `### M1 layer: Title` headings and `- **T1:** Title. ...` bullets. Absent -> missing, never invented."""
+    ms, ts = {}, {}
+    for ln in (text or "").splitlines():
+        m = re.match(r"#{2,5}\s+(?:Milestone\s+)?(" + MS + r")\b[\s:—–-]*(.*)$", ln)
+        if m and _short(m.group(2), 120):
+            ms.setdefault(m.group(1), _short(m.group(2), 120))
+        t = re.match(r"\s*[-*]\s+\*\*(T\d+)\b[^*]*\*\*\s*(.*)$", ln)
+        if t:
+            first = re.split(r"\.\s|\sCovers\b|\sOwns\b", t.group(2), maxsplit=1)[0].rstrip(".")
+            if _short(first, 100):
+                ts.setdefault(t.group(1), _short(first, 100))
+    return ms, ts
+
+
+def intent_outcomes(text):
+    return [{"id": i, "text": _short(t, 300) or ""} for i, t in re.findall(r"^\s*-\s*(outcome-\d+)\s*:\s*(.+)$", text or "", re.M)]
+
+
+def _has_github(repo):
+    return "github.com" in (run(["git", "-C", str(repo), "remote", "get-url", "origin"], None) or "")
+
+
+def _need(kind, text, cmd, where, since=None, milestone=None):
+    return {"kind": kind, "text": text, "cmd": cmd, "where": where, "since": since, "milestone": milestone}
+
+
 def analyze(repo, slug, wts, now, warns, prs_fn):
     """One change (a slug found in the main checkout or any worktree) -> its card, or None when it is not a factory change.
     The freshest copy of its folder (newest plan.md) supplies title, plan block and intent."""
     where = f"{repo.name}/changes/{slug}"
-    card = {"slug": slug, "title": slug, "column": "backlog", "approved": False, "milestones": [], "current": None, "needs": None, "prs": []}
+    card = _blank(slug)
     dirs = [Path(w) / "changes" / slug for w, _ in wts if (Path(w) / "changes" / slug).is_dir()]
     stamp = lambda d: max([(d / n).stat().st_mtime for n in ("plan.md", "intent.md") if (d / n).is_file()] or [0])  # noqa: E731
     dirs.sort(key=stamp)
@@ -185,14 +312,24 @@ def analyze(repo, slug, wts, now, warns, prs_fn):
         t = read(cdir / n)
         h = t and re.search(r"^#\s+(.+)$", t, re.M)
         if h:
-            card["title"] = h.group(1).strip()
+            card["title"] = re.sub(r"^Plan:\s*", "", h.group(1).strip()) or h.group(1).strip()
             break
+    intents = [d / "intent.md" for d in dirs if (d / "intent.md").is_file()]
+    card["outcomes"] = intent_outcomes(read(intents[-1])) if intents else []
+    deltas = [d / "delta.md" for d in dirs if (d / "delta.md").is_file()]
+    delta_qs = [{"id": f"d{i}", "milestone": None, "text": _short(t, 300), "source": "delta.md", "open": True, "at": None}
+                for i, t in enumerate(re.findall(r"\[NEEDS CLARIFICATION:\s*(.{1,400}?)\]", read(deltas[-1]) or "", re.S), 1) if _short(t, 300)] if deltas else []
+    run_cmd = f"/factory:run {shlex.quote(slug)}"
+    in_repo = f"Paste it in a new Claude session in {repo.name}."
     copies = [d / "plan.md" for d in dirs if (d / "plan.md").is_file()]
     text = next((t for t in (read(p) for p in reversed(copies)) if BLOCK.search(t or "")), None)
     m = BLOCK.search(text or "")
     if not m:
         # no plan block: a draft is backlog, but only when intent.md has factory ids; other tools' changes/ folders are not ours
-        return card if any(re.search(r"^\s*-\s*(?:outcome|constraint)-\d+\s*:", read(d / "intent.md") or "", re.M) for d in dirs) else None
+        if not any(re.search(r"^\s*-\s*(?:outcome|constraint)-\d+\s*:", read(d / "intent.md") or "", re.M) for d in dirs):
+            return None
+        _intent_needs(card, delta_qs, run_cmd, repo)
+        return card
     try:
         plan = json.loads(m.group(1))
         mss = [x for x in plan["milestones"] if isinstance(x, dict) and re.fullmatch(MS, str(x.get("id")))]
@@ -200,20 +337,34 @@ def analyze(repo, slug, wts, now, warns, prs_fn):
             raise ValueError("no milestones")
     except (ValueError, KeyError, TypeError) as e:
         warns.append(f"{where}: plan block unreadable ({e})")
+        _intent_needs(card, delta_qs, run_cmd, repo)
         return card
     log = "\n".join(_after_block(read(p)) for p in copies)
     ids = [x["id"] for x in mss]
-    events, gaps = log_events(log, set(ids))
+    events, gaps, gap_files = log_events(log, set(ids))
+    recs = log_records(log, set(ids))
+    ms_titles, task_titles = prose_titles(text[:m.start()])
     logstate = {}
-    for mid, st, note in events:
-        logstate[mid] = (st, note)
-    card["approved"] = bool(re.search(r"\bapproved:\s*`?[0-9a-f]{7,40}", log, re.I))
+    for mid, st, note, at in events:
+        logstate[mid] = (st, note, at)
+    am = re.search(r"\bapproved:\s*`?([0-9a-f]{7,40})", log, re.I)
+    card["approved"] = bool(am)
+    if am:
+        card["approvedSha"] = am.group(1)[:7]
+        for e in log_entries(log):
+            if re.search(r"\bapproved:\s*`?[0-9a-f]{7,40}", "\n".join(e), re.I):
+                hm = TS_RE.search(re.sub(r"[*_`]", "", e[0]))
+                card["approvedAt"] = to_iso(hm.group(1), hm.group(2)) if hm else None
+                break
     change = str(plan.get("change") or slug)
+    card["integration"] = plan["integration"] if isinstance(plan.get("integration"), str) and plan["integration"] else None
+    card["requirementCount"] = len([r for r in plan.get("requirements", []) if isinstance(r, str)]) if isinstance(plan.get("requirements"), list) else 0
     # state files and task worktrees
-    sfiles, building = {}, {}
+    sfiles, building, wt_of = {}, {}, {}
     for path, branch in wts:
         sm = re.fullmatch(re.escape("milestone/" + change) + "-(" + MS + ")", branch)
         if sm:
+            wt_of[sm.group(1)] = Path(path)
             f = Path(path) / ".factory" / "state" / f"{sm.group(1)}.json"
             try:
                 st = json.loads(f.read_text())
@@ -225,14 +376,22 @@ def analyze(repo, slug, wts, now, warns, prs_fn):
                 warns.append(f"{where}: state file {f.name} is not valid JSON")
         tm = re.fullmatch(re.escape(change) + "-(" + MS + ")-(T\\d+|gap\\d*)", branch)
         if tm:
-            building.setdefault(tm.group(1), []).append(tm.group(2) if tm.group(2).startswith("T") else f"{tm.group(1)}-{tm.group(2)}")
+            name = tm.group(2)
+            if name.startswith("gap"):
+                name = f"{tm.group(1)}-gap{name[3:] or 1}"
+            building.setdefault(tm.group(1), []).append(name)
     rows = []
     open_ms = next((ms["id"] for ms in mss if (logstate.get(ms["id"]) or ("",))[0] not in ("shipped", "merged", "hold")), None)  # the current milestone
     subjects = {}
+    last_verify = {}
+    for v in recs["verifies"]:
+        last_verify[v["milestone"]] = v
+    any_active = False
     for ms in mss:
         mid = ms["id"]
         sf = sfiles.get(mid)
-        tasks = [t["id"] for t in ms.get("tasks", []) if isinstance(t, dict) and "id" in t]
+        ptasks = [t for t in ms.get("tasks", []) if isinstance(t, dict) and "id" in t]
+        tasks = [t["id"] for t in ptasks]
         done = {t for t, v in ((sf or ({},))[0].get("tasks") or {}).items() if isinstance(v, dict) and (v.get("merged") or v.get("empty"))}
         ls = logstate.get(mid)
         finished = bool(ls) and ls[0] in ("shipped", "merged", "hold")
@@ -247,6 +406,7 @@ def analyze(repo, slug, wts, now, warns, prs_fn):
                 else:
                     live.append(t)
         active = not finished and (bool(live) or (sf is not None and now - sf[1] < ACTIVE_SECS))
+        any_active = any_active or active
         if finished and ls[0] in DONE:
             state, done = ls[0], set(tasks)
         elif finished:
@@ -258,16 +418,37 @@ def analyze(repo, slug, wts, now, warns, prs_fn):
         else:
             state = "incomplete" if done else "pending"
         tstate = [{"id": t, "state": "done" if t in done else "building" if t in live else "pending"} for t in tasks]
-        rows.append({"id": mid, "state": state, "tasks": tstate, "gapRound": gaps.get(mid, 0), "gapRounds": as_int(ms.get("gapRounds"), 3),
-                     "_live": live, "_since": (sf[2] if sf else None), "_note": (ls[1] if ls else "")})
-    card["milestones"] = [{k: v for k, v in r.items() if not k.startswith("_")} for r in rows]
+        for t, ts in zip(ptasks, tstate):
+            ts["title"] = task_titles.get(t["id"])
+            ts["model"] = t["model"] if t.get("model") in ("haiku", "sonnet", "opus") else None
+            ts["effort"] = t["effort"] if t.get("effort") in ("low", "medium", "high") else None
+        gr = gaps.get(mid, 0)
+        v = last_verify.get(mid)
+        gtasks = []
+        for n in range(1, gr + 1):
+            gid = f"{mid}-gap{n}"
+            files = gap_files.get((mid, n)) or ""
+            gst = "building" if gid in live else "failed" if (n == gr and v and v["result"] == "FAIL") else "done"
+            gtasks.append({"id": gid, "state": gst, "title": f"Fix round {n}" + (f": {', '.join(files.split(',')[:2])}" + (f" (+{len(files.split(',')) - 2} more)" if len(files.split(',')) > 2 else "") if files else ""), "model": None, "effort": None})
+        layer = ms.get("layer") if ms.get("layer") in ("components", "layouts", "backend", "screens", "rest") else None
+        rows.append({"id": mid, "title": ms_titles.get(mid) or (_short(ms["title"], 120) if isinstance(ms.get("title"), str) else None), "layer": layer,
+                     "risky": ms.get("risky") is True, "requirements": [r for r in ms.get("covers", []) if isinstance(r, str) and re.fullmatch(r"req-\d+", r)],
+                     "branch": f"milestone/{change}-{mid}", "state": state, "tasks": tstate, "gapRound": gr, "gapRounds": as_int(ms.get("gapRounds"), 3),
+                     "verifier": {"result": v["result"] if v else None, "sha": v["sha"] if v else None, "reqs": v["reqs"] if v else []},
+                     "_live": live, "_since": (sf[2] if sf else None), "_note": (ls[1] if ls else ""), "_at": (ls[2] if ls else None), "_gtasks": gtasks})
+    card["milestones"] = [{**{k: v for k, v in r.items() if not k.startswith("_")}, "tasks": r["tasks"] + r["_gtasks"]} for r in rows]
     states = [r["state"] for r in rows]
     cur = next((r for r in rows if r["state"] == "building"), None) or next((r for r in rows if r["state"] in ("blocked", "hold")), None)
+    needs = []
     if "building" in states:
         card["column"] = "building"
     elif not card["approved"]:
         card["column"] = "needs-you"
-        card["needs"] = {"kind": "approve-plan", "text": "The plan is written and waits for your approval.", "where": f"In {repo}, run /factory:run {slug} and approve."}
+        try:
+            since = iso(max((p.stat().st_mtime for p in copies)))
+        except (OSError, ValueError):
+            since = None
+        needs.append(_need("approve-plan", "The plan is written and waits for your approval.", run_cmd, f"{in_repo} It shows the plan and asks for approval.", since))
     else:
         card["column"] = "ready"
     prs = []
@@ -275,22 +456,83 @@ def analyze(repo, slug, wts, now, warns, prs_fn):
         prs = [p for p in prs_fn() if isinstance(p, dict) and _mine(str(p.get("headRefName", "")), change, plan)]
         card["prs"] = [{"number": p.get("number"), "url": p.get("url"), "title": p.get("title"), "state": "draft" if p.get("isDraft") else "open"} for p in prs]
     if card["column"] != "building" and card["approved"]:
-        again = f"In {repo}, fix the cause, then run /factory:run {slug}."
-        if "blocked" in states:
-            card["column"], card["needs"] = "needs-you", {"kind": "blocked", "text": next(r["_note"] for r in rows if r["state"] == "blocked") or "The run stopped on a decision only you can make.", "where": again}
-        elif "hold" in states:
-            card["column"], card["needs"] = "needs-you", {"kind": "hold-review", "text": next(r["_note"] for r in rows if r["state"] == "hold") or "A held milestone is pushed and waits for you.",
-                                                          "where": f"Review the pushed branch in {repo}, then run /factory:run {slug}."}
-        elif (release := _release(prs, plan, mss)) is not None:
-            gal = any(g.is_file() for w, _ in wts for g in (Path(w) / "changes" / slug / "evidence").glob("*/gallery.md"))
+        blocked = [r for r in rows if r["state"] == "blocked"]
+        held = [r for r in rows if r["state"] == "hold"]
+        if blocked or held:
             card["column"] = "needs-you"
-            card["needs"] = {"kind": "gallery" if gal else "release-pr", "text": (f"Review the gallery, then merge release PR #{release['number']}." if gal else f"Release PR #{release['number']} waits for your merge."),
-                             "where": f"Open {release['url']}"}
-        elif all(s in DONE for s in states):
+        for r in blocked:
+            needs.append(_need("blocked", r["_note"] or "The run stopped on a decision only you can make.", run_cmd, f"{in_repo} Fix the cause first, it resumes the run.", r["_at"], r["id"]))
+        for r in held:
+            sha = (re.findall(r"\b[0-9a-f]{7,40}\b", r["_note"]) or [None])[0] or (run(["git", "-C", str(repo), "rev-parse", "--short", f"refs/heads/{r['branch']}"], None) or "").strip() or None
+            cmd = f"gh browse --branch {shlex.quote(r['branch'])}" if _has_github(repo) else f"git log -1 {shlex.quote(sha or r['branch'])}"
+            needs.append(_need("hold-review", r["_note"] or "A held milestone is pushed and waits for you.", cmd,
+                               f"Paste it in a terminal in {repo.name}. " + ("It opens the branch on GitHub." if cmd.startswith("gh ") else "It prints the held commit."), r["_at"], r["id"]))
+        if not blocked and not held and (release := _release(prs, plan, mss)) is not None:
+            gal = any(g.is_file() for w, _ in wts for g in (Path(w) / "changes" / slug / "evidence").glob("*/gallery.md"))
+            url = str(release.get("url") or "")
+            ref = url if url.startswith("https://") else str(release.get("number"))
+            card["column"] = "needs-you"
+            needs.append(_need("gallery" if gal else "release-pr", (f"Review the gallery, then merge release PR #{release['number']}." if gal else f"Release PR #{release['number']} waits for your merge."),
+                               f"gh pr view {shlex.quote(ref)} --web", f"Paste it in a terminal in {repo.name}. It opens the pull request in your browser."))
+        elif not blocked and not held and all(s in DONE for s in states):
             card["column"] = "done"
+    if card["column"] == "done":
+        card["doneAt"] = next((at for _, st, _, at in reversed(events) if st in DONE), None)
+    shipped = {r["id"] for r in rows if r["state"] in DONE}
+    _questions(card, delta_qs, recs["questions"], recs["answered"], {r["id"]: r["state"] for r in rows}, shipped, run_cmd, f"Answer it in a new Claude session in {repo.name}.", needs)
+    _set_needs(card, needs)
+    # failures, newest (last in the log) first
+    fails = [{"milestone": v["milestone"], "text": v["text"], "sha": v["sha"], "at": v["at"], "kind": "verify", "reqs": v["reqs"], "n": v["n"]} for v in recs["verifies"] if v["result"] == "FAIL"]
+    fails += [{"milestone": e["milestone"], "text": e["text"], "sha": None, "at": e["at"], "kind": "error", "reqs": [], "n": e["n"]} for e in recs["errors"]]
+    card["failures"] = sorted(fails, key=lambda f: -f.pop("n"))
+    # run, stage, current
+    acts = [iso(sf[1]) for sf in sfiles.values()] + [x["at"] for x in recs["verifies"] + recs["errors"] + recs["questions"] if x["at"]] + [at for _, _, _, at in events if at]
+    endmap = {"shipped": "SHIPPED", "merged": "HOLD", "hold": "HOLD", "blocked": "BLOCKED", "incomplete": "INCOMPLETE"}
+    wt = wt_of.get((cur or {}).get("id") or open_ms or "")
+    try:
+        rel = wt.relative_to(repo).as_posix() if wt else None
+    except ValueError:
+        rel = None
+    plain = [re.sub(r"^[-*]\s+", "", re.sub(r"[*_`]", "", ln).strip()) for ln in log.splitlines()]
+    seen_ll, lines = set(), []
+    for ln in plain:
+        if re.match(r"(?:GAP-FIX|VERIFY|QUESTION|ANSWERED|ERROR|HOLD-MERGED|approved:)", ln) and ln not in seen_ll:
+            seen_ll.add(ln)
+            lines.append(ln[:300])
+    card["run"] = {"state": "running" if any_active else "stopped" if card["approved"] and card["column"] != "done" and any(s != "pending" for s in states) else "idle",
+                   "lastActivity": max(acts) if acts else None, "lastEndState": endmap.get(events[-1][1]) if events else None, "worktree": rel, "logLines": lines[-12:]}
+    card["stage"] = "done" if card["column"] == "done" else "plan" if not card["approved"] else "building" if (card["column"] == "building" or any(s != "pending" for s in states)) else "ready"
     if card["column"] in ("building", "needs-you") and cur is not None:
         card["current"] = _current(cur, rows, mss)
     return card
+
+
+def _set_needs(card, needs):
+    if card["column"] in ("ready", "backlog") and any(n["kind"] == "question" for n in needs):
+        card["column"] = "needs-you"
+    card["needsAll"] = needs
+    card["needs"] = needs[0] if needs else None
+
+
+def _intent_needs(card, delta_qs, run_cmd, repo):
+    needs = []
+    _questions(card, delta_qs, [], {}, {}, set(), run_cmd, f"Answer it in a new Claude session in {repo.name}.", needs)
+    _set_needs(card, needs)
+
+
+def _questions(card, delta_qs, log_qs, answered, mstate, shipped, run_cmd, where, needs=None):
+    """card["questions"] (every question, open or answered) and, in `needs`, one question need per milestone with an open one on a milestone that is not shipped."""
+    qs = [{"id": q["id"], "milestone": q["milestone"], "text": q["text"], "source": "log", "open": (q["milestone"], q["id"]) not in answered, "at": q["at"]} for q in log_qs] + delta_qs
+    card["questions"] = qs
+    if needs is None or card["column"] == "done":
+        return
+    groups = {}
+    for q in qs:
+        if q["open"] and q["milestone"] not in shipped:
+            groups.setdefault(q["milestone"], []).append(q)
+    for mid, g in groups.items():
+        more = f" (+{len(g) - 1} more)" if len(g) > 1 else ""
+        needs.append(_need("question", f"Question: {g[0]['text']}{more}", run_cmd, where, g[0]["at"], mid))
 
 
 def _mine(head, change, plan):

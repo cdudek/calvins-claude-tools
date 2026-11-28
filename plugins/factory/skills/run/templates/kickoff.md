@@ -4,6 +4,7 @@
 You coordinate factory change {{change}}, {{scope}}. The approved plan and delta are on `{{tgt}}`, or on this branch for milestone 1 in a repo without a plan PR. Read {{P}}plan.md and {{P}}delta.md first. The owner approved revision `{{sha}}`; every integrity and plan check below passes it.
 Do reversible steps yourself and keep going: create a missing branch, rerun a check, recreate a worktree. Stop only for a decision the plan does not cover or an irreversible step.
 Resume rule: read the progress log in plan.md, reconcile it with git and PR state, skip what is already done. Read a PR's state and merge SHA from `gh pr view <n> --json state,mergeCommit` or git, never from the log. `python3 .factory/task-step.py status {{P}}plan.md <M> --approved {{sha}}` prints the recorded <target SHA> and the <checked SHA>s, which it derives from the `factory-merge:` merges in git. If the target is missing, re-record it with `python3 .factory/task-step.py target {{P}}plan.md <M> --approved {{sha}} --resume`.
+Board log lines: when it happens, append one of these to the plan.md progress log (own line, commit with the next progress entry): `QUESTION <M> <id>: <text>` for an owner question (ids q1, q2, ...), `ANSWERED <M> <id>: <answer>`, `VERIFY <M> PASS <sha>`, `VERIFY <M> FAIL <sha> <req-ids>: <one-line reason>` (req ids comma separated), `ERROR <M>: <one line>` for a failure that stops progress (integrity, gate, crash). Start a line with `HH:MM ` to stamp it.
 {{standing}}
 {{all_start}}
 {{milestones}}

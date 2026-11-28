@@ -107,6 +107,6 @@ Run from `<repo>/.factory/`, where the SessionStart hook keeps them equal to the
 - `task-step.py target|start|pin|finish|gate|status <plan.md> <M> [<T>] --approved <sha>`: the coordinator's per-task mechanics; reads the approved plan and derives checked commits from git.
 - `test-integrity.sh <worktree> <base-ref> [plan.md [--task <id> | --milestone <id>] [flags]]`: touched tests, paths outside the task (plus the logged gap rounds inside `mayTouch`), CI, `.github/`, `.factory/`, plan, baselines, spec, skips and added lint suppressions, and for every existing test a task may edit, anything but add-only changes (no test block removed, no fewer assertions, no new skip, no looser matcher, no longer timeout). The flags are in its header.
   Flags are documented in its header.
-- `factory-status.py --json [--roots DIR ...]` or `--repo DIR --line`: reads plans, progress logs, state files and open PRs; stores nothing.
+- `factory-status.py --json [--roots DIR ...]` or `--repo DIR --line`: reads plans, progress logs, state files and open PRs; stores nothing. The board reads the `QUESTION`, `ANSWERED`, `VERIFY` and `ERROR` log lines (references/board.md).
 - `factory-board.py serve|install|uninstall [--dry-run]`: the local read-only board on 127.0.0.1, with a macOS notification when something needs you.
 - `migrate-name.py <repo> | --home`: one-shot rename of a pre-0.3.0 repo or home folder; commits nothing.
